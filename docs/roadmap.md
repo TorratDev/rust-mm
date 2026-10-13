@@ -59,7 +59,7 @@ Approach: reverse engineer the original game, understand its data and mechanics,
 Dependency rule: `sim` and `data` depend on nothing platform-related; only `platform` and `apps/*` depend on SDL3.
 
 ## Phase 0 — Verify assumptions
-Milestone: every assumption the plan relies on is confirmed or replaced. Record each result (date, evidence, outcome) in `docs/verification.md`. A check gates the phase listed in "Blocks"; it doesn't have to finish before Phase 1 starts.
+Milestone: every assumption the plan relies on is confirmed or replaced. Record each result (date, evidence, outcome) in [`docs/verification.md`](verification.md). A check gates the phase listed in "Blocks"; it doesn't have to finish before Phase 1 starts.
 
 | ID | Assumption | How to check | Done when | If false | Blocks |
 |----|------------|--------------|-----------|----------|--------|

@@ -1,0 +1,10 @@
+[package]
+name = "sdl3-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Phase 0 check V1: builds SDL3 from the bundled source and runs a headless
+# window, render target, gamepad and audio-stream smoke test.
+[dependencies]
+sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
