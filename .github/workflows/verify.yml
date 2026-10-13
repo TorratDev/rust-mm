@@ -1,0 +1,47 @@
+name: Phase 0 verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  SDL_VIDEO_DRIVER: offscreen
+  SDL_AUDIO_DRIVER: dummy
+  CARGO_TERM_COLOR: always
+
+jobs:
+  probes:
+    name: V1/V2 probes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install SDL3 build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpulse-dev libpipewire-0.3-dev \
+            libjack-dev libsndio-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev \
+            libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libegl-dev libgl-dev \
+            libgles-dev libdbus-1-dev libudev-dev libwayland-dev libdecor-0-dev
+
+      - name: V1 sdl3 probe (build, then headless run)
+        working-directory: verification/sdl3-probe
+        run: |
+          cargo build
+          cargo run
+
+      - name: V2 probe (egui/eframe, insta, proptest)
+        working-directory: verification/v2-probe
+        run: cargo test
+
+      - name: Report toolchain
+        run: rustc --version && cargo --version
