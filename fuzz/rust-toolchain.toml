@@ -1,0 +1,5 @@
+# cargo-fuzz needs nightly. Pinned so fuzz runs are reproducible; keep in sync with
+# FUZZ_TOOLCHAIN in .github/workflows/ci.yml.
+[toolchain]
+channel = "nightly-2026-10-01"
+profile = "minimal"

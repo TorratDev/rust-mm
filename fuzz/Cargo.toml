@@ -1,0 +1,32 @@
+# cargo-fuzz project. Needs nightly (fuzz/rust-toolchain.toml) and a Unix-like OS,
+# so it is excluded from the stable workspace and built only by the Linux fuzz job
+# in .github/workflows/ci.yml.
+#
+#   cargo install cargo-fuzz --version 0.13.2 --locked
+#   cargo +nightly-2026-10-01 fuzz run smoke -- -max_total_time=30
+#
+# Real targets for the ROM/format parsers land with #38.
+[package]
+name = "rescue-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rescue-nds = { path = "../crates/nds" }
+rescue-formats = { path = "../crates/formats" }
+
+# Own workspace, so cargo does not treat it as part of the root one.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "smoke"
+path = "fuzz_targets/smoke.rs"
+test = false
+doc = false
+bench = false
