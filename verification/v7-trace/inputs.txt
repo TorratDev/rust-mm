@@ -1,0 +1,7 @@
+# Fixed input sequence for run_v7.sh. FRAME KEY... ; keys held until the next line.
+0 -
+10 A
+20 A RIGHT
+40 -
+50 START
+55 -
