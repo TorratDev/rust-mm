@@ -113,7 +113,7 @@ Copy this section for each check.
   - Output: [`docs/file-survey.md`](file-survey.md), metadata only.
   - Totals: 171 entries = `arm9.bin`, `arm7.bin`, 145 overlays (ARM9 and ARM7 tables), and 24 named files. The FNT has one directory (root), so all 24 named files are flat.
   - Tags: 1 *known* (`sound.sbin`, SDAT), 155 *hypothesis*, 15 *unknown*.
-  - Overlay flag bit 24 marks BLZ compression. Many overlays have it set, and their raw bytes have entropy around 7.2–7.5. Their contents are not decompressed in the survey.
+  - Overlay flag bit 24 marks BLZ compression. All 145 overlays have it set (per `file-survey.md`), and their raw bytes have entropy around 7.2–7.5. Their contents are not decompressed in the survey.
   - "Header guess" tags (LZ10, Huffman, RLE) are a weak check on the first byte. Treat them as leads, not findings. The `message_*.str` files all start with `20 34 00 00`, which is a plausible LZ/RLE-style header but is unverified.
 - **Outcome:** partial. The survey covers 100% of entries, each tagged. Save media is not identified.
 - **Fallback adopted:** N/A (discovery task). Unknown formats become Phase 2/3 work items.
