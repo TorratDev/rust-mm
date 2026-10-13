@@ -25,3 +25,8 @@ rustc-ice-*.txt
 
 # Python bytecode caches
 __pycache__/
+
+# ROM dumps: never commit (legal hygiene, see docs/roadmap.md)
+roms/
+*.nds
+*.gba

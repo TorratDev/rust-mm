@@ -2,7 +2,8 @@ name: Phase 0 verification
 
 on:
   push:
-    branches: [claude/modest-tesla-ye6p8y]
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 env:

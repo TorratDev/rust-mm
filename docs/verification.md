@@ -6,8 +6,8 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 
 | ID | Assumption (short) | Blocks | Status |
 |----|--------------------|--------|--------|
-| V1 | `sdl3` builds, links, exposes renderer / gamepad / audio stream | Phase 1 | Partial — Linux confirmed locally; Windows MSVC run pending in CI |
-| V2 | egui/eframe, insta, proptest, cargo-nextest, cargo-fuzz work on stable, edition 2024 | Phase 1 | Partial — Linux confirmed for egui/eframe/insta/proptest; Windows pending in CI; cargo-nextest not run; cargo-fuzz nightly requirement confirmed from docs |
+| V1 | `sdl3` builds, links, exposes renderer / gamepad / audio stream | Phase 1 | **Confirmed** — Linux and Windows MSVC build and headless run pass in CI; gamepad input on real hardware not exercised |
+| V2 | egui/eframe, insta, proptest, cargo-nextest, cargo-fuzz work on stable, edition 2024 | Phase 1 | Partial — egui/eframe build and insta/proptest tests pass on Linux and Windows in CI; cargo-nextest not run; cargo-fuzz nightly requirement confirmed from docs |
 | V3 | Blue's audio uses the Nintendo SDAT container | Phase 4 audio | **Confirmed** |
 | V4 | Non-audio formats identified; save media identified | Phase 2 | Partial — file survey complete (171 entries tagged); save media not yet identified |
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
@@ -51,14 +51,15 @@ Copy this section for each check.
 
 - **Assumption:** the `sdl3` crate builds and links on Windows MSVC and Linux (static or bundled dynamic), and exposes SDL3's 2D renderer, gamepad and audio-stream APIs.
 - **Date:** 2026-10-13
-- **Environment:** Linux (Ubuntu 24.04, gcc 13.3, cmake 3.28.3), rustc 1.97.0 stable, `sdl3` 0.20.0 with `sdl3-sys` 0.7.2+SDL-3.4.18.
+- **Environment:** Linux (Ubuntu 24.04, gcc 13.3, cmake 3.28.3), rustc 1.97.0 stable, `sdl3` 0.20.0 with `sdl3-sys` 0.7.2+SDL-3.4.18, feature `build-from-source-static`. CI: `ubuntu-latest` and `windows-latest` (MSVC), rustc 1.99.0 stable.
 - **Evidence:**
   - Probe: [`verification/sdl3-probe`](../verification/sdl3-probe). Feature `build-from-source-static` builds SDL from the source bundled in the `sdl3-src` crate, so no network download of SDL is needed.
   - Linux build needs the packages listed in [`.github/workflows/verify.yml`](../.github/workflows/verify.yml) (CMake configure fails without them).
   - Local run: window, 256×192 texture target, `with_texture_canvas` + `copy` + `present`, gamepad subsystem with `GamepadButtonDown` events, and an audio playback stream with an `AudioCallback`. `cargo build` succeeds. Run with `SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy`: 120 frames, exit 0, "gamepads attached: 0". No gamepad was attached, so gamepad input was not exercised.
-- **Outcome:** partial. Linux build and headless run confirmed locally. Windows MSVC and the CI run are pending.
+  - CI run [38444628595](https://github.com/TorratDev/rust-mm/actions/runs/38444628595): `cargo build` and `cargo run` (headless, exit 0) pass on both `ubuntu-latest` and `windows-latest`.
+- **Outcome:** confirmed. Static bundled build links and runs on Linux and Windows MSVC.
 - **Fallback adopted:** none.
-- **Notes:** Still to do: the CI run on `windows-latest` (see the workflow), recording the feature flags used, and gamepad input on real hardware.
+- **Notes:** Gamepad input on real hardware is still to be exercised (no pad attached in CI).
 
 ---
 
@@ -66,23 +67,24 @@ Copy this section for each check.
 
 - **Assumption:** `egui`/`eframe`, `insta`, `proptest`, `cargo-nextest` and `cargo-fuzz` work on stable Rust, edition 2024, on both OSes. Any nightly requirement is confined to `fuzz/`.
 - **Date:** 2026-10-13
-- **Environment:** Linux, rustc 1.97.0 stable, edition 2024.
+- **Environment:** Linux, rustc 1.97.0 stable, edition 2024. CI: `ubuntu-latest` and `windows-latest`, rustc 1.99.0 stable.
 - **Evidence:**
 
   | Crate | Version checked | Declared `rust-version` | Result on Linux |
   |-------|-----------------|-------------------------|-----------------|
-  | egui | 0.36.2 | 1.95 | `cargo check` passes (via eframe) |
-  | eframe | 0.36.2 | 1.95 | `cargo check` passes |
+  | egui | 0.36.2 | 1.95 | builds (dependency only, not exercised) |
+  | eframe | 0.36.2 | 1.95 | builds (dependency only, not exercised) |
   | insta | 1.49.0 | 1.66.0 | snapshot test passes |
   | proptest | 1.12.0 | 1.88 | property test passes (2 passed) |
   | cargo-nextest | 0.9.148 | 1.91 | not run |
   | cargo-fuzz | 0.13.2 | unknown | not run |
 
-  - Probe: [`verification/v2-probe`](../verification/v2-probe), versions pinned.
+  - Probe: [`verification/v2-probe`](../verification/v2-probe), versions pinned. `egui`/`eframe` are declared but unused, so the probe shows they compile and link, not that a window opens.
+  - CI run [38444628595](https://github.com/TorratDev/rust-mm/actions/runs/38444628595): `cargo test` passes on `ubuntu-latest` and `windows-latest` (2 passed).
   - `cargo-fuzz` README: needs a nightly compiler (unstable `-Z` sanitizer flags), works only on x86-64 and AArch64, and **only on Unix-like systems, not Windows**.
-- **Outcome:** partial. Linux confirmed for egui/eframe, insta and proptest on stable. The cargo-fuzz nightly requirement is confirmed from its documentation. Windows and cargo-nextest are pending.
+- **Outcome:** partial. egui/eframe, insta and proptest confirmed on stable on Linux and Windows. The cargo-fuzz nightly requirement is confirmed from its documentation. cargo-nextest and cargo-fuzz runs are pending.
 - **Fallback adopted:** none. Consequence: the fuzz job runs on Linux only, with its own nightly toolchain, and is excluded from the Windows matrix.
-- **Notes:** Still to do: `cargo nextest` and `cargo fuzz` on Linux, and the Windows CI run.
+- **Notes:** Still to do: `cargo nextest` on both OSes and `cargo fuzz` on Linux.
 
 ---
 
