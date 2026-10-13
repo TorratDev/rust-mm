@@ -1,0 +1,15 @@
+[package]
+name = "v2-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Phase 0 check V2: egui/eframe, insta, proptest on stable, edition 2024.
+# cargo-nextest and cargo-fuzz are installed separately in CI (fuzz is Linux only).
+[dependencies]
+egui = "=0.36.2"
+eframe = "=0.36.2"
+
+[dev-dependencies]
+insta = "=1.49.0"
+proptest = "=1.12.0"
