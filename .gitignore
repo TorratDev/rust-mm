@@ -26,7 +26,27 @@ rustc-ice-*.txt
 # Python bytecode caches
 __pycache__/
 
-# ROM dumps: never commit (legal hygiene, see docs/roadmap.md)
+# ROM dumps: never commit (see docs/legal.md)
 roms/
 *.nds
 *.gba
+*.srl
+
+# Extracted game data: never commit (see docs/legal.md)
+/extracted/
+/extract/
+/dump/
+/dumps/
+/out/
+/assets/extracted/
+
+# Save files and emulator savestates (see docs/legal.md)
+*.sav
+*.dsv
+*.dst
+*.ds[0-9]
+*.mln
+*.State
+
+# Local read-only reference checkouts (pret/pmd-red, see docs/references.md)
+/reference/
