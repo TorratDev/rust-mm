@@ -20,7 +20,7 @@ Outcome values: **confirmed**, **partial**, **replaced** (fallback adopted), **b
 
 ## Dumps used
 
-Dumps are identified by SHA-1 and are not committed. The roadmap's legal hygiene rule applies.
+Dumps are identified by SHA-1 and are not committed. The roadmap's legal hygiene rule applies. The list the tools accept is [`supported-dumps.md`](supported-dumps.md).
 
 | Dump | Size | SHA-1 | Used for |
 |------|------|-------|----------|

@@ -14,3 +14,5 @@ pub fn workspace_root() -> PathBuf {
         .expect("tests/ lives inside the workspace root")
         .to_path_buf()
 }
+
+pub mod rom;

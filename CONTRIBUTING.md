@@ -10,6 +10,7 @@ The full policy is [`docs/legal.md`](docs/legal.md). Every contribution must fol
 - **Dumps are identified by SHA-1.** Tools accept only supported dumps and refuse others.
 - **Never commit extracted assets** (graphics, text, music, maps, scripts, data tables) or anything that embeds ROM bytes.
 - **Fixtures are generated at test time** from the user's dump. Tests skip cleanly when no dump is configured.
+  Configure your dump as described in [`docs/supported-dumps.md`](docs/supported-dumps.md); writing and running ROM-gated tests is in [`docs/rom-tests.md`](docs/rom-tests.md).
 - **Release binaries and CI artifacts contain no ROM data.**
 - **Use the neutral name.** Crates, binaries and packages use the `rescue` prefix. No "Pokémon" or Nintendo trademarks in names.
 - **`pmd-red` is read-only.** Read and cite it; do not copy its code or data. Fetch it with `tools/fetch_pmd_red.sh`.

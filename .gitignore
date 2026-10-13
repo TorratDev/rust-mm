@@ -50,3 +50,6 @@ roms/
 
 # Local read-only reference checkouts (pret/pmd-red, see docs/references.md)
 /reference/
+
+# Local config (holds the path to your ROM dump, see docs/supported-dumps.md)
+rescue.toml

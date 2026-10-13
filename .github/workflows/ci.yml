@@ -19,6 +19,9 @@ env:
   # Headless SDL (V1, docs/verification.md).
   SDL_VIDEO_DRIVER: offscreen
   SDL_AUDIO_DRIVER: dummy
+  # CI has no ROM: ROM-gated tests skip (docs/rom-tests.md). Keep it empty so a
+  # runner-level setting cannot point the tests at a dump.
+  RESCUE_ROM: ""
 
 jobs:
   build:
