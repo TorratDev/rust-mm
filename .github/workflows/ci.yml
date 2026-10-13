@@ -84,9 +84,10 @@ jobs:
       - name: Doctests
         run: cargo test --locked --workspace --doc --target ${{ matrix.target }}
 
+      # Opens the window on SDL's offscreen driver and stops after 120 ticks (~2 s).
       - name: Smoke-run the game binary (headless)
         shell: bash
-        run: target/${{ matrix.target }}/debug/rescue
+        run: target/${{ matrix.target }}/debug/rescue --frames 120
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
