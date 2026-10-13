@@ -9,6 +9,12 @@ Approach: reverse engineer the original game, understand its data and mechanics,
 - Go rejected: SDL needs cgo (painful cross-compiles/Windows builds); GC pauses can cause frame stutter.
 - Decided up front to avoid a later rewrite. The language-independent assets (specs, glossary, golden traces) stay as data anyway.
 
+## Naming decision
+- **Project, crate, binary and package prefix: `rescue`** (decided 2026-10-13, #20). No "Pokémon" or Nintendo trademarks in any name.
+- Crates: `rescue-nds`, `rescue-formats`, `rescue-data`, `rescue-sim`, `rescue-save`, `rescue-audio`, `rescue-render`, `rescue-platform`.
+- Binaries: `rescue` (game), `rescue-asset-viewer`, `rescue-trace-harness`.
+- Replaces the earlier `pmd-*` working names. `pmd-red` below is pret's repository name, not ours.
+
 ## Reference sources
 - **Ground truth: Blue Rescue Team (NDS) only.** Its ARM9 binary, overlays, filesystem and observed runtime behavior are authoritative.
 - **Explorers of Time/Darkness/Sky: out of scope.** Their tooling and formats (pmdsky-debug, SkyTemple, ppmdu) don't apply unless a format is verified identical in Blue.
@@ -19,12 +25,12 @@ Approach: reverse engineer the original game, understand its data and mechanics,
   - Expect Blue-specific deltas (bug fixes, rebalanced data, DS-only features). Document each one found.
 
 ## Engineering principles
-- **Deterministic, headless simulation.** `pmd-sim` has no SDL/platform dependency (enforced by its `Cargo.toml`). Integer/fixed-point math only — no `f32`/`f64` in game logic. A single seeded RNG owned by the sim. No `HashMap` iteration in logic paths (use `Vec`, `BTreeMap` or `IndexMap`). The sim advances purely from input commands, so it runs in CI without a window.
-- **Golden traces.** Scripted emulator runs dump RAM entity state and RNG state per turn (tooling per V7). Traces are language-neutral fixtures (JSON or a documented binary format): replay the same inputs in `pmd-sim` and diff state turn by turn.
+- **Deterministic, headless simulation.** `rescue-sim` has no SDL/platform dependency (enforced by its `Cargo.toml`). Integer/fixed-point math only — no `f32`/`f64` in game logic. A single seeded RNG owned by the sim. No `HashMap` iteration in logic paths (use `Vec`, `BTreeMap` or `IndexMap`). The sim advances purely from input commands, so it runs in CI without a window.
+- **Golden traces.** Scripted emulator runs dump RAM entity state and RNG state per turn (tooling per V7). Traces are language-neutral fixtures (JSON or a documented binary format): replay the same inputs in `rescue-sim` and diff state turn by turn.
 - **Audio deferred.** Placeholder audio until the first playable dungeon. Native playback of Blue's sound format (expected SDAT — see V3) is its own crate.
 - **Rendering.** Each DS screen renders into a 256×192 offscreen target via SDL3's 2D renderer; the window composites and scales by integer factors. GPU API only if a later need justifies it.
 - **Parsers.** Binary formats parsed from `&[u8]` with explicit bounds checks returning `Result` — never panic on malformed input. Fuzz the ROM/format parsers (`cargo-fuzz`).
-- **Legal hygiene.** Identify the user's ROM by SHA-1 and refuse unknown dumps. Keep "Pokémon" out of repo, crate, binary and package names. Never commit extracted assets — test fixtures are generated at test time from the user's dump (tests skip cleanly when no ROM is configured).
+- **Legal hygiene.** Identify the user's ROM by SHA-1 and refuse unknown dumps. Keep "Pokémon" out of repo, crate, binary and package names. Never commit extracted assets — test fixtures are generated at test time from the user's dump (tests skip cleanly when no ROM is configured). Full policy: [`docs/legal.md`](legal.md).
 - **Separation.** Reverse engineering notes, asset extraction, simulation and platform layer stay independent and individually testable.
 
 ## Toolchain
@@ -37,7 +43,7 @@ Approach: reverse engineer the original game, understand its data and mechanics,
 
 ## Workspace layout
 ```
-<neutral-name>/
+rescue/
 ├── Cargo.toml              # workspace
 ├── crates/
 │   ├── nds/                # NDS container: header, FNT/FAT, ARM9/ARM7, overlays
@@ -56,6 +62,7 @@ Approach: reverse engineer the original game, understand its data and mechanics,
 ├── fuzz/
 └── docs/                   # Format specs, glossary, Blue-vs-Red deltas, verification log
 ```
+Directory names are short; package names carry the prefix (`crates/sim` is `rescue-sim`, `apps/game` builds `rescue`, `apps/asset-viewer` builds `rescue-asset-viewer`, `apps/trace-harness` builds `rescue-trace-harness`).
 Dependency rule: `sim` and `data` depend on nothing platform-related; only `platform` and `apps/*` depend on SDL3.
 
 ## Phase 0 — Verify assumptions
@@ -77,7 +84,8 @@ Milestone: every assumption the plan relies on is confirmed or replaced. Record 
 Milestone: establish the technical foundation.
 - Define the target: native x86-64 Windows and Linux builds, with no DS hardware emulator or ARM instruction translation.
 - Obtain a legally acquired game dump for local analysis; record its SHA-1.
-- Research existing Blue/DS reverse-engineering work and DS file-format documentation; clone `pmd-red` as the logic reference.
+- Choose a neutral name (`rescue`) and write the legal-hygiene policy ([`docs/legal.md`](legal.md)).
+- Research existing Blue/DS reverse-engineering work and DS file-format documentation ([`docs/references.md`](references.md)); clone `pmd-red` as the logic reference (`tools/fetch_pmd_red.sh`).
 - Set up the cargo workspace, lints, CI matrix for Windows and Linux.
 - Close V1 and V2.
 - Working Windows and Linux builds that open a window and handle input.
