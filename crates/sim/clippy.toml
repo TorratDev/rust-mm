@@ -1,0 +1,25 @@
+# Determinism lints for rescue-sim. Clippy reads the clippy.toml nearest to the
+# crate's manifest, so this file applies to this crate only.
+# Keep crates/data/clippy.toml in sync.
+#
+# The simulation must give the same result for the same seed and inputs on every
+# platform and every run, so it can be diffed turn by turn against golden traces.
+
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order is random per process; use Vec, BTreeMap or IndexMap" },
+    { path = "std::collections::HashSet", reason = "iteration order is random per process; use Vec or BTreeSet" },
+    { path = "std::collections::hash_map::RandomState", reason = "randomly seeded hasher" },
+    { path = "std::hash::RandomState", reason = "randomly seeded hasher" },
+    { path = "std::time::SystemTime", reason = "wall-clock time is outside state; the sim advances only from input commands" },
+    { path = "std::time::Instant", reason = "wall-clock time is outside state; the sim advances only from input commands" },
+    { path = "f32", reason = "floats round differently across platforms; use integer or fixed-point math" },
+    { path = "f64", reason = "floats round differently across platforms; use integer or fixed-point math" },
+]
+
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "wall-clock time is outside state" },
+    { path = "std::time::Instant::now", reason = "wall-clock time is outside state" },
+    { path = "std::thread::spawn", reason = "thread scheduling is nondeterministic" },
+    { path = "std::env::var", reason = "environment is outside state; pass configuration in explicitly" },
+    { path = "std::env::var_os", reason = "environment is outside state; pass configuration in explicitly" },
+]
