@@ -15,7 +15,7 @@ The game's title may appear in documentation and source comments only to say whi
 ## Rules
 
 1. **Users supply their own dump.** The project never distributes a ROM, a patch against one, or a link to one. Users supply a dump of a cartridge they own, made by themselves.
-2. **Dumps are identified by SHA-1.** The tools accept only dumps whose SHA-1 is on the supported list, and refuse anything else with a clear message (implementation: #21). Supported dumps are listed in [`verification.md`](verification.md#dumps-used) and, later, in the release docs.
+2. **Dumps are identified by SHA-1.** The tools accept only dumps whose SHA-1 is on the supported list, and refuse anything else with a clear message (implementation: #21). Supported dumps are listed in [`supported-dumps.md`](supported-dumps.md) and, later, in the release docs.
 3. **Extracted assets are never committed.** No sprites, portraits, tiles, maps, text, music, sound samples, scripts or data tables decoded from the ROM. This includes screenshots or crops of game graphics, hex dumps longer than a few bytes, and generated files that embed ROM data (for example a Rust `const` table copied from the ARM9 binary).
 4. **Fixtures are generated at test time.** Tests that need game data read it from the user's dump, located through configuration, and skip cleanly when no dump is configured (#27). Snapshot tests store hashes, sizes or decoded metadata, not decoded asset bytes.
 5. **Release binaries contain no ROM data.** The game binary loads everything from the user's dump at runtime. No asset is embedded with `include_bytes!` or similar. CI artifacts follow the same rule.
