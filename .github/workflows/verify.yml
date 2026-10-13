@@ -45,3 +45,28 @@ jobs:
 
       - name: Report toolchain
         run: rustc --version && cargo --version
+
+  v7:
+    name: V7 scripted DeSmuME dumps (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install libdesmume runtime dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+
+      - name: Install py-desmume
+        run: pip install py-desmume==0.0.9
+
+      - name: V7 repeatability check
+        shell: bash
+        run: verification/v7-trace/run_v7.sh "$RUNNER_TEMP/v7" python

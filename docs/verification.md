@@ -12,7 +12,7 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 | V4 | Non-audio formats identified; save media identified | Phase 2 | Partial — file survey complete (171 entries tagged); save media not yet identified |
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
 | V6 | Blue reuses Red's data tables and constants | Phase 3 | Partial — 1 of 3 required tables shared by value; 2 unresolved |
-| V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | Pending — not run |
+| V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | Partial — py-desmume script with savestate, fixed inputs and exec trigger gives byte-identical dumps over 3 runs on Linux, on a synthetic test ROM; retail Blue run and Windows CI result pending |
 | V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | Blocked — Ghidra not installed; not downloadable from this session |
 | V9 | REA supports the planned Ghidra workflow on ARM DS binaries | Phase 3 | Pending — depends on V8 for the run; README reviewed |
 
@@ -169,12 +169,31 @@ Copy this section for each check.
 ## V7 — Scriptable DS emulator for RAM and RNG dumps
 
 - **Assumption:** a DS emulator can be scripted to dump ARM9 memory and RNG state per turn (DeSmuME Lua, BizHawk + melonDS core, or melonDS GDB stub).
-- **Date:** —
-- **Environment:** `desmume` is available from apt in this session. Not installed or run.
-- **Evidence:** —
-- **Outcome:** pending.
-- **Fallback adopted:** none.
-- **Notes:** Still to do: pick a candidate (DeSmuME's Linux build scripting support is unverified), write a hook that dumps a RAM range per frame, and confirm the dump is stable across repeated runs.
+- **Date:** 2026-10-13
+- **Environment:** Linux (Ubuntu 24.04), Python 3.13. `desmume-cli` 0.9.11 from apt. `py-desmume` 0.0.9 from PyPI (bundles libdesmume 0.9.12; wheels for Linux, Windows and macOS). CI: `ubuntu-latest` and `windows-latest`, job `v7` in [`.github/workflows/verify.yml`](../.github/workflows/verify.yml).
+- **Evidence:**
+  - Retail ROM not available in this session, so the check uses a synthetic ROM built by [`make_test_rom.py`](../verification/v7-trace/make_test_rom.py) (source [`test_rom.s`](../verification/v7-trace/test_rom.s), no retail code). Each frame its ARM9 code bumps a counter, mixes `KEYINPUT` into an LCG (stand-in for the game RNG) and stores both at `0x02100000`. The instruction at `0x02000044` runs once per frame, right after the update, standing in for the turn-advance routine.
+  - **Candidates tried:**
+
+    | Candidate | Result on Linux |
+    |-----------|-----------------|
+    | `desmume-cli` 0.9.11 (apt) + Lua | No Lua in this build (links SDL 1.2 only, no Lua strings). |
+    | `desmume-cli` 0.9.11 ARM9 GDB stub (`--arm9gdb=PORT`, `--cpu-mode=0`) | Works: [`gdb_dump.py`](../verification/v7-trace/gdb_dump.py) speaks GDB RSP, sets `Z0` at the trigger, reads memory with `m`, steps over the breakpoint. 120 consecutive frames dumped, counter 1..120 with no gaps. Slow: about 4 hits/s. No scripted input: `--play-movie` and `--record-movie` are parsed but ignored (strace shows the file is never opened). |
+    | `py-desmume` 0.0.9 | Works, chosen. Python API over libdesmume: savestate save/load, `keypad_update` per frame, `register_exec` hooks, memory reads. Headless with `SDL_VIDEODRIVER=dummy`. |
+    | BizHawk + melonDS core | Not tried. |
+
+  - **Script:** [`pydesmume_dump.py`](../verification/v7-trace/pydesmume_dump.py) loads the ROM and a savestate, plays an [input file](../verification/v7-trace/inputs.txt) (`FRAME KEY...` lines), and appends `LEN` bytes at `ADDR` to a file on each exec-trigger hit or at the end of each frame. [`run_v7.sh`](../verification/v7-trace/run_v7.sh) runs the whole check.
+  - **Repeatability** (`run_v7.sh`, savestate taken at frame 30, then 600 frames):
+    - 16-byte state block on the exec trigger, 3 runs: 600 dumps each, all sha256 `ec2531b0…bc45a`. Frame counter 31..630, no gaps. `KEYINPUT` changes land on the scripted frames (A at +10, A+Right at +20, release at +40, Start at +50).
+    - All 4 MiB of main RAM at the end of every frame, 60 frames, 3 runs: all sha256 `01086505…19ca6`.
+    - Negative control, different inputs: sha256 `c13cf7e6…78574`, so inputs reach the game state.
+  - **Speed** (unthrottled, interpreter, shared container, so noisy): ~70–90 frames/s with no dump or a 16-byte dump; ~20–50 frames/s dumping 4 MiB per frame. py-desmume reads one byte per ctypes call (seconds per 4 MiB), so the script reads main RAM straight from libdesmume's exported `MMU` struct (`MAIN_MEM` at offset `0xC000`) after checking it against the per-byte API.
+- **Outcome:** partial. Scripted dumps on a frame or exec trigger are byte-identical across runs on Linux. Not yet done: the same run on the retail Blue ROM, and the Windows result from CI.
+- **Fallback adopted:** none. The melonDS GDB stub stays the fallback; the DeSmuME GDB stub shows that route works but is slow and has no input playback.
+- **Notes:**
+  - Setup quirks: libdesmume needs a video driver even headless (`SDL_VIDEODRIVER=dummy`); on Linux it needs `libGL` and `glib` from the system. The apt `desmume-cli` defaults to the JIT; the GDB stub run used `--cpu-mode=0`. py-desmume ran the interpreter.
+  - Save files: the retail run should start from a savestate taken in a known spot, with the backup (save) file fixed too.
+  - The per-turn trigger (turn counter or turn-advance routine) comes from RNG RE (#47) and turn-scheduler RE (#49); pass its address as `--trigger`.
 
 ---
 
