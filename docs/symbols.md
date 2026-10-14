@@ -125,3 +125,9 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0001::0214C0A8 | ResetTile | void ResetTile(void * tile) | blue-verified | Clears every tile field in `pmd-red`'s order, `room = 0xFF` |
 | ov_0001::021B3ED0 | gCurTilesetOobTile | void * | blue-verified | Returned by `GetTile` outside the map |
 | ov_0001::021B4270 | gOutOfBoundsTileData | - | blue-verified | 0x14-byte copy target in `GetTileMut` |
+| ov_0001::021432E8 | HasHeldItem | bool HasHeldItem(void * pokemon, uchar id) | blue-verified | Held item exists, is not sticky and has this id, like `pmd-red` |
+| ov_0001::02180644 | MonsterIsType | bool MonsterIsType(void * pokemon, uchar type) | blue-verified | Compares both types with `type`, false for type 0, like `pmd-red` |
+| ov_0001::021805CC | IsTacticSet | bool IsTacticSet(void * pokemon, uchar tactic) | blue-verified | Team leader: `tactic == TACTIC_GO_THE_OTHER_WAY` (1); else compares `tactic`, like `pmd-red` |
+| 02007A94 | GetItemCountInInventory | int GetItemCountInInventory(uchar id) | blue-verified | Counts existing team items with this id, 20 slots of 3 bytes, like `pmd-red` |
+| 02008538 | GetNumberOfFilledInventorySlots | int GetNumberOfFilledInventorySlots(void) | blue-verified | Counts existing team items, like `pmd-red` |
+| 020DECF8 | gTeamInventoryRef | void * | blue-verified | Inventory pointer read by both inventory functions |
