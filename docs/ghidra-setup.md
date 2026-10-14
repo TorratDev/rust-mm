@@ -11,7 +11,7 @@ How to build, on your own machine and from your own dump, a Ghidra project with 
 | Your dump | SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, 33,554,432 bytes | the only supported dump ([`supported-dumps.md`](supported-dumps.md)) |
 | Python | 3.8 or later | standard library only |
 | JDK | 21 (64-bit) | e.g. Eclipse Temurin 21, or `openjdk-21-jdk` on Debian/Ubuntu |
-| Ghidra | 11.4.3 (tested) | [release page](https://github.com/NationalSecurityAgency/ghidra/releases), file `ghidra_11.4.3_PUBLIC_20251203.zip`. Ghidra 12.x is out but untested here. |
+| Ghidra | 11.4.3 (tested) | [release page](https://github.com/NationalSecurityAgency/ghidra/releases), file `ghidra_11.4.3_PUBLIC_20251203.zip`. Ghidra 12.1.4 also works (retail run, see "Tested so far"). |
 
 Unzip Ghidra anywhere and set `GHIDRA_INSTALL_DIR` to the folder that holds `ghidraRun` / `ghidraRun.bat`:
 
@@ -83,6 +83,27 @@ Each overlay gets its own overlay address space, because several overlays share 
 
 The GUI path uses the same script, but it has not been run in this repository's tests (only the headless path has, see below).
 
+## 2c. Find the rest of the overlay code
+
+Auto-analysis only follows code from entry points it knows, and it leaves literal-pool words untyped, so references through them are missing. On the supported dump only overlays 0, 1 and 7 hold code (the other 142 are data, see V8 in [`verification.md`](verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses)). After the import, run [`RescueOverlayDiscover.java`](../tools/ghidra/RescueOverlayDiscover.java) on those three:
+
+```powershell
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueOverlayDiscover.java -- all ov_0000 ov_0001 ov_0007
+```
+
+(or from the Script Manager, category *NDS*, with the same arguments). It creates functions at ARM prologues and after function returns, re-runs analysis, and types pool words that point into the same overlay or the ARM9 as pointers. On the supported dump: 112 more functions and 3,621 pool pointers. A second run changes nothing. Without arguments it processes only overlays that have no functions; `dry` counts candidates without changing anything.
+
+## 2d. Apply the known names
+
+[`symbols.md`](symbols.md) lists every function and global named so far. [`RescueApplySymbols.java`](../tools/ghidra/RescueApplySymbols.java) applies the whole table (names, signatures, data types), then checks each row and ends with `all checks passed`. [`RescueRngLabels.java`](../tools/ghidra/RescueRngLabels.java) does the same for the RNG and also checks the RNG constants.
+
+```powershell
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueRngLabels.java
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueApplySymbols.java
+```
+
+Both are safe to run again after you add rows.
+
 ## 3. What success looks like
 
 The headless wrapper prints lines like these (from the synthetic test ROM; your dump has many more blocks):
@@ -120,7 +141,36 @@ Also note whether you tried an NDS loader extension (e.g. NTRGhidra), as #18 ask
 
 V9 ([#19](https://github.com/TorratDev/rust-mm/issues/19)) checks [REA](https://github.com/morluto/rea) against this project. REA is a Node.js MCP server that drives an existing Ghidra install; per its README, setup is `npx rea-agents setup` (needs Node.js and npm). Point it at the Ghidra install above and at the project built in step 2, then test the four capabilities listed in V9 (function search, xrefs into and between overlays, decompiled summaries on ARM and Thumb code, evidence notes) on the code around `ov_0001+0x72688`. Record the results in the V9 entry of [`verification.md`](verification.md#v9--rea-workflow-on-arm-ds-binaries). These REA steps come from its README and have not been run here.
 
+## 6. ghidra-cli
+
+[ghidra-cli](https://github.com/akiselev/ghidra-cli) (GPL-3.0, tested with v0.2.2) runs Ghidra headless as a resident "bridge" and answers queries from the command line in well under a second: decompile, cross-references, renames, signatures, scripts. It is how the RNG work in [`re/rng.md`](re/rng.md) was done.
+
+Setup (Windows example; the release zip holds one `ghidra.exe`):
+
+```powershell
+ghidra config set ghidra_install_dir C:\tools\ghidra_12.1.4_PUBLIC
+ghidra config set ghidra_project_dir C:\rescue-re\ghidra
+ghidra doctor
+```
+
+Use:
+
+```powershell
+ghidra --project rescue-arm9 --program arm9.bin decompile ov_0001::0219d058
+ghidra --project rescue-arm9 --program arm9.bin x-ref to 0x020df704
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueRngLabels.java
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueNdsReport.java -- ov_0001+0x72688
+```
+
+Things to know:
+
+- **One opener at a time.** The bridge opens the project like the GUI does. Save and close the GUI before you start the bridge, and stop the bridge (`ghidra --project rescue-arm9 stop`) before you reopen the GUI. Changes made through the bridge are on disk after it stops.
+- **Stop it when you are done.** The bridge listens on `127.0.0.1` without authentication and can run scripts, so any local program could drive it while it runs.
+- **Starting from a script:** the first command starts the bridge as a child process, which keeps the caller's output pipe open. When you capture output (for example `$x = ghidra ...` in PowerShell), start it first with `Start-Process ghidra -ArgumentList '--project','rescue-arm9','--program','arm9.bin','start'` and wait for `ghidra --project rescue-arm9 status` to show `State: running`.
+- **Script arguments** go after `--`. `script run` does not show compile errors; compile the script with `javac` against Ghidra's jars to see them. A script method must not reuse a `FlatProgramAPI` name (`find`, `setPlateComment`, ...).
+- Overlay addresses are written `ov_NNNN::ADDRESS`. Calls from the ARM9 into an overlay land on the `ram` address, not the overlay's.
+
 ## Tested so far
 
 - **2026-10-14, Linux, sandbox, no retail dump.** Ghidra 11.4.3 (`ghidra_11.4.3_PUBLIC_20251203.zip`), OpenJDK 21.0.12. Synthetic ROM from [`tools/tests/synth_nds.py`](../tools/tests/synth_nds.py) (`--compress-arm9`: BLZ-compressed ARM9, two autoloads, three overlays, two of them BLZ-compressed, two sharing `0x02100000`). `import.sh` mapped 12 blocks. Analysis found the overlay functions from their static-initialiser entries. Calls from all three overlays to `0x02000020` resolved to the ARM9, and each overlay's literal-pool pointer resolved inside its own overlay space. `import.ps1` was not run (the test session could not run PowerShell).
-- The retail run is still to do: it needs your dump.
+- **2026-10-14, Windows 11, supported dump.** Ghidra 12.1.4, JDK 25.0.4, headless import wrapper. All 145 overlays mapped (154 blocks); auto-analysis found functions in `arm9` and overlays 0, 1, 2 and 7 only; the other overlays are data. After `RescueOverlayDiscover.java` (step 2c), the type-chart check finds 4 references. Details in V8 of [`verification.md`](verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses). ghidra-cli v0.2.2 used against the same project (section 6).
