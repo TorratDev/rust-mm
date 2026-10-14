@@ -8,12 +8,13 @@ Tags: **[blue-verified]** unless marked *probable* (one access, consistent with 
 
 ## Entity
 
-Same layout as Red at the three offsets checked, so Red's `Entity` (size 0x74) is the working hypothesis for the rest.
+Same size as Red, 0x74 bytes (the team entities are allocated 0x74 apart by `021428F8`), and the same offsets wherever checked; Red's `Entity` is the working hypothesis for the rest.
 
 | Blue | Red field | Red | Evidence |
 |------|-----------|-----|----------|
 | `+0x00` | `type` (0 = no entity) | `0x00` | `EntityIsValid` |
-| `+0x70` | `axObj.info` (pointer to the entity info) | `0x70` | `GetLeader`, `AbilityIsActive`, `CalcDamage`, ... |
+| `+0x20` | `isVisible` | `0x20` | `SpawnItem` |
+| `+0x70` | `axObj.info` (pointer to the entity info; for an item entity, its `Item`) | `0x70` | `GetLeader`, `AbilityIsActive`, `GetItemInfo`, ... |
 | `+0x04`, `+0x06` | `pos.x`, `pos.y` (s16) | `0x04` | `0219082C` copies them into the info's `aiTarget.aiTargetPos`; `021563CC` passes `entity+4` as a position |
 
 ## Entity info
@@ -31,6 +32,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x10` | `maxHPStat` | `0x10` | 0 | `TickStatusAndHealthRegen` |
 | `+0x16` | `def[2]` | `0x16` | 0 | `CalcDamage` |
 | `+0x28` | `flashFireBoost` | `0x28` | 0 | `CalcDamage` (*probable*) |
+| `+0x3C`, `+0x3E` | `hiddenPower` base power, type | `0x3C` | 0 | `GetMovePower`, `GetMoveTypeForMonster` |
 | `+0x56` | `types[2]` | `0x5C` | −6 | `sub_806F370_Async`, `sub_806F4A4` |
 | `+0x58` | `abilities[2]` | `0x5E` | −6 | `AbilityIsActive` |
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
@@ -78,6 +80,7 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`) |
 | `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor` |
 | `+0xC660` | `tilePointers[32][56]` | `0xE8C0` | `GetTile`, `GetTileMut`, `sub_80495E4` |
+| `+0x113B4` | `items[64]` (entity pointers) | `0x1361C` | `SpawnItemEntity` (searches the 64 entries for a free slot) and `0219B700` |
 | `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` |
 | `+0x11314` | `teamPokemon[4]` (entity pointers) | `0x1357C` | `GetLeader` |
 | `+0x11324` | `wildPokemon[16]` (entity pointers) | `0x1358C` | five loops over 16 entries with `EntityIsValid` (`0219F09C`, ...) |
@@ -121,13 +124,13 @@ Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row st
 
 ## Moves, items and inventory
 
-**Move** [blue-verified stride and `moveFlags2`; other fields from `pmd-red`'s note `B=0x6` in `include/structs/str_moves.h`, *red-hypothesis*]: `moveFlags` `+0`, `moveFlags2` `+1`, `id` (u16) `+2`, `PP` `+4`, `ginseng` `+5`; 6 bytes (Red 8). The info struct holds 4 of them at `+0xF4`; `pmd-red` notes `struggleMoveFlags` at `+0x18` after them.
+**Move** [blue-verified]: `moveFlags` `+0` (`5` = exists and enabled for the AI), `moveFlags2` `+1`, `id` (u16) `+2`, `PP` `+4`, `ginseng` `+5`; 6 bytes (Red 8). Every field is written by `InitPokemonMove` (`0200B568`), and `GetMovePower` reads `id` and `ginseng`. The info struct holds 4 of them at `+0xF4`; `pmd-red` notes `struggleMoveFlags` at `+0x18` after them.
 
-**Item** [blue-verified]: `flags` `+0` (bit `1` = exists, bit `8` = sticky), `quantity` `+1`, `id` `+2`; 3 bytes, the same as Red's fields. Read by `HasHeldItem` and the inventory functions.
+**Item** [blue-verified]: `flags` `+0` (bit `1` = exists, `8` = sticky, `0x10` = set for L+R throwing), `quantity` `+1`, `id` `+2`; 3 bytes, the same as Red's fields. Read by `HasHeldItem` and the inventory functions; `SpawnItem` clears bit `0x10`.
 
 **Team inventory** [blue-verified for the items]: `gTeamInventoryRef` (`0x020DECF8`) points to it; `teamItems[20]` at `+0`, stride 3 (`GetItemCountInInventory`, `GetNumberOfFilledInventorySlots`). `pmd-red`'s note in `include/structs/str_items.h` gives the rest of Blue's layout (*red-hypothesis*): `teamStorage` `+0x3C`, Kecleon shop items `+0x21C` and wares `+0x22C`, `teamMoney` `+0x234`, `teamSavings` `+0x238`.
 
-**Floor items:** Red keeps 64 item entity pointers at `0x1361C`; in Blue that would be dungeon `+0x113B4` (*red-hypothesis*, same −0x2268 shift as `traps`).
+**Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` takes a free slot, then `SpawnItem` copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field. An item entity has `type` 3 (`ENTITY_ITEM`).
 
 ## RAM for golden traces
 
@@ -141,14 +144,14 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 | Team | 4 entity pointers at dungeon `+0x11314`; for each: `+0x70` → info: `id` `+0x02`, `level` `+0x09`, `HP` `+0x0E`, `maxHPStat` `+0x10`, `types` `+0x56`, statuses `+0x99`–`+0xC4`, `speedStage` `+0xE0`, `belly` `+0x10E` |
 | Wild Pokémon | 16 entity pointers at dungeon `+0x11324` |
 | Positions | entity `+0x04` (x), `+0x06` (y) |
-| Moves, held item | info `+0xF4` (4 × 6 bytes), info `+0x5A` (3 bytes) |
+| Moves, held item | info `+0xF4` (4 × 6 bytes: flags, id `+2`, PP `+4`), info `+0x5A` (3 bytes) |
+| Floor items | 64 entity pointers at dungeon `+0x113B4`; each entity's `+0x04` position and `+0x70` → 3-byte `Item` |
 | Team inventory | 20 × 3-byte items at `*(u32 *)0x020DECF8` |
 | Floor map | 56 × 32 tiles of 0x14 bytes at dungeon `+0x34B8` (`terrainFlags` `+0`, `room` `+5`, `monster` `+0xC`, `object` `+0x10`); stairs at dungeon `+0xC0BC` |
 | RNG | `sPRNGState` `0x020DF704`, `gDungeonRngState` `0x021B3F58` ([`rng.md`](rng.md)) |
 
 ## Open questions
 
-- The floor item array and the item entity data.
 - The size of Blue's entity info struct (Red 0x208): look for the array or allocation that holds the infos.
 - Item and inventory structs.
 - Check the trace RAM list against an emulator dump on the retail ROM.

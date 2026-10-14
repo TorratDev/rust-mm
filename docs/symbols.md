@@ -131,3 +131,14 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | 02007A94 | GetItemCountInInventory | int GetItemCountInInventory(uchar id) | blue-verified | Counts existing team items with this id, 20 slots of 3 bytes, like `pmd-red` |
 | 02008538 | GetNumberOfFilledInventorySlots | int GetNumberOfFilledInventorySlots(void) | blue-verified | Counts existing team items, like `pmd-red` |
 | 020DECF8 | gTeamInventoryRef | void * | blue-verified | Inventory pointer read by both inventory functions |
+| ov_0001::021803E0 | GetMovePower | int GetMovePower(void * pokemon, void * pokeMove) | blue-verified | Hidden Power (`0x144`) uses the info's `hiddenPower` power, else `GetMoveBasePower`; plus `ginseng`, like `pmd-red` |
+| ov_0001::02180418 | GetMoveTypeForMonster | uchar GetMoveTypeForMonster(void * pokemon, void * pokeMove) | blue-verified | Hidden Power uses the info's `hiddenPower` type, else `GetMoveType`, like `pmd-red` |
+| 0200B3E8 | GetMoveBasePower | int GetMoveBasePower(void * move) | blue-verified | Called by `GetMovePower` |
+| 0200B4CC | GetMoveType | uchar GetMoveType(void * move) | blue-verified | Called by `GetMoveTypeForMonster` |
+| 0200B3A4 | GetMoveBasePP | uint GetMoveBasePP(void * move) | blue-verified | Gives the initial PP in `InitPokemonMove` |
+| 0200B568 | InitPokemonMove | void InitPokemonMove(void * move, ushort moveID) | blue-verified | Writes all five move fields, like `pmd-red` |
+| 0200B510 | InitZeroedPPPokemonMove | void InitZeroedPPPokemonMove(void * move, ushort moveID) | blue-verified | Flags, id and `PP = 0`, like `pmd-red` |
+| ov_0001::02141F58 | SpawnItemEntity | void * SpawnItemEntity(void * pos) | blue-verified | Takes a free slot in the 64 floor items, like `pmd-red` |
+| ov_0001::021440B0 | SpawnItem | bool SpawnItem(void * pos, void * item, bool a2) | blue-verified | Same steps as `pmd-red` |
+| ov_0001::02142ADC | GetEntityType | uint GetEntityType(void * entity) | blue-verified | Returns `entity->type` |
+| ov_0001::02142AC4 | GetItemInfo | void * GetItemInfo(void * entity) | blue-verified | Returns the entity's info pointer (`+0x70`) |
