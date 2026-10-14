@@ -9,7 +9,7 @@ Dump: `BlueRescueTeamEur`. Rules for each column:
 - **Tag:** `blue-verified` (role read in Blue's code), `red-hypothesis` (role taken from `pmd-red`, not yet checked in Blue), `sdk-hypothesis` (NitroSDK function recognised by its behaviour), `tentative` (our own name, role only partly known).
 - **Evidence:** why the name fits. Names that come from `pmd-red` keep its spelling.
 
-Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md), [`re/structs.md`](re/structs.md).
+Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md), [`re/structs.md`](re/structs.md), [`re/dungeon-generation.md`](re/dungeon-generation.md).
 
 | Address | Name | Type | Tag | Evidence |
 |---------|------|------|-----|----------|
@@ -95,3 +95,28 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0001::0218766C | DisplayActions_Async | bool DisplayActions_Async(void * a0) | blue-verified | `RunLeaderTurn_Async` call order, argument `NULL` |
 | ov_0001::0213AFA8 | DungeonRunFrameActions | void DungeonRunFrameActions(uint a0) | blue-verified | `RunLeaderTurn_Async` call order, argument `12` |
 | ov_0001::021ABC84 | gSpeedTurns | short[5][25] | blue-verified | Same values as `pmd-red`; indexed by speed stage and `fractionalTurn` |
+| ov_0001::02151E7C | GenerateFloor | void GenerateFloor(void) | blue-verified | Only overlay-1 function with Red's 4 `DungeonRandRange` and 3 `DungeonRandInt` calls; same call order, same grid constants and layout switch |
+| 0201A54C | OpenFileAndGetFileDataPtr | void * OpenFileAndGetFileDataPtr(char * filename, void * arc) | blue-verified | Opens `"fixedmap"` at the start of `GenerateFloor`, like `pmd-red` |
+| 0201A22C | CloseFile | void CloseFile(void * openedFile) | blue-verified | Closes the files of `GenerateFloor` and the title screen, like `pmd-red` |
+| 020817E0 | abs | int abs(int x) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::0214BDBC | ResetFloor | void ResetFloor(void) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::02150958 | ProcessFixedRoom | bool ProcessFixedRoom(int fixedRoomNumber, void * floorProps) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::02151BF4 | GenerateStandardFloor | void GenerateStandardFloor(int a0, int a1, void * a2) | blue-verified | Layout cases 0, 1, 8, 11 |
+| ov_0001::021506B0 | GenerateOneRoomMonsterHouseFloor | void GenerateOneRoomMonsterHouseFloor(void) | blue-verified | Layout case 2 |
+| ov_0001::0215174C | GenerateOuterRingFloor | void GenerateOuterRingFloor(void * a0) | blue-verified | Layout case 3; 4 / 2 RNG calls like `pmd-red` |
+| ov_0001::021512B4 | GenerateCrossroadsFloor | void GenerateCrossroadsFloor(void * a0) | blue-verified | Layout case 4; 4 / 2 RNG calls like `pmd-red` |
+| ov_0001::021504F4 | GenerateTwoRoomsWithMonsterHouseFloor | void GenerateTwoRoomsWithMonsterHouseFloor(void) | blue-verified | Layout case 5; 2 / 2 RNG calls like `pmd-red` |
+| ov_0001::02151160 | GenerateLineFloor | void GenerateLineFloor(void * a0) | blue-verified | Layout case 6 |
+| ov_0001::02150FC0 | GenerateCrossFloor | void GenerateCrossFloor(void * a0) | blue-verified | Layout case 7 |
+| ov_0001::02150DFC | GenerateBeetleFloor | void GenerateBeetleFloor(void * a0) | blue-verified | Layout case 9 |
+| ov_0001::02150A10 | GenerateOuterRoomsFloor | void GenerateOuterRoomsFloor(int gridSizeX, int gridSizeY, void * floorProps) | blue-verified | Layout case 10 |
+| ov_0001::02149A70 | ResetInnerBoundaryTileRows | void ResetInnerBoundaryTileRows(void) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::0214C0E0 | EnsureImpassableTilesAreWalls | void EnsureImpassableTilesAreWalls(void) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::02149A08 | GetTile | void * GetTile(int x, int y) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::0214D900 | FinalizeJunctions | void FinalizeJunctions(void) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::0214AAF8 | GenerateSecondaryTerrainFormations | void GenerateSecondaryTerrainFormations(uint flag, void * floorProps) | blue-verified | `GenerateFloor` call order and argument count; 3 / 9 RNG calls like `pmd-red` |
+| ov_0001::0214B650 | SpawnNonEnemies | void SpawnNonEnemies(void * floorProps, bool isEmptyMonsterHouse) | blue-verified | `GenerateFloor` call order and argument count; 4 / 7 RNG calls like `pmd-red` |
+| ov_0001::0214B338 | SpawnEnemies | void SpawnEnemies(void * floorProps, bool isEmptyMonsterHouse) | blue-verified | `GenerateFloor` call order and argument count; 2 / 2 RNG calls like `pmd-red` |
+| ov_0001::0214C1A8 | ResolveInvalidSpawns | void ResolveInvalidSpawns(void) | blue-verified | `GenerateFloor` call order and argument count |
+| 0206DB90 | GetFloorType | uchar GetFloorType(void) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::0214A760 | StairsAlwaysReachable | bool StairsAlwaysReachable(int stairsX, int stairsY, bool markUnreachable) | blue-verified | `GenerateFloor` call order and argument count |

@@ -65,11 +65,16 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x00F` | `noActionInProgress` | `0x00F` | `RunLeaderTurn_Async` |
 | `+0x0B8`, `+0x0BC` | `unkB8`, `unkBC` (acting entity) | `0x0B8`, `0x0BC` | `RunLeaderTurn_Async` |
 | `+0x134`–`+0x17A` | `damageCalcWorkingValues` | same | `CalcDamage` (16 fields at Red's offsets) |
+| `+0x5B8` | `unk5C0` | `0x5C0` | `RunDungeon_Async` |
 | `+0x638` | start of `unk644` | `0x644` | see below |
+| `+0x3360` | `deoxysForm` | `0x3800` | `RunDungeon_Async` |
+| `+0x34AE`, `+0x34B0`, `+0x34B4` | `tileset`, `unk3A10`, `fixedRoomNumber` | `0x3A0E`, `0x3A10`, `0x3A14` | `RunDungeon_Async` |
 | `+0x11314` | `teamPokemon[4]` (entity pointers) | `0x1357C` | `GetLeader` |
 | `+0x15FB0`, `+0x15FB1` | `unk181e8.unk18218`, `unk18219` | `0x18218`, `0x18219` | `RunDungeon_Async` |
+| `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
+| `+0x1A2F8`–`+0x1A308` | `floorProperties` fields | `0x1C576`–`0x1C588` | `RunDungeon_Async` ([`dungeon-generation.md`](dungeon-generation.md)) |
 
-The shift is 0xC at `unk644` and 0x2268 at `teamPokemon` and `unk181e8`, so most of the bytes Blue drops lie between `0x680` and `0x11314`.
+The shift grows: −8 at `0x5C0`, −0xC at `unk644`, −0x4A0 at `0x3800`, −0x560 at `0x3A0E`, −0x2268 at `teamPokemon`, `unk181e8` and `unk1BDD4`.
 
 ### `unk644` sub-struct
 
