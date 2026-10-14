@@ -9,7 +9,7 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 | V1 | `sdl3` builds, links, exposes renderer / gamepad / audio stream | Phase 1 | **Confirmed** — Linux and Windows MSVC build and headless run pass in CI; gamepad input on real hardware not exercised |
 | V2 | egui/eframe, insta, proptest, cargo-nextest, cargo-fuzz work on stable, edition 2024 | Phase 1 | Partial — egui/eframe build and insta/proptest tests pass on Linux and Windows in CI; cargo-nextest not run; cargo-fuzz nightly requirement confirmed from docs |
 | V3 | Blue's audio uses the Nintendo SDAT container | Phase 4 audio | **Confirmed** |
-| V4 | Non-audio formats identified; save media identified | Phase 2 | Partial — file survey complete (171 entries tagged); save media not yet identified |
+| V4 | Non-audio formats identified; save media identified | Phase 2 | **Confirmed** — file survey complete (171 entries tagged); save media is 2 Mbit (256 KiB) flash, save layout mapped |
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
 | V6 | Blue reuses Red's data tables and constants | Phase 3 | **Confirmed** — 4 tables shared by value (type chart, effectiveness combination, attack and defense stat stages); 2 routine constants match (RNG step, damage calc) |
 | V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | Partial — py-desmume script with savestate, fixed inputs and exec trigger gives byte-identical dumps over 3 runs on Linux, on a synthetic test ROM; retail Blue run and Windows CI result pending |
@@ -115,9 +115,10 @@ Copy this section for each check.
   - Tags: 1 *known* (`sound.sbin`, SDAT), 155 *hypothesis*, 15 *unknown*.
   - Overlay flag bit 24 marks BLZ compression. Many overlays have it set, and their raw bytes have entropy around 7.2–7.5. Their contents are not decompressed in the survey.
   - "Header guess" tags (LZ10, Huffman, RLE) are a weak check on the first byte. Treat them as leads, not findings. The `message_*.str` files all start with `20 34 00 00`, which is a plausible LZ/RLE-style header but is unverified.
-- **Outcome:** partial. The survey covers 100% of entries, each tagged. Save media is not identified.
+  - **Save media (2026-10-14, Ghidra):** the boot code calls NitroSDK's `CARD_IdentifyBackup` with `0x1202`, which is `CARD_BACKUP_TYPE_FLASH_2MBITS`: 2 Mbit (256 KiB) serial flash, used in 4 KiB sectors. The main save is a `0x57D8`-byte block written twice (sectors 0–5 and 6–11), with a word-sum checksum and Red's eight sections plus a Blue-only language field. Details: [`formats/save.md`](formats/save.md).
+- **Outcome:** confirmed. The survey covers 100% of entries, each tagged, and the save media type and size are identified.
 - **Fallback adopted:** N/A (discovery task). Unknown formats become Phase 2/3 work items.
-- **Notes:** Still to do: decompress BLZ overlays for analysis; identify the save media type and size (the roadmap's done-when criterion).
+- **Notes:** BLZ overlays are now decompressed by `tools/nds_extract_code.py` (V8). The save media has not been checked on a real cartridge save yet.
 
 ---
 

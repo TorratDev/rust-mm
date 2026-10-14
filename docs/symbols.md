@@ -9,7 +9,7 @@ Dump: `BlueRescueTeamEur`. Rules for each column:
 - **Tag:** `blue-verified` (role read in Blue's code), `red-hypothesis` (role taken from `pmd-red`, not yet checked in Blue), `sdk-hypothesis` (NitroSDK function recognised by its behaviour), `tentative` (our own name, role only partly known).
 - **Evidence:** why the name fits. Names that come from `pmd-red` keep its spelling.
 
-Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md), [`re/structs.md`](re/structs.md), [`re/dungeon-generation.md`](re/dungeon-generation.md).
+Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md), [`re/structs.md`](re/structs.md), [`re/dungeon-generation.md`](re/dungeon-generation.md).
 
 | Address | Name | Type | Tag | Evidence |
 |---------|------|------|-----|----------|
@@ -150,3 +150,39 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | 02006AE4 | AddKecleonWareItem | bool AddKecleonWareItem(uchar itemIndex) | blue-verified | First empty ware slot, like `pmd-red` |
 | 02007014 | InitKecleonShopItem | void InitKecleonShopItem(uchar index) | blue-verified | Clears shop slot `index`, like `pmd-red` |
 | 020083D4 | InitBulkItem | void InitBulkItem(void * item, uchar itemIndex) | blue-verified | Builds the `BulkItem` in both add functions, like `pmd-red` |
+| 020190CC | InitFlash | void InitFlash(void) | blue-verified | Called from the boot code; `CARD_IdentifyBackup(0x1202)`, stores the size and the 0x1000 sector unit |
+| 0207E598 | CARD_IdentifyBackup | bool CARD_IdentifyBackup(uint type) | sdk-hypothesis | Called by `InitFlash` with the backup type |
+| 020F38B4 | gFlashSize | - | tentative | Backup size returned by the SDK in `InitFlash` |
+| 020F38B8 | gFlashSectorSize | - | tentative | `0x1000`, multiplied by the sector number in `ReadFlashData` and `WriteFlashData` |
+| 02018F0C | ReadFlashData | int ReadFlashData(int sector, void * dest, int size) | blue-verified | Backup read request (type 6), up to 4 attempts; called by `ReadSaveSector`, like `pmd-red` |
+| 02018DC4 | WriteFlashData | int WriteFlashData(int sector, void * src, int size) | blue-verified | Backup write request (type 7), up to 4 attempts; called by `WriteSaveSector`, like `pmd-red` |
+| 02029E2C | ReadSaveSector | uint ReadSaveSector(int * a, void * dest, int size) | blue-verified | Same steps as `pmd-red`: advance the sector, read, `ValidateChecksum` |
+| 02029ECC | WriteSaveSector | uint WriteSaveSector(int * a, void * src, int size) | blue-verified | Same steps as `pmd-red`: advance the sector, `CalculateChecksum`, write |
+| 02029F6C | sub_8011CA8 | void sub_8011CA8(uint * out, int size) | blue-verified | Advances the sector number by `(size + 0xFFF) / 0x1000`, like `pmd-red` |
+| 02029FD4 | CalculateChecksum | void CalculateChecksum(void * out, uint size) | blue-verified | Word 0 = sum of the other 32-bit words, like `pmd-red` |
+| 02029F98 | ValidateChecksum | bool ValidateChecksum(void * in, uint size) | blue-verified | True when word 0 differs from the sum, like `pmd-red` |
+| 0202A53C | WriteSavetoPak | uint WriteSavetoPak(int * param_1, uint param_2) | blue-verified | Same header and eight sections as `pmd-red`, written twice; stores the language at `+0x424` |
+| 0202A000 | GetGameInternalName | char * GetGameInternalName(void) | blue-verified | Copied to `+0x404` by `WriteSavetoPak`, like `pmd-red` |
+| 0202A060 | sub_8011C34 | int sub_8011C34(void) | blue-verified | Gives header `+0x418` in `WriteSavetoPak` |
+| 0202A050 | sub_8011C40 | void sub_8011C40(int x) | blue-verified | Takes header `+0x418` in `ReadSaveFromPak` |
+| 0202A070 | sub_8011C28 | void sub_8011C28(uint x) | blue-verified | Takes header `+0x41C` in `ReadSaveFromPak` |
+| 0202A010 | SetLanguage | void SetLanguage(int language) | tentative | Takes header `+0x424` in `ReadSaveFromPak`; also called by `GameLoop_Async` with the console's language |
+| 0201F884 | SaveGlobalScriptVars | bool SaveGlobalScriptVars(void * dest) | blue-verified | `WriteSavetoPak` section order |
+| 0201F81C | RestoreGlobalScriptVars | bool RestoreGlobalScriptVars(void * src) | blue-verified | `ReadSaveFromPak` section order |
+| 0200409C | SaveRecruitedPokemon | int SaveRecruitedPokemon(void * a1, int a2) | blue-verified | `WriteSavetoPak` section order |
+| 02003F2C | RestoreRecruitedPokemon | int RestoreRecruitedPokemon(void * a1, int a2) | blue-verified | `ReadSaveFromPak` section order |
+| 02003AD0 | SavePoke2s | int SavePoke2s(void * buffer, int size) | blue-verified | `WriteSavetoPak` section order, size 600 |
+| 020038AC | RestorePoke2s | int RestorePoke2s(void * a1, int size) | blue-verified | `ReadSaveFromPak` section order, size 600 |
+| 020069C8 | SaveTeamInventory | int SaveTeamInventory(void * unk0, uint size) | blue-verified | `WriteSavetoPak` section order, size 0x1D8 |
+| 020068AC | RestoreTeamInventory | int RestoreTeamInventory(void * unk0, uint size) | blue-verified | `ReadSaveFromPak` section order, size 0x1D8 |
+| 02008758 | SaveRescueTeamInfo | uint SaveRescueTeamInfo(void * buffer, uint bufLen) | blue-verified | `WriteSavetoPak` section order, size 0x10 |
+| 020086CC | ReadRescueTeamInfo | uint ReadRescueTeamInfo(void * buffer, uint bufLen) | blue-verified | `ReadSaveFromPak` section order, size 0x10 |
+| 02008D30 | SaveFriendAreas | uint SaveFriendAreas(void * r0, uint size) | blue-verified | `WriteSavetoPak` section order, size 8 |
+| 02008CB0 | ReadSavedFriendAreas | uint ReadSavedFriendAreas(void * r0, int size) | blue-verified | `ReadSaveFromPak` section order, size 8 |
+| 02010F4C | SaveAdventureData | uint SaveAdventureData(void * buffer, uint bufLen) | blue-verified | `WriteSavetoPak` section order, size 0x100 |
+| 02010EFC | RestoreAdventureData | uint RestoreAdventureData(void * buffer, uint bufLen) | blue-verified | `ReadSaveFromPak` section order, size 0x100 |
+| 0200D0CC | sub_8095624 | uint sub_8095624(void * buffer, uint b) | blue-verified | `WriteSavetoPak` section order, size 0x594 |
+| 0200D2B8 | sub_80954CC | uint sub_80954CC(void * buffer, uint size) | blue-verified | `ReadSaveFromPak` section order, size 0x594 |
+| 0200DB80 | SaveMailInfo | uint SaveMailInfo(void * r0, uint size) | blue-verified | `WriteSavetoPak` section order, size 0x221 |
+| 0200DD5C | RestoreMailInfo | uint RestoreMailInfo(void * r0, uint size) | blue-verified | `ReadSaveFromPak` section order, size 0x221 |
+| 020E0490 | gUnknown_203B184 | void * | blue-verified | Debug save-state pointer tested by `ReadSaveFromPak` and `WriteSavetoPak`, like `pmd-red` |

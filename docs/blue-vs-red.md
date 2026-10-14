@@ -39,3 +39,14 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Wonder Guard | ability `0x35` in `sub_806F370_Async` | `ABILITY_WONDER_GUARD` | same |
 | `EntityInfo.types` | `+0x56` | `+0x5C` | **6 bytes earlier in Blue** |
 | Entity info pointer | `entity+0x70` | `axObj.info` at `0x28 + 0x48` | same offset |
+
+## Save ([`formats/save.md`](formats/save.md))
+
+| Item | Blue | Red (`pmd-red`) | Verdict |
+|------|------|-----------------|---------|
+| Media | 2 Mbit flash, `CARD_IdentifyBackup(0x1202)` | GBA flash | **different hardware**, same 4 KiB sector logic |
+| Block | `0x57D8` bytes, written twice | `0x57D4` bytes, written twice | **4 bytes longer in Blue** |
+| Header | adds a language field at `+0x424` | — | **Blue only**; later header fields 4 bytes later |
+| Magic | `0x06061320` | `0x05071412` | **different value** |
+| Checksum | sum of the other 32-bit words in word 0 | same | same |
+| Sections | 8 sections, same sizes and order | same | same |
