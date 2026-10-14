@@ -68,13 +68,19 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x5B8` | `unk5C0` | `0x5C0` | `RunDungeon_Async` |
 | `+0x638` | start of `unk644` | `0x644` | see below |
 | `+0x3360` | `deoxysForm` | `0x3800` | `RunDungeon_Async` |
+| `+0x3424` | `numItems` | `0x3904` | `ResetFloor` |
 | `+0x34AE`, `+0x34B0`, `+0x34B4` | `tileset`, `unk3A10`, `fixedRoomNumber` | `0x3A0E`, `0x3A10`, `0x3A14` | `RunDungeon_Async` |
+| `+0x34B8` | `tiles[32][56]` (0x14 bytes each, see below) | `0x3A18` (0x18 bytes each) | `sub_80495E4` |
+| `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`) |
+| `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor` |
+| `+0xC660` | `tilePointers[32][56]` | `0xE8C0` | `GetTile`, `GetTileMut`, `sub_80495E4` |
+| `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` |
 | `+0x11314` | `teamPokemon[4]` (entity pointers) | `0x1357C` | `GetLeader` |
 | `+0x15FB0`, `+0x15FB1` | `unk181e8.unk18218`, `unk18219` | `0x18218`, `0x18219` | `RunDungeon_Async` |
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
 | `+0x1A2F8`–`+0x1A308` | `floorProperties` fields | `0x1C576`–`0x1C588` | `RunDungeon_Async` ([`dungeon-generation.md`](dungeon-generation.md)) |
 
-The shift grows: −8 at `0x5C0`, −0xC at `unk644`, −0x4A0 at `0x3800`, −0x560 at `0x3A0E`, −0x2268 at `teamPokemon`, `unk181e8` and `unk1BDD4`.
+The shift grows: −8 at `0x5C0`, −0xC at `unk644`, −0x4A0 at `0x3800`, −0x560 at `0x3A0E`, −0x2160 at `stairsSpawn`, −0x2268 from `traps` on. From the tiles to the tile pointers, the extra shift is exactly 4 bytes per tile (56 × 32 map tiles plus 64 fixed-room tiles).
 
 ### `unk644` sub-struct
 
@@ -91,6 +97,23 @@ In Blue it starts at `0x638`. Its first field checked, `unk10`, is at Red's rela
 | `+0x66C` | `prngPreseed23Bit` | `0x67C` | `RunDungeon_Async` |
 | `+0x670` | `unk3C` (floor seed) | `0x680` | `RunDungeon_Async` |
 
+## Tile
+
+[blue-verified] by `ResetTile` (`ov_0001::0214C0A8`), which writes every field in Red's order, and by `sub_80495E4`/`GetTileMut` (stride 0x14). `pmd-red`'s `include/structs/map.h` already notes the DS size: the spawn/visibility flags take 2 bytes instead of 6, so every later field is 4 bytes earlier.
+
+| Blue | Red field | Red | Notes |
+|------|-----------|-----|-------|
+| `+0x00` | `terrainFlags` (u16) | `0x00` | `0x10` = impassable wall (set on the map border by `ResetFloor`) |
+| `+0x02` | `spawnOrVisibilityFlags` (u16) | `0x04` | |
+| `+0x04` | `unk8` | `0x08` | |
+| `+0x05` | `room` (`0xFF` = none) | `0x09` | |
+| `+0x06` | `walkableNeighborFlags[4]` | `0x0A` | one byte per crossable-terrain kind |
+| `+0x0A` | `unkE` | `0x0E` | |
+| `+0x0C` | `monster` (entity pointer) | `0x10` | |
+| `+0x10` | `object` (item or trap entity pointer) | `0x14` | |
+
+Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row stride `0x460`; `GetTile(x, y)` returns `tilePointers[y][x]` (dungeon `+0xC660`, row stride `0xE0`) or, outside 56 × 32, the out-of-bounds tile `gCurTilesetOobTile`.
+
 ## RAM for golden traces
 
 What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) should read on each turn trigger ([`turns.md`](turns.md)), all through the pointer in `gDungeon`:
@@ -103,11 +126,12 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 | Team | 4 entity pointers at dungeon `+0x11314`; for each: `+0x70` → info: `id` `+0x02`, `level` `+0x09`, `HP` `+0x0E`, `maxHPStat` `+0x10`, `types` `+0x56`, statuses `+0x99`–`+0xC4`, `speedStage` `+0xE0`, `belly` `+0x10E` |
 | Wild Pokémon | 16 entity pointers at dungeon `+0x11324` (*red-hypothesis*: right after `teamPokemon`, as in Red) |
 | Positions | entity `+0x04` (*red-hypothesis*) |
+| Floor map | 56 × 32 tiles of 0x14 bytes at dungeon `+0x34B8` (`terrainFlags` `+0`, `room` `+5`, `monster` `+0xC`, `object` `+0x10`); stairs at dungeon `+0xC0BC` |
 | RNG | `sPRNGState` `0x020DF704`, `gDungeonRngState` `0x021B3F58` ([`rng.md`](rng.md)) |
 
 ## Open questions
 
-- Positions, moves (`moves` at Red `0x118`), held item, and the floor tile grid: find matched functions that use them.
+- Positions, moves (`moves` at Red `0x118`) and held item: find matched functions that use them.
 - The size of Blue's entity info struct (Red 0x208): look for the array or allocation that holds the infos.
 - Item and inventory structs.
 - Check the trace RAM list against an emulator dump on the retail ROM.

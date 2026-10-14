@@ -120,3 +120,8 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0001::0214C1A8 | ResolveInvalidSpawns | void ResolveInvalidSpawns(void) | blue-verified | `GenerateFloor` call order and argument count |
 | 0206DB90 | GetFloorType | uchar GetFloorType(void) | blue-verified | `GenerateFloor` call order and argument count |
 | ov_0001::0214A760 | StairsAlwaysReachable | bool StairsAlwaysReachable(int stairsX, int stairsY, bool markUnreachable) | blue-verified | `GenerateFloor` call order and argument count |
+| ov_0001::021498F8 | sub_80495E4 | void sub_80495E4(void) | blue-verified | Points `tilePointers[y][x]` at `tiles[y][x]` (stride 0x14) and clears `tileset`, like `pmd-red` |
+| ov_0001::02149990 | GetTileMut | void * GetTileMut(int x, int y) | blue-verified | Like `GetTile`, but copies the out-of-bounds tile into `gOutOfBoundsTileData` first, like `pmd-red` |
+| ov_0001::0214C0A8 | ResetTile | void ResetTile(void * tile) | blue-verified | Clears every tile field in `pmd-red`'s order, `room = 0xFF` |
+| ov_0001::021B3ED0 | gCurTilesetOobTile | void * | blue-verified | Returned by `GetTile` outside the map |
+| ov_0001::021B4270 | gOutOfBoundsTileData | - | blue-verified | 0x14-byte copy target in `GetTileMut` |

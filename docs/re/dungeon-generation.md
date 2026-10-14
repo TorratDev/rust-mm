@@ -36,7 +36,7 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 
 ## For bit-exact generation
 
-The order of RNG calls in `GenerateFloor` and the direct calls of every generator match Red. Before porting, compare each generator's internal call order with Red's source and confirm the result on the retail ROM: dump the tile grid after `GenerateFloor` for a known floor seed (dungeon `+0x670`) and compare.
+The order of RNG calls in `GenerateFloor` and the direct calls of every generator match Red. Before porting, compare each generator's internal call order with Red's source and confirm the result on the retail ROM: dump the tile grid after `GenerateFloor` for a known floor seed (dungeon `+0x670`) and compare. The grid layout is in [`structs.md`](structs.md#tile): 56 × 32 tiles of 0x14 bytes at dungeon `+0x34B8`.
 
 ## Dungeon struct offsets seen here
 
@@ -54,5 +54,4 @@ The gap grows from −8 at `0x5C0` to −0x4A0 at `0x3800` and −0x560 at `0x3A
 ## Open questions
 
 - Each generator's internal RNG order (sub-functions such as room and corridor placement).
-- The tile struct and grid: `GetTile` (`ov_0001::02149A08`) returns a tile pointer; read it to find the grid base and tile size (#46).
 - Emulator check of one generated floor.
