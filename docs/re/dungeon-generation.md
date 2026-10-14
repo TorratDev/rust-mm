@@ -46,6 +46,34 @@ Results (2026-10-14, 5 seeds × 3 global RNG values, plus the floor's natural se
 
 So the generator's inputs are the dungeon RNG state and the floor properties. A reimplementation can be tested against `floor_oracle.py`: generate a floor from the same seed and compare the layout hash, stairs and RNG step count. The reimplementation must be original code written from this description and our own analysis of Blue, not a translation of `pmd-red`'s source ([`legal.md`](../legal.md)).
 
+## Reimplementation, step by step
+
+The Rust generator lives in `rescue_sim::floor` (with `rescue_sim::rng`). It is written from this page and our own reading of Blue's code, and checked against [`verification/v7-trace/floor_stages.py`](../../verification/v7-trace/floor_stages.py), which records the dungeon RNG state and the arguments at the entry of every generation step on the retail ROM. Between each pair of checkpoints, the reimplementation must make the same number of RNG calls.
+
+RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid), for the game's own seed and for a forced seed `0x12345678`:
+
+| Step | Blue address | Natural seed | Seed `0x12345678` | Status in Rust |
+|------|--------------|-------------:|------------------:|----------------|
+| `GenerateFloor` up to `GenerateStandardFloor` | `ov_0001::02151E7C` | 11 | 7 | |
+| std 1: grid bounds (`i × (56 / gridX)`, `i × (32 / gridY)`) | `ov_0001::0214FEB0` | 0 | 0 | done (`grid_bounds`) |
+| std 2: init grid cells (30-byte records; a mode flag can mark the right half or quarter invalid) | `ov_0001::0214FD7C` | 0 | 0 | |
+| std 3 (room density as last argument) | `ov_0001::0214FB4C` | 129 | 129 | |
+| std 4 | `ov_0001::0214F7A8` | 17 | 20 | |
+| std 5 | `ov_0001::0214F6A0` | 33 | 33 | |
+| std 6 | `ov_0001::0214E824` | 19 | 18 | |
+| std 7 | `ov_0001::0214DB54` | 0 | 4 | |
+| std 8–10 | `ov_0001::0214CF2C`, `0214D448`, `0214D190` | 0 | 0 | |
+| std 11 (last argument: floor property `+0x13`, probably the number of extra hallways) | `ov_0001::0214FF30` | 16 | 31 | |
+| std 12, std 13, `ResetInnerBoundaryTileRows`, `EnsureImpassableTilesAreWalls`, `FinalizeJunctions` | | 0 | 0 | |
+| `GenerateSecondaryTerrainFormations` | `ov_0001::0214AAF8` | 1 | 1 | |
+| `SpawnNonEnemies` | `ov_0001::0214B650` | 788 | 760 | |
+| `SpawnEnemies` | `ov_0001::0214B338` | 766 | 738 | |
+| `ResolveInvalidSpawns` | `ov_0001::0214C1A8` | 0 | 0 | |
+| `StairsAlwaysReachable` up to the first turn | `ov_0001::0214A760` | 22 | 20 | |
+| **Total** | | **1,802** | **1,761** | |
+
+Each count is the number of RNG steps between the entry of that step and the entry of the next one. The floor reset (outer ring of tiles impassable, rooms cleared) and the tile layout are also in `rescue_sim::floor`.
+
 ## Dungeon struct offsets seen here
 
 | Blue | Red field | Red | Evidence |
