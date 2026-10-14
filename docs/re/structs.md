@@ -128,7 +128,18 @@ Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row st
 
 **Item** [blue-verified]: `flags` `+0` (bit `1` = exists, `8` = sticky, `0x10` = set for L+R throwing), `quantity` `+1`, `id` `+2`; 3 bytes, the same as Red's fields. Read by `HasHeldItem` and the inventory functions; `SpawnItem` clears bit `0x10`.
 
-**Team inventory** [blue-verified for the items]: `gTeamInventoryRef` (`0x020DECF8`) points to it; `teamItems[20]` at `+0`, stride 3 (`GetItemCountInInventory`, `GetNumberOfFilledInventorySlots`). `pmd-red`'s note in `include/structs/str_items.h` gives the rest of Blue's layout (*red-hypothesis*): `teamStorage` `+0x3C`, Kecleon shop items `+0x21C` and wares `+0x22C`, `teamMoney` `+0x234`, `teamSavings` `+0x238`.
+**Team inventory** [blue-verified]: `gTeamInventoryRef` (`0x020DECF8`) points to it. Every field below is written by `InitializeMoneyItems` (`02008588`) or read by a function matched to `pmd-red`, and the offsets agree with `pmd-red`'s Blue notes in `include/structs/str_items.h`.
+
+| Blue | Field | Red | Evidence |
+|------|-------|-----|----------|
+| `+0x000` | `teamItems[20]` (3-byte `Item`) | `0x000` | `GetItemCountInInventory`, `InitializeMoneyItems` |
+| `+0x03C` | `teamStorage[240]` (u16 counts per item id) | `0x050` | `InitializeMoneyItems` (240 entries; ends exactly at `+0x21C`) |
+| `+0x21C` | `kecleonShopItems[8]` (2-byte `BulkItem`: `id`, `quantity`) | `0x230` | `CountKecleonShopItems`, `AddKecleonShopItem`, `InitKecleonShopItem` |
+| `+0x22C` | `kecleonWareItems[4]` | `0x250` | `CountKecleonWareItems`, `AddKecleonWareItem` |
+| `+0x234` | `teamMoney` (s32, clamped to 99,999) | `0x260` | `AddToTeamMoney` |
+| `+0x238` | `teamSavings` (s32) | `0x264` | `InitializeMoneyItems` |
+
+Blue's struct is 0x23C bytes (Red 0x268). The difference is packing: Blue stores `Item` in 3 bytes and `BulkItem` in 2, where Red's arrays use a 4-byte stride for both.
 
 **Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` takes a free slot, then `SpawnItem` copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field. An item entity has `type` 3 (`ENTITY_ITEM`).
 
@@ -146,7 +157,7 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 | Positions | entity `+0x04` (x), `+0x06` (y) |
 | Moves, held item | info `+0xF4` (4 × 6 bytes: flags, id `+2`, PP `+4`), info `+0x5A` (3 bytes) |
 | Floor items | 64 entity pointers at dungeon `+0x113B4`; each entity's `+0x04` position and `+0x70` → 3-byte `Item` |
-| Team inventory | 20 × 3-byte items at `*(u32 *)0x020DECF8` |
+| Team inventory | `*(u32 *)0x020DECF8`: 20 × 3-byte items at `+0`, money `+0x234`, savings `+0x238` |
 | Floor map | 56 × 32 tiles of 0x14 bytes at dungeon `+0x34B8` (`terrainFlags` `+0`, `room` `+5`, `monster` `+0xC`, `object` `+0x10`); stairs at dungeon `+0xC0BC` |
 | RNG | `sPRNGState` `0x020DF704`, `gDungeonRngState` `0x021B3F58` ([`rng.md`](rng.md)) |
 

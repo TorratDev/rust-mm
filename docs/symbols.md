@@ -142,3 +142,11 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0001::021440B0 | SpawnItem | bool SpawnItem(void * pos, void * item, bool a2) | blue-verified | Same steps as `pmd-red` |
 | ov_0001::02142ADC | GetEntityType | uint GetEntityType(void * entity) | blue-verified | Returns `entity->type` |
 | ov_0001::02142AC4 | GetItemInfo | void * GetItemInfo(void * entity) | blue-verified | Returns the entity's info pointer (`+0x70`) |
+| 02008588 | InitializeMoneyItems | void InitializeMoneyItems(void) | blue-verified | Clears 20 items, 240 storage counts, 8 shop items, money and savings, like `pmd-red` |
+| 02007688 | AddToTeamMoney | void AddToTeamMoney(int amount) | blue-verified | Adds to `teamMoney` (`+0x234`) and clamps to 0–99,999, like `pmd-red` |
+| 02007038 | CountKecleonShopItems | int CountKecleonShopItems(void) | blue-verified | Counts the 8 shop slots at `+0x21C`, like `pmd-red` |
+| 02006D70 | CountKecleonWareItems | int CountKecleonWareItems(void) | blue-verified | Counts the 4 ware slots at `+0x22C`, like `pmd-red` |
+| 02006DA4 | AddKecleonShopItem | bool AddKecleonShopItem(uchar itemIndex) | blue-verified | First empty shop slot, like `pmd-red` |
+| 02006AE4 | AddKecleonWareItem | bool AddKecleonWareItem(uchar itemIndex) | blue-verified | First empty ware slot, like `pmd-red` |
+| 02007014 | InitKecleonShopItem | void InitKecleonShopItem(uchar index) | blue-verified | Clears shop slot `index`, like `pmd-red` |
+| 020083D4 | InitBulkItem | void InitBulkItem(void * item, uchar itemIndex) | blue-verified | Builds the `BulkItem` in both add functions, like `pmd-red` |
