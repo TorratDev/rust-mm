@@ -124,10 +124,12 @@ jobs:
         with:
           workspaces: fuzz
 
+      # The prebuilt cargo-fuzz binary is built for musl and defaults --target to
+      # its own triple; ASan needs the glibc target, so name it explicitly.
       - name: Run each fuzz target briefly
         run: |
           for t in $(cargo +"$FUZZ_TOOLCHAIN" fuzz list); do
             echo "::group::fuzz $t"
-            cargo +"$FUZZ_TOOLCHAIN" fuzz run "$t" -- -max_total_time=30
+            cargo +"$FUZZ_TOOLCHAIN" fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=30
             echo "::endgroup::"
           done
