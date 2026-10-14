@@ -9,7 +9,7 @@ Dump: `BlueRescueTeamEur`. Rules for each column:
 - **Tag:** `blue-verified` (role read in Blue's code), `red-hypothesis` (role taken from `pmd-red`, not yet checked in Blue), `sdk-hypothesis` (NitroSDK function recognised by its behaviour), `tentative` (our own name, role only partly known).
 - **Evidence:** why the name fits. Names that come from `pmd-red` keep its spelling.
 
-Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md).
+Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md).
 
 | Address | Name | Type | Tag | Evidence |
 |---------|------|------|-----|----------|
@@ -77,3 +77,12 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0001::021AA588 | gEffectivenessChart | int[4][4] | blue-verified | Same 16 values as `pmd-red` |
 | ov_0001::021AA660 | gAtkStatStageMultipliers | int[21] | blue-verified | Same 21 s24.8 values as `pmd-red`; read by `CalcDamage` |
 | ov_0001::021AA6B4 | gDefStatStageMultipliers | int[21] | blue-verified | Same 21 s24.8 values as `pmd-red`; read by `CalcDamage` |
+| 020E0788 | gDungeon | void * | blue-verified | Pointer to the dungeon struct; read by `RunDungeon_Async`, `IsFloorOver` and `RunFractionalTurn_Async` |
+| ov_0001::021411BC | RunFractionalTurn_Async | void RunFractionalTurn_Async(bool param_1) | blue-verified | Same call sequence as `pmd-red`, each step followed by `IsFloorOver`; increments `dungeon+0x650` and wraps it at 24 |
+| ov_0001::0214067C | IsFloorOver | bool IsFloorOver(void) | blue-verified | Same checks as `pmd-red`; sets `dungeon+0x648` to 1 or 2 |
+| ov_0001::0214078C | TrySpawnMonsterAndActivatePlusMinus_Async | void TrySpawnMonsterAndActivatePlusMinus_Async(void) | blue-verified | `RunFractionalTurn_Async` call order |
+| ov_0001::02140FAC | RunLeaderTurn_Async | bool RunLeaderTurn_Async(bool param_1) | blue-verified | `RunFractionalTurn_Async` call order; its result gates `UpdateWindTurns` |
+| ov_0001::02195104 | UpdateWindTurns | void UpdateWindTurns(void) | blue-verified | `RunFractionalTurn_Async` call order |
+| ov_0001::02140AC0 | sub_8044574_Async | void sub_8044574_Async(void) | blue-verified | `RunFractionalTurn_Async` call order |
+| ov_0001::021408F8 | sub_8044820_Async | void sub_8044820_Async(void) | blue-verified | `RunFractionalTurn_Async` call order |
+| ov_0001::021406F8 | sub_8044AB4 | void sub_8044AB4(void) | blue-verified | `RunFractionalTurn_Async` call order, last step |

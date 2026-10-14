@@ -195,7 +195,7 @@ Copy this section for each check.
 - **Notes:**
   - Setup quirks: libdesmume needs a video driver even headless (`SDL_VIDEODRIVER=dummy`); on Linux it needs `libGL` and `glib` from the system. The apt `desmume-cli` defaults to the JIT; the GDB stub run used `--cpu-mode=0`. py-desmume ran the interpreter.
   - Save files: the retail run should start from a savestate taken in a known spot, with the backup (save) file fixed too.
-  - The per-turn trigger (turn counter or turn-advance routine) comes from turn-scheduler RE (#49); pass its address as `--trigger`.
+  - Per-turn trigger for the retail run ([`re/turns.md`](re/turns.md)): the entry of `RunFractionalTurn_Async`, `0x021411BC`, counted only once overlay 1 is loaded (overlays 0 and 7 share that RAM). Dump `fractionalTurn` at `dungeon+0x650` with the RNG state; the dungeon struct pointer is in `gDungeon` at `0x020E0788`.
   - RNG state to dump on the retail run ([`re/rng.md`](re/rng.md)): `sPRNGState` at `0x020DF704` and `gDungeonRngState` at `0x021B3F58` (overlay 1 loaded), plus the dungeon struct fields `+0x66C` (run preseed) and `+0x670` (floor seed). Both generators advance during a dungeon. The global LCG is seeded at boot from the console MAC address in the firmware, so keep the emulator firmware fixed between runs.
 
 ---
