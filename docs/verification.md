@@ -11,9 +11,9 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 | V3 | Blue's audio uses the Nintendo SDAT container | Phase 4 audio | **Confirmed** |
 | V4 | Non-audio formats identified; save media identified | Phase 2 | Partial — file survey complete (171 entries tagged); save media not yet identified |
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
-| V6 | Blue reuses Red's data tables and constants | Phase 3 | Partial — 1 of 3 required tables shared by value; 2 unresolved |
+| V6 | Blue reuses Red's data tables and constants | Phase 3 | Partial — 1 of 3 required tables shared by value, 2 unresolved; 1 of 2 routine constants matched (RNG step) |
 | V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | Partial — py-desmume script with savestate, fixed inputs and exec trigger gives byte-identical dumps over 3 runs on Linux, on a synthetic test ROM; retail Blue run and Windows CI result pending |
-| V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | Pending — mapping tooling ready and run end to end on a synthetic ROM with Ghidra 11.4.3; retail run needs the user's dump ([`ghidra-setup.md`](ghidra-setup.md)) |
+| V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | Partial — retail ARM9 and all 145 overlays mapped (Ghidra 12.1.4); only overlays 0, 1 and 7 analysed so far, type-chart reference not resolved yet |
 | V9 | REA supports the planned Ghidra workflow on ARM DS binaries | Phase 3 | Pending — depends on V8 for the run; README reviewed |
 
 Outcome values: **confirmed**, **partial**, **replaced** (fallback adopted), **blocked**, **pending**.
@@ -140,7 +140,7 @@ Copy this section for each check.
   - The repo README does not publish a percent-decompiled figure. The numbers above are proxies, not a verified percentage.
 - **Outcome:** confirmed, with naming gaps. Dungeon, AI and RNG are substantially decompiled. Combat is decompiled, but its callers depend on 2,128 unnamed identifiers.
 - **Fallback adopted:** none.
-- **Notes:** The roadmap's fallback ("lower Red's role") is not triggered. Naming gaps mean V6 comparisons may need Ghidra analysis of Blue for the call targets.
+- **Notes:** Correction (2026-10-14): the RNG row lists only the Mersenne Twister, but Red's main generators are LCGs (`src/random.c`, `src/dungeon_random.c`). Blue has the same three generators ([`re/rng.md`](re/rng.md)). The roadmap's fallback ("lower Red's role") is not triggered. Naming gaps mean V6 comparisons may need Ghidra analysis of Blue for the call targets.
 
 ---
 
@@ -159,10 +159,11 @@ Copy this section for each check.
 
   - The Red control confirms the table extraction. The Blue hit is a full 648-byte match after BLZ decoding.
   - Searches covered ARM9 binary, all 145 overlays (BLZ-decoded where flagged), and all named files.
-  - Constants in routines (damage calc, RNG step) were not compared yet.
-- **Outcome:** partial. 1 of 3 required tables matches by value. The other two are unresolved, so the "3+ shared tables" criterion is not met.
+  - **Routine constant 1, RNG step (2026-10-14, Ghidra):** Blue's global LCG (`Rand16Bit`, `020119A4`) and dungeon LCG (`DungeonRand16Bit`, `ov_0001::0219D07C`) both step `s * 0x5D588B65 + 1` and return `s >> 16`, like Red's `src/random.c` and `src/dungeon_random.c`. The seeding constant `0xD305` (54021) in `SeedRng` and the floor-seed mask `& 0xFFFFFF | 1` also match. The multiplier is in the Red dump too (file offsets `0x6994`, `0x890D0`, `0x89100`, `0x9AF08`). Differences: Blue seeds the global LCG from the console MAC address. Details: [`re/rng.md`](re/rng.md), [`blue-vs-red.md`](blue-vs-red.md).
+  - Routine constant 2 (damage calc) not compared yet.
+- **Outcome:** partial. 1 of 3 required tables matches by value, and the other two are unresolved, so the "3+ shared tables" criterion is not met. 1 of 2 routine constants matches (RNG step).
 - **Fallback adopted:** none yet. If the two remaining tables do not match, the roadmap fallback applies ("treat Red as a design reference only; budget more RE time for Phase 3").
-- **Notes:** Still to do: find 2+ more shared tables (candidates: species base stats, move data) and compare 2+ routine constants. Check whether the Gummi tables moved or changed layout in Blue, using Ghidra once available (V8). The Red dump is not the decomp's base ROM (see above).
+- **Notes:** Still to do: find 2+ more shared tables (candidates: species base stats, move data) and compare a second routine constant (damage calc). Check whether the Gummi tables moved or changed layout in Blue, using Ghidra once available (V8). The Red dump is not the decomp's base ROM (see above).
 
 ---
 
@@ -193,23 +194,27 @@ Copy this section for each check.
 - **Notes:**
   - Setup quirks: libdesmume needs a video driver even headless (`SDL_VIDEODRIVER=dummy`); on Linux it needs `libGL` and `glib` from the system. The apt `desmume-cli` defaults to the JIT; the GDB stub run used `--cpu-mode=0`. py-desmume ran the interpreter.
   - Save files: the retail run should start from a savestate taken in a known spot, with the backup (save) file fixed too.
-  - The per-turn trigger (turn counter or turn-advance routine) comes from RNG RE (#47) and turn-scheduler RE (#49); pass its address as `--trigger`.
+  - The per-turn trigger (turn counter or turn-advance routine) comes from turn-scheduler RE (#49); pass its address as `--trigger`.
+  - RNG state to dump on the retail run ([`re/rng.md`](re/rng.md)): `sPRNGState` at `0x020DF704` and `gDungeonRngState` at `0x021B3F58` (overlay 1 loaded), plus the dungeon struct fields `+0x66C` (run preseed) and `+0x670` (floor seed). Both generators advance during a dungeon. The global LCG is seeded at boot from the console MAC address in the firmware, so keep the emulator firmware fixed between runs.
 
 ---
 
 ## V8 — Ghidra loads ARM9 and overlays at real addresses
 
 - **Assumption:** Ghidra can load the ARM9 binary and its overlays at their real addresses, through an existing NDS loader or a custom script.
-- **Date:** 2026-10-14 (tooling, synthetic ROM); retail run pending.
+- **Date:** 2026-10-14 (tooling, synthetic ROM; retail run on Windows).
 - **Environment:** Linux sandbox, Ghidra 11.4.3 (`ghidra_11.4.3_PUBLIC_20251203.zip`; the GitHub release download now works from the session, the earlier HTTP 403 is gone), OpenJDK 21.0.12, Python 3.13. No retail dump in the session.
 - **Evidence:**
   - Took the "If false" route (a script of our own); no NDS loader extension tried yet. Setup and usage: [`ghidra-setup.md`](ghidra-setup.md).
   - [`tools/nds_extract_code.py`](../tools/nds_extract_code.py) checks the dump's SHA-1 and writes `arm9.bin` (BLZ-decoded if compressed), every ARM9 overlay (BLZ-decoded when flag bit 24 is set) and a `manifest.json` memory map (module params, static BSS, autoload sections, overlay RAM ranges, BSS, static initialisers). Unit tests on synthetic ROMs in [`tools/tests`](../tools/tests); its BLZ decoder agrees with `ndspy` in both directions.
   - [`tools/ghidra/RescueNdsImport.java`](../tools/ghidra/RescueNdsImport.java) maps ARM9 static + BSS, the autoload sections at their destinations, and each overlay as its own Ghidra overlay block (plus its BSS in the same overlay space), with language `ARM:LE:32:v5t`. Headless wrappers: [`import.sh`](../tools/ghidra/import.sh), [`import.ps1`](../tools/ghidra/import.ps1).
   - Synthetic end-to-end run (`tools/tests/synth_nds.py --compress-arm9`, then `import.sh ... --check ov_0000+0x14 ov_0001+0x14 ov_0002+0x14 arm9+0x20`): 12 blocks. Two overlays share `0x02100000` as `ov_0000::02100000` and `ov_0001::02100000`. Calls from all three overlays to `0x02000020` resolve to the ARM9 function. Each overlay's literal-pool pointer resolves inside its own overlay space (`from ov_0001::02100008 DATA in ov_0001_start`).
-- **Outcome:** pending. The tooling works on synthetic data. Confirming V8 needs the run on the retail dump: all ARM9 overlays mapped, and a resolving reference to `gTypeEffectivenessChart` at `ov_0001+0x72688` (steps in [`ghidra-setup.md`](ghidra-setup.md#4-record-the-v8-result)).
+  - **Retail run** (Windows 11, Ghidra 12.1.4, JDK 25.0.4, headless import wrapper (log `rescue-arm9-import.log`), supported dump): `RESCUE: mapped arm9 + 145 overlays, 154 blocks`, ROM SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, no overlap warning. Auto-analysis took 146 s. `RescueNdsReport.java` (run through ghidra-cli, see [`ghidra-setup.md`](ghidra-setup.md#6-ghidra-cli)) counts 5,236 functions: 2,988 in `arm9`, 1,741 in `ov_0001`, 365 in `ov_0000`, 95 in `ov_0007`, 1 in `ov_0002`, and **none in the other 140 overlays**. Auto-analysis only followed code reachable from entry points it knew (the ARM9 entry and the overlays' static initialisers).
+  - Cross-references resolve inside overlays (for example 175 calls to `DungeonRandInt` within `ov_0001`) and from overlays into the ARM9. Calls from the ARM9 into an overlay resolve to the `ram` address, as expected; [`RescueCallers.java`](../tools/ghidra/RescueCallers.java) collects those too.
+  - Type-chart spot check: `references to ov_0001::021aaee8 (ov_0001+0x72688): 0`. The chart is mapped at the right place (V6 offset), but no code reference to its first byte was found. It may be reached through a computed pointer, or from an overlay that is not analysed yet.
+- **Outcome:** partial. ARM9 and all 145 overlays are mapped at their real addresses, and cross-references work where code is analysed. Missing: code discovery in 140 overlays, and a resolved type-chart reference.
 - **Fallback adopted:** none yet (the script is the roadmap fallback, now available).
-- **Notes:** `import.ps1` has not been run (the session could not run PowerShell). The GUI path uses the same script but has not been exercised. Calls from ARM9 code into overlay ranges cannot resolve statically (Ghidra cannot know which overlay is loaded); that is expected.
+- **Notes:** Next: disassemble each unanalysed overlay from its start and run function discovery on it, then repeat the type-chart check. The GUI path uses the same script but has not been exercised. Calls from ARM9 code into overlay ranges cannot resolve statically (Ghidra cannot know which overlay is loaded); that is expected.
 
 ---
 
