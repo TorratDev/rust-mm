@@ -11,7 +11,7 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 | V3 | Blue's audio uses the Nintendo SDAT container | Phase 4 audio | **Confirmed** |
 | V4 | Non-audio formats identified; save media identified | Phase 2 | Partial — file survey complete (171 entries tagged); save media not yet identified |
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
-| V6 | Blue reuses Red's data tables and constants | Phase 3 | Partial — 1 of 3 required tables shared by value, 2 unresolved; 1 of 2 routine constants matched (RNG step) |
+| V6 | Blue reuses Red's data tables and constants | Phase 3 | **Confirmed** — 4 tables shared by value (type chart, effectiveness combination, attack and defense stat stages); 2 routine constants match (RNG step, damage calc) |
 | V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | Partial — py-desmume script with savestate, fixed inputs and exec trigger gives byte-identical dumps over 3 runs on Linux, on a synthetic test ROM; retail Blue run and Windows CI result pending |
 | V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | **Confirmed** — retail ARM9 and all 145 overlays mapped (Ghidra 12.1.4); type chart referenced from 4 places in overlay 1; the 142 overlays without code are data |
 | V9 | REA supports the planned Ghidra workflow on ARM DS binaries | Phase 3 | Pending — depends on V8 for the run; README reviewed |
@@ -160,10 +160,11 @@ Copy this section for each check.
   - The Red control confirms the table extraction. The Blue hit is a full 648-byte match after BLZ decoding.
   - Searches covered ARM9 binary, all 145 overlays (BLZ-decoded where flagged), and all named files.
   - **Routine constant 1, RNG step (2026-10-14, Ghidra):** Blue's global LCG (`Rand16Bit`, `020119A4`) and dungeon LCG (`DungeonRand16Bit`, `ov_0001::0219D07C`) both step `s * 0x5D588B65 + 1` and return `s >> 16`, like Red's `src/random.c` and `src/dungeon_random.c`. The seeding constant `0xD305` (54021) in `SeedRng` and the floor-seed mask `& 0xFFFFFF | 1` also match. The multiplier is in the Red dump too (file offsets `0x6994`, `0x890D0`, `0x89100`, `0x9AF08`). Differences: Blue seeds the global LCG from the console MAC address. Details: [`re/rng.md`](re/rng.md), [`blue-vs-red.md`](blue-vs-red.md).
-  - Routine constant 2 (damage calc) not compared yet.
-- **Outcome:** partial. 1 of 3 required tables matches by value, and the other two are unresolved, so the "3+ shared tables" criterion is not met. 1 of 2 routine constants matches (RNG step).
-- **Fallback adopted:** none yet. If the two remaining tables do not match, the roadmap fallback applies ("treat Red as a design reference only; budget more RE time for Phase 3").
-- **Notes:** Still to do: find 2+ more shared tables (candidates: species base stats, move data) and compare a second routine constant (damage calc). Check whether the Gummi tables moved or changed layout in Blue, using Ghidra once available (V8). The Red dump is not the decomp's base ROM (see above).
+  - **Routine constant 2, damage calc (2026-10-14, Ghidra):** Blue's `CalcDamage` (`ov_0001::0217BD94`, found from the type chart's readers) has the constants of Red's `CalcDamage` (`src/dungeon_damage.c`): damage cap `999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`, and the same three dungeon RNG calls in the same order (`DungeonRandInt(100)`, `DungeonRandInt(100)`, `DungeonRandInt(0x4000)`). Its 9 arguments match too. Details: [`re/combat.md`](re/combat.md).
+  - **More shared tables (2026-10-14, Ghidra):** the pointers in `CalcDamage` and `sub_806F370_Async` lead to three more tables in overlay 1 with the same values as Red's `src/dungeon_config.c`, compared entry by entry: `gEffectivenessChart` (4 × 4 `s32`, `ov_0001::021AA588`), `gAtkStatStageMultipliers` and `gDefStatStageMultipliers` (21 × s24.8 each, `ov_0001::021AA660` and `021AA6B4`).
+- **Outcome:** **confirmed.** 4 tables are shared by value (type chart, effectiveness combination, attack and defense stat-stage multipliers), meeting the "3+ shared tables" criterion, and both routine constants match (RNG step, damage calc). `gTypeGummiIQBoost` and `gUnknown_810A808` are still not found by value.
+- **Fallback adopted:** none. Red stays the map for Phase 3.
+- **Notes:** Still open: where the two Gummi tables went in Blue (moved, re-laid out, or replaced). The Red dump is not the decomp's base ROM (see above).
 
 ---
 

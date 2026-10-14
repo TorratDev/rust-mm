@@ -29,3 +29,13 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Title menu | choices 2, 3, 4 as in Red, plus choice 5 (`RunOverlay7Mode`, overlay 7) | choices 2, 4, `MENU_NEW_GAME` | **one extra mode in Blue** |
 | Ground and dungeon code | overlays 0 and 1, swapped by `NDS_LoadOverlay_GroundMain` and `LoadAndRunDungeon_Async` | always resident; the load points are empty stubs | NDS overlay swap |
 | Quicksave dungeon entry | `LoadAndRunQuickSaveDungeon_Async` `0201E204` | same, `src/main_loops.c` | same steps |
+
+## Combat ([`re/combat.md`](re/combat.md))
+
+| Item | Blue | Red (`pmd-red`) | Verdict |
+|------|------|-----------------|---------|
+| Damage formula constants | `CalcDamage` `ov_0001::0217BD94` | `CalcDamage`, `src/dungeon_damage.c` | same constants and same RNG call order |
+| Type tables | `gTypeEffectivenessChart`, `gEffectivenessChart`, stat-stage multipliers in overlay 1 | `src/dungeon_config.c` | same values |
+| Wonder Guard | ability `0x35` in `sub_806F370_Async` | `ABILITY_WONDER_GUARD` | same |
+| `EntityInfo.types` | `+0x56` | `+0x5C` | **6 bytes earlier in Blue** |
+| Entity info pointer | `entity+0x70` | `axObj.info` at `0x28 + 0x48` | same offset |

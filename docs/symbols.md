@@ -9,7 +9,7 @@ Dump: `BlueRescueTeamEur`. Rules for each column:
 - **Tag:** `blue-verified` (role read in Blue's code), `red-hypothesis` (role taken from `pmd-red`, not yet checked in Blue), `sdk-hypothesis` (NitroSDK function recognised by its behaviour), `tentative` (our own name, role only partly known).
 - **Evidence:** why the name fits. Names that come from `pmd-red` keep its spelling.
 
-Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md).
+Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md).
 
 | Address | Name | Type | Tag | Evidence |
 |---------|------|------|-----|----------|
@@ -66,3 +66,14 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0000::0214FC50 | GroundStation_SetBank | int GroundStation_SetBank(int bank) | blue-verified | Name from its own debug message; loads or unloads a ground bank overlay |
 | ov_0000::0214FD00 | GroundStation_LoadBank | void GroundStation_LoadBank(int bank) | tentative | Loads the overlay of `gGroundBankTable[bank]` |
 | ov_0000::0214FCA4 | GroundStation_UnloadBank | void GroundStation_UnloadBank(void) | tentative | Unloads the current bank overlay |
+| ov_0001::0217BD94 | CalcDamage | void CalcDamage(void * attacker, void * target, uchar moveType, int movePower, int critChance, void * dmgStruct, int arg8, ushort moveId, bool arg_10) | blue-verified | Calls `sub_806E100`; same constants as `pmd-red` (`999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`) and the same three `DungeonRandInt` calls in order |
+| ov_0001::0217CE88 | sub_806E100 | bool sub_806E100(void * param_1, void * pokemon, void * target, uchar type, void * dmgStruct) | blue-verified | Reads `gTypeEffectivenessChart`; type is the 4th of 5 arguments, like `pmd-red` |
+| ov_0001::0217CB3C | WeightWeakTypePicker | int WeightWeakTypePicker(void * user, void * target, uchar moveType) | blue-verified | Reads `gTypeEffectivenessChart`; 3 arguments, like `pmd-red` |
+| ov_0001::0217BB94 | sub_806F370_Async | void sub_806F370_Async(void * pokemon, void * target, int dmg, int giveExp, bool * tookNoDamage, uchar moveType, short dungeonExitReason, int residualDmgType, int arg_10, int arg_14) | blue-verified | Same 10 arguments as `pmd-red`; Wonder Guard check through `gEffectivenessChart`, then `HandleDealingDamage_Async` |
+| ov_0001::0217BA94 | sub_806F4A4 | uchar sub_806F4A4(void * pokemon, uchar type) | blue-verified | Tests the target's two types for `EFFECTIVENESS_IMMUNE` in `gTypeEffectivenessChart`, like `pmd-red` |
+| ov_0001::0217E890 | HandleDealingDamage_Async | void HandleDealingDamage_Async(void * attacker, void * target, void * dmgStruct, bool isFalseSwipe, bool giveExp, short dungeonExitReason, bool arg8, int argC) | blue-verified | Called by `sub_806F370_Async` with 8 arguments, like `pmd-red` |
+| ov_0001::0218067C | AbilityIsActive | bool AbilityIsActive(void * entity, uchar ability) | blue-verified | Called with `0x35` (`ABILITY_WONDER_GUARD`) in `sub_806F370_Async`, like `pmd-red` |
+| ov_0001::021AAEE8 | gTypeEffectivenessChart | short[18][18] | blue-verified | Same 648 bytes as `pmd-red` (V6); row stride `0x24` in its 4 readers |
+| ov_0001::021AA588 | gEffectivenessChart | int[4][4] | blue-verified | Same 16 values as `pmd-red` |
+| ov_0001::021AA660 | gAtkStatStageMultipliers | int[21] | blue-verified | Same 21 s24.8 values as `pmd-red`; read by `CalcDamage` |
+| ov_0001::021AA6B4 | gDefStatStageMultipliers | int[21] | blue-verified | Same 21 s24.8 values as `pmd-red`; read by `CalcDamage` |
