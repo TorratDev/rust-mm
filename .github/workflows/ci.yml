@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Keep in sync with rust-toolchain.toml and fuzz/rust-toolchain.toml.
+  RUST_TOOLCHAIN: "1.97.0"
+  FUZZ_TOOLCHAIN: nightly-2026-10-01
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Headless SDL (V1, docs/verification.md).
+  SDL_VIDEO_DRIVER: offscreen
+  SDL_AUDIO_DRIVER: dummy
+  # CI has no ROM: ROM-gated tests skip (docs/rom-tests.md). Keep it empty so a
+  # runner-level setting cannot point the tests at a dump.
+  RESCUE_ROM: ""
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # SDL3 is built from the source bundled in the sdl3-src crate
+      # (feature build-from-source-static); Linux needs these headers or CMake fails.
+      # Same list as .github/workflows/verify.yml.
+      - name: Install SDL3 build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpulse-dev libpipewire-0.3-dev \
+            libjack-dev libsndio-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev \
+            libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libegl-dev libgl-dev \
+            libgles-dev libdbus-1-dev libudev-dev libwayland-dev libdecor-0-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Dependency rule (sim/data must not depend on SDL or platform crates)
+        shell: bash
+        run: scripts/check-deps.sh
+
+      - name: Determinism (no floats in sim/data)
+        shell: bash
+        run: scripts/check-determinism.sh
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --target ${{ matrix.target }} -- -D warnings
+
+      - name: Build
+        run: cargo build --locked --workspace --all-targets --target ${{ matrix.target }}
+
+      - name: Test (nextest)
+        run: cargo nextest run --locked --workspace --target ${{ matrix.target }} --no-tests=pass
+
+      - name: Doctests
+        run: cargo test --locked --workspace --doc --target ${{ matrix.target }}
+
+      # Opens the window on SDL's offscreen driver and stops after 120 ticks (~2 s).
+      - name: Smoke-run the game binary (headless)
+        shell: bash
+        run: target/${{ matrix.target }}/debug/rescue --frames 120
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: rescue-${{ matrix.target }}
+          if-no-files-found: error
+          path: |
+            target/${{ matrix.target }}/debug/rescue
+            target/${{ matrix.target }}/debug/rescue.exe
+            target/${{ matrix.target }}/debug/rescue-asset-viewer
+            target/${{ matrix.target }}/debug/rescue-asset-viewer.exe
+            target/${{ matrix.target }}/debug/rescue-trace-harness
+            target/${{ matrix.target }}/debug/rescue-trace-harness.exe
+
+  fuzz:
+    # cargo-fuzz needs nightly and a Unix-like OS (V2), so this job is Linux only.
+    name: Fuzz smoke (Linux, nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.FUZZ_TOOLCHAIN }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.13.2
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+
+      - name: Run each fuzz target briefly
+        run: |
+          for t in $(cargo +"$FUZZ_TOOLCHAIN" fuzz list); do
+            echo "::group::fuzz $t"
+            cargo +"$FUZZ_TOOLCHAIN" fuzz run "$t" -- -max_total_time=30
+            echo "::endgroup::"
+          done

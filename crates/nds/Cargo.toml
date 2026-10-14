@@ -1,0 +1,14 @@
+[package]
+name = "rescue-nds"
+description = "NDS container: cartridge header, filesystem (FNT/FAT), ARM9/ARM7 binaries, overlay table."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sha1.workspace = true

@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "tests"]
+# `verification/` holds the standalone Phase 0 probes (built by verify.yml).
+# `fuzz/` needs a nightly toolchain (cargo-fuzz) and is built on its own.
+exclude = ["verification", "fuzz"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+repository = "https://github.com/TorratDev/rust-mm"
+
+[workspace.dependencies]
+# Internal crates.
+rescue-nds = { path = "crates/nds" }
+rescue-formats = { path = "crates/formats" }
+rescue-data = { path = "crates/data" }
+rescue-sim = { path = "crates/sim" }
+rescue-save = { path = "crates/save" }
+rescue-audio = { path = "crates/audio" }
+rescue-render = { path = "crates/render" }
+rescue-platform = { path = "crates/platform" }
+
+# External crates. Versions are the ones confirmed by the Phase 0 probes
+# (verification/sdl3-probe, verification/v2-probe; see docs/verification.md).
+# Dependency rule: only `rescue-platform` and `apps/*` may use sdl3.
+# CI enforces it with scripts/check-deps.sh.
+sdl3 = { version = "=0.20.0", features = ["build-from-source-static"] }
+egui = "=0.36.2"
+eframe = "=0.36.2"
+# Whole-ROM identification (rescue-nds). RustCrypto, pure Rust, no default features.
+sha1 = { version = "=0.11.0", default-features = false }
+
+# Test-only.
+insta = "=1.49.0"
+proptest = "=1.12.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

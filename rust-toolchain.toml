@@ -1,0 +1,7 @@
+# Pinned stable toolchain for the workspace. Bump deliberately, together with
+# `rust-version` in Cargo.toml and RUST_TOOLCHAIN in .github/workflows/ci.yml.
+# `fuzz/` uses its own pinned nightly (fuzz/rust-toolchain.toml).
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
