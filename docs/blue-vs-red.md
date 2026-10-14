@@ -14,7 +14,7 @@ Blue is the ground truth. A row saying "same" means Blue's code was read and fou
 | Dungeon LCG and wrappers | `ov_0001` `DungeonRand16Bit`, `DungeonRandInt`, `DungeonRandRange`, `DungeonRandOutcome`, `_2` | `src/dungeon_random.c` | same, including the duplicated `DungeonRandOutcome_2` |
 | Floor seed | `GenerateDungeonRNGSeed` `ov_0001::0219D0C4`, preseed `& 0xFFFFFF \| 1` | same, `src/dungeon_random.c` | same |
 | Run preseed source | `RunDungeon_Async` `0206DC20`: rescue seed or `Rand32Bit() & 0xFFFFFF` | `RunDungeon_Async`, `src/run_dungeon.c` | same |
-| Seed fields in the dungeon struct | `+0x668` mission kind, `+0x66C` preseed, `+0x670` floor seed | `unk644` at `0x644`: `+0x34`, `+0x38`, `+0x3C` | same layout inside the sub-struct; **sub-struct starts 0x10 earlier in Blue** (`0x634`) |
+| Seed fields in the dungeon struct | `+0x668` mission kind, `+0x66C` preseed, `+0x670` floor seed | `unk644` at `0x644`: `+0x34`, `+0x38`, `+0x3C` | **sub-struct starts 0xC earlier in Blue** (`0x638`), and its fields from `+0x14` on sit 4 bytes earlier inside it ([`re/structs.md`](re/structs.md)) |
 | Mersenne Twister | `0200CCB0` / `0200CB40`, state `020DED24` | `src/random_mersenne_twister.c` | present in both; Blue's users not identified yet |
 | RNG per frame | No path from `MainLoops_RunFrameActions` to the global RNG within 4 call levels (static) | `WaitForNextFrameAndAdvanceRNG` advances it every frame, twice while A or Select is held | **probably removed in Blue**; confirm by emulator |
 

@@ -9,7 +9,7 @@ Dump: `BlueRescueTeamEur`. Rules for each column:
 - **Tag:** `blue-verified` (role read in Blue's code), `red-hypothesis` (role taken from `pmd-red`, not yet checked in Blue), `sdk-hypothesis` (NitroSDK function recognised by its behaviour), `tentative` (our own name, role only partly known).
 - **Evidence:** why the name fits. Names that come from `pmd-red` keep its spelling.
 
-Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md).
+Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md), [`re/structs.md`](re/structs.md).
 
 | Address | Name | Type | Tag | Evidence |
 |---------|------|------|-----|----------|
@@ -86,3 +86,12 @@ Topic pages: [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-mo
 | ov_0001::02140AC0 | sub_8044574_Async | void sub_8044574_Async(void) | blue-verified | `RunFractionalTurn_Async` call order |
 | ov_0001::021408F8 | sub_8044820_Async | void sub_8044820_Async(void) | blue-verified | `RunFractionalTurn_Async` call order |
 | ov_0001::021406F8 | sub_8044AB4 | void sub_8044AB4(void) | blue-verified | `RunFractionalTurn_Async` call order, last step |
+| ov_0001::0219C23C | GetLeader | void * GetLeader(void) | blue-verified | Returns the cached `gLeaderPointer`, else the first valid `teamPokemon` entry (dungeon `+0x11314`) whose info has `isTeamLeader` set, like `pmd-red` |
+| ov_0001::021B3F54 | gLeaderPointer | void * | blue-verified | Cache read and written by `GetLeader` |
+| ov_0001::02142AE4 | EntityIsValid | bool EntityIsValid(void * entity) | blue-verified | Non-null and `type != 0`, like `pmd-red` |
+| ov_0001::02181E58 | CalcSpeedStage | int CalcSpeedStage(void * pokemon) | blue-verified | Counts speed-up and speed-down counters, paralysis, species speed, Deoxys and Kecleon checks, clamps to 0–4, stores it; like `pmd-red` |
+| ov_0001::02185C70 | TickStatusAndHealthRegen | void TickStatusAndHealthRegen(void * entity) | blue-verified | HP regeneration (clamped 30–500) then status countdowns, like `pmd-red` |
+| ov_0001::02176B54 | TryActivateArtificialWeatherAbilities | void TryActivateArtificialWeatherAbilities(void) | blue-verified | `RunLeaderTurn_Async` call order |
+| ov_0001::0218766C | DisplayActions_Async | bool DisplayActions_Async(void * a0) | blue-verified | `RunLeaderTurn_Async` call order, argument `NULL` |
+| ov_0001::0213AFA8 | DungeonRunFrameActions | void DungeonRunFrameActions(uint a0) | blue-verified | `RunLeaderTurn_Async` call order, argument `12` |
+| ov_0001::021ABC84 | gSpeedTurns | short[5][25] | blue-verified | Same values as `pmd-red`; indexed by speed stage and `fractionalTurn` |

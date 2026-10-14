@@ -25,7 +25,7 @@ Before the loop it clears `dungeon+0x648` (Red: `unk644.unk10`, the floor-end re
 3. `sub_8044574_Async`, `sub_8044820_Async`, `sub_8044AB4` (in Red: the other monsters' turns and end-of-turn effects; names not checked in Blue yet)
 4. `fractionalTurn` (`dungeon+0x650`, Red: `unk644.fractionalTurn`) goes up by one and wraps at 24.
 
-The 24 fractional turns let monsters with different speeds act different numbers of times; in Red, `RunLeaderTurn_Async` looks up `gSpeedTurns[speed][fractionalTurn]` to decide whether the leader acts in this fractional turn.
+The 24 fractional turns let monsters with different speeds act different numbers of times: `RunLeaderTurn_Async` looks up `gSpeedTurns[CalcSpeedStage(leader)][fractionalTurn]` (`ov_0001::021ABC84`, `s16[5][25]`, same values as Red) to decide whether the leader acts in this fractional turn.
 
 ## For golden traces (V7)
 
@@ -44,10 +44,9 @@ The 24 fractional turns let monsters with different speeds act different numbers
 | `+0x670` | `unk644.unk3C` (floor seed) | `0x680` | [`rng.md`](rng.md) |
 | `+0x15FB0`, `+0x15FB1` | `unk181e8.unk18218`, `unk18219` | `0x18218`, `0x18219` | Blue's struct is about 0x2268 bytes shorter before these |
 
-Most fields sit 0x10 earlier than in Red; `unk644.unk10` sits only 0xC earlier, so the first part of the sub-struct differs slightly. This is input for [#46](https://github.com/TorratDev/rust-mm/issues/46).
+`unk644` starts at `0x638` (Red `0x644`); its fields from `+0x14` on are 4 bytes earlier inside it. The full map is in [`structs.md`](structs.md).
 
 ## Open questions
 
-- Check `gSpeedTurns` in Blue (table read by `RunLeaderTurn_Async`) against Red by value.
 - Name the three end-of-turn functions by their contents (other monsters' turns, status countdowns, belly, regeneration).
 - Confirm the trigger on the retail ROM with the V7 script.

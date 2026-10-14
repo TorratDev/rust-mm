@@ -55,7 +55,7 @@ Use: `DungeonRandInt` has 176 call sites in 86 functions, almost all in overlay 
 1. **Once per run** (not when resuming): if `dungeon+0x668` (Red: `unk644.missionKind`) is `DUNGEON_MISSION_OUTONRESCUE`, the preseed comes from the dungeon setup (`setup+0x14`, Red: `info.dungeonSeed.seed`). Otherwise it is `Rand32Bit() & 0xFFFFFF`. It is stored at `dungeon+0x66C` (Red: `unk644.prngPreseed23Bit`) and passed to `SetDungeonRNGPreseed23Bit`.
 2. **Once per floor:** `GenerateDungeonRNGSeed()` is stored at `dungeon+0x670` (Red: `unk644.unk3C`) and passed to `InitDungeonRNG`.
 
-The three fields sit at the same offsets inside Red's `unkDungeon644` sub-struct (`+0x34`, `+0x38`, `+0x3C`). That sub-struct starts at `0x634` in Blue and at `0x644` in Red, so the fields before it in the dungeon struct are 0x10 bytes shorter in Blue. This is input for #46.
+In Red these are `unkDungeon644` fields `+0x34`, `+0x38` and `+0x3C`. In Blue that sub-struct starts at `0x638` (Red `0x644`), and its fields from `+0x14` on are 4 bytes earlier, so these three are at `+0x30`, `+0x34`, `+0x38` inside it. Layout details: [`structs.md`](structs.md).
 
 **For golden traces (V7):** the floor seed follows from the run preseed, and the run preseed follows from the global LCG. So it is enough to capture `sPRNGState` at dungeon entry, or `dungeon+0x66C` and `dungeon+0x670`. The rescue path offers a way to set the preseed directly.
 
