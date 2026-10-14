@@ -196,6 +196,7 @@ Copy this section for each check.
     - 3 runs from power-on (and runs from savestates taken along the way): identical output, sha256 `1dfa3860…0555f3`.
     - Checks against [`re/rng.md`](re/rng.md), done by the script: in all 255 consecutive pairs, the dungeon RNG state is reachable from the previous one with `s * 0x5D588B65 + 1` (0–19 steps per fractional turn) and so is the global one (up to 672 steps). The first floor seed equals `GenerateDungeonRNGSeed` applied once to `(runSeed | 1) & 0xFFFFFF`, the preseed state after it matches, and the dungeon RNG state is 1,812 steps after `InitDungeonRNG(floorSeed)` (floor generation).
     - Speed: about 40 s for the whole run (boot replay plus trace) on a desktop PC.
+    - The same replay drives [`floor_oracle.py`](../verification/v7-trace/floor_oracle.py), which forces the dungeon RNG at `GenerateFloor` and shows that the floor depends only on that state (results in [`re/dungeon-generation.md`](re/dungeon-generation.md#emulator-check)).
 - **Outcome:** confirmed. A scripted DeSmuME run dumps the dungeon state once per turn, byte-identically across runs, on the retail ROM. Still open: the Windows CI result for the synthetic-ROM job.
 - **Fallback adopted:** none. The melonDS GDB stub stays the fallback; the DeSmuME GDB stub shows that route works but is slow and has no input playback.
 - **Notes:**

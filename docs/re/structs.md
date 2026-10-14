@@ -113,7 +113,7 @@ In Blue it starts at `0x638`. Its first field checked, `unk10`, is at Red's rela
 |------|-----------|-----|-------|
 | `+0x00` | `terrainFlags` (u16) | `0x00` | `0x10` = impassable wall (set on the map border by `ResetFloor`) |
 | `+0x02` | `spawnOrVisibilityFlags` (u16) | `0x04` | |
-| `+0x04` | `unk8` | `0x08` | |
+| `+0x04` | `unk8`: graphics variant, picked with the global RNG; cosmetic ([`dungeon-generation.md`](dungeon-generation.md#emulator-check)) | `0x08` | |
 | `+0x05` | `room` (`0xFF` = none) | `0x09` | |
 | `+0x06` | `walkableNeighborFlags[4]` | `0x0A` | one byte per crossable-terrain kind |
 | `+0x0A` | `unkE` | `0x0E` | |
