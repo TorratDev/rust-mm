@@ -217,7 +217,7 @@ def main():
                "turnValues": sorted({r["fractionalTurn"] for r in rows})}
     if rows:
         summary.update(check(rows))
-    print(json.dumps(summary), flush=True)
+    print("\n" + json.dumps(summary), file=sys.stderr, flush=True)
     emu.destroy()  # libdesmume ends the process here
 
 

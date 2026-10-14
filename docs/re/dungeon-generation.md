@@ -1,6 +1,6 @@
 # Dungeon floor generation
 
-How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://github.com/TorratDev/rust-mm/issues/48). Names, addresses and tags are in [`symbols.md`](../symbols.md). The code is in overlay 1 and matches `pmd-red`'s `src/dungeon_generation.c` function for function. Not confirmed by emulator trace yet.
+How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://github.com/TorratDev/rust-mm/issues/48). Names, addresses and tags are in [`symbols.md`](../symbols.md). The code is in overlay 1 and matches `pmd-red`'s `src/dungeon_generation.c` function for function. The inputs and outputs are checked by emulator on the retail ROM (see below); the internal steps are read in code only.
 
 ## Entry point
 
@@ -34,9 +34,17 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 8. `GetFloorType` and `StairsAlwaysReachable(x, y, FALSE)`: if the stairs cannot be reached, `ResetFloor` and fall back to `GenerateOneRoomMonsterHouseFloor`, then finalise and spawn again (same as Red).
 9. Final calls (`sub_806C330`, `sub_8051654`, `sub_804B534(0, 0, 56, 32)`, `sub_804FC74`), then `CloseFile`.
 
-## For bit-exact generation
+## Emulator check
 
-The order of RNG calls in `GenerateFloor` and the direct calls of every generator match Red. Before porting, compare each generator's internal call order with Red's source and confirm the result on the retail ROM: dump the tile grid after `GenerateFloor` for a known floor seed (dungeon `+0x670`) and compare. The grid layout is in [`structs.md`](structs.md#tile): 56 × 32 tiles of 0x14 bytes at dungeon `+0x34B8`.
+[`verification/v7-trace/floor_oracle.py`](../../verification/v7-trace/floor_oracle.py) replays the retail ROM to the first dungeon floor, then for each case forces the dungeon RNG state at `GenerateFloor`'s entry (and optionally the global RNG state) and records the generated floor at the first turn: a layout hash, per-field hashes of the tile grid, stairs, room count, terrain counts, and the number of dungeon RNG steps used. It stores hashes and counts only.
+
+Results (2026-10-14, 5 seeds × 3 global RNG values, plus the floor's natural seed):
+
+- **The floor is a function of the dungeon RNG state at `GenerateFloor`'s entry.** For each seed, terrain, spawn/visibility flags, rooms, walkability, `unkE`, monster placement and item placement are identical whatever the global RNG state; every seed gives a different layout; the same seed always gives the same floor and uses the same number of RNG steps (1,225 to 2,029 in these cases).
+- **One tile byte follows the global RNG:** `+0x04` (Red `unk8`) is a graphics variant (an index into the tileset's cell table), which Red picks with the global `RandInt(4)` in `sub_80498A8`. It is cosmetic; the layout hash zeroes it.
+- **The natural seed reproduces the real run:** forcing the seed the game picks itself gives the same floor (stairs `(23, 8)`, 3 rooms, 1,802 RNG steps) as the unforced replay.
+
+So the generator's inputs are the dungeon RNG state and the floor properties. A reimplementation can be tested against `floor_oracle.py`: generate a floor from the same seed and compare the layout hash, stairs and RNG step count. The reimplementation must be original code written from this description and our own analysis of Blue, not a translation of `pmd-red`'s source ([`legal.md`](../legal.md)).
 
 ## Dungeon struct offsets seen here
 
@@ -54,4 +62,4 @@ The gap grows from −8 at `0x5C0` to −0x4A0 at `0x3800` and −0x560 at `0x3A
 ## Open questions
 
 - Each generator's internal RNG order (sub-functions such as room and corridor placement).
-- Emulator check of one generated floor.
+- Write the reimplementation (`crates/sim`) and test it against `floor_oracle.py`.
