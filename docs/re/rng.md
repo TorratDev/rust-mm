@@ -4,7 +4,7 @@ Blue has three random number generators. All three match generators in the `pmd-
 
 Dump: `BlueRescueTeamEur` ([`supported-dumps.md`](../supported-dumps.md)). Addresses are RAM addresses. `ov_0001::` marks code in overlay 1, which is loaded while a dungeon runs; plain addresses are in the ARM9 binary. The names are applied to a Ghidra project by [`tools/ghidra/RescueRngLabels.java`](../../tools/ghidra/RescueRngLabels.java), which checks each constant below before it changes anything.
 
-Tags: **[blue-verified]** means read in Blue's code; **[red-hypothesis]** means taken from `pmd-red` and not yet confirmed in Blue (see [#43](https://github.com/TorratDev/rust-mm/issues/43)). Nothing here is confirmed by an emulator capture yet.
+Tags: **[blue-verified]** means read in Blue's code; **[red-hypothesis]** means taken from `pmd-red` and not yet confirmed in Blue (see [#43](https://github.com/TorratDev/rust-mm/issues/43)). The LCG step of both generators and the dungeon seed chain are also confirmed on the retail ROM by emulator (V7 in [`verification.md`](../verification.md#v7--scriptable-ds-emulator-for-ram-and-rng-dumps)).
 
 ## Summary
 
@@ -68,5 +68,4 @@ In Red these are `unkDungeon644` fields `+0x34`, `+0x38` and `+0x3C`. In Blue th
 - Sort the dungeon RNG call sites by subsystem (#48, #50, #52).
 - Identify the two Mersenne Twister users.
 - Confirm the role of `0202A1AC` and `0202A53C` (save load and save write?) when the save format is studied (#53).
-- Confirm the sequences by emulator capture (#17): step the game, read `sPRNGState` and `gDungeonRngState`, and compare with this algorithm.
 - `pmd-red`'s `src/other_random.c` documents a fourth, 16-bit generator with NDS addresses (`arm9.bin::020127F4`). Those addresses do not match this dump (the code at `020127F4` here is something else), so they appear to come from another Blue build. Look for it by its constants (multiplier 109, increment 1021).

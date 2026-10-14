@@ -1,6 +1,6 @@
 # Turn loop
 
-How a dungeon floor advances, turn by turn. Issue: [#49](https://github.com/TorratDev/rust-mm/issues/49). Names, addresses and tags are in [`symbols.md`](../symbols.md). The code is in overlay 1 ([`execution-model.md`](execution-model.md)) and matches `pmd-red`'s `src/dungeon_engine.c` call for call. Not confirmed by emulator trace yet.
+How a dungeon floor advances, turn by turn. Issue: [#49](https://github.com/TorratDev/rust-mm/issues/49). Names, addresses and tags are in [`symbols.md`](../symbols.md). The code is in overlay 1 ([`execution-model.md`](execution-model.md)) and matches `pmd-red`'s `src/dungeon_engine.c` call for call. Confirmed by emulator on the retail ROM: the trigger fires on every fractional turn and `fractionalTurn` cycles through 0–23 (V7).
 
 ## The floor loop
 
@@ -49,4 +49,3 @@ The 24 fractional turns let monsters with different speeds act different numbers
 ## Open questions
 
 - Name the three end-of-turn functions by their contents (other monsters' turns, status countdowns, belly, regeneration).
-- Confirm the trigger on the retail ROM with the V7 script.
