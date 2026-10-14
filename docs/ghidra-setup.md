@@ -83,6 +83,16 @@ Each overlay gets its own overlay address space, because several overlays share 
 
 The GUI path uses the same script, but it has not been run in this repository's tests (only the headless path has, see below).
 
+## 2c. Find the rest of the overlay code
+
+Auto-analysis only follows code from entry points it knows, and it leaves literal-pool words untyped, so references through them are missing. On the supported dump only overlays 0, 1 and 7 hold code (the other 142 are data, see V8 in [`verification.md`](verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses)). After the import, run [`RescueOverlayDiscover.java`](../tools/ghidra/RescueOverlayDiscover.java) on those three:
+
+```powershell
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueOverlayDiscover.java -- all ov_0000 ov_0001 ov_0007
+```
+
+(or from the Script Manager, category *NDS*, with the same arguments). It creates functions at ARM prologues and after function returns, re-runs analysis, and types pool words that point into the same overlay or the ARM9 as pointers. On the supported dump: 112 more functions and 3,621 pool pointers. A second run changes nothing. Without arguments it processes only overlays that have no functions; `dry` counts candidates without changing anything.
+
 ## 3. What success looks like
 
 The headless wrapper prints lines like these (from the synthetic test ROM; your dump has many more blocks):
@@ -152,4 +162,4 @@ Things to know:
 ## Tested so far
 
 - **2026-10-14, Linux, sandbox, no retail dump.** Ghidra 11.4.3 (`ghidra_11.4.3_PUBLIC_20251203.zip`), OpenJDK 21.0.12. Synthetic ROM from [`tools/tests/synth_nds.py`](../tools/tests/synth_nds.py) (`--compress-arm9`: BLZ-compressed ARM9, two autoloads, three overlays, two of them BLZ-compressed, two sharing `0x02100000`). `import.sh` mapped 12 blocks. Analysis found the overlay functions from their static-initialiser entries. Calls from all three overlays to `0x02000020` resolved to the ARM9, and each overlay's literal-pool pointer resolved inside its own overlay space. `import.ps1` was not run (the test session could not run PowerShell).
-- **2026-10-14, Windows 11, supported dump.** Ghidra 12.1.4, JDK 25.0.4, headless import wrapper. All 145 overlays mapped (154 blocks); auto-analysis found functions in `arm9` and overlays 0, 1, 2 and 7 only. Details in V8 of [`verification.md`](verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses). ghidra-cli v0.2.2 used against the same project (section 6).
+- **2026-10-14, Windows 11, supported dump.** Ghidra 12.1.4, JDK 25.0.4, headless import wrapper. All 145 overlays mapped (154 blocks); auto-analysis found functions in `arm9` and overlays 0, 1, 2 and 7 only; the other overlays are data. After `RescueOverlayDiscover.java` (step 2c), the type-chart check finds 4 references. Details in V8 of [`verification.md`](verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses). ghidra-cli v0.2.2 used against the same project (section 6).
