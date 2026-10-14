@@ -6,7 +6,7 @@
 //   global LCG (ARM9)    sPRNGState, SeedRng, Rand16Bit, Rand32Bit, RandInt, RandRange, ...
 //   dungeon LCG (ov_0001) gDungeonRngState, DungeonRand16Bit, DungeonRandInt, ...
 //   Mersenne Twister     sStateArray, MersenneTwister_InitializeState, Random32MersenneTwister
-// plus the two callers that seed the dungeon RNG (names tentative).
+// plus the two callers that seed the dungeon RNG.
 //
 // Before changing anything it checks literal pools and tables for the expected constants
 // (LCG multiplier 0x5D588B65, SeedRng constant 0xD305, MT 0x6C078965 / 0x9908B0DF). If any
@@ -65,8 +65,8 @@ public class RescueRngLabels extends GhidraScript {
 		{ ARM9, 0x020118ecL, "SetRNGSeed", "void f(int state)" },
 		{ ARM9, 0x0200ccb0L, "MersenneTwister_InitializeState", "void f(uint seed)" },
 		{ ARM9, 0x0200cb40L, "Random32MersenneTwister", "int f(void)" },
-		{ ARM9, 0x0206dc20L, "RunDungeon", null },
-		{ ARM9, 0x0201db70L, "RunDungeonMode", null },
+		{ ARM9, 0x0206dc20L, "RunDungeon_Async", null },
+		{ ARM9, 0x0201db70L, "LoadAndRunDungeon_Async", null },
 		{ OV1, 0x0219d07cL, "DungeonRand16Bit", "int f(void)" },
 		{ OV1, 0x0219d058L, "DungeonRandInt", "int f(int cap)" },
 		{ OV1, 0x0219d014L, "DungeonRandRange", "int f(int low, int high)" },
@@ -77,8 +77,8 @@ public class RescueRngLabels extends GhidraScript {
 		{ OV1, 0x0219d124L, "SetDungeonRNGPreseed23Bit", "void f(uint preseed23)" },
 	};
 
-	private static final String TENTATIVE =
-		"Name tentative: matched to pmd-red RunDungeon_Async by its RNG seeding only.";
+	private static final String RUN_DUNGEON_NOTE =
+		"Matches pmd-red RunDungeon_Async by its RNG seeding.";
 
 	private AddressSpace arm9;
 	private AddressSpace ov1;
@@ -113,11 +113,11 @@ public class RescueRngLabels extends GhidraScript {
 		for (Object[] f : FUNCTIONS) {
 			apply(at((String) f[0], (Long) f[1]), (String) f[2], (String) f[3]);
 		}
-		setPlateComment(at(ARM9, 0x0206dc20L), TENTATIVE + " Seeds: dungeon+0x668 missionKind " +
+		setPlateComment(at(ARM9, 0x0206dc20L), RUN_DUNGEON_NOTE + " Seeds: dungeon+0x668 missionKind " +
 			"(OUTONRESCUE: preseed from setup+0x14, else Rand32Bit() & 0xFFFFFF), " +
 			"+0x66c preseed, +0x670 floor seed = GenerateDungeonRNGSeed().");
 		setPlateComment(at(ARM9, 0x0201db70L),
-			"Name tentative: loads the dungeon overlays, calls RunDungeon, unloads them.");
+			"Matches pmd-red LoadAndRunDungeon_Async: swaps overlay 0 for the language text overlay and overlay 1, runs RunDungeon_Async, swaps back.");
 
 		say("--- check");
 		checkGlobal(at(ARM9, 0x020df704L), "sPRNGState");

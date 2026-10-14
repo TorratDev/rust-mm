@@ -48,9 +48,9 @@ Use: 25 call sites of `Rand32Bit` (16 functions), 42 of `RandInt` (28 functions)
 
 Use: `DungeonRandInt` has 176 call sites in 86 functions, almost all in overlay 1. `DungeonRandRange` has 62 call sites (19 functions), and the two `DungeonRandOutcome` functions have 9. Sorting these call sites by subsystem (floor generation, combat, AI, items) is still to do. It feeds #48, #50 and #52.
 
-## Seeding a dungeon run [blue-verified, names tentative]
+## Seeding a dungeon run [blue-verified]
 
-`RunDungeon` (`0206DC20`, ARM9) matches `RunDungeon_Async` in Red's `src/run_dungeon.c` by its seeding code. `RunDungeonMode` (`0201DB70`) loads the dungeon overlays, calls `RunDungeon`, then unloads them. `RunDungeon` reaches the dungeon struct through the pointer at `DAT_0206EBF0` (`gDungeon` in Red).
+`RunDungeon_Async` (`0206DC20`, ARM9) matches Red's `RunDungeon_Async` (`src/run_dungeon.c`) by its seeding code. `LoadAndRunDungeon_Async` (`0201DB70`) loads the dungeon overlays, calls it, then unloads them (see [`execution-model.md`](execution-model.md)). `RunDungeon_Async` reaches the dungeon struct through the pointer at `DAT_0206EBF0` (`gDungeon` in Red).
 
 1. **Once per run** (not when resuming): if `dungeon+0x668` (Red: `unk644.missionKind`) is `DUNGEON_MISSION_OUTONRESCUE`, the preseed comes from the dungeon setup (`setup+0x14`, Red: `info.dungeonSeed.seed`). Otherwise it is `Rand32Bit() & 0xFFFFFF`. It is stored at `dungeon+0x66C` (Red: `unk644.prngPreseed23Bit`) and passed to `SetDungeonRNGPreseed23Bit`.
 2. **Once per floor:** `GenerateDungeonRNGSeed()` is stored at `dungeon+0x670` (Red: `unk644.unk3C`) and passed to `InitDungeonRNG`.

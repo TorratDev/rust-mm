@@ -13,8 +13,19 @@ Blue is the ground truth. A row saying "same" means Blue's code was read and fou
 | `SetRNGSeed` | `020118EC`: set, then advance once through `Rand32Bit` | same, `src/random.c` | same |
 | Dungeon LCG and wrappers | `ov_0001` `DungeonRand16Bit`, `DungeonRandInt`, `DungeonRandRange`, `DungeonRandOutcome`, `_2` | `src/dungeon_random.c` | same, including the duplicated `DungeonRandOutcome_2` |
 | Floor seed | `GenerateDungeonRNGSeed` `ov_0001::0219D0C4`, preseed `& 0xFFFFFF \| 1` | same, `src/dungeon_random.c` | same |
-| Run preseed source | `RunDungeon` `0206DC20`: rescue seed or `Rand32Bit() & 0xFFFFFF` | `RunDungeon_Async`, `src/run_dungeon.c` | same |
+| Run preseed source | `RunDungeon_Async` `0206DC20`: rescue seed or `Rand32Bit() & 0xFFFFFF` | `RunDungeon_Async`, `src/run_dungeon.c` | same |
 | Seed fields in the dungeon struct | `+0x668` mission kind, `+0x66C` preseed, `+0x670` floor seed | `unk644` at `0x644`: `+0x34`, `+0x38`, `+0x3C` | same layout inside the sub-struct; **sub-struct starts 0x10 earlier in Blue** (`0x634`) |
 | Mersenne Twister | `0200CCB0` / `0200CB40`, state `020DED24` | `src/random_mersenne_twister.c` | present in both; Blue's users not identified yet |
+| RNG per frame | No path from `MainLoops_RunFrameActions` to the global RNG within 4 call levels (static) | `WaitForNextFrameAndAdvanceRNG` advances it every frame, twice while A or Select is held | **probably removed in Blue**; confirm by emulator |
 
 Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Twister. The Mersenne Twister is not Red's main generator.
+
+## Execution model ([`re/execution-model.md`](re/execution-model.md))
+
+| Item | Blue | Red (`pmd-red`) | Verdict |
+|------|------|-----------------|---------|
+| Start-up | `GameLoop_Async` `0201F2E4` | `GameLoop_Async`, `src/main_loops.c` | same calls in the same order; Blue adds a 4 KiB memory check before reading the save |
+| Language | Set from a console record when unset; text per language in overlays 2–6 | single language | **Blue only** |
+| Title menu | choices 2, 3, 4 as in Red, plus choice 5 (`RunOverlay7Mode`, overlay 7) | choices 2, 4, `MENU_NEW_GAME` | **one extra mode in Blue** |
+| Ground and dungeon code | overlays 0 and 1, swapped by `NDS_LoadOverlay_GroundMain` and `LoadAndRunDungeon_Async` | always resident; the load points are empty stubs | NDS overlay swap |
+| Quicksave dungeon entry | `LoadAndRunQuickSaveDungeon_Async` `0201E204` | same, `src/main_loops.c` | same steps |

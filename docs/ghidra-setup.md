@@ -93,6 +93,17 @@ ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueOv
 
 (or from the Script Manager, category *NDS*, with the same arguments). It creates functions at ARM prologues and after function returns, re-runs analysis, and types pool words that point into the same overlay or the ARM9 as pointers. On the supported dump: 112 more functions and 3,621 pool pointers. A second run changes nothing. Without arguments it processes only overlays that have no functions; `dry` counts candidates without changing anything.
 
+## 2d. Apply the known names
+
+[`symbols.md`](symbols.md) lists every function and global named so far. [`RescueApplySymbols.java`](../tools/ghidra/RescueApplySymbols.java) applies the whole table (names, signatures, data types), then checks each row and ends with `all checks passed`. [`RescueRngLabels.java`](../tools/ghidra/RescueRngLabels.java) does the same for the RNG and also checks the RNG constants.
+
+```powershell
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueRngLabels.java
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueApplySymbols.java
+```
+
+Both are safe to run again after you add rows.
+
 ## 3. What success looks like
 
 The headless wrapper prints lines like these (from the synthetic test ROM; your dump has many more blocks):
