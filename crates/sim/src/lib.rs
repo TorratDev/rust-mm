@@ -7,4 +7,5 @@
 #![deny(clippy::float_arithmetic)]
 #![deny(clippy::disallowed_types, clippy::disallowed_methods)]
 
+pub mod floor;
 pub mod rng;
