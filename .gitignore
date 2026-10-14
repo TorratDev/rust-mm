@@ -48,6 +48,11 @@ roms/
 *.mln
 *.State
 
+# Ghidra projects hold game code (see docs/ghidra-setup.md, docs/legal.md)
+*.gpr
+*.rep/
+*.gzf
+
 # Local read-only reference checkouts (pret/pmd-red, see docs/references.md)
 /reference/
 
