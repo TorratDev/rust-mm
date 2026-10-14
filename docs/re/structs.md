@@ -143,6 +143,26 @@ Blue's struct is 0x23C bytes (Red 0x268). The difference is packing: Blue stores
 
 **Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` takes a free slot, then `SpawnItem` copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field. An item entity has `type` 3 (`ENTITY_ITEM`).
 
+## Recruited Pokémon
+
+The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1Bits` (`02003E1C`), which writes each field in turn; they match `pmd-red`'s Blue notes in `include/structs/str_pokemon.h` field for field. Size `0x40` (Red `0x58`).
+
+| Blue | Field | Red |
+|------|-------|-----|
+| `+0x03` | `level` | `0x03` |
+| `+0x04` | `dungeonLocation` | `0x04` |
+| `+0x06` | `speciesNum` | `0x08` |
+| `+0x08`, `+0x09` | `unkC[2]` (levels) | `0x0C` |
+| `+0x0A` | `IQ` | `0x14` |
+| `+0x0C` | `pokeHP` | `0x16` |
+| `+0x0E`–`+0x11` | `offense` (attack, sp. attack, defense, sp. defense) | `0x18` |
+| `+0x14` | `currExp` | `0x1C` |
+| `+0x18` | `IQSkills` (24 bits) | `0x20` |
+| `+0x1B` | `tacticIndex` | `0x24` |
+| `+0x1C` | `heldItem` (2-byte `BulkItem`) | `0x28` |
+| `+0x1E` | `moves[4]` (6 bytes each) | `0x2C` |
+| `+0x36` | `name[10]` | `0x4C` |
+
 ## RAM for golden traces
 
 What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) should read on each turn trigger ([`turns.md`](turns.md)), all through the pointer in `gDungeon`:

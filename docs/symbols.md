@@ -186,3 +186,21 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 0200DB80 | SaveMailInfo | uint SaveMailInfo(void * r0, uint size) | blue-verified | `WriteSavetoPak` section order, size 0x221 |
 | 0200DD5C | RestoreMailInfo | uint RestoreMailInfo(void * r0, uint size) | blue-verified | `ReadSaveFromPak` section order, size 0x221 |
 | 020E0490 | gUnknown_203B184 | void * | blue-verified | Debug save-state pointer tested by `ReadSaveFromPak` and `WriteSavetoPak`, like `pmd-red` |
+| 0200C190 | InitBitWriter | void InitBitWriter(void * seri, void * buffer, int bufLen) | blue-verified | Sets the stream and clears the buffer, like `pmd-red` |
+| 0200C1BC | InitBitReader | void InitBitReader(void * seri, void * buffer, int bufLen) | blue-verified | First call of every `Restore*` section function, like `pmd-red` |
+| 0200C18C | FinishBitSerializer | void FinishBitSerializer(void * seri) | blue-verified | Empty, like `pmd-red` |
+| 0200C0F4 | WriteBits | void WriteBits(void * seri, void * src, int numBits) | blue-verified | LSB-first bit writer, same loop as `pmd-red` |
+| 0200C050 | ReadBits | void ReadBits(void * seri, void * dst, int numBits) | blue-verified | Used by every `Restore*` section function with the same widths |
+| 020067CC | WriteItemSlotBits | void WriteItemSlotBits(void * seri, void * slot) | blue-verified | 8, 7, 8 bits, like `pmd-red` |
+| 0200680C | ReadItemSlotBits | void ReadItemSlotBits(void * seri, void * slot) | blue-verified | `RestoreTeamInventory` call order |
+| 0200684C | WriteHeldItemBits | void WriteHeldItemBits(void * seri, void * item) | blue-verified | 8, 7 bits, like `pmd-red` |
+| 0200687C | ReadHeldItemBits | void ReadHeldItemBits(void * seri, void * item) | blue-verified | `RestoreTeamInventory` call order |
+| 0200617C | WriteDungeonLocationBits | void WriteDungeonLocationBits(void * seri, void * loc) | blue-verified | 7, 7 bits, like `pmd-red` |
+| 02003E1C | WritePoke1Bits | void WritePoke1Bits(void * seri, void * pokemon) | blue-verified | Same field order and widths as `pmd-red` |
+| 0200388C | WritePoke1LevelBits | void WritePoke1LevelBits(void * seri, void * unkC) | blue-verified | Tail call to `WriteBits` with 7 bits |
+| 020094D8 | WritePoke1MovesBits | void WritePoke1MovesBits(void * seri, void * moves) | blue-verified | 4 × `WritePoke1MoveBits` |
+| 02009550 | WritePoke1MoveBits | void WritePoke1MoveBits(void * seri, void * move) | blue-verified | 4, 9, 7 bits, like `pmd-red` |
+| 020093F8 | WritePoke2MovesBits | void WritePoke2MovesBits(void * seri, void * moves) | blue-verified | `SavePoke2s` call order |
+| 0200B944 | WriteBellyBits | void WriteBellyBits(void * seri, void * belly) | blue-verified | 16, 16 bits, like `pmd-red` |
+| 0200382C | WriteHiddenPowerBits | void WriteHiddenPowerBits(void * seri, void * hiddenPower) | blue-verified | 10, 5 bits, like `pmd-red` |
+| 0200CEEC | sub_8095824 | void sub_8095824(void * a, void * b) | blue-verified | Same 13-field mail record as `pmd-red` |

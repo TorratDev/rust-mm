@@ -48,7 +48,44 @@ Offsets are from `0x44C`. Sizes and order are the same as in Red; each section h
 | `0x4B98` | `0x594` | (unnamed in Red) | `sub_80954CC` / `sub_8095624` |
 | `0x512C` | `0x221` | mail | `RestoreMailInfo` / `SaveMailInfo` |
 
-The sections end at `0x534D`, inside the `0x57D8` block. The contents of each section (Red packs them bit by bit) are not decoded yet.
+The sections end at `0x534D`, inside the `0x57D8` block.
+
+## Section encoding
+
+Every section except the script variables is **bit-packed** with the same serializer as Red (`src/data_serializer.c`), matched function by function:
+
+- `InitBitWriter` clears the section buffer; `WriteBits(seri, src, n)` copies the lowest `n` bits of `src`, **least significant bit first**, into the stream, filling each byte from bit 0 up. `ReadBits` is the reverse; `FinishBitSerializer` does nothing.
+- A section's result value in the header is the serializer's bit position inside its last byte (0–7) when the section ended; on load, the reader must end at the same position.
+- Multi-byte values are written from their lowest byte up, so a 24-bit field holds the low 3 bytes of a little-endian integer.
+
+The sequence of field widths in each section is the same as in Red's save functions. This was checked by extracting, for each section, every `WriteBits` width in call order (following helper calls) from Blue's code and from Red's source, and comparing the two lists:
+
+| Section | Red function (field list) | Writes compared | Result |
+|---------|---------------------------|-----------------|--------|
+| Recruited Pokémon | `SaveRecruitedPokemon`, `WritePoke1Bits` | per Pokémon record | same |
+| `Poke2` records | `SavePoke2s` | 34 field widths | same |
+| Team inventory | `SaveTeamInventory` | all | same (below) |
+| Rescue team info | `SaveRescueTeamInfo` | 3 | same |
+| Friend areas | `SaveFriendAreas` | 1 per area | same |
+| Adventure data | `SaveAdventureData` | 32 | same (`learnedMoves` is 13 × 32 bits in both) |
+| Mail and rescue records | `sub_8095624`, `sub_8095824` | all | same |
+| Mail info | `SaveMailInfo` | 44 | same |
+| Script variables | `SaveGlobalScriptVars` | — | raw 0x400-byte copy in both |
+
+So each field's meaning and width can be read from those `pmd-red` functions.
+
+### Example: team inventory
+
+| Field | Count | Bits each |
+|-------|-------|-----------|
+| team items (`flags` 8, `quantity` 7, `id` 8) | 20 | 23 |
+| storage counts | 240 | 10 |
+| Kecleon shop items (`id` 8, `quantity` 7) | 8 | 15 |
+| Kecleon wares | 4 | 15 |
+| money | 1 | 24 |
+| savings | 1 | 24 |
+
+That is 3,088 bits (386 bytes) of the 0x1D8-byte section.
 
 ## Checks on load
 
@@ -66,5 +103,5 @@ The sections end at `0x534D`, inside the `0x57D8` block. The contents of each se
 
 - The quicksave (suspended dungeon) area: it uses a separate buffer of `0x4800` bytes (`PrepareQuickSaveRead`); find its sector.
 - What `unk418` and `unk41C` hold.
-- Decode each section, starting with the team inventory against [`re/structs.md`](../re/structs.md#moves-items-and-inventory).
+- Name every field of the remaining sections in Rust types, following the `pmd-red` functions listed above.
 - Check all of this on a real save file (local only).
