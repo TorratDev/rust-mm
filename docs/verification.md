@@ -13,7 +13,7 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
 | V6 | Blue reuses Red's data tables and constants | Phase 3 | Partial — 1 of 3 required tables shared by value; 2 unresolved |
 | V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | Partial — py-desmume script with savestate, fixed inputs and exec trigger gives byte-identical dumps over 3 runs on Linux, on a synthetic test ROM; retail Blue run and Windows CI result pending |
-| V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | Blocked — Ghidra not installed; not downloadable from this session |
+| V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | Pending — mapping tooling ready and run end to end on a synthetic ROM with Ghidra 11.4.3; retail run needs the user's dump ([`ghidra-setup.md`](ghidra-setup.md)) |
 | V9 | REA supports the planned Ghidra workflow on ARM DS binaries | Phase 3 | Pending — depends on V8 for the run; README reviewed |
 
 Outcome values: **confirmed**, **partial**, **replaced** (fallback adopted), **blocked**, **pending**.
@@ -200,12 +200,16 @@ Copy this section for each check.
 ## V8 — Ghidra loads ARM9 and overlays at real addresses
 
 - **Assumption:** Ghidra can load the ARM9 binary and its overlays at their real addresses, through an existing NDS loader or a custom script.
-- **Date:** 2026-10-13
-- **Environment:** Ghidra is not installed. Not in the apt repositories used here. The GitHub release download is refused by this session's proxy (HTTP 403).
-- **Evidence:** —
-- **Outcome:** blocked. Needs Ghidra installed by the user, or a download path the session can reach.
-- **Fallback adopted:** none.
-- **Notes:** The overlay table layout needed for the mapping is already parsed by [`tools/nds_survey.py`](../tools/nds_survey.py) (overlay ID, file ID, flags).
+- **Date:** 2026-10-14 (tooling, synthetic ROM); retail run pending.
+- **Environment:** Linux sandbox, Ghidra 11.4.3 (`ghidra_11.4.3_PUBLIC_20251203.zip`; the GitHub release download now works from the session, the earlier HTTP 403 is gone), OpenJDK 21.0.12, Python 3.13. No retail dump in the session.
+- **Evidence:**
+  - Took the "If false" route (a script of our own); no NDS loader extension tried yet. Setup and usage: [`ghidra-setup.md`](ghidra-setup.md).
+  - [`tools/nds_extract_code.py`](../tools/nds_extract_code.py) checks the dump's SHA-1 and writes `arm9.bin` (BLZ-decoded if compressed), every ARM9 overlay (BLZ-decoded when flag bit 24 is set) and a `manifest.json` memory map (module params, static BSS, autoload sections, overlay RAM ranges, BSS, static initialisers). Unit tests on synthetic ROMs in [`tools/tests`](../tools/tests); its BLZ decoder agrees with `ndspy` in both directions.
+  - [`tools/ghidra/RescueNdsImport.java`](../tools/ghidra/RescueNdsImport.java) maps ARM9 static + BSS, the autoload sections at their destinations, and each overlay as its own Ghidra overlay block (plus its BSS in the same overlay space), with language `ARM:LE:32:v5t`. Headless wrappers: [`import.sh`](../tools/ghidra/import.sh), [`import.ps1`](../tools/ghidra/import.ps1).
+  - Synthetic end-to-end run (`tools/tests/synth_nds.py --compress-arm9`, then `import.sh ... --check ov_0000+0x14 ov_0001+0x14 ov_0002+0x14 arm9+0x20`): 12 blocks. Two overlays share `0x02100000` as `ov_0000::02100000` and `ov_0001::02100000`. Calls from all three overlays to `0x02000020` resolve to the ARM9 function. Each overlay's literal-pool pointer resolves inside its own overlay space (`from ov_0001::02100008 DATA in ov_0001_start`).
+- **Outcome:** pending. The tooling works on synthetic data. Confirming V8 needs the run on the retail dump: all ARM9 overlays mapped, and a resolving reference to `gTypeEffectivenessChart` at `ov_0001+0x72688` (steps in [`ghidra-setup.md`](ghidra-setup.md#4-record-the-v8-result)).
+- **Fallback adopted:** none yet (the script is the roadmap fallback, now available).
+- **Notes:** `import.ps1` has not been run (the session could not run PowerShell). The GUI path uses the same script but has not been exercised. Calls from ARM9 code into overlay ranges cannot resolve statically (Ghidra cannot know which overlay is loaded); that is expected.
 
 ---
 
@@ -217,4 +221,4 @@ Copy this section for each check.
 - **Evidence:** README reviewed. Native analysis is driven by an external Hopper, Ghidra or IDA install. Setup is `npx rea-agents setup`.
 - **Outcome:** pending. The README confirms the Ghidra dependency, so the run waits on V8.
 - **Fallback adopted:** none.
-- **Notes:** Still to do: install and check the REA–Ghidra bridge once V8 is unblocked; run it on a small ARM9 region and record supported features and limits.
+- **Notes:** Still to do: install and check the REA–Ghidra bridge once V8 is unblocked; run it on a small ARM9 region and record supported features and limits. Setup outline: [`ghidra-setup.md`](ghidra-setup.md#5-rea-v9-on-top-of-this-project).

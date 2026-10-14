@@ -36,7 +36,7 @@ The game's title may appear in documentation and source comments only to say whi
 
 ## Enforced by `.gitignore`
 
-`.gitignore` blocks ROMs (`*.nds`, `*.gba`, `*.srl`, `roms/`), extracted output folders (`extracted/`, `extract/`, `dump/`, `dumps/`, `out/`, `assets/extracted/`), saves (`*.sav`, `*.dsv`), emulator savestates (`*.dst`, `*.ds0`–`*.ds9`, `*.mln`, `*.State`) and the local `reference/` checkout. These rules are a safety net, not a substitute for reviewing what a commit adds.
+`.gitignore` blocks ROMs (`*.nds`, `*.gba`, `*.srl`, `roms/`), extracted output folders (`extracted/`, `extract/`, `dump/`, `dumps/`, `out/`, `assets/extracted/`), saves (`*.sav`, `*.dsv`), emulator savestates (`*.dst`, `*.ds0`–`*.ds9`, `*.mln`, `*.State`), Ghidra projects (`*.gpr`, `*.rep/`, `*.gzf`) and the local `reference/` checkout. These rules are a safety net, not a substitute for reviewing what a commit adds.
 
 ## If something slips through
 
