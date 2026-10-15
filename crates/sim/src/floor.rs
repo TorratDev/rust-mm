@@ -1483,6 +1483,130 @@ pub fn generate_monster_house(
     true
 }
 
+/// Walk steps `(dx, dy)` by direction number 0, 2, 4, 6 (south, east, north,
+/// west) in the table `ov_0001::0214FF30` reads (odd entries, the diagonals,
+/// are not used).
+const EXTRA_STEPS: [(i32, i32); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
+
+/// Room number at `(x, y)`; outside the map it reads as [`NO_ROOM`].
+fn room_at(floor: &Floor, x: i32, y: i32) -> u8 {
+    floor.tile(x, y).map_or(NO_ROOM, |t| t.room)
+}
+
+/// Generation step 11 of a standard floor (`ov_0001::0214FF30`,
+/// `GenerateExtraHallways` in `pmd-red`): `count` attempts to dig a winding
+/// hallway out of a room. An attempt picks a random cell (`DungeonRandInt` on
+/// each grid axis); the cell must be valid, hold a room, have a hallway and not
+/// be a maze. It draws a point in the room and a direction (south, east, north
+/// or west), turned away from the grid edge, walks out of the room and across
+/// any floor beyond, and starts digging at the first tile that is not floor,
+/// unless that tile is the secondary terrain, the 5 x 5 block around it is not
+/// all inside the map, or either side of it is floor. The hallway advances in
+/// runs of `DungeonRandInt(3) + 3` tiles and turns left or right (50 %) after
+/// each run. Each tile becomes floor unless that completes a 2 x 2 block of
+/// floor. It stops at floor beside the path, at a wall flag, near the map edge,
+/// or, on the small and medium layouts, when a turn east passes the unused part
+/// of the map. Written from the disassembly; see `docs/re/dungeon-generation.md`.
+pub fn generate_extra_hallways(
+    floor: &mut Floor,
+    grid: &Grid,
+    mode: GridMode,
+    count: i32,
+    rng: &mut DungeonRng,
+) {
+    let (gx, gy) = (grid.grid_x, grid.grid_y);
+    let is_floor = |floor: &Floor, x: i32, y: i32| terrain_type(floor, x, y) == TERRAIN_FLOOR;
+    let step = |dir: usize, x: i32, y: i32| {
+        let (dx, dy) = EXTRA_STEPS[dir / 2];
+        (x + dx, y + dy)
+    };
+    for _ in 0..count {
+        let cx = usize::try_from(rng.int(i32::try_from(gx).unwrap_or(i32::MAX))).unwrap_or(0);
+        let cy = usize::try_from(rng.int(i32::try_from(gy).unwrap_or(i32::MAX))).unwrap_or(0);
+        let cell = *grid.cell(cx, cy);
+        if !(cell.has_room && cell.hallway_mark && !cell.invalid && !cell.maze) {
+            continue;
+        }
+        let mut x = rng.range(i32::from(cell.start_x), i32::from(cell.end_x));
+        let mut y = rng.range(i32::from(cell.start_y), i32::from(cell.end_y));
+        let mut dir = usize::try_from(rng.int(4)).unwrap_or(0) * 2;
+        // Turn away from a grid edge; three rounds let a turn cascade.
+        for _ in 0..3 {
+            if dir == 0 && cy + 1 >= gy {
+                dir = 2;
+            }
+            if dir == 2 && cx + 1 >= gx {
+                dir = 4;
+            }
+            if dir == 4 && cy < 1 {
+                dir = 6;
+            }
+            if dir == 6 && cx < 1 {
+                dir = 0;
+            }
+        }
+        let start_room = room_at(floor, x, y);
+        while room_at(floor, x, y) == start_room {
+            (x, y) = step(dir, x, y);
+        }
+        while is_floor(floor, x, y) {
+            (x, y) = step(dir, x, y);
+        }
+        if terrain_type(floor, x, y) == 2 {
+            continue;
+        }
+        // The whole 5 x 5 block around the tile must be inside the map.
+        if x < 2 || x + 2 >= WIDTH as i32 || y < 2 || y + 2 >= HEIGHT as i32 {
+            continue;
+        }
+        let (sx, sy) = step((dir + 2) & 6, x, y);
+        let (tx, ty) = step((dir + 6) & 6, x, y);
+        if is_floor(floor, sx, sy) || is_floor(floor, tx, ty) {
+            continue;
+        }
+        let mut left = rng.int(3) + 3;
+        while x > 1
+            && y > 1
+            && x < WIDTH as i32 - 1
+            && y < HEIGHT as i32 - 1
+            && !is_floor(floor, x, y)
+            && floor
+                .tile(x, y)
+                .is_some_and(|t| t.terrain & TERRAIN_IMPASSABLE_WALL == 0)
+        {
+            // A 2 x 2 block of floor in any of the four corners blocks the tile.
+            let block = |dx: i32, dy: i32| {
+                is_floor(floor, x + dx, y)
+                    && is_floor(floor, x + dx, y + dy)
+                    && is_floor(floor, x, y + dy)
+            };
+            let blocked = block(1, 1) || block(1, -1) || block(-1, 1) || block(-1, -1);
+            if let Some(tile) = floor.tile_mut(x, y).filter(|_| !blocked) {
+                tile.terrain = (tile.terrain & !TERRAIN_TYPE_MASK) | TERRAIN_FLOOR;
+            }
+            let (sx, sy) = step((dir + 2) & 6, x, y);
+            let (tx, ty) = step((dir + 6) & 6, x, y);
+            if is_floor(floor, sx, sy) || is_floor(floor, tx, ty) {
+                break;
+            }
+            left -= 1;
+            if left == 0 {
+                left = rng.int(3) + 3;
+                dir = if rng.int(100) < 50 { dir + 2 } else { dir + 6 } & 6;
+                let past_edge = match mode {
+                    GridMode::LeftHalf => x > 0x1F,
+                    GridMode::LeftThreeQuarters => x > 0x2F,
+                    GridMode::Full => false,
+                };
+                if past_edge && dir == 2 {
+                    break;
+                }
+            }
+            (x, y) = step(dir, x, y);
+        }
+    }
+}
+
 /// FNV-1a 64 over the terrain flags (`u16`, little endian) and the room of
 /// every tile, row by row. `verification/v7-trace/floor_stages.py` computes the
 /// same value from the retail ROM (`tilesFnv1a` at the entry of step 7).
@@ -2955,6 +3079,29 @@ mod tests {
                     "{what}: house room"
                 );
             }
+        }
+    }
+
+    /// Step 11 checkpoints from the retail ROM, in the order of
+    /// [`NATURAL_SEED`] and [`FORCED_SEEDS`]: the dungeon RNG state and
+    /// `tilesFnv1a` at the entry of step 12. The count (floor properties
+    /// `+0x13`) is 5 on the first floor. Steps 8 to 10 draw nothing there.
+    const EXTRA_HALLWAY_RESULTS: [(u32, u64); 4] = [
+        (984_344_710, 0xb6dc_487d_352f_cc8e),
+        (1_462_097_070, 0x8aae_f9a4_88cb_299e),
+        (764_592_701, 0xf251_6ef3_4075_0e51),
+        (1_671_193_971, 0x3299_603e_f26a_4dfd),
+    ];
+
+    #[test]
+    fn extra_hallways_match_the_retail_rng_budget_and_tiles() {
+        let cases = std::iter::once(NATURAL_SEED).chain(FORCED_SEEDS);
+        for (i, (stages, (std12, tiles))) in cases.zip(EXTRA_HALLWAY_RESULTS).enumerate() {
+            let (mut floor, grid, mut rng) =
+                floor_before_features(stages.grid_y, stages.std3, stages.std5);
+            generate_extra_hallways(&mut floor, &grid, GridMode::LeftHalf, 5, &mut rng);
+            assert_eq!(rng.state(), std12, "case {i}, step 12");
+            assert_eq!(tiles_fnv1a(&floor), tiles, "case {i}, tiles");
         }
     }
 
