@@ -172,6 +172,9 @@ pub struct GridCell {
     /// `+0x09`: flag not known yet; the extra-link pass of step 6 skips cells
     /// with it set. Nothing in steps 1 to 5 sets it.
     pub flag_09: bool,
+    /// `+0x0F`: flag not known yet; step 7 only drops the room of an unlinked
+    /// cell when it is clear. Nothing in steps 1 to 7 sets it.
+    pub flag_0f: bool,
     /// `+0x0B`: set by step 6 when a hallway is dug to or from the cell.
     /// The extra-link pass needs it set on both cells.
     pub hallway_mark: bool,
@@ -907,6 +910,143 @@ fn extra_south(floor: &mut Floor, grid: &mut Grid, x: usize, y: usize) {
     o.extra_mark = true;
 }
 
+/// Whether a cell can take a hallway from an unlinked neighbour in step 7:
+/// valid, already linked by step 6, and not part of an extra link.
+fn can_join(cell: &GridCell) -> bool {
+    !cell.invalid && cell.hallway_mark && !cell.extra_linked
+}
+
+/// A cell's anchor on the x axis for step 7, and its y axis draw.
+/// A cell with a room draws x then y; one without takes its start tile.
+fn join_anchor(cell: &GridCell, rng: &mut DungeonRng) -> (i32, i32) {
+    if cell.has_room {
+        let x = anchor_x(cell, rng);
+        (x, anchor_y(cell, rng))
+    } else {
+        (i32::from(cell.start_x), i32::from(cell.start_y))
+    }
+}
+
+/// Turns a tile into wall and clears its low spawn markers, as step 7 does to
+/// the anchor of a cell that stays unlinked.
+fn wall_off(floor: &mut Floor, x: i32, y: i32) {
+    if let Some(tile) = floor.tile_mut(x, y) {
+        tile.terrain &= !TERRAIN_TYPE_MASK;
+        tile.spawn_or_visibility &= !0x7;
+    }
+}
+
+/// Generation step 7 of a standard floor (`ov_0001::0214DB54`, `EnsureConnectedGrid`
+/// in `pmd-red`). Finds valid cells that step 6 left without a hallway and joins
+/// each to the first neighbour that has one (north, south, west, east), digging
+/// a hallway with the same routine as step 6. A cell that cannot join keeps its
+/// place: an anchor loses its tile, and (second pass) a room is erased unless
+/// `flag_0f` is set. `xs` and `ys` are the cell boundaries from [`grid_bounds`].
+/// Written from the disassembly; see `docs/re/dungeon-generation.md`.
+pub fn ensure_connected_grid(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    xs: &[i32],
+    ys: &[i32],
+    rng: &mut DungeonRng,
+) {
+    let (grid_x, grid_y) = (grid.grid_x, grid.grid_y);
+    for x in 0..grid_x {
+        for y in 0..grid_y {
+            let c = *grid.cell(x, y);
+            if c.invalid || c.extra_mark || c.hallway_mark {
+                continue;
+            }
+            if !c.has_room || c.flag_09 {
+                // No room, or a flagged one: the cell's start tile goes back to wall.
+                wall_off(floor, i32::from(c.start_x), i32::from(c.start_y));
+                continue;
+            }
+            let x0 = anchor_x(&c, rng);
+            let y0 = anchor_y(&c, rng);
+            let join = if y > 0 && can_join(grid.cell(x, y - 1)) {
+                let n = *grid.cell(x, y - 1);
+                let (x1, _) = join_anchor(&n, rng);
+                dig_hallway(
+                    floor,
+                    (x0, i32::from(c.start_y)),
+                    (x1, i32::from(n.end_y) - 1),
+                    true,
+                    xs[x],
+                    ys[y],
+                );
+                Some(Dir::North)
+            } else if y + 1 < grid_y && can_join(grid.cell(x, y + 1)) {
+                let s = *grid.cell(x, y + 1);
+                let (x1, _) = join_anchor(&s, rng);
+                dig_hallway(
+                    floor,
+                    (x0, i32::from(c.end_y) - 1),
+                    (x1, i32::from(s.start_y)),
+                    true,
+                    xs[x],
+                    ys[y + 1] - 1,
+                );
+                Some(Dir::South)
+            } else if x > 0 && can_join(grid.cell(x - 1, y)) {
+                let w = *grid.cell(x - 1, y);
+                let (_, y1) = join_anchor(&w, rng);
+                dig_hallway(
+                    floor,
+                    (i32::from(c.start_x), y0),
+                    (i32::from(w.start_x) - 1, y1),
+                    false,
+                    xs[x],
+                    ys[y],
+                );
+                Some(Dir::West)
+            } else if x + 1 < grid_x && can_join(grid.cell(x + 1, y)) {
+                let e = *grid.cell(x + 1, y);
+                let (_, y1) = join_anchor(&e, rng);
+                dig_hallway(
+                    floor,
+                    (i32::from(c.end_x) - 1, y0),
+                    (i32::from(e.start_x), y1),
+                    false,
+                    xs[x + 1] - 1,
+                    ys[y],
+                );
+                Some(Dir::East)
+            } else {
+                None
+            };
+            if let Some(dir) = join {
+                let (nx, ny) = grid
+                    .neighbour(x, y, dir)
+                    .expect("a joinable neighbour is in the grid");
+                let cell = grid.cell_mut(x, y);
+                cell.hallway_mark = true;
+                cell.set_link(dir);
+                grid.cell_mut(nx, ny).set_link(dir.opposite());
+            }
+        }
+    }
+
+    // Cells still unlinked lose their room.
+    for x in 0..grid_x {
+        for y in 0..grid_y {
+            let c = *grid.cell(x, y);
+            if c.invalid || c.extra_mark || c.hallway_mark || c.flag_0f {
+                continue;
+            }
+            for tx in i32::from(c.start_x)..i32::from(c.end_x) {
+                for ty in i32::from(c.start_y)..i32::from(c.end_y) {
+                    if let Some(tile) = floor.tile_mut(tx, ty) {
+                        tile.terrain &= !TERRAIN_TYPE_MASK;
+                        tile.spawn_or_visibility &= !0x7;
+                        tile.room = NO_ROOM;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Start of a cell's anchor on the x axis: a random point inside the room, or
 /// the cell's start when it has no room. Draws only for a room.
 fn anchor_x(cell: &GridCell, rng: &mut DungeonRng) -> i32 {
@@ -1339,6 +1479,237 @@ mod tests {
             create_hallways(&mut floor, &mut grid, &xs, &ys, false, &mut rng);
             assert_eq!(rng.state(), std7, "case {i}, step 7");
             assert_eq!(tiles_fnv1a(&floor), tiles, "case {i}, tiles");
+        }
+    }
+
+    /// Step 7 checkpoints from the retail ROM, in the order of
+    /// [`NATURAL_SEED`] and [`FORCED_SEEDS`]: the dungeon RNG state and
+    /// `tilesFnv1a` at the entry of step 8. Only the `0x12345678` floor has an
+    /// unlinked cell, so only it draws (4 steps) and digs.
+    const ENSURE_RESULTS: [(u32, u64); 4] = [
+        (717_111_574, 0x08aa_8f91_334e_3d50),
+        (4_001_168_455, 0x6185_0823_cb3c_1bb3),
+        (2_147_750_935, 0xf251_6ef3_4075_0e51),
+        (4_249_534_461, 0x3299_603e_f26a_4dfd),
+    ];
+
+    #[test]
+    fn ensure_connected_grid_matches_the_retail_rng_budget_and_tiles() {
+        let cases = std::iter::once(NATURAL_SEED).chain(FORCED_SEEDS);
+        for (i, (stages, (std8, tiles))) in cases.zip(ENSURE_RESULTS).enumerate() {
+            let (_, _, mut floor, mut grid) = first_floor_steps(stages.grid_y, stages.std3);
+            let mut rng = DungeonRng::from_state(stages.std5);
+            assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
+            let (xs, ys) = grid_bounds(4, stages.grid_y);
+            create_hallways(&mut floor, &mut grid, &xs, &ys, false, &mut rng);
+            ensure_connected_grid(&mut floor, &mut grid, &xs, &ys, &mut rng);
+            assert_eq!(rng.state(), std8, "case {i}, step 8");
+            assert_eq!(tiles_fnv1a(&floor), tiles, "case {i}, tiles");
+        }
+    }
+
+    /// More forced seeds where step 7 changes the floor, from the retail ROM:
+    /// the grid height, the RNG state at the entry of steps 3, 5 and 8, and
+    /// `tilesFnv1a` at the entry of step 8. They change the RNG by 0 to 10 draws
+    /// and dig, wall off anchors and erase rooms (23 of 36 seeds tried).
+    const ENSURE_SEEDS: &[(usize, u32, u32, u32, u64)] = &[
+        // 0x08D12DFD
+        (
+            2,
+            1_976_947_032,
+            284_701_749,
+            504_553_352,
+            0x7aa6_256a_a9d6_cf3e,
+        ),
+        // 0x11A25BFA
+        (
+            3,
+            2_937_234_321,
+            1_860_216_811,
+            1_083_456_640,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0x28B7BC6F
+        (
+            3,
+            3_280_667_150,
+            394_156_293,
+            3_075_025_184,
+            0xed95_bbd0_b9c1_d18b,
+        ),
+        // 0x2E2AC0EA
+        (
+            2,
+            278_952_215,
+            898_684_437,
+            818_453_974,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0x36FBEEE7
+        (
+            3,
+            3_033_275_370,
+            3_731_767_195,
+            785_028_812,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0x3C6EF362
+        (
+            3,
+            2_733_681_987,
+            2_735_416_536,
+            2_388_364_781,
+            0x97a2_8fad_e62b_87c6,
+        ),
+        // 0x3FCD1CE4
+        (
+            3,
+            2_617_097_491,
+            3_091_852_748,
+            2_402_063_198,
+            0xfce3_338f_d2b5_541d,
+        ),
+        // 0x4540215F
+        (
+            3,
+            3_289_384_834,
+            3_735_770_515,
+            4_142_196_411,
+            0xacc0_685b_f00f_e8c4,
+        ),
+        // 0x538453D7
+        (
+            2,
+            475_179_094,
+            2_983_244_959,
+            3_689_695_638,
+            0x5c97_6138_91eb_e191,
+        ),
+        // 0x5C5581D4
+        (
+            2,
+            1_815_861_487,
+            3_747_341_869,
+            2_242_055_630,
+            0xfccd_8013_5d37_f380,
+        ),
+        // 0x6A99B44C
+        (
+            3,
+            3_385_425_883,
+            2_404_653_519,
+            2_775_422_417,
+            0xf102_551e_60fb_401c,
+        ),
+        // 0x78DDE6C4
+        (
+            3,
+            3_641_535_347,
+            189_740_765,
+            4_203_639_610,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0x8A8042BE
+        (
+            3,
+            2_809_179_589,
+            602_133_439,
+            3_326_839_150,
+            0xe373_ce19_eb33_11c3,
+        ),
+        // 0x8FF34739
+        (
+            3,
+            2_304_828_844,
+            527_474_027,
+            1_615_930_158,
+            0x4245_b5f2_2b37_19d8,
+        ),
+        // 0x98C47536
+        (
+            3,
+            3_902_873_959,
+            1_344_564_337,
+            3_808_655_134,
+            0x1c24_261f_1645_50ea,
+        ),
+        // 0xA195A333
+        (
+            3,
+            4_281_705_724,
+            2_454_085_806,
+            244_803_382,
+            0x0472_d239_7daa_bc69,
+        ),
+        // 0xA708A7AE
+        (
+            3,
+            3_853_845_675,
+            2_451_130_894,
+            804_935_811,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0xB54CDA26
+        (
+            2,
+            1_249_533_463,
+            2_240_918_293,
+            774_831_830,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0xBE1E0823
+        (
+            3,
+            2_238_119_330,
+            2_333_177_289,
+            1_679_710_362,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0xCC623A9B
+        (
+            3,
+            3_417_439_566,
+            1_590_288_527,
+            4_060_182_839,
+            0xa92d_97a5_acc8_b7e2,
+        ),
+        // 0xEC48C90D
+        (
+            3,
+            2_841_193_272,
+            3_064_137_930,
+            1_634_106_075,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0xF1BBCD88
+        (
+            3,
+            3_513_480_615,
+            3_226_624_689,
+            2_074_527_326,
+            0xbc4c_fafe_a003_4b05,
+        ),
+        // 0xFA8CFB85
+        (
+            3,
+            4_002_331_848,
+            490_432_218,
+            3_283_895_198,
+            0xee83_2232_f3d3_0df3,
+        ),
+    ];
+
+    #[test]
+    fn ensure_connected_grid_matches_more_retail_floors() {
+        for (i, &(grid_y, std3, std5, std8, tiles)) in ENSURE_SEEDS.iter().enumerate() {
+            let (_, _, mut floor, mut grid) = first_floor_steps(grid_y, std3);
+            let mut rng = DungeonRng::from_state(std5);
+            assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
+            let (xs, ys) = grid_bounds(4, grid_y);
+            create_hallways(&mut floor, &mut grid, &xs, &ys, false, &mut rng);
+            ensure_connected_grid(&mut floor, &mut grid, &xs, &ys, &mut rng);
+            assert_eq!(rng.state(), std8, "seed row {i}, step 8");
+            assert_eq!(tiles_fnv1a(&floor), tiles, "seed row {i}, tiles");
         }
     }
 
