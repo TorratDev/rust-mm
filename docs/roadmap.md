@@ -113,6 +113,29 @@ Milestone: understand the execution model and major subsystems.
 - Glossary of structures/functions, separating verified findings from hypotheses.
 - Reverse engineer each subsystem when its implementation becomes necessary.
 
+### Phase 3 status (2026-10-15)
+Where the Ghidra work on Blue stands, so any session can pick up from here. Details live in [`docs/re/`](re/), [`docs/formats/save.md`](formats/save.md), [`docs/symbols.md`](symbols.md) and [`docs/verification.md`](verification.md).
+
+Done:
+- V4 (save media and format), V6 (4 shared tables, 2 routine constants), V7 (scripted retail trace, `verification/v7-trace/`), V8 (all overlays mapped).
+- RNG (#47): all three generators, seeding, dungeon seed chain; bit-exact Rust port in `rescue-sim` (`crates/sim/src/rng.rs`).
+- Execution model and overlays (#44), dungeon and entity structs (#46), turn loop and V7 trigger (#49), floor-generation entry and RNG order (#48), combat (#50), save format (#53).
+- Tooling: ghidra-cli workflow, `tools/ghidra/Rescue*.java`, `RescueApplySymbols.java` driven by `symbols.md`.
+
+Partly done:
+- V9: REA not tested yet. #43 glossary still to write.
+- RNG leftovers: what uses the Mersenne Twister (callers `0200D4DC`, `0206C6E4`); the 16-bit generator from `pmd-red`'s `other_random.c` (multiplier 109, increment 1021) not found yet.
+- Turn loop: name the three end-of-turn functions ([`re/turns.md`](re/turns.md)).
+- #53: locate the quicksave sector.
+
+Not started:
+- #45 input and resource loading (`REG_KEYINPUT` `0x04000130`, file-system open calls).
+
+Rust floor generator (`crates/sim/src/floor.rs`), checked step by step against `verification/v7-trace/floor_stages.py` (RNG state and arguments at 26 checkpoints):
+- Done: map, reset, step 1 (grid bounds).
+- Next: step 2 `InitGrid` (`ov_0001::0214FD7C`), step 3 (`0214FB4C`, 129 RNG calls), then steps 4-13 of `GenerateStandardFloor`, the cleanup and spawn passes, and the other layout generators. The plan is in [`re/dungeon-generation.md`](re/dungeon-generation.md), "Reimplementation, step by step".
+
+
 ## Phase 4 — Build the native engine
 Milestone: render original game assets in your own application.
 - `render`: tilemaps, sprites, palettes, animation; per-screen 256×192 targets with integer scaling.
