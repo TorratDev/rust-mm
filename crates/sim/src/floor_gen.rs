@@ -155,7 +155,8 @@ pub trait FloorSteps {
         rng: &mut DungeonRng,
         g: &mut GenState,
     );
-    /// `GenerateOneRoomMonsterHouseFloor` (`0x021506B0`).
+    /// `GenerateOneRoomMonsterHouseFloor` (`0x021506B0`); see
+    /// [`crate::floor::generate_one_room_monster_house`].
     fn one_room_monster_house(&mut self, floor: &mut Floor, rng: &mut DungeonRng, g: &mut GenState);
     /// The layout generator for `plan`: the standard generator, `GenerateOuterRoomsFloor`
     /// or one of the other `Layout` generators.
@@ -196,19 +197,25 @@ pub trait FloorSteps {
         floor: &mut Floor,
         rng: &mut DungeonRng,
     );
-    /// `ResolveInvalidSpawns` (`0x0214C1A8`).
+    /// `ResolveInvalidSpawns` (`0x0214C1A8`); see [`crate::floor::resolve_invalid_spawns`].
     fn resolve_invalid_spawns(&mut self, floor: &mut Floor, rng: &mut DungeonRng);
-    /// `GetFloorType` (`0x0206DB90`).
+    /// `GetFloorType` (`0x0206DB90`); see [`crate::floor::floor_type`].
     fn floor_type(&mut self) -> u8;
-    /// `StairsAlwaysReachable(x, y, FALSE)` (`0x0214A760`).
+    /// `StairsAlwaysReachable(x, y, FALSE)` (`0x0214A760`); see
+    /// [`crate::floor::stairs_always_reachable`].
     fn stairs_reachable(&mut self, floor: &mut Floor, x: i16, y: i16) -> bool;
-    /// The call with `pair_c` as its position (`0x02179060`, arguments
-    /// `x, y, 0x17C, 0`). Not named yet.
+    /// The call with `pair_c`, the shop's centre, as its position
+    /// (`0x02179060`, arguments `x, y, 0x17C, 0`): it adds or updates an
+    /// entry `(x, y, 0x17C, 0)` in an 8-entry list of the dungeon (likely a
+    /// monster to spawn there). No tiles, no RNG.
     fn pair_c_marker(&mut self, pos: (i16, i16));
-    /// The call with the props pointer (`0x02149AF8`). Not named yet.
+    /// The call with the props pointer (`0x02149AF8`) when a shop was made;
+    /// see [`crate::floor::finish_shop`].
     fn props_marker(&mut self, props: &FloorProperties);
-    /// The steps after the stairs fallbacks: `0x02151D4C(0, 0, 56, 32)`, the
-    /// optional `0x0214C13C` when `tileset_type2`, and `CloseFile`.
+    /// The steps after the stairs fallbacks: `0x02151D4C(0, 0, 56, 32)`
+    /// ([`crate::floor::mark_hallway_junctions`]), the optional `0x0214C13C`
+    /// when `tileset_type2` ([`crate::floor::secondary_to_terrain_3`]), and
+    /// `CloseFile`. None of them draws from the RNG.
     fn final_steps(&mut self, floor: &mut Floor, rng: &mut DungeonRng, tileset_type2: bool);
 }
 

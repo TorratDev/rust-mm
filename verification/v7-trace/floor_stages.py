@@ -4,7 +4,8 @@
 Replays BOOT_INPUTS from power-on to the first dungeon floor (as
 retail_trace.py does) and records, at the entry of every floor-generation step
 (GenerateFloor, its layout generators, the 13 steps of GenerateStandardFloor,
-the spawn steps) and at the first turn, the dungeon RNG state, the arguments
+the spawn steps, the end of the floor), at GenerateFloor's return and at
+the first turn, the dungeon RNG state, the arguments
 r0-r3, the first two stack words (the fifth and sixth arguments of functions
 that take them), and the number of dungeon RNG steps since the previous entry.
 A reimplementation must use the same number of RNG steps between each pair of
@@ -14,7 +15,9 @@ GenerateFloor starts (see floor_oracle.py).
 Usage:
   floor_stages.py ROM OUT.jsonl [--seed S] [--force-chance 8=P,9=P,10=P] [--maze-gate]
                   [--force-structures N] [--force-secondary N]
-                  [--force-spawn ITEMS,BURIED,TRAPS[,TRAPFLAG]] [--force-enemies N] [--boot-inputs FILE]
+                  [--force-spawn ITEMS,BURIED,TRAPS[,TRAPFLAG]] [--force-enemies N] [--force-unreachable]
+                  [--force-shop-chances C1,...,C9]
+                  [--boot-inputs FILE]
 Output: one JSON line per checkpoint; only states, counts and arguments.
 """
 
@@ -63,6 +66,8 @@ STEPS = {
     0x0214B338: "SpawnEnemies",
     0x0214C1A8: "ResolveInvalidSpawns",
     0x0214A760: "StairsAlwaysReachable",
+    0x02149AF8: "FinishShop",
+    0x021525B4: "GenerateFloorEnd",  # after CloseFile, GenerateFloor's last call
     TRIGGER: "FirstTurn",
 }
 
@@ -93,6 +98,12 @@ def main():
     p.add_argument("--force-enemies", type=int,
                    help="at SpawnEnemies' entry, set floor-properties byte +0x06 (the monster density) "
                         "to N, so that the step places more than the first floor's properties ask")
+    p.add_argument("--force-shop-chances", default="",
+                   help="C1,...,C9: at the entry of the shop pass (02149AF8), overwrite the 3 x 3 item "
+                        "chances it reads, so that a test can use its own values instead of the game's")
+    p.add_argument("--force-unreachable", action="store_true",
+                   help="make every StairsAlwaysReachable call of GenerateFloor's stairs check return 0, "
+                        "so that GenerateFloor falls back to the one-room monster house")
     p.add_argument("--boot-inputs", default=os.path.join(HERE, "boot_to_dungeon.txt"))
     p.add_argument("--max-boot-frames", type=int, default=30000)
     a = p.parse_args()
@@ -209,8 +220,28 @@ def main():
                     "stairsRoom": bytes(emu.memory.read(0x21B4598, 0x21B4599, 1, False))[0],
                     "houseRoom": bytes(emu.memory.read(dun + 0x34AC, dun + 0x34AD, 1, False))[0],
                 }
-            if name == "ResolveInvalidSpawns":
+            if name in ("ResolveInvalidSpawns", "StairsAlwaysReachable", "GenerateFloorEnd"):
                 entry["placed"] = {"spawnFnv1a": spawn_fnv1a(), "tilesFnv1a": tiles_fnv1a()}
+            if name == "FinishShop":
+                props = regs.r0 & 0xFFFFFFFF
+                kind = bytes(emu.memory.read(props + 0x18, props + 0x19, 1, False))[0]
+                table = 0x21AAA38 + kind * 0x12
+                for i, v in enumerate(int(v) for v in a.force_shop_chances.split(",") if v):
+                    emu.memory.write_short(table + 2 * i, v)
+                entry["shop"] = {
+                    "rect": list(struct.unpack("<4i", bytes(emu.memory.read(0x21B45CC, 0x21B45DC, 1, False)))),
+                    "kind": kind,
+                    "tilesFnv1a": tiles_fnv1a(),
+                    "spawnFnv1a": spawn_fnv1a(),
+                }
+            if name == "GenerateFloorEnd":
+                dun = u32(G_DUNGEON)
+                entry["end"] = {
+                    "pairA": list(struct.unpack("<2h", bytes(emu.memory.read(dun + 0xC0B8, dun + 0xC0BC, 1, False)))),
+                    "pairB": list(struct.unpack("<2h", bytes(emu.memory.read(dun + 0xC0BC, dun + 0xC0C0, 1, False)))),
+                    "rect": list(struct.unpack("<4i", bytes(emu.memory.read(0x21B45CC, 0x21B45DC, 1, False)))),
+                    "flag34AA": bytes(emu.memory.read(dun + 0x34AA, dun + 0x34AB, 1, False))[0],
+                }
             if name == "std8" and a.maze_gate:
                 emu.memory.write_short(u32(G_DUNGEON) + 0x34B6, 0xFFFF)
             if name in ("std7", "std8", "std9", "std10", "std11", "std12", "std13",
@@ -239,6 +270,11 @@ def main():
 
     for addr, name in STEPS.items():
         emu.memory.register_exec(addr, make(name))
+    if a.force_unreachable:
+        def unreachable(*_):
+            regs.r0 = 0
+        # The stairs check's `cmp r0, #0` right after the StairsAlwaysReachable call.
+        emu.memory.register_exec(0x021524A8, unreachable)
     a_key = keymask(Keys.KEY_A)
     for f in range(3000):
         emu.input.keypad_update(a_key if f % 30 < 4 else 0)
