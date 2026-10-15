@@ -2,36 +2,57 @@
 //! draws, the fixed-room branch and the two retry loops, in the order of
 //! Blue's code. See `docs/re/dungeon-generation.md`, "Prologue and retry loops".
 //!
-//! The steps this function calls that are not reimplemented yet (ResetFloor,
-//! the layout generators, the spawns, the stairs marker, the fixed-room
-//! placements) are behind [`FloorSteps`]. This module decides when each runs
-//! and which RNG draws happen around it.
+//! The steps this function calls are behind [`FloorSteps`]; this module
+//! decides when each runs and which RNG draws happen around it.
+//! [`PortedSteps`] implements them with the ported functions of
+//! [`crate::floor`]; the fixed rooms and layout cases 3 to 7, 9 and 10 are not
+//! ported yet.
 
 use crate::floor::{
-    Floor, GridMode, Layout, LayoutPlan, MAX_LAYOUT_ATTEMPTS, MAX_STAIRS_ATTEMPTS,
-    attempt_has_rooms, plan_layout, stairs_check,
+    self, EnemySpawn, Floor, Grid, GridMode, Layout, LayoutPlan, MAX_LAYOUT_ATTEMPTS,
+    MAX_STAIRS_ATTEMPTS, RoomFeatures, SpawnCounts, SpawnState, attempt_has_rooms, plan_layout,
+    stairs_check,
 };
 use crate::rng::DungeonRng;
 
 /// "Unset" stairs position, as the game stores it.
 pub const UNSET: (i16, i16) = (-1, -1);
 
-/// Floor-properties bytes that `GenerateFloor` reads, named by offset.
+/// Floor-properties bytes that `GenerateFloor` and the steps it calls read,
+/// named by offset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FloorProperties {
     /// `+0x00`: the layout byte. `& 0xF` picks the layout case; the value 8
     /// changes the grid draw.
     pub layout: u8,
-    /// `+0x06`: its value is stored in dungeon `+0x654`.
+    /// The room density of step 3 (`+0x01`, from `pmd-red`'s layout of the
+    /// struct; a `[red-hypothesis]` offset).
+    pub room_density: i8,
+    /// `+0x05`: walk length of step 5.
+    pub byte_05: u8,
+    /// `+0x06`: its value is stored in dungeon `+0x654`; the monster density
+    /// of `SpawnEnemies`.
     pub byte_06: u8,
     /// `+0x07`: copied to `021B45B0`, used by steps 9 and 10.
     pub byte_07: u8,
     /// `+0x08`: copied to `021B45AC`, used by steps 9 and 10.
     pub byte_08: u8,
+    /// `+0x09`: maze-room chance of step 8.
+    pub byte_09: u8,
+    /// `+0x0B`: non-zero skips the dead-end pass of step 5.
+    pub byte_0b: u8,
     /// `+0x0C`: copied to `gFloorPropsByteC`; gates a room flag.
     pub byte_0c: u8,
     /// `+0x0D`: bit 0 turns the secondary terrain on, bit 2 marks room imperfections.
     pub byte_0d: u8,
+    /// `+0x0F`: average number of items (`SpawnNonEnemies`).
+    pub byte_0f: u8,
+    /// `+0x10`: most traps (`SpawnNonEnemies`).
+    pub byte_10: u8,
+    /// `+0x13`: extra-hallway attempts of step 11.
+    pub byte_13: u8,
+    /// `+0x14`: average number of buried items (`SpawnNonEnemies`).
+    pub byte_14: u8,
     /// `+0x15`: number of secondary-terrain ponds.
     pub byte_15: u8,
     /// `+0x19`: percent chance of an itemless monster house.
@@ -188,6 +209,7 @@ pub trait FloorSteps {
         itemless: bool,
         floor: &mut Floor,
         rng: &mut DungeonRng,
+        g: &mut GenState,
     );
     /// `SpawnEnemies` (`0x0214B338`).
     fn spawn_enemies(
@@ -196,14 +218,15 @@ pub trait FloorSteps {
         itemless: bool,
         floor: &mut Floor,
         rng: &mut DungeonRng,
+        g: &mut GenState,
     );
     /// `ResolveInvalidSpawns` (`0x0214C1A8`); see [`crate::floor::resolve_invalid_spawns`].
     fn resolve_invalid_spawns(&mut self, floor: &mut Floor, rng: &mut DungeonRng);
     /// `GetFloorType` (`0x0206DB90`); see [`crate::floor::floor_type`].
-    fn floor_type(&mut self) -> u8;
+    fn floor_type(&mut self, g: &GenState) -> u8;
     /// `StairsAlwaysReachable(x, y, FALSE)` (`0x0214A760`); see
-    /// [`crate::floor::stairs_always_reachable`].
-    fn stairs_reachable(&mut self, floor: &mut Floor, x: i16, y: i16) -> bool;
+    /// [`crate::floor::stairs_always_reachable`]. `stored` is stairs pair B.
+    fn stairs_reachable(&mut self, floor: &mut Floor, x: i16, y: i16, stored: (i16, i16)) -> bool;
     /// The call with `pair_c`, the shop's centre, as its position
     /// (`0x02179060`, arguments `x, y, 0x17C, 0`): it adds or updates an
     /// entry `(x, y, 0x17C, 0)` in an 8-entry list of the dungeon (likely a
@@ -211,12 +234,248 @@ pub trait FloorSteps {
     fn pair_c_marker(&mut self, pos: (i16, i16));
     /// The call with the props pointer (`0x02149AF8`) when a shop was made;
     /// see [`crate::floor::finish_shop`].
-    fn props_marker(&mut self, props: &FloorProperties);
+    fn props_marker(&mut self, props: &FloorProperties, floor: &mut Floor, rng: &mut DungeonRng);
     /// The steps after the stairs fallbacks: `0x02151D4C(0, 0, 56, 32)`
     /// ([`crate::floor::mark_hallway_junctions`]), the optional `0x0214C13C`
     /// when `tileset_type2` ([`crate::floor::secondary_to_terrain_3`]), and
     /// `CloseFile`. None of them draws from the RNG.
     fn final_steps(&mut self, floor: &mut Floor, rng: &mut DungeonRng, tileset_type2: bool);
+}
+
+/// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
+/// fixed rooms (they read the fixed-room file, game data) and the layouts of
+/// cases 3 to 7, 9 and 10 (#109) are not ported: they panic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PortedSteps {
+    /// Dungeon byte `+0x668`, read by `GetFloorType`.
+    pub byte_668: u8,
+    /// Dungeon byte `+0x641`, read by `GetFloorType`.
+    pub byte_641: u8,
+    /// Dungeon byte `+0x63D`, read by `GetFloorType`.
+    pub byte_63d: u8,
+    /// Dungeon `+0x64D`: monster-house tiles may get traps.
+    pub byte_64d: u8,
+    /// Dungeon `+0x678` (16 bit): blocks the monster house, adds an enemy spot.
+    pub word_678: i16,
+    /// The 3 x 3 shop item chances (the table at `021AAA38` that props byte
+    /// `+0x18` picks; game data, so the caller supplies it).
+    pub shop_chances: [i16; 9],
+    /// The shop area at `021B45CC`; [`GenState::word_45cc`] mirrors its first word.
+    pub shop_rect: [i32; 4],
+    /// Dungeon `+0xC0E0`: the shop area bounds.
+    pub shop_bounds: [i32; 4],
+}
+
+impl PortedSteps {
+    /// The floor-wide data of steps 8 to 10, as `GenerateFloor` left it in `g`.
+    fn features(&self, g: &GenState) -> RoomFeatures {
+        let [shop, maze, house] = g.bytes_458c_4594;
+        RoomFeatures {
+            maze: maze != 0,
+            monster_house: house != 0,
+            shop: shop != 0,
+            shop_rect: if g.word_45cc < 0 {
+                [-1; 4]
+            } else {
+                self.shop_rect
+            },
+            shop_centre: (g.pair_c.0.cast_unsigned(), g.pair_c.1.cast_unsigned()),
+            shop_bounds: self.shop_bounds,
+            monster_house_room: g.field_34ac,
+        }
+    }
+
+    /// Writes the data of steps 8 to 10 back to `g` and `self`.
+    fn store(&mut self, f: &RoomFeatures, g: &mut GenState) {
+        g.bytes_458c_4594 = [
+            u8::from(f.shop),
+            u8::from(f.maze),
+            u8::from(f.monster_house),
+        ];
+        g.word_45cc = f.shop_rect[0];
+        g.pair_c = (f.shop_centre.0.cast_signed(), f.shop_centre.1.cast_signed());
+        g.field_34ac = f.monster_house_room;
+        self.shop_rect = f.shop_rect;
+        self.shop_bounds = f.shop_bounds;
+    }
+
+    /// `GenerateStandardFloor(grid_x, grid_y, props)`: steps 1 to 13.
+    fn standard(
+        &mut self,
+        (grid_x, grid_y, mode): (usize, usize, GridMode),
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let (xs, ys) = floor::grid_bounds(grid_x, grid_y);
+        let mut grid = Grid::new(grid_x, grid_y, mode);
+        if floor::assign_rooms(&mut grid, props.room_density, rng) < 2 {
+            g.byte_4584 = 0;
+        }
+        let byte_c = g.props_byte_c != 0;
+        floor::place_rooms(floor, &mut grid, &xs, &ys, props.byte_0d, byte_c, rng);
+        floor::assign_connections(&mut grid, props.byte_05, props.byte_0b != 0, rng);
+        floor::create_hallways(floor, &mut grid, &xs, &ys, false, rng);
+        floor::ensure_connected_grid(floor, &mut grid, &xs, &ys, rng);
+        let ty = self.floor_type(g);
+        let mut f = self.features(g);
+        let maze = i32::from(props.byte_09);
+        floor::generate_maze_room(floor, &mut grid, maze, g.attempt < 0, &mut f, rng);
+        let shop = i32::from(g.props_copy_07);
+        floor::generate_shop(floor, &mut grid, shop, ty, &mut f, rng);
+        let house = i32::from(g.props_copy_08);
+        let blocked = self.word_678 != 0;
+        floor::generate_monster_house(floor, &mut grid, house, ty, blocked, &mut f, rng);
+        floor::generate_extra_hallways(floor, &grid, mode, i32::from(props.byte_13), rng);
+        floor::generate_room_imperfections(floor, &grid, rng);
+        floor::generate_secondary_structures(floor, &mut grid, &mut g.props_byte_c, &mut f, rng);
+        self.store(&f, g);
+    }
+}
+
+impl FloorSteps for PortedSteps {
+    fn reset_floor(&mut self, floor: &mut Floor, g: &mut GenState) {
+        *floor = Floor::new();
+        g.stairs_b = UNSET;
+    }
+    fn fixed_room_size(&mut self, number: i16) -> (u8, u8) {
+        panic!("fixed room {number}: the fixed-room file is not ported")
+    }
+    fn place_fixed_room(
+        &mut self,
+        number: i16,
+        _props: &FloorProperties,
+        _floor: &mut Floor,
+        _rng: &mut DungeonRng,
+        _g: &mut GenState,
+    ) {
+        panic!("fixed room {number}: not ported")
+    }
+    fn place_fixed_room_large(
+        &mut self,
+        room: FixedRoom,
+        _props: &FloorProperties,
+        _floor: &mut Floor,
+        _rng: &mut DungeonRng,
+        _g: &mut GenState,
+    ) {
+        panic!("fixed room {}: not ported", room.number)
+    }
+    fn one_room_monster_house(
+        &mut self,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let ty = self.floor_type(g);
+        let f = floor::generate_one_room_monster_house(floor, ty, self.word_678 != 0, rng);
+        // Step 10 sets only the house flag and room; the other globals stay.
+        if f.monster_house {
+            g.bytes_458c_4594[2] = 1;
+            g.field_34ac = f.monster_house_room;
+        }
+    }
+    fn generate_layout(
+        &mut self,
+        plan: LayoutPlan,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        match plan {
+            LayoutPlan::Standard {
+                grid_x,
+                grid_y,
+                mode,
+            } => self.standard((grid_x, grid_y, mode), props, floor, rng, g),
+            LayoutPlan::Other(Layout::OneRoomMonsterHouse) => {
+                self.one_room_monster_house(floor, rng, g);
+            }
+            _ => panic!("layout {plan:?}: not ported (#109)"),
+        }
+    }
+    fn reset_inner_boundary(&mut self, floor: &mut Floor) {
+        floor::reset_inner_boundary_tile_rows(floor);
+    }
+    fn ensure_impassable(&mut self, floor: &mut Floor) {
+        floor::ensure_impassable_tiles_are_walls(floor);
+    }
+    fn finalize_junctions(&mut self, floor: &mut Floor) {
+        floor::finalize_junctions(floor);
+    }
+    fn secondary_terrain(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+    ) {
+        floor::generate_secondary_terrain(floor, props.byte_0d, props.byte_15, rng);
+    }
+    fn spawn_non_enemies(
+        &mut self,
+        props: &FloorProperties,
+        itemless: bool,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let counts = SpawnCounts {
+            items: props.byte_0f,
+            traps: props.byte_10,
+            buried: props.byte_14,
+        };
+        let ty = self.floor_type(g);
+        let mut s = SpawnState {
+            leader: g.stairs_a,
+            stairs: g.stairs_b,
+            stairs_room: g.byte_4598,
+            house_room: g.field_34ac,
+        };
+        floor::spawn_non_enemies(floor, counts, itemless, ty, self.byte_64d != 0, &mut s, rng);
+        g.stairs_a = s.leader;
+        g.stairs_b = s.stairs;
+        g.byte_4598 = s.stairs_room;
+        g.field_34ac = s.house_room;
+    }
+    fn spawn_enemies(
+        &mut self,
+        props: &FloorProperties,
+        itemless: bool,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let spawn = EnemySpawn {
+            density: props.byte_06,
+            empty_house: itemless,
+            has_house: g.monster_house != 0,
+            extra: self.word_678 != 0,
+            leader: g.stairs_a,
+        };
+        floor::spawn_enemies(floor, spawn, rng);
+    }
+    fn resolve_invalid_spawns(&mut self, floor: &mut Floor, _rng: &mut DungeonRng) {
+        floor::resolve_invalid_spawns(floor);
+    }
+    fn floor_type(&mut self, g: &GenState) -> u8 {
+        floor::floor_type(self.byte_668, self.byte_641, self.byte_63d, g.fixed_room)
+    }
+    fn stairs_reachable(&mut self, floor: &mut Floor, x: i16, y: i16, stored: (i16, i16)) -> bool {
+        floor::stairs_always_reachable(floor, (x, y), stored, false)
+    }
+    // shortcut: the 8-entry list of `0x02179060` is not modelled; it touches no tiles and no RNG.
+    fn pair_c_marker(&mut self, _pos: (i16, i16)) {}
+    fn props_marker(&mut self, _props: &FloorProperties, floor: &mut Floor, rng: &mut DungeonRng) {
+        floor::finish_shop(floor, &mut self.shop_rect, &self.shop_chances, rng);
+    }
+    fn final_steps(&mut self, floor: &mut Floor, _rng: &mut DungeonRng, tileset_type2: bool) {
+        floor::mark_hallway_junctions(floor);
+        if tileset_type2 {
+            floor::secondary_to_terrain_3(floor);
+        }
+    }
 }
 
 /// A reason `generate_floor` returned before the end.
@@ -399,19 +658,20 @@ pub fn generate_floor<S: FloorSteps>(
             steps.secondary_terrain(props, floor, rng);
         }
         let itemless = rng.int(100) < i32::from(props.itemless_chance);
-        steps.spawn_non_enemies(props, itemless, floor, rng);
-        steps.spawn_enemies(props, itemless, floor, rng);
+        steps.spawn_non_enemies(props, itemless, floor, rng, g);
+        steps.spawn_enemies(props, itemless, floor, rng, g);
         steps.resolve_invalid_spawns(floor, rng);
 
         // `GetFloorType` is only called when pair A is set, as in the game.
         let a = g.stairs_a;
         let floor_type = if a.0 != -1 && a.1 != -1 {
-            steps.floor_type()
+            steps.floor_type(g)
         } else {
             0
         };
-        let accepted = stairs_check(a, g.stairs_b, floor_type, |x, y| {
-            steps.stairs_reachable(floor, x, y)
+        let b = g.stairs_b;
+        let accepted = stairs_check(a, b, floor_type, |x, y| {
+            steps.stairs_reachable(floor, x, y, b)
         });
         if accepted {
             stairs_ok = true;
@@ -427,8 +687,8 @@ pub fn generate_floor<S: FloorSteps>(
         steps.one_room_monster_house(floor, rng, g);
         g.monster_house = 1;
         steps.finalize_junctions(floor);
-        steps.spawn_non_enemies(props, false, floor, rng);
-        steps.spawn_enemies(props, false, floor, rng);
+        steps.spawn_non_enemies(props, false, floor, rng, g);
+        steps.spawn_enemies(props, false, floor, rng, g);
         steps.resolve_invalid_spawns(floor, rng);
     }
 
@@ -438,7 +698,7 @@ pub fn generate_floor<S: FloorSteps>(
     if g.word_45cc < 0 {
         g.field_34aa = 0;
     } else {
-        steps.props_marker(props);
+        steps.props_marker(props, floor, rng);
         g.field_34aa = 1;
     }
     steps.final_steps(floor, rng, g.tileset_type2);
@@ -550,6 +810,7 @@ mod tests {
             _itemless: bool,
             _floor: &mut Floor,
             _rng: &mut DungeonRng,
+            _g: &mut GenState,
         ) {
             self.non_enemy_spawns += 1;
         }
@@ -559,18 +820,31 @@ mod tests {
             _itemless: bool,
             _floor: &mut Floor,
             _rng: &mut DungeonRng,
+            _g: &mut GenState,
         ) {
         }
         fn resolve_invalid_spawns(&mut self, _floor: &mut Floor, _rng: &mut DungeonRng) {}
-        fn floor_type(&mut self) -> u8 {
+        fn floor_type(&mut self, _g: &GenState) -> u8 {
             0
         }
-        fn stairs_reachable(&mut self, _floor: &mut Floor, _x: i16, _y: i16) -> bool {
+        fn stairs_reachable(
+            &mut self,
+            _floor: &mut Floor,
+            _x: i16,
+            _y: i16,
+            _stored: (i16, i16),
+        ) -> bool {
             self.stairs_calls += 1;
             self.stairs_calls >= self.reachable_from
         }
         fn pair_c_marker(&mut self, _pos: (i16, i16)) {}
-        fn props_marker(&mut self, _props: &FloorProperties) {}
+        fn props_marker(
+            &mut self,
+            _props: &FloorProperties,
+            _floor: &mut Floor,
+            _rng: &mut DungeonRng,
+        ) {
+        }
         fn final_steps(&mut self, _floor: &mut Floor, _rng: &mut DungeonRng, _t2: bool) {
             self.finals += 1;
         }

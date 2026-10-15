@@ -54,7 +54,7 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 
 | Step | Blue address | Natural seed | Seed `0x12345678` | Status in Rust |
 |------|--------------|-------------:|------------------:|----------------|
-| `GenerateFloor` up to `GenerateStandardFloor` | `ov_0001::02151E7C` | 11 | 7 | partly: the entry, grid size, layout switch and retry loops (`floor_gen::generate_floor`), checked for the forced seeds; ResetFloor, the layout generators and the spawns are behind `FloorSteps` |
+| `GenerateFloor` up to `GenerateStandardFloor` | `ov_0001::02151E7C` | 11 | 7 | done for the standard and one-room layouts (`floor_gen::generate_floor` with `floor_gen::PortedSteps`), checked end to end, see "Prologue and retry loops in Rust" |
 | std 1: grid bounds (`i × (56 / gridX)`, `i × (32 / gridY)`) | `ov_0001::0214FEB0` | 0 | 0 | done (`grid_bounds`) |
 | std 2 `InitDungeonGrid`: clear the 30-byte cells; small and medium layouts mark columns `x >= gridX / 2` or `x >= gridX × 3 / 4` invalid | `ov_0001::0214FD7C` | 0 | 0 | done (`Grid::new`) |
 | std 3 `AssignRooms` (room density as last argument) | `ov_0001::0214FB4C` | 129 | 129 | done (`assign_rooms`) |
@@ -248,7 +248,9 @@ The gap grows from −8 at `0x5C0` to −0x4A0 at `0x3800` and −0x560 at `0x3A
 
 `rescue_sim::floor::plan_layout` covers the grid size draw and the layout switch (`GenerateFloor` steps 3 and 4). Its RNG calls are the grid draw and, for layouts 1 and 11, one `DungeonRandInt(2)` for the grid height `r + 2`. Forced seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D` reach the state recorded at `GenerateStandardFloor`'s entry, and seed `0x12345678` takes 7 RNG steps. Both match the table above.
 
-`rescue_sim::floor_gen::generate_floor` runs the whole of `GenerateFloor` in the order of the disassembly below: the entry reset, the grid draw and layout switch, the fixed-room branch, both retry loops, the fallbacks and the final steps. The steps it calls that are not ported yet (ResetFloor's body, the layout generators, the spawns, the fixed-room placements) are behind the `FloorSteps` trait. The driver can stop at `GenerateStandardFloor`'s entry (`GenStop::StandardFloor`), which is the checkpoint the forced-seed tests use.
+`rescue_sim::floor_gen::generate_floor` runs the whole of `GenerateFloor` in the order of the disassembly below: the entry reset, the grid draw and layout switch, the fixed-room branch, both retry loops, the fallbacks and the final steps. The steps it calls are behind the `FloorSteps` trait. The driver can stop at `GenerateStandardFloor`'s entry (`GenStop::StandardFloor`), which is the checkpoint the forced-seed tests use.
+
+`rescue_sim::floor_gen::PortedSteps` implements `FloorSteps` with the ported functions: `ResetFloor` as a fresh map plus stairs pair B unset, `GenerateStandardFloor` as steps 1 to 13 in order, the one-room monster house, the finalising passes, the spawns and the end of `GenerateFloor`. The floor-wide data of steps 8 to 10 and the spawn pairs live in `GenState`. The fixed rooms and layout cases 3 to 7, 9 and 10 are not ported and panic. Room density is read from props `+0x01` (the offset `pmd-red`'s struct gives; `[red-hypothesis]`). The test `generate_floor_matches_the_retail_floors_end_to_end` runs `generate_floor` from the RNG state at `GenerateFloor`'s entry and reaches the RNG state, spawn hash, tile hash, leader and stairs at `GenerateFloorEnd` for the natural seed, the three forced seeds, their three forced monster houses and their three forced shops. The natural seed's entry state is its step-3 state taken 11 LCG steps back (the prologue's budget). The first floor's props that the recorded runs pin: layout 1, room density 5, walk 15, monster density 4, 2 items, 5 extra hallways, all chances 0.
 
 `attempt_has_rooms` and `stairs_check` are the two acceptance tests of the loops (`rescue_sim::floor`).
 
@@ -276,11 +278,10 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 
 ### Still not done
 
-- ResetFloor's body (`0x0214BDBC`): the driver calls it through `FloorSteps::reset_floor`. The body also clears the 8 × 8 cell records, a 64-entry pointer table and stairs pair B, and marks the walls next to the map edge. Not decoded in full yet.
+- ResetFloor's body (`0x0214BDBC`): `PortedSteps` resets the map and stairs pair B, which the checked floors need. The body also clears the 8 × 8 cell records, a 64-entry pointer table and stairs pair B, and marks the walls next to the map edge. Not decoded in full yet.
 - The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
 - Unnamed callees: `0x02179060` (called with the pair C position and `0x17C`), `0x02149AF8` (called with the props pointer), `0x0214C13C`, `0x02151D4C` (called with `0, 0, 56, 32`).
 - The layout generators, the enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up: their own issues. The driver calls them through `FloorSteps`.
-- Checks against the retail ROM for the natural seed (no ROM in this environment; the forced seeds are checked).
 
 ## Open questions
 
