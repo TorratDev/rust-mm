@@ -7,7 +7,6 @@ Plans and decisions live in [`docs/roadmap.md`](docs/roadmap.md). Assumption che
 The full policy is [`docs/legal.md`](docs/legal.md). Every contribution must follow it. In short:
 
 - **Dumps are identified by SHA-1.** Tools accept only supported dumps and refuse others.
-- **Never commit extracted assets** (graphics, text, music, maps, scripts, data tables) or anything that embeds ROM bytes.
 - **Fixtures are generated at test time** from the user's dump. Tests skip cleanly when no dump is configured.
   Configure your dump as described in [`docs/supported-dumps.md`](docs/supported-dumps.md); writing and running ROM-gated tests is in [`docs/rom-tests.md`](docs/rom-tests.md).
 - **Release binaries and CI artifacts contain no ROM data.**
