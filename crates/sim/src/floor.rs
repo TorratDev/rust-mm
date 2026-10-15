@@ -2181,6 +2181,248 @@ pub fn generate_secondary_terrain(floor: &mut Floor, byte_0d: u8, ponds: u8, rng
     }
 }
 
+/// What `SpawnNonEnemies` reads from the floor properties.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpawnCounts {
+    /// `+0x0F`: average number of items in the rooms; 0 places none.
+    pub items: u8,
+    /// `+0x10`: the most traps; the count is drawn between half of it and all of it.
+    pub traps: u8,
+    /// `+0x14`: average number of items buried in the walls; 0 places none.
+    pub buried: u8,
+}
+
+/// The values `SpawnNonEnemies` reads and writes besides the tiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpawnState {
+    /// Pair A (dungeon `+0xC0B8`, `+0xC0BA`): where the leader starts; set by the step when unset.
+    pub leader: (i16, i16),
+    /// Pair B (dungeon `+0xC0BC`, `+0xC0BE`): the stairs; set by the step when unset.
+    pub stairs: (i16, i16),
+    /// Byte `021B4598`: room number of the stairs.
+    pub stairs_room: u8,
+    /// Dungeon `+0x34AC`: room that floor type 2 turns into a monster house.
+    pub house_room: u8,
+}
+
+/// Spawn markers in the second tile word, as `SpawnNonEnemies` sets and reads them.
+const SPAWN_STAIRS: u16 = 0x1;
+const SPAWN_ITEM: u16 = 0x2;
+const SPAWN_TRAP: u16 = 0x4;
+const SPAWN_BLOCKED: u16 = 0x8;
+const SPAWN_NO_STAIRS: u16 = 0x10;
+const TERRAIN_NO_SPAWN: u16 = 0x100;
+
+/// The most items a monster house gets (a constant in overlay 1's data).
+const HOUSE_ITEM_LIMIT: i32 = 7;
+
+/// Swaps two random entries, `2 * len` times (`ov_0001::0214BD40`).
+fn shuffle_positions(list: &mut [(u8, u8)], rng: &mut DungeonRng) {
+    let len = i32::try_from(list.len()).unwrap_or(i32::MAX);
+    for _ in 0..2 * list.len() {
+        let a = usize::try_from(rng.int(len)).unwrap_or(0);
+        let b = usize::try_from(rng.int(len)).unwrap_or(0);
+        list.swap(a, b);
+    }
+}
+
+/// Every tile (x outer, y inner) for which `keep(terrain, spawn, room)` holds.
+fn tile_positions(floor: &Floor, keep: impl Fn(u16, u16, u8) -> bool) -> Vec<(u8, u8)> {
+    let mut found = Vec::new();
+    for x in 0..WIDTH {
+        for y in 0..HEIGHT {
+            let tile = floor.tile(x as i32, y as i32).expect("in-map tile");
+            if keep(tile.terrain, tile.spawn_or_visibility, tile.room) {
+                found.push((x as u8, y as u8));
+            }
+        }
+    }
+    found
+}
+
+/// A random entry of `list`, which must not be empty.
+fn pick_position(list: &[(u8, u8)], rng: &mut DungeonRng) -> (u8, u8) {
+    let len = i32::try_from(list.len()).unwrap_or(i32::MAX);
+    list[usize::try_from(rng.int(len)).unwrap_or(0)]
+}
+
+/// Sets `marker` in the spawn word of `count` tiles of `list`, from a random
+/// start and wrapping at the end.
+fn mark_from_random(
+    floor: &mut Floor,
+    list: &[(u8, u8)],
+    count: i32,
+    marker: u16,
+    rng: &mut DungeonRng,
+) {
+    let len = i32::try_from(list.len()).unwrap_or(i32::MAX);
+    let mut at = usize::try_from(rng.int(len)).unwrap_or(0);
+    for _ in 0..count {
+        let (x, y) = list[at];
+        if let Some(tile) = floor.tile_mut(i32::from(x), i32::from(y)) {
+            tile.spawn_or_visibility |= marker;
+        }
+        at = (at + 1) % list.len();
+    }
+}
+
+/// `ov_0001::0214B650` (`SpawnNonEnemies(props, isEmptyMonsterHouse)` in
+/// `pmd-red`; a `[red-hypothesis]` name). It marks tiles; the entities come
+/// from later steps. In order:
+///
+/// 1. **Stairs**, when pair B is unset: one room floor tile that is not a
+///    shop, junction or no-spawn tile and has neither spawn bit `0x8` nor
+///    [`SPAWN_NO_STAIRS`], by `DungeonRandInt`. It gets the stairs marker and
+///    loses the item marker. On floor type 2 every floor tile of the stairs'
+///    room also gets the monster-house terrain bit.
+/// 2. **Items**: `items` (floor-properties `+0x0F`) turns into
+///    `DungeonRandRange(items - 2, items + 2)`, at least 1 (nothing when it
+///    is 0), over a shuffled list of room tiles that are not a shop, junction,
+///    no-spawn tile or monster house.
+/// 3. **Buried items**: the same over wall tiles (terrain type 0), with
+///    `buried` (`+0x14`) and no minimum.
+/// 4. **Monster-house items**, unless `empty_house`: over the monster-house
+///    tiles, `DungeonRandRange(5 n / 10, 8 n / 10)` of them, clamped to 6
+///    and [`HOUSE_ITEM_LIMIT`]. Each draws `DungeonRandInt(2)`: an item, or a
+///    trap when `trap_flag` (dungeon `+0x64D`) is set.
+/// 5. **Traps**: `DungeonRandRange(traps / 2, traps)` (`+0x10`), at most 56,
+///    over room tiles with no item.
+/// 6. **Leader**, when pair A is unset: one room tile with no item, trap or
+///    `0x8` marker.
+///
+/// Lists are scanned x outer, y inner, shuffled with `2 n` swaps of two
+/// `DungeonRandInt(n)` draws, and read from a random start. Written from the
+/// disassembly; see `docs/re/dungeon-generation.md`.
+pub fn spawn_non_enemies(
+    floor: &mut Floor,
+    counts: SpawnCounts,
+    empty_house: bool,
+    floor_type: u8,
+    trap_flag: bool,
+    state: &mut SpawnState,
+    rng: &mut DungeonRng,
+) {
+    let in_room =
+        |terrain: u16, room: u8| terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR && room != NO_ROOM;
+    let plain = |terrain: u16| terrain & (TERRAIN_SHOP | TERRAIN_JUNCTION | TERRAIN_NO_SPAWN) == 0;
+
+    if state.stairs.0 == -1 || state.stairs.1 == -1 {
+        let found = tile_positions(floor, |t, s, room| {
+            in_room(t, room) && plain(t) && s & (SPAWN_BLOCKED | SPAWN_NO_STAIRS) == 0
+        });
+        if !found.is_empty() {
+            let (x, y) = pick_position(&found, rng);
+            let tile = floor
+                .tile_mut(i32::from(x), i32::from(y))
+                .expect("in-map tile");
+            tile.spawn_or_visibility = (tile.spawn_or_visibility | SPAWN_STAIRS) & !SPAWN_ITEM;
+            let room = tile.room;
+            state.stairs_room = room;
+            state.stairs = (i16::from(x), i16::from(y));
+            if floor_type == 2 {
+                for tx in 0..WIDTH as i32 {
+                    for ty in 0..HEIGHT as i32 {
+                        let t = floor.tile_mut(tx, ty).expect("in-map tile");
+                        if t.terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR && t.room == room {
+                            t.terrain |= TERRAIN_MONSTER_HOUSE;
+                        }
+                    }
+                }
+                state.house_room = room;
+            }
+        }
+    }
+
+    let mut found = tile_positions(floor, |t, _, room| {
+        in_room(t, room) && plain(t) && t & TERRAIN_MONSTER_HOUSE == 0
+    });
+    let mut count = i32::from(counts.items);
+    if !found.is_empty() && count != 0 {
+        count = rng.range(count - 2, count + 2).max(1);
+    }
+    if !found.is_empty() && count > 0 {
+        shuffle_positions(&mut found, rng);
+        mark_from_random(floor, &found, count, SPAWN_ITEM, rng);
+    }
+
+    let mut found = tile_positions(floor, |t, _, _| t & TERRAIN_TYPE_MASK == 0);
+    let mut count = i32::from(counts.buried);
+    if !found.is_empty() && count != 0 {
+        count = rng.range(count - 2, count + 2);
+    }
+    if !found.is_empty() && count > 0 {
+        shuffle_positions(&mut found, rng);
+        mark_from_random(floor, &found, count, SPAWN_ITEM, rng);
+    }
+
+    let mut found = if empty_house {
+        Vec::new()
+    } else {
+        tile_positions(floor, |t, _, _| {
+            t & (TERRAIN_SHOP | TERRAIN_JUNCTION) == 0 && t & TERRAIN_MONSTER_HOUSE != 0
+        })
+    };
+    if !found.is_empty() {
+        let len = i32::try_from(found.len()).unwrap_or(i32::MAX);
+        let count = rng
+            .range(len * 5 / 10, len * 8 / 10)
+            .clamp(6, HOUSE_ITEM_LIMIT);
+        shuffle_positions(&mut found, rng);
+        let mut at = usize::try_from(rng.int(len)).unwrap_or(0);
+        for _ in 0..count {
+            let (x, y) = found[at];
+            let item = rng.int(2) != 0;
+            if let Some(tile) = floor.tile_mut(i32::from(x), i32::from(y)) {
+                if item {
+                    tile.spawn_or_visibility |= SPAWN_ITEM;
+                } else if trap_flag {
+                    tile.spawn_or_visibility |= SPAWN_TRAP;
+                }
+            }
+            at = (at + 1) % found.len();
+        }
+    }
+
+    let mut found = tile_positions(floor, |t, s, room| {
+        in_room(t, room) && plain(t) && s & SPAWN_ITEM == 0
+    });
+    if !found.is_empty() {
+        let most = i32::from(counts.traps);
+        let count = rng.range(most >> 1, most);
+        if count > 0 {
+            shuffle_positions(&mut found, rng);
+            mark_from_random(floor, &found, count.min(WIDTH as i32), SPAWN_TRAP, rng);
+        }
+    }
+
+    if state.leader.0 == -1 || state.leader.1 == -1 {
+        let found = tile_positions(floor, |t, s, room| {
+            in_room(t, room) && plain(t) && s & (SPAWN_ITEM | SPAWN_BLOCKED | SPAWN_TRAP) == 0
+        });
+        if !found.is_empty() {
+            let (x, y) = pick_position(&found, rng);
+            state.leader = (i16::from(x), i16::from(y));
+        }
+    }
+}
+
+/// FNV-1a 64 over the spawn word (`u16`, little endian) of every tile, row by
+/// row; `spawnFnv1a` of `floor_stages.py`.
+#[must_use]
+pub fn spawn_fnv1a(floor: &Floor) -> u64 {
+    let mut hash = 0xCBF2_9CE4_8422_2325_u64;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let tile = floor.tile(x as i32, y as i32).expect("in-map tile");
+            for byte in tile.spawn_or_visibility.to_le_bytes() {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+            }
+        }
+    }
+    hash
+}
+
 /// FNV-1a 64 over the terrain flags (`u16`, little endian) and the room of
 /// every tile, row by row. `verification/v7-trace/floor_stages.py` computes the
 /// same value from the retail ROM (`tilesFnv1a` at the entry of step 7).
@@ -4559,6 +4801,423 @@ mod tests {
             assert_eq!((rng.state(), tiles_fnv1a(&floor)), spawn, "{what}: spawn");
         }
         assert!(changed > 10, "{changed}");
+    }
+
+    /// `SpawnNonEnemies` on the retail ROM, from `floor_stages.py` (rows after
+    /// the first four use `--force-spawn`; the `h` rows add `--force-chance
+    /// 10=100`, a monster house): the grid height and the RNG states at the
+    /// entries of steps 3 and 5, the floor-properties counts, the entry of
+    /// `SpawnNonEnemies` (RNG state and `tilesFnv1a`) and the entry of
+    /// `SpawnEnemies` (RNG state, `spawnFnv1a`, `tilesFnv1a`), the leader and
+    /// stairs positions, and the RNG steps between the two.
+    struct SpawnRow {
+        grid_y: usize,
+        std3: u32,
+        std5: u32,
+        house: bool,
+        counts: SpawnCounts,
+        itemless: bool,
+        trap_flag: bool,
+        entry: (u32, u64),
+        after: (u32, u64, u64),
+        leader: (i16, i16),
+        stairs: (i16, i16),
+        steps: usize,
+    }
+
+    const SPAWN_ROWS: &[SpawnRow] = &[
+        // nat
+        SpawnRow {
+            grid_y: 2,
+            std3: 1410305108,
+            std5: 2134860938,
+            house: false,
+            counts: SpawnCounts {
+                items: 2,
+                traps: 0,
+                buried: 0,
+            },
+            itemless: false,
+            trap_flag: false,
+            entry: (421756639, 0xbcf5b4263ff9d1e9),
+            after: (2253708027, 0xad01dfd2d2a3157e, 0xbcf5b4263ff9d1e9),
+            leader: (20, 25),
+            stairs: (23, 8),
+            steps: 788,
+        },
+        // f1
+        SpawnRow {
+            grid_y: 2,
+            std3: 985678915,
+            std5: 3860814012,
+            house: false,
+            counts: SpawnCounts {
+                items: 2,
+                traps: 0,
+                buried: 0,
+            },
+            itemless: false,
+            trap_flag: false,
+            entry: (1043817127, 0x94d7066093b792c3),
+            after: (1303458447, 0xf9b1bd37df0df12e, 0x94d7066093b792c3),
+            leader: (9, 24),
+            stairs: (7, 27),
+            steps: 760,
+        },
+        // f2
+        SpawnRow {
+            grid_y: 2,
+            std3: 1477956308,
+            std5: 3196431495,
+            house: false,
+            counts: SpawnCounts {
+                items: 2,
+                traps: 0,
+                buried: 0,
+            },
+            itemless: false,
+            trap_flag: false,
+            entry: (2555756818, 0x520e24f7aa329aef),
+            after: (3861683090, 0xd7a7a00ea6a52fa6, 0x520e24f7aa329aef),
+            leader: (23, 28),
+            stairs: (20, 25),
+            steps: 384,
+        },
+        // f3
+        SpawnRow {
+            grid_y: 3,
+            std3: 3889763896,
+            std5: 2379107274,
+            house: false,
+            counts: SpawnCounts {
+                items: 2,
+                traps: 0,
+                buried: 0,
+            },
+            itemless: false,
+            trap_flag: false,
+            entry: (3729880928, 0x4ef1904d755692ba),
+            after: (2696250568, 0xa39e79e99997830e, 0x4ef1904d755692ba),
+            leader: (19, 13),
+            stairs: (21, 14),
+            steps: 408,
+        },
+        // a1
+        SpawnRow {
+            grid_y: 2,
+            std3: 985678915,
+            std5: 3860814012,
+            house: false,
+            counts: SpawnCounts {
+                items: 6,
+                traps: 8,
+                buried: 5,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (1043817127, 0x94d7066093b792c3),
+            after: (3391043811, 0x4d9dcffa260e3e7e, 0x94d7066093b792c3),
+            leader: (22, 3),
+            stairs: (7, 27),
+            steps: 7668,
+        },
+        // a2
+        SpawnRow {
+            grid_y: 2,
+            std3: 1477956308,
+            std5: 3196431495,
+            house: false,
+            counts: SpawnCounts {
+                items: 3,
+                traps: 4,
+                buried: 0,
+            },
+            itemless: false,
+            trap_flag: false,
+            entry: (2555756818, 0x520e24f7aa329aef),
+            after: (1393630876, 0x50aead524190c110, 0x520e24f7aa329aef),
+            leader: (10, 21),
+            stairs: (20, 25),
+            steps: 750,
+        },
+        // a3
+        SpawnRow {
+            grid_y: 3,
+            std3: 3889763896,
+            std5: 2379107274,
+            house: false,
+            counts: SpawnCounts {
+                items: 8,
+                traps: 12,
+                buried: 4,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (3729880928, 0x4ef1904d755692ba),
+            after: (575383652, 0x9150252763ef68be, 0x4ef1904d755692ba),
+            leader: (4, 15),
+            stairs: (21, 14),
+            steps: 7260,
+        },
+        // h1
+        SpawnRow {
+            grid_y: 2,
+            std3: 985678915,
+            std5: 3860814012,
+            house: true,
+            counts: SpawnCounts {
+                items: 4,
+                traps: 5,
+                buried: 2,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (3817659253, 0xcc0288f32104c959),
+            after: (757834862, 0xda0a92d5f9d6069a, 0xcc0288f32104c959),
+            leader: (7, 11),
+            stairs: (7, 27),
+            steps: 7613,
+        },
+        // h2
+        SpawnRow {
+            grid_y: 2,
+            std3: 1477956308,
+            std5: 3196431495,
+            house: true,
+            counts: SpawnCounts {
+                items: 4,
+                traps: 5,
+                buried: 2,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (1268302414, 0x0c802c777a0f272f),
+            after: (859905314, 0x2eb9f26dff8e2f3e, 0x0c802c777a0f272f),
+            leader: (9, 19),
+            stairs: (23, 29),
+            steps: 748,
+        },
+        // h3
+        SpawnRow {
+            grid_y: 3,
+            std3: 3889763896,
+            std5: 2379107274,
+            house: true,
+            counts: SpawnCounts {
+                items: 4,
+                traps: 5,
+                buried: 2,
+            },
+            itemless: false,
+            trap_flag: false,
+            entry: (961689483, 0x765db24b5429815f),
+            after: (2357950828, 0x9cd71bac77df0e7e, 0x765db24b5429815f),
+            leader: (18, 25),
+            stairs: (21, 13),
+            steps: 7245,
+        },
+        // h4
+        SpawnRow {
+            grid_y: 2,
+            std3: 181269758,
+            std5: 1729437732,
+            house: true,
+            counts: SpawnCounts {
+                items: 3,
+                traps: 9,
+                buried: 1,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (2253548544, 0x3ab4f818bf0688fa),
+            after: (2740741813, 0xabddcf47d0fd6f62, 0x3ab4f818bf0688fa),
+            leader: (16, 22),
+            stairs: (20, 24),
+            steps: 7357,
+        },
+        // r1
+        SpawnRow {
+            grid_y: 3,
+            std3: 3145669994,
+            std5: 904877196,
+            house: false,
+            counts: SpawnCounts {
+                items: 5,
+                traps: 7,
+                buried: 3,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (2881710534, 0x4b37c30632c17cd0),
+            after: (243286298, 0xac27a59c94e72472, 0x4b37c30632c17cd0),
+            leader: (3, 7),
+            stairs: (4, 6),
+            steps: 7148,
+        },
+        // r2
+        SpawnRow {
+            grid_y: 3,
+            std3: 3200292023,
+            std5: 175351402,
+            house: false,
+            counts: SpawnCounts {
+                items: 1,
+                traps: 3,
+                buried: 2,
+            },
+            itemless: false,
+            trap_flag: true,
+            entry: (1093691434, 0xd5de6eede9abb21a),
+            after: (4037258089, 0xa4820cd6f2172516, 0xd5de6eede9abb21a),
+            leader: (22, 26),
+            stairs: (2, 27),
+            steps: 699,
+        },
+    ];
+
+    fn unset_spawn_state() -> SpawnState {
+        SpawnState {
+            leader: (-1, -1),
+            stairs: (-1, -1),
+            stairs_room: 0,
+            house_room: NO_ROOM,
+        }
+    }
+
+    #[test]
+    fn spawn_non_enemies_matches_the_retail_floors() {
+        let (mut houses, mut buried, mut traps) = (0, 0, 0);
+        for (i, row) in SPAWN_ROWS.iter().enumerate() {
+            let what = format!("row {i}");
+            let (mut floor, mut grid, mut rng) =
+                floor_before_features(row.grid_y, row.std3, row.std5);
+            if row.house {
+                let mut features = RoomFeatures::default();
+                assert!(generate_monster_house(
+                    &mut floor,
+                    &mut grid,
+                    100,
+                    0,
+                    false,
+                    &mut features,
+                    &mut rng
+                ));
+            }
+            generate_extra_hallways(&mut floor, &grid, GridMode::LeftHalf, 5, &mut rng);
+            reset_inner_boundary_tile_rows(&mut floor);
+            ensure_impassable_tiles_are_walls(&mut floor);
+            finalize_junctions(&mut floor);
+            generate_secondary_terrain(&mut floor, 0, 0, &mut rng);
+            rng.int(100);
+            assert_eq!(
+                (rng.state(), tiles_fnv1a(&floor)),
+                row.entry,
+                "{what}: entry"
+            );
+
+            let mut state = unset_spawn_state();
+            spawn_non_enemies(
+                &mut floor,
+                row.counts,
+                row.itemless,
+                0,
+                row.trap_flag,
+                &mut state,
+                &mut rng,
+            );
+            let got = (rng.state(), spawn_fnv1a(&floor), tiles_fnv1a(&floor));
+            assert_eq!(got, row.after, "{what}: RNG state and tiles");
+            assert_eq!(state.leader, row.leader, "{what}: leader");
+            assert_eq!(state.stairs, row.stairs, "{what}: stairs");
+
+            let mut counted = DungeonRng::from_state(row.entry.0);
+            let mut steps = 0;
+            while counted.state() != row.after.0 {
+                counted.next_u16();
+                steps += 1;
+            }
+            assert_eq!(steps, row.steps, "{what}: RNG steps");
+            houses += usize::from(row.house);
+            buried += usize::from(row.counts.buried > 0);
+            traps += usize::from(row.counts.traps > 0);
+        }
+        // The rows must exercise the monster-house, buried-item and trap branches.
+        assert!(
+            houses > 0 && buried > 0 && traps > 0,
+            "{houses} {buried} {traps}"
+        );
+    }
+
+    /// A floor of one 10 x 6 room (room 3) in an otherwise walled map.
+    fn one_room_floor() -> Floor {
+        let mut floor = Floor::new();
+        for x in 5..15 {
+            for y in 5..11 {
+                open_tile(&mut floor, x, y, 3);
+            }
+        }
+        floor
+    }
+
+    /// Branches the first floor cannot reach, read from the disassembly: with
+    /// both pairs set and no counts, the step draws nothing; floor type 2 turns
+    /// the stairs' room into a monster house; `isEmptyMonsterHouse` skips the
+    /// house items and the trap flag picks what a house tile gets.
+    #[test]
+    fn spawn_non_enemies_gates() {
+        let counts = SpawnCounts::default();
+        let set = SpawnState {
+            leader: (6, 6),
+            stairs: (7, 7),
+            stairs_room: 9,
+            house_room: NO_ROOM,
+        };
+        let mut floor = one_room_floor();
+        let mut rng = DungeonRng::from_state(77);
+        let mut state = set;
+        spawn_non_enemies(&mut floor, counts, false, 0, true, &mut state, &mut rng);
+        assert_eq!((rng.state(), state), (77, set));
+        assert_eq!(spawn_fnv1a(&floor), spawn_fnv1a(&one_room_floor()));
+
+        // Unset pairs cost one draw each (60 candidates both times: the stairs
+        // tile stays a leader candidate); the stairs lose the item bit and floor
+        // type 2 flags their room.
+        let mut floor = one_room_floor();
+        let mut state = unset_spawn_state();
+        let mut rng = DungeonRng::from_state(77);
+        spawn_non_enemies(&mut floor, counts, true, 2, true, &mut state, &mut rng);
+        let mut expected = DungeonRng::from_state(77);
+        expected.int(60);
+        expected.int(60);
+        assert_eq!(rng.state(), expected.state());
+        let (sx, sy) = (i32::from(state.stairs.0), i32::from(state.stairs.1));
+        assert_eq!(floor.tile(sx, sy).unwrap().spawn_or_visibility, 1);
+        assert_eq!((state.stairs_room, state.house_room), (3, 3));
+        assert!(floor.tile(6, 6).unwrap().terrain & TERRAIN_MONSTER_HOUSE != 0);
+
+        // A 60-tile monster house gets 6 to 7 marks. An empty house skips them
+        // with no draw; the trap flag only decides what a zero draw becomes.
+        let marked = |floor: &Floor, bit: u16| tile_positions(floor, |_, s, _| s & bit != 0).len();
+        let mut house = one_room_floor();
+        for x in 5..15 {
+            for y in 5..11 {
+                house.tile_mut(x, y).unwrap().terrain |= TERRAIN_MONSTER_HOUSE;
+            }
+        }
+        let go = |empty: bool, flag: bool| {
+            let mut floor = house.clone();
+            let mut state = set;
+            let mut rng = DungeonRng::from_state(5);
+            spawn_non_enemies(&mut floor, counts, empty, 0, flag, &mut state, &mut rng);
+            (floor, rng.state())
+        };
+        let (skipped, rng_skipped) = go(true, true);
+        assert_eq!((rng_skipped, marked(&skipped, 7)), (5, 0));
+        let (with_flag, _) = go(false, true);
+        let (without, _) = go(false, false);
+        assert_eq!(marked(&with_flag, 2), marked(&without, 2));
+        assert_eq!(marked(&without, 4), 0);
+        assert!((1..=7).contains(&(marked(&with_flag, 2) + marked(&with_flag, 4))));
     }
 
     #[test]

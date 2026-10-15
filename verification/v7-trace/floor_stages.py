@@ -13,7 +13,8 @@ GenerateFloor starts (see floor_oracle.py).
 
 Usage:
   floor_stages.py ROM OUT.jsonl [--seed S] [--force-chance 8=P,9=P,10=P] [--maze-gate]
-                  [--force-structures N] [--force-secondary N] [--boot-inputs FILE]
+                  [--force-structures N] [--force-secondary N]
+                  [--force-spawn ITEMS,BURIED,TRAPS[,TRAPFLAG]] [--boot-inputs FILE]
 Output: one JSON line per checkpoint; only states, counts and arguments.
 """
 
@@ -85,6 +86,10 @@ def main():
                    help="at the entry of GenerateSecondaryTerrainFormations, set bit 0 of floor-properties "
                         "byte +0x0D and byte +0x15 to N (the number of ponds), so that the step acts on "
                         "floors whose properties turn it off")
+    p.add_argument("--force-spawn", default="",
+                   help="ITEMS,BURIED,TRAPS[,TRAPFLAG]: at SpawnNonEnemies' entry, set floor-properties "
+                        "bytes +0x0F (items), +0x14 (buried items) and +0x10 (traps), and dungeon +0x64D "
+                        "(the trap flag), so that the step places more than the first floor's properties ask")
     p.add_argument("--boot-inputs", default=os.path.join(HERE, "boot_to_dungeon.txt"))
     p.add_argument("--max-boot-frames", type=int, default=30000)
     a = p.parse_args()
@@ -121,6 +126,18 @@ def main():
                     h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
         return f"{h:016x}"
 
+    def spawn_fnv1a():
+        # Same walk as tiles_fnv1a over the two bytes of the spawn markers (+2).
+        base = u32(G_DUNGEON) + 0x34B8
+        h = 0xCBF29CE484222325
+        for y in range(32):
+            row = bytes(emu.memory.read(base + y * 0x460, base + (y + 1) * 0x460, 1, False))
+            for x in range(56):
+                t = row[x * 0x14:(x + 1) * 0x14]
+                for b in (t[2], t[3]):
+                    h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+        return f"{h:016x}"
+
     def make(name):
         def hook(*_):
             if done:
@@ -152,6 +169,33 @@ def main():
                 flags = bytes(emu.memory.read(props + 0xD, props + 0xE, 1, False))[0]
                 emu.memory.write_byte(props + 0xD, flags | 1)
                 emu.memory.write_byte(props + 0x15, a.force_secondary)
+            if name == "SpawnNonEnemies":
+                props = regs.r0 & 0xFFFFFFFF
+                dun = u32(G_DUNGEON)
+                force = [int(v) for v in a.force_spawn.split(",") if v]
+                if force:
+                    for off, v in zip((0xF, 0x14, 0x10), force):
+                        emu.memory.write_byte(props + off, v)
+                    if len(force) > 3:
+                        emu.memory.write_byte(dun + 0x64D, force[3])
+                entry["spawn"] = {
+                    "itemless": regs.r1 & 0xFF,
+                    "items": bytes(emu.memory.read(props + 0xF, props + 0x10, 1, False))[0],
+                    "traps": bytes(emu.memory.read(props + 0x10, props + 0x11, 1, False))[0],
+                    "buried": bytes(emu.memory.read(props + 0x14, props + 0x15, 1, False))[0],
+                    "trapFlag": bytes(emu.memory.read(dun + 0x64D, dun + 0x64E, 1, False))[0],
+                    "houseLimit": struct.unpack("<h", bytes(emu.memory.read(0x21AA194, 0x21AA196, 1, False)))[0],
+                }
+            if name == "SpawnEnemies":
+                dun = u32(G_DUNGEON)
+                entry["spawned"] = {
+                    "spawnFnv1a": spawn_fnv1a(),
+                    "tilesFnv1a": tiles_fnv1a(),
+                    "pairA": list(struct.unpack("<2h", bytes(emu.memory.read(dun + 0xC0B8, dun + 0xC0BC, 1, False)))),
+                    "pairB": list(struct.unpack("<2h", bytes(emu.memory.read(dun + 0xC0BC, dun + 0xC0C0, 1, False)))),
+                    "stairsRoom": bytes(emu.memory.read(0x21B4598, 0x21B4599, 1, False))[0],
+                    "houseRoom": bytes(emu.memory.read(dun + 0x34AC, dun + 0x34AD, 1, False))[0],
+                }
             if name == "std8" and a.maze_gate:
                 emu.memory.write_short(u32(G_DUNGEON) + 0x34B6, 0xFFFF)
             if name in ("std7", "std8", "std9", "std10", "std11", "std12", "std13",
