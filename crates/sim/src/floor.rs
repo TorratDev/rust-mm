@@ -5727,6 +5727,120 @@ mod tests {
         }
     }
 
+    /// The dungeon RNG state at `GenerateFloor`'s entry for the natural seed:
+    /// [`NATURAL_SEED`]'s step-3 state, 11 LCG steps back (the prologue's
+    /// budget in `docs/re/dungeon-generation.md`).
+    fn natural_entry() -> u32 {
+        // Inverse of the LCG multiplier mod 2^32 (Newton's iteration).
+        let mut inv = crate::rng::LCG_MULTIPLIER;
+        for _ in 0..5 {
+            inv = inv.wrapping_mul(2u32.wrapping_sub(crate::rng::LCG_MULTIPLIER.wrapping_mul(inv)));
+        }
+        (0..11).fold(NATURAL_SEED.std3, |s, _| {
+            s.wrapping_sub(1).wrapping_mul(inv)
+        })
+    }
+
+    /// The first floor of a new game as `GenerateFloor` sees it, with the
+    /// bytes the recorded rows pin (room density 5, walk 15, monster density 4,
+    /// two items, five extra hallways) and every chance 0.
+    fn first_floor_props() -> crate::floor_gen::FloorProperties {
+        crate::floor_gen::FloorProperties {
+            layout: 1,
+            room_density: 5,
+            byte_05: FIRST_FLOOR_WALK_STEPS,
+            byte_06: 4,
+            byte_0f: 2,
+            byte_13: 5,
+            ..Default::default()
+        }
+    }
+
+    /// RNG state, `spawnFnv1a` and `tilesFnv1a` at `GenerateFloor`'s return.
+    type FloorEnd = (u32, u64, u64);
+
+    /// Runs `GenerateFloor` with the ported steps from `entry` and returns the
+    /// RNG state, `spawnFnv1a`, `tilesFnv1a`, leader and stairs at its return.
+    fn whole_floor(
+        entry: u32,
+        props: &crate::floor_gen::FloorProperties,
+        steps: &mut crate::floor_gen::PortedSteps,
+    ) -> (FloorEnd, (i16, i16), (i16, i16)) {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::from_state(entry);
+        let mut g = crate::floor_gen::GenState::default();
+        crate::floor_gen::generate_floor(props, false, &mut floor, &mut rng, &mut g, steps, false)
+            .expect("runs to the end");
+        let end = (rng.state(), spawn_fnv1a(&floor), tiles_fnv1a(&floor));
+        (end, g.stairs_a, g.stairs_b)
+    }
+
+    /// `GenerateFloor` end to end with [`crate::floor_gen::PortedSteps`]: from
+    /// the RNG state at its entry to the RNG state, spawn hash and tile hash
+    /// recorded at `GenerateFloorEnd`, for the rows of [`END_ROWS`] (natural
+    /// seed, the forced seeds, the forced monster houses) and the forced shops
+    /// of [`SHOP_END_ROWS`].
+    #[test]
+    fn generate_floor_matches_the_retail_floors_end_to_end() {
+        let seeds = [natural_entry(), 0x1234_5678, 0xCAFE_BABF, 0x0BAD_F00D];
+        let mut prologue = DungeonRng::from_state(seeds[0]);
+        let plan = plan_layout(1, &mut prologue);
+        assert!(matches!(
+            plan,
+            LayoutPlan::Standard {
+                grid_x: 4,
+                grid_y: 2,
+                ..
+            }
+        ));
+        assert_eq!(prologue.state(), NATURAL_SEED.std3, "natural entry");
+
+        for row in END_ROWS {
+            let spawn = &SPAWN_ROWS[row.spawn_row];
+            // Rows 0 to 3 are the four seeds; rows 7 to 9 their forced houses.
+            let seed = seeds[if spawn.house {
+                row.spawn_row - 6
+            } else {
+                row.spawn_row
+            }];
+            let props = crate::floor_gen::FloorProperties {
+                byte_06: row.density,
+                byte_08: if spawn.house { 100 } else { 0 },
+                byte_0f: spawn.counts.items,
+                byte_10: spawn.counts.traps,
+                byte_14: spawn.counts.buried,
+                ..first_floor_props()
+            };
+            let mut steps = crate::floor_gen::PortedSteps {
+                byte_64d: u8::from(spawn.trap_flag),
+                ..Default::default()
+            };
+            let (end, leader, stairs) = whole_floor(seed, &props, &mut steps);
+            let what = format!("spawn row {}", row.spawn_row);
+            assert_eq!(end, (row.resolve.0, row.resolve.1, row.end_tiles), "{what}");
+            assert_eq!(
+                (leader, stairs),
+                (spawn.leader, spawn.stairs),
+                "{what}: pairs"
+            );
+        }
+
+        for (seed, (_, end, rect)) in seeds[1..].iter().zip(SHOP_END_ROWS) {
+            let props = crate::floor_gen::FloorProperties {
+                byte_06: 8,
+                byte_07: 100,
+                ..first_floor_props()
+            };
+            let mut steps = crate::floor_gen::PortedSteps {
+                shop_chances: TEST_SHOP_CHANCES,
+                ..Default::default()
+            };
+            let (got, _, _) = whole_floor(*seed, &props, &mut steps);
+            assert_eq!(got, end, "seed {seed:#x}: GenerateFloor's return");
+            assert_eq!(steps.shop_rect, rect, "seed {seed:#x}: shop area");
+        }
+    }
+
     /// The fallback of `GenerateFloor` on the retail ROM (`floor_stages.py
     /// --force-unreachable --force-enemies 8`, natural seed): after ten
     /// rejected floors, `ResetFloor`, the one-room monster house, the junction
