@@ -184,6 +184,21 @@ Read from the disassembly; the names are ours. Arguments: a flag (1) and the flo
 - **Check.** The oracle option `floor_stages.py --force-secondary N` sets bit 0 of `+0x0D` and `+0x15 = N` at the step's entry. For the natural seed, `0x12345678`, `0xCAFEBABF`, `0x0BADF00D` and 16 more forced seeds the Rust step reaches the RNG state and `tilesFnv1a` of `SpawnNonEnemies`' entry (stripe counts 1 to 3, ponds 0, 3, 4 and 12; the first floor's stripes cost about 520 to 650 draws with 3 ponds). Without the option every floor keeps its tile hash and costs the single itemless draw.
 - **Not exercised.** The 200-try limit of a pond, and the last pass turning flagged tiles (`0x160`, spawn bit 0) into floor: no checked floor has such a tile under the secondary terrain. Both are read from the disassembly only. Stripes that run into their own path, the lumpy edge, and the edge cut of the last pass are all reached.
 
+### Spawn markers (`ov_0001::0214B650`, `SpawnNonEnemies`)
+
+Read from the disassembly; the names are ours. Arguments: the floor properties and `isEmptyMonsterHouse` (the itemless-house draw from `GenerateFloor`). The step only marks tiles (bits of the second tile word) and sets two position pairs; the monsters, items and traps themselves are made later, so it needs none of the spawn tables. Floor-properties bytes: `+0x0F` items, `+0x10` traps, `+0x14` buried items. Each list below is scanned in column order (x outer, y inner); "room tile" means terrain type 1 with a room number other than `0xFF`, and "plain" means none of terrain bits `0x20` (shop), `0x8` (junction) and `0x100`.
+
+1. **Stairs**, only if pair B (`+0xC0BC`, `+0xC0BE`) has a `-1` part. Candidates: plain room tiles with neither spawn bit `0x8` nor `0x10`. If there are any, `DungeonRandInt(n)` picks one: it gets spawn bit `0x1` and loses `0x2`, its room goes to `021B4598`, and its position to pair B. When `GetFloorType() == 2`, every floor tile of that room gets terrain bit `0x40` and the room number goes to dungeon `+0x34AC`.
+2. **Items.** Candidates: plain room tiles without terrain bit `0x40`. If `+0x0F` is not 0: `DungeonRandRange(c - 2, c + 2)`, raised to 1 if lower. With candidates and a count above 0: shuffle, `DungeonRandInt(n)` start, spawn bit `0x2` on that many consecutive entries (wrapping to the start).
+3. **Buried items.** Candidates: every tile of terrain type 0 (the outer ring included). Same as 2 with `+0x14` and no minimum.
+4. **Monster-house items**, skipped when `isEmptyMonsterHouse`. Candidates: tiles with terrain bit `0x40` and neither `0x20` nor `0x8`. With `n` of them: `DungeonRandRange(5n/10, 8n/10)`, raised to 6, lowered to a limit of 7 (a 16-bit constant at `021AA194`, read from the overlay and from the emulator). Shuffle, start, then per entry `DungeonRandInt(2)`: non-zero sets spawn bit `0x2`; zero sets `0x4` if the byte at dungeon `+0x64D` is non-zero.
+5. **Traps.** Candidates: plain room tiles without spawn bit `0x2` (so after steps 1 to 4). `DungeonRandRange(t >> 1, t)` with `t` from `+0x10`, a call even when `t` is 0; with a count above 0, at most 56: shuffle, start, spawn bit `0x4`.
+6. **Leader**, only if pair A (`+0xC0B8`, `+0xC0BA`) has a `-1` part. Candidates: plain room tiles with none of spawn bits `0x2`, `0x4`, `0x8`. `DungeonRandInt(n)` picks one for pair A.
+
+The shuffle (`0214BD40`) is `2n` swaps of two entries picked by `DungeonRandInt(n)` twice. Direct calls: 4 `DungeonRandRange` (items, buried, traps; the monster-house range) and 7 `DungeonRandInt` (stairs, three starts, the trap start, the house per-entry draw, the leader), as the issue counts. `floor_stages.py` now records, at the entry of `SpawnEnemies`, `spawnFnv1a` (FNV-1a over the second tile word), `tilesFnv1a`, both pairs, `021B4598` and `+0x34AC`; at `SpawnNonEnemies`'s entry it records the arguments and the three counts, and `--force-spawn ITEMS,BURIED,TRAPS[,TRAPFLAG]` overrides them (and `+0x64D`).
+
+**Checks.** `rescue_sim::floor::spawn_non_enemies` reaches the RNG state of `SpawnEnemies`'s entry (788 steps on the natural seed, 760 on `0x12345678`), with the same spawn hash, terrain hash, stairs and leader, for the natural seed, the three forced seeds, and forced counts (more items, buried items and traps, trap flag on and off) and forced monster houses (`--force-chance 10=100`). Not exercised on the retail ROM: `GetFloorType() == 2` and `isEmptyMonsterHouse` (the first floor has neither); both are covered by unit tests against the disassembly.
+
 ## Dungeon struct offsets seen here
 
 | Blue | Red field | Red | Evidence |
@@ -194,6 +209,7 @@ Read from the disassembly; the names are ours. Arguments: a flag (1) and the flo
 | `+0x11304` | fixed-room file handle | — | `GenerateFloor` |
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
 | `+0x34AC`, `+0x34B6`, `+0x678`, `+0xC0E0`..`+0xC0EC` | monster-house room, attempt index (maze gate), blocks the monster house (step 10), shop area bounds | — | steps 8 to 10 |
+| `+0xC0B8`, `+0xC0BA` / `+0xC0BC`, `+0xC0BE` / `+0x64D` | leader start / stairs positions (`-1` when unset) / trap flag for monster-house tiles | � | `SpawnNonEnemies` |
 | `+0x1A2F8`, `+0x1A2F9`, `+0x1A308` | `floorProperties.tileset`, `.bgMusic`, `.fixedRoomNumber` | `0x1C576`, `0x1C577`, `0x1C588` | `RunDungeon_Async` |
 
 The gap grows from −8 at `0x5C0` to −0x4A0 at `0x3800` and −0x560 at `0x3A0E`; inside `FloorProperties`, Blue has 2 bytes fewer between `bgMusic` and `fixedRoomNumber`.
@@ -233,7 +249,7 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 - ResetFloor's body (`0x0214BDBC`): the driver calls it through `FloorSteps::reset_floor`. The body also clears the 8 × 8 cell records, a 64-entry pointer table and stairs pair B, and marks the walls next to the map edge. Not decoded in full yet.
 - The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
 - Unnamed callees: `0x02179060` (called with the pair C position and `0x17C`), `0x02149AF8` (called with the props pointer), `0x0214C13C`, `0x02151D4C` (called with `0, 0, 56, 32`).
-- The layout generators, the spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up: their own issues. The driver calls them through `FloorSteps`.
+- The layout generators, the enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up: their own issues. The driver calls them through `FloorSteps`.
 - Checks against the retail ROM for the natural seed (no ROM in this environment; the forced seeds are checked).
 
 ## Open questions
