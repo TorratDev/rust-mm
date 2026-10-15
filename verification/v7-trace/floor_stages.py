@@ -12,7 +12,8 @@ checkpoints. With --seed, the dungeon RNG is forced to that state when
 GenerateFloor starts (see floor_oracle.py).
 
 Usage:
-  floor_stages.py ROM OUT.jsonl [--seed S] [--force-chance 8=P,9=P,10=P] [--maze-gate] [--boot-inputs FILE]
+  floor_stages.py ROM OUT.jsonl [--seed S] [--force-chance 8=P,9=P,10=P] [--maze-gate]
+                  [--force-structures N] [--boot-inputs FILE]
 Output: one JSON line per checkpoint; only states, counts and arguments.
 """
 
@@ -76,6 +77,10 @@ def main():
     p.add_argument("--maze-gate", action="store_true",
                    help="write -1 to dungeon +0x34B6 at std8's entry (the attempt index, which is "
                         "never negative in a normal run, gates the maze room)")
+    p.add_argument("--force-structures", type=int,
+                   help="at std12's entry, set +0x1C of the cells whose x + y is a multiple of 3 and "
+                        "clear it on the others, set +0x1D on all of them, and set gFloorPropsByteC "
+                        "(021B45C0) to N, so that steps 12 and 13 act on floors whose properties give 0")
     p.add_argument("--boot-inputs", default=os.path.join(HERE, "boot_to_dungeon.txt"))
     p.add_argument("--max-boot-frames", type=int, default=30000)
     a = p.parse_args()
@@ -130,11 +135,23 @@ def main():
             if step_no in forced:
                 regs.r3 = forced[step_no]
                 entry["args"][3] = forced[step_no]
+            if name == "std12" and a.force_structures is not None:
+                grid, gx, gy = regs.r0, regs.r1, regs.r2
+                for x in range(gx):
+                    for y in range(gy):
+                        cell = grid + x * 0x1C2 + y * 0x1E
+                        emu.memory.write_byte(cell + 0x1C, 1 if (x + y) % 3 == 0 else 0)
+                        emu.memory.write_byte(cell + 0x1D, 1)
+                emu.memory.write_long(0x21B45C0, a.force_structures)
             if name == "std8" and a.maze_gate:
                 emu.memory.write_short(u32(G_DUNGEON) + 0x34B6, 0xFFFF)
-            if name in ("std7", "std8", "std9", "std10", "std11", "std12"):
-                # Tile hash at the entry of steps 7 to 12, to check the hallways (step 6), step 7
-                # the optional rooms (steps 8 to 10) and the extra hallways (step 11).
+            if name in ("std7", "std8", "std9", "std10", "std11", "std12", "std13",
+                        "ResetInnerBoundaryTileRows", "EnsureImpassableTilesAreWalls",
+                        "FinalizeJunctions", "GenerateSecondaryTerrainFormations"):
+                # Tile hash at the entry of steps 7 to 13 and of the finalising passes, to check the
+                # hallways (step 6), step 7, the optional rooms (steps 8 to 10), the extra hallways
+                # (step 11), the room imperfections and secondary structures (steps 12 and 13) and
+                # the three tile passes.
                 entry["tilesFnv1a"] = tiles_fnv1a()
             if name in ("std8", "std9", "std10", "std11"):
                 dun = u32(G_DUNGEON)

@@ -155,12 +155,12 @@ pub struct GridCell {
     pub invalid: bool,
     /// The cell holds a room (otherwise a hallway anchor).
     pub has_room: bool,
-    /// Room flag set in step 4 when floor-properties byte `+0x0D` has bit 2;
-    /// role not known yet.
-    pub room_flag_a: bool,
-    /// Room flag set in step 4 (80 % chance) when the floor-properties byte
-    /// `+0x0C` is non-zero; role not known yet.
-    pub room_flag_b: bool,
+    /// `+0x1C`: set in step 4 when floor-properties byte `+0x0D` has bit 2.
+    /// Step 12 may cut the corners of the room; step 13 skips the cell.
+    pub imperfect: bool,
+    /// `+0x1D`: set in step 4 (80 % chance) when the floor-properties byte
+    /// `+0x0C` is non-zero. Step 13 may build a secondary structure in the room.
+    pub structure: bool,
     /// `+0x13`: the cell is linked to the cell north of it (`-y`). Step 5.
     pub north: bool,
     /// `+0x14`: linked to the cell south of it (`+y`). Step 5.
@@ -510,8 +510,8 @@ pub fn place_rooms(
                 }
             }
             let cell = grid.cell_mut(x, y);
-            cell.room_flag_a |= flag_a;
-            cell.room_flag_b |= flag_b;
+            cell.imperfect |= flag_a;
+            cell.structure |= flag_b;
             room_index = room_index.wrapping_add(1);
         }
     }
@@ -1218,6 +1218,37 @@ fn make_wall(floor: &mut Floor, x: i32, y: i32) {
     }
 }
 
+/// Terrain type of the secondary terrain (water, lava or a chasm, by tileset).
+const TERRAIN_SECONDARY: u16 = 0x2;
+
+/// Makes `(x, y)` the secondary terrain, with the extra terrain bits `extra`
+/// (`ov_0001::0214CA90`).
+fn make_secondary(floor: &mut Floor, x: i32, y: i32, extra: u16) {
+    if let Some(tile) = floor.tile_mut(x, y) {
+        tile.terrain = (tile.terrain & !TERRAIN_TYPE_MASK) | TERRAIN_SECONDARY | extra;
+    }
+}
+
+/// How a maze turns its paths into wall: plain wall, or, when the maze belongs
+/// to a secondary structure (step 13), the secondary terrain on the tiles of
+/// the given room (`ov_0001::0214DB18`).
+#[derive(Clone, Copy)]
+enum MazeWall {
+    Wall,
+    SecondaryIn(u8),
+}
+
+impl MazeWall {
+    fn build(self, floor: &mut Floor, x: i32, y: i32) {
+        make_wall(floor, x, y);
+        if let Self::SecondaryIn(room) = self
+            && floor.tile(x, y).is_some_and(|t| t.room == room)
+        {
+            make_secondary(floor, x, y, 0);
+        }
+    }
+}
+
 /// Offsets of a maze step in the order of the direction numbers 0 to 3 (east,
 /// north, west, south): two tiles, with the tile between walled.
 const MAZE_STEPS: [(i32, i32); 4] = [(2, 0), (0, -2), (-2, 0), (0, 2)];
@@ -1228,12 +1259,18 @@ const MAZE_STEPS: [(i32, i32); 4] = [(2, 0), (0, -2), (-2, 0), (0, 2)];
 /// turning by +1, whose tile two steps away is inside `bounds`
 /// (`[x0, y0, x1, y1]`, ends excluded) and still floor. It walls the tile
 /// between, moves there and draws again. It ends when no direction works.
-fn carve_maze_walls(floor: &mut Floor, rng: &mut DungeonRng, start: (i32, i32), bounds: [i32; 4]) {
+fn carve_maze_walls(
+    floor: &mut Floor,
+    rng: &mut DungeonRng,
+    wall: MazeWall,
+    start: (i32, i32),
+    bounds: [i32; 4],
+) {
     let [x0, y0, x1, y1] = bounds;
     let (mut x, mut y) = start;
     loop {
         let first = rng.int(4);
-        make_wall(floor, x, y);
+        wall.build(floor, x, y);
         let step = (0..4)
             .map(|turn| MAZE_STEPS[usize::try_from((first + turn) & 3).unwrap_or(0)])
             .find(|&(dx, dy)| {
@@ -1243,20 +1280,22 @@ fn carve_maze_walls(floor: &mut Floor, rng: &mut DungeonRng, start: (i32, i32), 
                     && terrain_type(floor, nx, ny) == TERRAIN_FLOOR
             });
         let Some((dx, dy)) = step else { return };
-        make_wall(floor, x + dx / 2, y + dy / 2);
+        wall.build(floor, x + dx / 2, y + dy / 2);
         x += dx;
         y += dy;
     }
 }
 
-/// Turns the room of `cell` into a maze (`ov_0001::0214CC7C`, called with its
-/// second argument 0): marks the cell, then starts a wall path from every
+/// Turns the room of `cell` into a maze (`ov_0001::0214CC7C`; its second
+/// argument is 0 for [`MazeWall::Wall`], 1 for [`MazeWall::SecondaryIn`]): marks
+/// the cell, then starts a wall path from every
 /// non-floor tile along a side of the room at every second position (north,
 /// east, south, west), and from every floor tile of the room's inner lattice.
 fn make_maze(
     floor: &mut Floor,
     cell: &mut GridCell,
     features: &mut RoomFeatures,
+    wall: MazeWall,
     rng: &mut DungeonRng,
 ) {
     features.maze = true;
@@ -1270,29 +1309,32 @@ fn make_maze(
     let [x0, y0, x1, y1] = bounds;
     for x in (x0 + 1..x1 - 1).step_by(2) {
         if terrain_type(floor, x, y0 - 1) != TERRAIN_FLOOR {
-            carve_maze_walls(floor, rng, (x, y0 - 1), bounds);
+            carve_maze_walls(floor, rng, wall, (x, y0 - 1), bounds);
         }
     }
     for y in (y0 + 1..y1 - 1).step_by(2) {
         if terrain_type(floor, x1, y) != TERRAIN_FLOOR {
-            carve_maze_walls(floor, rng, (x1, y), bounds);
+            carve_maze_walls(floor, rng, wall, (x1, y), bounds);
         }
     }
     for x in (x0 + 1..x1 - 1).step_by(2) {
         if terrain_type(floor, x, y1) != TERRAIN_FLOOR {
-            carve_maze_walls(floor, rng, (x, y1), bounds);
+            carve_maze_walls(floor, rng, wall, (x, y1), bounds);
         }
     }
     for y in (y0 + 1..y1 - 1).step_by(2) {
         if terrain_type(floor, x0 - 1, y) != TERRAIN_FLOOR {
-            carve_maze_walls(floor, rng, (x0 - 1, y), bounds);
+            carve_maze_walls(floor, rng, wall, (x0 - 1, y), bounds);
         }
     }
     for x in (x0 + 3..x1 - 3).step_by(2) {
         for y in (y0 + 3..y1 - 3).step_by(2) {
             if terrain_type(floor, x, y) == TERRAIN_FLOOR {
-                make_wall(floor, x - 1, y);
-                carve_maze_walls(floor, rng, (x, y), bounds);
+                match wall {
+                    MazeWall::Wall => make_wall(floor, x - 1, y),
+                    MazeWall::SecondaryIn(_) => make_secondary(floor, x - 1, y, 0),
+                }
+                carve_maze_walls(floor, rng, wall, (x, y), bounds);
             }
         }
     }
@@ -1335,7 +1377,7 @@ pub fn generate_maze_room(
     }
     let (x, y) = found[shuffled_pick(found.len(), rng)];
     let mut cell = *grid.cell(x, y);
-    make_maze(floor, &mut cell, features, rng);
+    make_maze(floor, &mut cell, features, MazeWall::Wall, rng);
     *grid.cell_mut(x, y) = cell;
     true
 }
@@ -1347,7 +1389,7 @@ pub fn generate_maze_room(
 /// 0 to 14 (200 swaps each, two draws of `DungeonRandInt(15)` per swap) and
 /// scans the pairs (column from the first list, row from the second, both
 /// inside the grid) for the first valid, hallway-linked room cell more than 4
-/// wide and 3 tall with no maze, `room_flag_b` or link marks. That cell
+/// wide and 3 tall with no maze, `structure` or link marks. That cell
 /// becomes the shop: its area (one tile in from the room's start and end, and
 /// at least 3 rows tall) gets [`TERRAIN_SHOP`] and loses spawn bits `0x8` and
 /// `0x1`, and every room tile gets spawn bit `0x10`. Returns whether a shop
@@ -1384,7 +1426,7 @@ pub fn generate_shop(
             && c.has_room
             && !c.flag_09
             && !c.maze
-            && !c.room_flag_b
+            && !c.structure
             && w.abs() > 4
             && h.abs() > 3
     };
@@ -1603,6 +1645,377 @@ pub fn generate_extra_hallways(
                 }
             }
             (x, y) = step(dir, x, y);
+        }
+    }
+}
+
+/// The 8 directions of the game's direction table, starting south and turning
+/// through east, north and west (`dx`, `dy`).
+const DIRECTIONS_8: [(i32, i32); 8] = [
+    (0, 1),
+    (1, 1),
+    (1, 0),
+    (1, -1),
+    (0, -1),
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+];
+
+/// For each room corner (top left, top right, bottom right, bottom left) and
+/// each of the two sides to walk along from it: the step.
+const CORNER_WALKS: [[(i32, i32); 2]; 4] = [
+    [(0, 1), (1, 0)],
+    [(-1, 0), (0, 1)],
+    [(0, -1), (-1, 0)],
+    [(1, 0), (0, -1)],
+];
+
+/// For each room corner: whether the neighbours to the south, east, north and
+/// west are floor when the corner is a right angle that may be cut.
+const CORNER_SHAPES: [[bool; 4]; 4] = [
+    [true, true, false, false],
+    [true, false, false, true],
+    [false, false, true, true],
+    [false, true, true, false],
+];
+
+/// True if a hallway tile (floor with no room) is in the 3 x 3 block around
+/// `(x, y)`.
+fn hallway_in_block(floor: &Floor, x: i32, y: i32) -> bool {
+    (-1..=1).any(|dy| {
+        (-1..=1).any(|dx| {
+            terrain_type(floor, x + dx, y + dy) == TERRAIN_FLOOR
+                && room_at(floor, x + dx, y + dy) == NO_ROOM
+        })
+    })
+}
+
+/// True if a hallway tile is next to `(x, y)` or on it (`ov_0001::0214C994`).
+fn hallway_in_cross(floor: &Floor, x: i32, y: i32) -> bool {
+    [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
+        .iter()
+        .any(|&(dx, dy)| {
+            terrain_type(floor, x + dx, y + dy) == TERRAIN_FLOOR
+                && room_at(floor, x + dx, y + dy) == NO_ROOM
+        })
+}
+
+/// Generation step 12 of a standard floor (`ov_0001::0214E3DC`,
+/// `GenerateRoomImperfections` in `pmd-red`): cuts corners off rooms. Cells
+/// are visited column by column. A cell qualifies when it is valid, holds a
+/// room that a hallway reaches, and has `imperfect` set but none of `+0x09`,
+/// `+0x11`, `+0x12` or the maze mark; it is then used with 40 % chance (one
+/// `DungeonRandInt(100)`, 60 or more). The room gets `(width + height) / 4`
+/// rounds (at least 1). A round takes two corners: each draws a corner
+/// (`DungeonRandInt(4)`) and walks from it along a side of the room, up to 10
+/// tiles and while inside the room, to the first floor tile. That tile
+/// becomes wall if no hallway tile is within one tile of any of its 8
+/// neighbours and its neighbours to the south, east, north and west are floor
+/// exactly as the corner's shape says (`CORNER_SHAPES`). Written from the
+/// disassembly; see `docs/re/dungeon-generation.md`.
+pub fn generate_room_imperfections(floor: &mut Floor, grid: &Grid, rng: &mut DungeonRng) {
+    let is_floor = |floor: &Floor, x: i32, y: i32| terrain_type(floor, x, y) == TERRAIN_FLOOR;
+    for gx in 0..grid.grid_x {
+        for gy in 0..grid.grid_y {
+            let cell = grid.cell(gx, gy);
+            if cell.invalid
+                || cell.extra_mark
+                || cell.extra_linked
+                || !cell.hallway_mark
+                || !cell.has_room
+                || cell.flag_09
+                || cell.maze
+                || !cell.imperfect
+                || rng.int(100) < 60
+            {
+                continue;
+            }
+            let (width, height) = span(cell);
+            let [x0, y0, x1, y1] =
+                [cell.start_x, cell.start_y, cell.end_x, cell.end_y].map(i32::from);
+            for _ in 0..((width + height) / 4).max(1) {
+                for walk in [0, 1] {
+                    let corner = usize::try_from(rng.int(4)).unwrap_or(0);
+                    let (mut x, mut y) = match corner {
+                        1 => (x1 - 1, y0),
+                        2 => (x1 - 1, y1 - 1),
+                        3 => (x0, y1 - 1),
+                        _ => (x0, y0),
+                    };
+                    let (dx, dy) = CORNER_WALKS[corner][walk];
+                    for _ in 0..10 {
+                        if x < x0 || x >= x1 || y < y0 || y >= y1 {
+                            break;
+                        }
+                        if !is_floor(floor, x, y) {
+                            (x, y) = (x + dx, y + dy);
+                            continue;
+                        }
+                        let near_hallway = DIRECTIONS_8
+                            .iter()
+                            .any(|&(ox, oy)| hallway_in_block(floor, x + ox, y + oy));
+                        let shape = (0..4).all(|k| {
+                            let (ox, oy) = DIRECTIONS_8[k * 2];
+                            is_floor(floor, x + ox, y + oy) == CORNER_SHAPES[corner][k]
+                        });
+                        if !near_hallway && shape {
+                            make_wall(floor, x, y);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Sets `flags` in the second flag word of the tile at `(x, y)`.
+fn mark_tile(floor: &mut Floor, x: i32, y: i32, flags: u16) {
+    if let Some(tile) = floor.tile_mut(x, y) {
+        tile.spawn_or_visibility |= flags;
+    }
+}
+
+/// Bit of the second tile flag word set on every tile of a room that got a
+/// secondary structure (`ov_0001::0214CA3C`). Its role is not known.
+const TILE_STRUCTURE_ROOM: u16 = 0x20;
+/// Terrain flag on one half of a room that a line of secondary terrain splits.
+/// Its role is not known.
+const TERRAIN_STRUCTURE_SIDE: u16 = 0x80;
+
+fn mark_side(floor: &mut Floor, x: i32, y: i32) {
+    if let Some(tile) = floor.tile_mut(x, y) {
+        tile.terrain |= TERRAIN_STRUCTURE_SIDE;
+    }
+}
+
+/// Marks every tile of the room of `cell` (`ov_0001::0214CA3C`).
+fn mark_room(floor: &mut Floor, cell: &GridCell) {
+    for x in i32::from(cell.start_x)..i32::from(cell.end_x) {
+        for y in i32::from(cell.start_y)..i32::from(cell.end_y) {
+            mark_tile(floor, x, y, TILE_STRUCTURE_ROOM);
+        }
+    }
+}
+
+/// Generation step 13 of a standard floor (`ov_0001::0214F6F0`,
+/// `GenerateSecondaryStructures` in `pmd-red`). Cells are visited row by row.
+/// A valid room cell with `structure` set and none of `imperfect`, the monster
+/// house mark and `+0x12` draws `DungeonRandInt(6)`: 0 does nothing, 1 to 5
+/// build a structure of the secondary terrain (see [`build_structure`]). Each
+/// structure costs one unit of `budget` (floor-properties byte `+0x0C` in
+/// `gFloorPropsByteC`, `021B45C0`) and is skipped when none is left. Written
+/// from the disassembly; see `docs/re/dungeon-generation.md`.
+pub fn generate_secondary_structures(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    budget: &mut u8,
+    features: &mut RoomFeatures,
+    rng: &mut DungeonRng,
+) {
+    for gy in 0..grid.grid_y {
+        for gx in 0..grid.grid_x {
+            let cell = grid.cell_mut(gx, gy);
+            if cell.invalid
+                || cell.monster_house
+                || cell.extra_linked
+                || !cell.has_room
+                || cell.imperfect
+                || !cell.structure
+            {
+                continue;
+            }
+            build_structure(floor, cell, budget, features, rng);
+        }
+    }
+}
+
+/// `ov_0001::0214C244`: one draw of `DungeonRandInt(6)` picks what to build in
+/// the room of `cell`; a structure sets `+0x09` on the cell.
+///
+/// 1. A maze of secondary terrain if both sides are odd; otherwise a plus of
+///    five tiles in the middle (3 tiles wide) for a room at least 5 x 5, or a
+///    single tile.
+/// 2. Random single tiles: 64 draws of a position, kept when the sum of the
+///    two offsets is odd. Needs both sides odd.
+/// 3. A rectangle between two random points, for rooms at least 5 x 5. The
+///    four draws come before the budget check.
+/// 4. A ring 4 x 4 around the centre, for rooms at least 6 x 6.
+/// 5. A line of secondary terrain across the middle, vertical or horizontal
+///    (one draw), unless a hallway tile touches it.
+fn build_structure(
+    floor: &mut Floor,
+    cell: &mut GridCell,
+    budget: &mut u8,
+    features: &mut RoomFeatures,
+    rng: &mut DungeonRng,
+) {
+    let [x0, y0, x1, y1] = [cell.start_x, cell.start_y, cell.end_x, cell.end_y].map(i32::from);
+    let (width, height) = (x1 - x0, y1 - y0);
+    let (cx, cy) = ((x0 + x1) / 2, (y0 + y1) / 2);
+    let kind = rng.int(6);
+    let available = *budget != 0;
+    match kind {
+        1 if available => {
+            *budget -= 1;
+            if width & 1 != 0 && height & 1 != 0 {
+                let room = room_at(floor, x0, y0);
+                mark_room(floor, cell);
+                make_maze(floor, cell, features, MazeWall::SecondaryIn(room), rng);
+            } else if width >= 5 && height >= 5 {
+                for (x, y) in [
+                    (cx + 1, cy),
+                    (cx, cy + 1),
+                    (cx - 1, cy),
+                    (cx, cy - 1),
+                    (cx, cy),
+                ] {
+                    make_secondary(floor, x, y, 0);
+                }
+            } else {
+                make_secondary(floor, cx, cy, 0);
+            }
+        }
+        2 if available && width & 1 != 0 && height & 1 != 0 => {
+            *budget -= 1;
+            mark_room(floor, cell);
+            for _ in 0..64 {
+                let a = rng.int(width);
+                let b = rng.int(height);
+                if (a + b) & 1 != 0 {
+                    make_secondary(floor, x0 + a, y0 + b, 0);
+                }
+            }
+        }
+        3 if width >= 5 && height >= 5 => {
+            let ax = rng.range(x0 + 2, x1 - 3);
+            let ay = rng.range(y0 + 2, y1 - 3);
+            let bx = rng.range(x0 + 2, x1 - 3);
+            let by = rng.range(y0 + 2, y1 - 3);
+            if !available {
+                return;
+            }
+            *budget -= 1;
+            mark_room(floor, cell);
+            for x in ax.min(bx)..=ax.max(bx) {
+                for y in ay.min(by)..=ay.max(by) {
+                    make_secondary(floor, x, y, 0);
+                }
+            }
+        }
+        4 if available && width >= 6 && height >= 6 => {
+            *budget -= 1;
+            mark_room(floor, cell);
+            for x in cx - 2..=cx + 1 {
+                for y in cy - 2..=cy + 1 {
+                    if x == cx - 2 || x == cx + 1 || y == cy - 2 || y == cy + 1 {
+                        make_secondary(floor, x, y, 0x4);
+                    }
+                }
+            }
+            for (x, y, flags) in [
+                (cx - 1, cy - 1, 0x54),
+                (cx, cy - 1, 0x12),
+                (cx - 1, cy, 0x12),
+                (cx, cy, 0x12),
+            ] {
+                mark_tile(floor, x, y, flags);
+            }
+        }
+        5 if available => {
+            *budget -= 1;
+            mark_room(floor, cell);
+            if rng.int(2) != 0 {
+                if (y0..y1).any(|y| hallway_in_cross(floor, cx, y)) {
+                    return;
+                }
+                for y in y0..y1 {
+                    make_secondary(floor, cx, y, 0);
+                }
+                for (x, y) in (x0..cx).flat_map(|x| (y0..y1).map(move |y| (x, y))) {
+                    mark_side(floor, x, y);
+                }
+            } else {
+                if (x0..x1).any(|x| hallway_in_cross(floor, x, cy)) {
+                    return;
+                }
+                for x in x0..x1 {
+                    make_secondary(floor, x, cy, 0);
+                }
+                for (x, y) in (y0..cy).flat_map(|y| (x0..x1).map(move |x| (x, y))) {
+                    mark_side(floor, x, y);
+                }
+            }
+        }
+        _ => return,
+    }
+    cell.flag_09 = true;
+}
+
+/// `ov_0001::02149A70` (`ResetInnerBoundaryTileRows`): clears the tiles of the
+/// second and the second-to-last row, and makes the ones at the two ends of
+/// those rows impassable walls.
+pub fn reset_inner_boundary_tile_rows(floor: &mut Floor) {
+    let last_x = WIDTH as i32 - 1;
+    for x in 0..=last_x {
+        for y in [1, HEIGHT as i32 - 2] {
+            if let Some(tile) = floor.tile_mut(x, y) {
+                *tile = Tile::EMPTY;
+                if x == 0 || x == last_x {
+                    tile.terrain |= TERRAIN_IMPASSABLE_WALL;
+                }
+            }
+        }
+    }
+}
+
+/// `ov_0001::0214C0E0` (`EnsureImpassableTilesAreWalls`): every tile with the
+/// impassable wall flag becomes wall.
+pub fn ensure_impassable_tiles_are_walls(floor: &mut Floor) {
+    for x in 0..WIDTH as i32 {
+        for y in 0..HEIGHT as i32 {
+            if let Some(tile) = floor.tile_mut(x, y)
+                && tile.terrain & TERRAIN_IMPASSABLE_WALL != 0
+            {
+                tile.terrain &= !TERRAIN_TYPE_MASK;
+            }
+        }
+    }
+}
+
+/// Terrain flag set on a room tile that touches a hallway.
+const TERRAIN_JUNCTION: u16 = 0x8;
+/// `ov_0001::0214D900` (`FinalizeJunctions`), without its last call
+/// (`0214D82C`, which lists the junction tiles of each room in the dungeon
+/// struct, outside the tile grid). Walking the map column by column: a
+/// hallway tile (floor with no room) sets the junction flag on each of its
+/// four neighbours that is in a room and turns it from the secondary terrain
+/// into floor; a floor tile numbered `0xFE` (an anchor) loses its number.
+pub fn finalize_junctions(floor: &mut Floor) {
+    for x in 0..WIDTH as i32 {
+        for y in 0..HEIGHT as i32 {
+            if terrain_type(floor, x, y) != TERRAIN_FLOOR {
+                continue;
+            }
+            match room_at(floor, x, y) {
+                NO_ROOM => {
+                    for (nx, ny) in [(x - 1, y), (x, y - 1), (x, y + 1), (x + 1, y)] {
+                        if let Some(tile) = floor.tile_mut(nx, ny).filter(|t| t.room != NO_ROOM) {
+                            tile.terrain |= TERRAIN_JUNCTION;
+                            if tile.terrain & TERRAIN_TYPE_MASK == TERRAIN_SECONDARY {
+                                tile.terrain = (tile.terrain & !TERRAIN_TYPE_MASK) | TERRAIN_FLOOR;
+                            }
+                        }
+                    }
+                }
+                ANCHOR_ROOM => {
+                    if let Some(tile) = floor.tile_mut(x, y) {
+                        tile.room = NO_ROOM;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -3092,6 +3505,639 @@ mod tests {
         (764_592_701, 0xf251_6ef3_4075_0e51),
         (1_671_193_971, 0x3299_603e_f26a_4dfd),
     ];
+
+    /// The seed behind row `i` of [`FINISH_ROWS`]: the natural seed, the three
+    /// forced seeds, then [`ENSURE_SEEDS`]. Returns the grid height and the
+    /// RNG states at the entries of steps 3 and 5.
+    fn seed_row(i: usize) -> (usize, u32, u32) {
+        match i {
+            0 => (NATURAL_SEED.grid_y, NATURAL_SEED.std3, NATURAL_SEED.std5),
+            1..=3 => {
+                let s = &FORCED_SEEDS[i - 1];
+                (s.grid_y, s.std3, s.std5)
+            }
+            _ => {
+                let &(grid_y, std3, std5, ..) = &ENSURE_SEEDS[i - 4];
+                (grid_y, std3, std5)
+            }
+        }
+    }
+
+    /// Steps 12 and 13 and the three tile passes on the retail ROM, from
+    /// `floor_stages.py --force-structures BUDGET`, which sets `imperfect` on
+    /// the cells whose x + y is a multiple of 3, `structure` on all of them
+    /// and `gFloorPropsByteC` to the budget (the first floor has none). One row
+    /// per seed (see [`seed_row`]) and budget: the RNG state and `tilesFnv1a`
+    /// at the entries of step 12 and step 13, the RNG state and hash at the
+    /// entry of `ResetInnerBoundaryTileRows`, then the hash at the entries of
+    /// `EnsureImpassableTilesAreWalls`, `FinalizeJunctions` and
+    /// `GenerateSecondaryTerrainFormations`.
+    type FinishRow = (
+        usize,
+        u8,
+        (u32, u64),
+        (u32, u64),
+        (u32, u64),
+        u64,
+        Option<u64>,
+        Option<u64>,
+    );
+
+    const FINISH_ROWS: &[FinishRow] = &[
+        (
+            0,
+            100,
+            (984344710, 0xb6dc_487d_352f_cc8e),
+            (984344710, 0xb6dc_487d_352f_cc8e),
+            (1910890242, 0x5d74_2f7e_8119_3995),
+            0x5d74_2f7e_8119_3995,
+            Some(0x5d74_2f7e_8119_3995),
+            Some(0xdefc_5608_77c6_25a2),
+        ),
+        (
+            0,
+            1,
+            (984344710, 0xb6dc_487d_352f_cc8e),
+            (984344710, 0xb6dc_487d_352f_cc8e),
+            (1910890242, 0x5d74_2f7e_8119_3995),
+            0x5d74_2f7e_8119_3995,
+            Some(0x5d74_2f7e_8119_3995),
+            Some(0xdefc_5608_77c6_25a2),
+        ),
+        (
+            1,
+            100,
+            (1462097070, 0x8aae_f9a4_88cb_299e),
+            (1043817127, 0x8aae_f9a4_88cb_299e),
+            (3303325147, 0x00a6_58dd_ca06_db54),
+            0x9727_dba2_a9b9_c781,
+            Some(0x9727_dba2_a9b9_c781),
+            Some(0x0d23_9be7_7f07_4e79),
+        ),
+        (
+            1,
+            1,
+            (1462097070, 0x8aae_f9a4_88cb_299e),
+            (1043817127, 0x8aae_f9a4_88cb_299e),
+            (3303325147, 0x502d_08e9_ec11_4a78),
+            0xabc4_30d7_d983_31a5,
+            Some(0xabc4_30d7_d983_31a5),
+            Some(0x97c9_3ac3_6c54_c47d),
+        ),
+        (
+            2,
+            100,
+            (764592701, 0xf251_6ef3_4075_0e51),
+            (764592701, 0xf251_6ef3_4075_0e51),
+            (1972965577, 0x2ba3_fe89_79ef_def0),
+            0x2ba3_fe89_79ef_def0,
+            Some(0x2ba3_fe89_79ef_def0),
+            Some(0x1d41_3b13_340b_47f1),
+        ),
+        (
+            2,
+            1,
+            (764592701, 0xf251_6ef3_4075_0e51),
+            (764592701, 0xf251_6ef3_4075_0e51),
+            (2073639753, 0xda0e_a6c1_41a5_004a),
+            0xda0e_a6c1_41a5_004a,
+            Some(0xda0e_a6c1_41a5_004a),
+            Some(0xdcb2_a372_2f3b_d1dc),
+        ),
+        (
+            3,
+            100,
+            (1671193971, 0x3299_603e_f26a_4dfd),
+            (2282574908, 0x506f_ea15_31c2_7e0c),
+            (1896501689, 0xb3d1_a9f4_2040_b961),
+            0xb3d1_a9f4_2040_b961,
+            Some(0xb3d1_a9f4_2040_b961),
+            Some(0x924e_6faf_e169_b362),
+        ),
+        (
+            3,
+            1,
+            (1671193971, 0x3299_603e_f26a_4dfd),
+            (2282574908, 0x506f_ea15_31c2_7e0c),
+            (4290763608, 0x113a_580a_0bff_7e26),
+            0x113a_580a_0bff_7e26,
+            Some(0x113a_580a_0bff_7e26),
+            Some(0x8e66_da04_ca57_fdb5),
+        ),
+        (
+            4,
+            100,
+            (3605883602, 0x0d7f_ccee_e07d_d81a),
+            (3605883602, 0x0d7f_ccee_e07d_d81a),
+            (49075254, 0x59f1_7f5b_45be_06fe),
+            0x59f1_7f5b_45be_06fe,
+            Some(0x59f1_7f5b_45be_06fe),
+            Some(0x8fbc_c1dd_a5ba_237e),
+        ),
+        (
+            4,
+            1,
+            (3605883602, 0x0d7f_ccee_e07d_d81a),
+            (3605883602, 0x0d7f_ccee_e07d_d81a),
+            (49075254, 0x59f1_7f5b_45be_06fe),
+            0x59f1_7f5b_45be_06fe,
+            Some(0x59f1_7f5b_45be_06fe),
+            Some(0x8fbc_c1dd_a5ba_237e),
+        ),
+        (
+            5,
+            100,
+            (3411281182, 0xbc4c_fafe_a003_4b05),
+            (3411281182, 0xbc4c_fafe_a003_4b05),
+            (2984695764, 0xbc4c_fafe_a003_4b05),
+            0xbc4c_fafe_a003_4b05,
+            None,
+            None,
+        ),
+        (
+            5,
+            1,
+            (3411281182, 0xbc4c_fafe_a003_4b05),
+            (3411281182, 0xbc4c_fafe_a003_4b05),
+            (2984695764, 0xbc4c_fafe_a003_4b05),
+            0xbc4c_fafe_a003_4b05,
+            None,
+            None,
+        ),
+        (
+            6,
+            100,
+            (1268549573, 0xed95_bbd0_b9c1_d18b),
+            (254904250, 0xed95_bbd0_b9c1_d18b),
+            (489458275, 0xed95_bbd0_b9c1_d18b),
+            0xed95_bbd0_b9c1_d18b,
+            Some(0xed95_bbd0_b9c1_d18b),
+            Some(0x665a_0b12_353d_6918),
+        ),
+        (
+            6,
+            1,
+            (1268549573, 0xed95_bbd0_b9c1_d18b),
+            (254904250, 0xed95_bbd0_b9c1_d18b),
+            (489458275, 0xed95_bbd0_b9c1_d18b),
+            0xed95_bbd0_b9c1_d18b,
+            Some(0xed95_bbd0_b9c1_d18b),
+            Some(0x665a_0b12_353d_6918),
+        ),
+        (
+            7,
+            100,
+            (2361972292, 0xbc4c_fafe_a003_4b05),
+            (2361972292, 0xbc4c_fafe_a003_4b05),
+            (477744371, 0x1de0_77ed_78bd_06c7),
+            0x1de0_77ed_78bd_06c7,
+            None,
+            None,
+        ),
+        (
+            7,
+            1,
+            (2361972292, 0xbc4c_fafe_a003_4b05),
+            (2361972292, 0xbc4c_fafe_a003_4b05),
+            (477744371, 0x1de0_77ed_78bd_06c7),
+            0x1de0_77ed_78bd_06c7,
+            None,
+            None,
+        ),
+        (
+            8,
+            100,
+            (3016989194, 0xbc4c_fafe_a003_4b05),
+            (3016989194, 0xbc4c_fafe_a003_4b05),
+            (70969569, 0xf753_22e8_5877_b023),
+            0xf753_22e8_5877_b023,
+            None,
+            None,
+        ),
+        (
+            8,
+            1,
+            (3016989194, 0xbc4c_fafe_a003_4b05),
+            (3016989194, 0xbc4c_fafe_a003_4b05),
+            (4003293024, 0xa580_482d_ba36_6ec9),
+            0xa580_482d_ba36_6ec9,
+            None,
+            None,
+        ),
+        (
+            9,
+            100,
+            (694667235, 0x97a2_8fad_e62b_87c6),
+            (1082466802, 0xb5b4_d084_2d8d_b215),
+            (1783792809, 0x4a03_00b0_bec2_7f02),
+            0x4a03_00b0_bec2_7f02,
+            Some(0x4a03_00b0_bec2_7f02),
+            Some(0x7c30_aefb_9fed_d914),
+        ),
+        (
+            9,
+            1,
+            (694667235, 0x97a2_8fad_e62b_87c6),
+            (1082466802, 0xb5b4_d084_2d8d_b215),
+            (1783792809, 0x4a03_00b0_bec2_7f02),
+            0x4a03_00b0_bec2_7f02,
+            Some(0x4a03_00b0_bec2_7f02),
+            Some(0x7c30_aefb_9fed_d914),
+        ),
+        (
+            10,
+            100,
+            (22117772, 0xfce3_338f_d2b5_541d),
+            (22117772, 0xfce3_338f_d2b5_541d),
+            (3362884669, 0xb8ec_8968_f04d_30cd),
+            0xb8ec_8968_f04d_30cd,
+            None,
+            None,
+        ),
+        (
+            10,
+            1,
+            (22117772, 0xfce3_338f_d2b5_541d),
+            (22117772, 0xfce3_338f_d2b5_541d),
+            (3362884669, 0xb8ec_8968_f04d_30cd),
+            0xb8ec_8968_f04d_30cd,
+            None,
+            None,
+        ),
+        (
+            11,
+            100,
+            (4170230507, 0x69c4_bab6_fda7_79ce),
+            (3693350676, 0xb598_aa8b_3210_be36),
+            (1897502771, 0xf9b6_5557_541f_e33a),
+            0xf9b6_5557_541f_e33a,
+            Some(0xf9b6_5557_541f_e33a),
+            Some(0x3aea_1723_d328_847e),
+        ),
+        (
+            11,
+            1,
+            (4170230507, 0x69c4_bab6_fda7_79ce),
+            (3693350676, 0xb598_aa8b_3210_be36),
+            (3382175894, 0x5bd3_0ac4_ea23_6153),
+            0x5bd3_0ac4_ea23_6153,
+            Some(0x5bd3_0ac4_ea23_6153),
+            Some(0x9c8c_dc6e_355f_b646),
+        ),
+        (
+            12,
+            100,
+            (3889543036, 0xad3d_351f_60c5_44ec),
+            (2710219589, 0x5559_007e_6861_6e29),
+            (2224169443, 0xdbce_7bb2_0eb1_6f99),
+            0xdbce_7bb2_0eb1_6f99,
+            Some(0xdbce_7bb2_0eb1_6f99),
+            Some(0xd1c6_c871_b9a0_e218),
+        ),
+        (
+            12,
+            1,
+            (3889543036, 0xad3d_351f_60c5_44ec),
+            (2710219589, 0x5559_007e_6861_6e29),
+            (2224169443, 0xdbce_7bb2_0eb1_6f99),
+            0xdbce_7bb2_0eb1_6f99,
+            Some(0xdbce_7bb2_0eb1_6f99),
+            Some(0xd1c6_c871_b9a0_e218),
+        ),
+        (
+            13,
+            100,
+            (1281755260, 0xfccd_8013_5d37_f380),
+            (2172431597, 0xfccd_8013_5d37_f380),
+            (3371545255, 0x2ca7_83bf_af25_8c94),
+            0x2ca7_83bf_af25_8c94,
+            Some(0x2ca7_83bf_af25_8c94),
+            Some(0xb14a_19e7_3144_701d),
+        ),
+        (
+            13,
+            1,
+            (1281755260, 0xfccd_8013_5d37_f380),
+            (2172431597, 0xfccd_8013_5d37_f380),
+            (3371545255, 0x59f3_9d57_ce95_06f0),
+            0x59f3_9d57_ce95_06f0,
+            Some(0x59f3_9d57_ce95_06f0),
+            Some(0x6bf7_8b51_df9e_6e51),
+        ),
+        (
+            14,
+            100,
+            (3499036911, 0x7ba6_a400_d850_b6dc),
+            (747768289, 0x4976_6de2_3f47_0a65),
+            (216034358, 0xc42a_69d7_cfd6_8bf3),
+            0xc42a_69d7_cfd6_8bf3,
+            Some(0xc42a_69d7_cfd6_8bf3),
+            Some(0x9ab1_4a09_1edf_9f34),
+        ),
+        (
+            14,
+            1,
+            (3499036911, 0x7ba6_a400_d850_b6dc),
+            (747768289, 0x4976_6de2_3f47_0a65),
+            (216034358, 0xc42a_69d7_cfd6_8bf3),
+            0xc42a_69d7_cfd6_8bf3,
+            Some(0xc42a_69d7_cfd6_8bf3),
+            Some(0x9ab1_4a09_1edf_9f34),
+        ),
+        (
+            15,
+            100,
+            (4241393544, 0xbc4c_fafe_a003_4b05),
+            (4241393544, 0xbc4c_fafe_a003_4b05),
+            (656177909, 0x7c08_71ef_3747_7d6b),
+            0x7c08_71ef_3747_7d6b,
+            None,
+            None,
+        ),
+        (
+            15,
+            1,
+            (4241393544, 0xbc4c_fafe_a003_4b05),
+            (4241393544, 0xbc4c_fafe_a003_4b05),
+            (656177909, 0x98c3_3c91_e2a0_ecc5),
+            0x98c3_3c91_e2a0_ecc5,
+            None,
+            None,
+        ),
+        (
+            16,
+            100,
+            (3518489234, 0x5937_2976_90dc_0d8c),
+            (2176952731, 0x5937_2976_90dc_0d8c),
+            (3792227278, 0xc08d_3b3f_c13f_4cbe),
+            0xc08d_3b3f_c13f_4cbe,
+            Some(0xc08d_3b3f_c13f_4cbe),
+            Some(0xfdd6_d97a_7a10_dc46),
+        ),
+        (
+            16,
+            1,
+            (3518489234, 0x5937_2976_90dc_0d8c),
+            (2176952731, 0x5937_2976_90dc_0d8c),
+            (1685590094, 0x4121_bf85_2c90_22b3),
+            0x4121_bf85_2c90_22b3,
+            Some(0x4121_bf85_2c90_22b3),
+            Some(0x88b9_743e_3dcc_6cc3),
+        ),
+        (
+            17,
+            100,
+            (1102739866, 0x7457_2bab_d8f0_0818),
+            (1102739866, 0x7457_2bab_d8f0_0818),
+            (552103601, 0x003a_2843_d41e_ac6b),
+            0x7249_877b_4965_3190,
+            Some(0x7249_877b_4965_3190),
+            Some(0x6855_2a95_8ae2_7938),
+        ),
+        (
+            17,
+            1,
+            (1102739866, 0x7457_2bab_d8f0_0818),
+            (1102739866, 0x7457_2bab_d8f0_0818),
+            (552103601, 0x003a_2843_d41e_ac6b),
+            0x7249_877b_4965_3190,
+            Some(0x7249_877b_4965_3190),
+            Some(0x6855_2a95_8ae2_7938),
+        ),
+        (
+            18,
+            100,
+            (145941314, 0x6ba1_89a3_54fd_4ec2),
+            (145941314, 0x6ba1_89a3_54fd_4ec2),
+            (3195584695, 0x1cfe_1c9e_43d2_e4b4),
+            0x1cfe_1c9e_43d2_e4b4,
+            Some(0x1cfe_1c9e_43d2_e4b4),
+            Some(0x0c40_5957_0d19_4bb8),
+        ),
+        (
+            18,
+            1,
+            (145941314, 0x6ba1_89a3_54fd_4ec2),
+            (145941314, 0x6ba1_89a3_54fd_4ec2),
+            (783820599, 0x59a9_6f8b_83b1_a1bb),
+            0x59a9_6f8b_83b1_a1bb,
+            Some(0x59a9_6f8b_83b1_a1bb),
+            Some(0xc261_1a34_15c9_1747),
+        ),
+        (
+            19,
+            100,
+            (4129670668, 0x8485_0304_62a2_63e5),
+            (261072573, 0x8485_0304_62a2_63e5),
+            (3461751451, 0x8485_0304_62a2_63e5),
+            0x8485_0304_62a2_63e5,
+            Some(0x8485_0304_62a2_63e5),
+            Some(0x4acd_d94d_8d42_7fd2),
+        ),
+        (
+            19,
+            1,
+            (4129670668, 0x8485_0304_62a2_63e5),
+            (261072573, 0x8485_0304_62a2_63e5),
+            (3461751451, 0x8485_0304_62a2_63e5),
+            0x8485_0304_62a2_63e5,
+            Some(0x8485_0304_62a2_63e5),
+            Some(0x4acd_d94d_8d42_7fd2),
+        ),
+        (
+            20,
+            100,
+            (624912457, 0xbc4c_fafe_a003_4b05),
+            (624912457, 0xbc4c_fafe_a003_4b05),
+            (2109458382, 0xbc4c_fafe_a003_4b05),
+            0xbc4c_fafe_a003_4b05,
+            None,
+            None,
+        ),
+        (
+            20,
+            1,
+            (624912457, 0xbc4c_fafe_a003_4b05),
+            (624912457, 0xbc4c_fafe_a003_4b05),
+            (2109458382, 0xbc4c_fafe_a003_4b05),
+            0xbc4c_fafe_a003_4b05,
+            None,
+            None,
+        ),
+        (
+            21,
+            100,
+            (1142681412, 0xbc4c_fafe_a003_4b05),
+            (1142681412, 0xbc4c_fafe_a003_4b05),
+            (3996174908, 0x7455_3816_294e_da9b),
+            0x7455_3816_294e_da9b,
+            None,
+            None,
+        ),
+        (
+            21,
+            1,
+            (1142681412, 0xbc4c_fafe_a003_4b05),
+            (1142681412, 0xbc4c_fafe_a003_4b05),
+            (2042907324, 0x05a7_159e_14b2_b28b),
+            0x05a7_159e_14b2_b28b,
+            None,
+            None,
+        ),
+        (
+            22,
+            100,
+            (321055208, 0xbc4c_fafe_a003_4b05),
+            (321055208, 0xbc4c_fafe_a003_4b05),
+            (3827654303, 0x9b8e_26a4_f7c5_91c5),
+            0x9b8e_26a4_f7c5_91c5,
+            None,
+            None,
+        ),
+        (
+            22,
+            1,
+            (321055208, 0xbc4c_fafe_a003_4b05),
+            (321055208, 0xbc4c_fafe_a003_4b05),
+            (3827654303, 0x9b8e_26a4_f7c5_91c5),
+            0x9b8e_26a4_f7c5_91c5,
+            None,
+            None,
+        ),
+        (
+            23,
+            100,
+            (3311669459, 0x1c63_f2d2_c771_9015),
+            (2531686946, 0xbf05_73ed_f29d_8daa),
+            (3078619033, 0xeffa_5916_c9d2_2000),
+            0xeffa_5916_c9d2_2000,
+            Some(0xeffa_5916_c9d2_2000),
+            Some(0x91f5_2543_0e2e_20b9),
+        ),
+        (
+            23,
+            1,
+            (3311669459, 0x1c63_f2d2_c771_9015),
+            (2531686946, 0xbf05_73ed_f29d_8daa),
+            (3078619033, 0xeffa_5916_c9d2_2000),
+            0xeffa_5916_c9d2_2000,
+            Some(0xeffa_5916_c9d2_2000),
+            Some(0x91f5_2543_0e2e_20b9),
+        ),
+        (
+            24,
+            100,
+            (2517180897, 0xbc4c_fafe_a003_4b05),
+            (2517180897, 0xbc4c_fafe_a003_4b05),
+            (664152237, 0x22c2_3cda_f5fc_0c03),
+            0x22c2_3cda_f5fc_0c03,
+            None,
+            None,
+        ),
+        (
+            24,
+            1,
+            (2517180897, 0xbc4c_fafe_a003_4b05),
+            (2517180897, 0xbc4c_fafe_a003_4b05),
+            (3789306172, 0x64e4_cebb_f09e_428b),
+            0x64e4_cebb_f09e_428b,
+            None,
+            None,
+        ),
+        (
+            25,
+            100,
+            (185948300, 0xbc4c_fafe_a003_4b05),
+            (185948300, 0xbc4c_fafe_a003_4b05),
+            (1930505907, 0x1ff6_b4ed_e93b_206b),
+            0x1996_24e7_6959_3c8f,
+            None,
+            None,
+        ),
+        (
+            25,
+            1,
+            (185948300, 0xbc4c_fafe_a003_4b05),
+            (185948300, 0xbc4c_fafe_a003_4b05),
+            (3860454858, 0x7280_6f2d_09e4_55c5),
+            0x183e_1683_ce1b_a1c9,
+            None,
+            None,
+        ),
+        (
+            26,
+            100,
+            (2691512074, 0xfae4_df19_8210_9f00),
+            (499222972, 0xa0ef_896f_2f9a_b24b),
+            (2009361197, 0xa0ef_896f_2f9a_b24b),
+            0xa0ef_896f_2f9a_b24b,
+            Some(0xa0ef_896f_2f9a_b24b),
+            Some(0xe999_04fa_8662_7136),
+        ),
+        (
+            26,
+            1,
+            (2691512074, 0xfae4_df19_8210_9f00),
+            (499222972, 0xa0ef_896f_2f9a_b24b),
+            (2009361197, 0xa0ef_896f_2f9a_b24b),
+            0xa0ef_896f_2f9a_b24b,
+            Some(0xa0ef_896f_2f9a_b24b),
+            Some(0xe999_04fa_8662_7136),
+        ),
+    ];
+
+    #[test]
+    fn imperfections_structures_and_tile_passes_match_the_retail_floors() {
+        let (mut cut, mut built, mut finished) = (0, 0, 0);
+        for &(seed, budget, std12, std13, reset, ensure, finalize, secondary) in FINISH_ROWS {
+            let what = format!("seed row {seed}, budget {budget}");
+            let (grid_y, std3, std5) = seed_row(seed);
+            let (mut floor, mut grid, mut rng) = floor_before_features(grid_y, std3, std5);
+            generate_extra_hallways(&mut floor, &grid, GridMode::LeftHalf, 5, &mut rng);
+            assert_eq!((rng.state(), tiles_fnv1a(&floor)), std12, "{what}: step 12");
+            for x in 0..grid.grid_x {
+                for y in 0..grid.grid_y {
+                    let cell = grid.cell_mut(x, y);
+                    cell.imperfect = (x + y) % 3 == 0;
+                    cell.structure = true;
+                }
+            }
+            generate_room_imperfections(&mut floor, &grid, &mut rng);
+            assert_eq!((rng.state(), tiles_fnv1a(&floor)), std13, "{what}: step 13");
+            cut += usize::from(tiles_fnv1a(&floor) != std12.1);
+            let mut features = RoomFeatures::default();
+            let mut left = budget;
+            generate_secondary_structures(
+                &mut floor,
+                &mut grid,
+                &mut left,
+                &mut features,
+                &mut rng,
+            );
+            assert_eq!(
+                (rng.state(), tiles_fnv1a(&floor)),
+                reset,
+                "{what}: structures"
+            );
+            built += usize::from(left != budget);
+            reset_inner_boundary_tile_rows(&mut floor);
+            assert_eq!(tiles_fnv1a(&floor), ensure, "{what}: boundary rows");
+            ensure_impassable_tiles_are_walls(&mut floor);
+            // A layout the game rejects starts over, so later checkpoints are missing.
+            let (Some(finalize), Some(secondary)) = (finalize, secondary) else {
+                continue;
+            };
+            assert_eq!(tiles_fnv1a(&floor), finalize, "{what}: impassable walls");
+            finalize_junctions(&mut floor);
+            assert_eq!(tiles_fnv1a(&floor), secondary, "{what}: junctions");
+            finished += 1;
+        }
+        // The seeds must exercise both steps.
+        assert!(
+            cut > 0 && built > 0 && finished > 0,
+            "{cut} {built} {finished}"
+        );
+    }
 
     #[test]
     fn extra_hallways_match_the_retail_rng_budget_and_tiles() {
