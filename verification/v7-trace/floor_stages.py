@@ -92,6 +92,19 @@ def main():
 
     log, done = [], []
 
+    def tiles_fnv1a():
+        # FNV-1a 64 over terrainFlags (u16 LE) and room (u8) of the 56 x 32
+        # tiles, row by row. Same hash as floor::tiles_fnv1a in Rust.
+        base = u32(G_DUNGEON) + 0x34B8
+        h = 0xCBF29CE484222325
+        for y in range(32):
+            row = bytes(emu.memory.read(base + y * 0x460, base + (y + 1) * 0x460, 1, False))
+            for x in range(56):
+                t = row[x * 0x14:(x + 1) * 0x14]
+                for b in (t[0], t[1], t[5]):
+                    h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+        return f"{h:016x}"
+
     def make(name):
         def hook(*_):
             if done:
@@ -103,9 +116,13 @@ def main():
                     return
                 done.append(True)
             sp = regs.r13 & 0xFFFFFFFF
-            log.append({"step": name, "rng": u32(G_DUNGEON_RNG),
-                        "args": [regs.r0, regs.r1, regs.r2, regs.r3],
-                        "stackArgs": [u32(sp), u32(sp + 4)]})
+            entry = {"step": name, "rng": u32(G_DUNGEON_RNG),
+                     "args": [regs.r0, regs.r1, regs.r2, regs.r3],
+                     "stackArgs": [u32(sp), u32(sp + 4)]}
+            if name == "std7":
+                # Tile hash at step 7's entry, to check the hallways (step 6).
+                entry["tilesFnv1a"] = tiles_fnv1a()
+            log.append(entry)
         return hook
 
     for addr, name in STEPS.items():
