@@ -119,8 +119,8 @@ def main():
             entry = {"step": name, "rng": u32(G_DUNGEON_RNG),
                      "args": [regs.r0, regs.r1, regs.r2, regs.r3],
                      "stackArgs": [u32(sp), u32(sp + 4)]}
-            if name == "std7":
-                # Tile hash at step 7's entry, to check the hallways (step 6).
+            if name in ("std7", "std8"):
+                # Tile hash at the entry of steps 7 and 8, to check the hallways (step 6) and step 7.
                 entry["tilesFnv1a"] = tiles_fnv1a()
             log.append(entry)
         return hook
