@@ -19,3 +19,4 @@ rescue-save.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+rescue-nds = { workspace = true, features = ["test-support"] }

@@ -10,5 +10,9 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Exposes `synth` (synthetic ROMs) to other crates' tests.
+test-support = []
+
 [dependencies]
 sha1.workspace = true
