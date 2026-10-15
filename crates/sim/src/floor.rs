@@ -161,6 +161,78 @@ pub struct GridCell {
     /// Room flag set in step 4 (80 % chance) when the floor-properties byte
     /// `+0x0C` is non-zero; role not known yet.
     pub room_flag_b: bool,
+    /// `+0x13`: the cell is linked to the cell north of it (`-y`). Step 5.
+    pub north: bool,
+    /// `+0x14`: linked to the cell south of it (`+y`). Step 5.
+    pub south: bool,
+    /// `+0x15`: linked to the cell west of it (`-x`). Step 5.
+    pub west: bool,
+    /// `+0x16`: linked to the cell east of it (`+x`). Step 5.
+    pub east: bool,
+}
+
+/// A side of a grid cell, numbered as `ov_0001::0214F224` numbers its walk
+/// directions: 0 east, 1 north, 2 west, 3 south. Turning to the next
+/// direction adds 1 (mod 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dir {
+    East,
+    North,
+    West,
+    South,
+}
+
+impl Dir {
+    /// The direction with index `index` (taken mod 4).
+    const fn from_index(index: i32) -> Self {
+        match index & 3 {
+            0 => Self::East,
+            1 => Self::North,
+            2 => Self::West,
+            _ => Self::South,
+        }
+    }
+
+    const fn next(self) -> Self {
+        Self::from_index(self as i32 + 1)
+    }
+
+    const fn opposite(self) -> Self {
+        match self {
+            Self::East => Self::West,
+            Self::North => Self::South,
+            Self::West => Self::East,
+            Self::South => Self::North,
+        }
+    }
+}
+
+impl GridCell {
+    fn link(&self, dir: Dir) -> bool {
+        match dir {
+            Dir::East => self.east,
+            Dir::North => self.north,
+            Dir::West => self.west,
+            Dir::South => self.south,
+        }
+    }
+
+    fn set_link(&mut self, dir: Dir) {
+        match dir {
+            Dir::East => self.east = true,
+            Dir::North => self.north = true,
+            Dir::West => self.west = true,
+            Dir::South => self.south = true,
+        }
+    }
+
+    /// How many of the four sides are linked.
+    fn link_count(&self) -> usize {
+        [self.north, self.south, self.west, self.east]
+            .into_iter()
+            .filter(|&linked| linked)
+            .count()
+    }
 }
 
 /// The generation grid: `grid_x` by `grid_y` [`GridCell`]s.
@@ -230,6 +302,37 @@ impl Grid {
     pub fn cell_mut(&mut self, x: usize, y: usize) -> &mut GridCell {
         assert!(x < self.grid_x && y < self.grid_y);
         &mut self.cells[x * self.grid_y + y]
+    }
+
+    /// The cell next to `(x, y)` in `dir`, if it is inside the grid.
+    fn neighbour(&self, x: usize, y: usize, dir: Dir) -> Option<(usize, usize)> {
+        match dir {
+            Dir::East if x + 1 < self.grid_x => Some((x + 1, y)),
+            Dir::North if y > 0 => Some((x, y - 1)),
+            Dir::West if x > 0 => Some((x - 1, y)),
+            Dir::South if y + 1 < self.grid_y => Some((x, y + 1)),
+            _ => None,
+        }
+    }
+
+    /// Links `(x, y)` and its neighbour in `dir` to each other.
+    ///
+    /// # Panics
+    /// If the neighbour is outside the grid.
+    fn connect(&mut self, x: usize, y: usize, dir: Dir) {
+        let (nx, ny) = self
+            .neighbour(x, y, dir)
+            .expect("connect: neighbour outside the grid");
+        self.cell_mut(x, y).set_link(dir);
+        self.cell_mut(nx, ny).set_link(dir.opposite());
+    }
+
+    /// Whether the cell east of `(x, y)` is marked invalid. The game reads
+    /// this flag for every direction in the dead-end pass (see
+    /// [`fill_dead_ends`]). Past the last column it reads the cleared cell
+    /// that `ResetFloor` leaves there, so the answer is `false`.
+    fn east_neighbour_invalid(&self, x: usize, y: usize) -> bool {
+        x + 1 < self.grid_x && self.cell(x + 1, y).invalid
     }
 }
 
@@ -380,6 +483,97 @@ pub fn place_rooms(
             cell.room_flag_a |= flag_a;
             cell.room_flag_b |= flag_b;
             room_index = room_index.wrapping_add(1);
+        }
+    }
+}
+
+/// Generation step 5 of a standard floor (`ov_0001::0214F6A0`, which calls
+/// `ov_0001::0214F224`): links the valid cells into connected paths. Draws a
+/// random start cell (`x` from `grid_x`, then `y` from `grid_y`) and walks from
+/// it for `walk_steps` steps (floor-properties byte `+0x05`), then, unless
+/// `skip_dead_ends` (byte `+0x0B` non-zero), links every dead end. Written from
+/// the disassembly; see `docs/re/dungeon-generation.md`.
+pub fn assign_connections(
+    grid: &mut Grid,
+    walk_steps: u8,
+    skip_dead_ends: bool,
+    rng: &mut DungeonRng,
+) {
+    let x = rng.int(i32::try_from(grid.grid_x).unwrap_or(i32::MAX));
+    let y = rng.int(i32::try_from(grid.grid_y).unwrap_or(i32::MAX));
+    let start = (
+        usize::try_from(x).unwrap_or(0),
+        usize::try_from(y).unwrap_or(0),
+    );
+    walk(grid, start, walk_steps, rng);
+    if !skip_dead_ends {
+        fill_dead_ends(grid, rng);
+    }
+}
+
+/// The walk of step 5. Each step draws `DungeonRandInt(8)` and then
+/// `DungeonRandInt(4)`; the new direction is used when the first draw is below
+/// 4 (half the steps). The walker turns clockwise while the way is blocked by
+/// the grid edge or an invalid cell, then links to the cell it moves to.
+fn walk(grid: &mut Grid, start: (usize, usize), steps: u8, rng: &mut DungeonRng) {
+    let (mut x, mut y) = start;
+    let mut dir = Dir::from_index(rng.int(4));
+    for _ in 0..steps {
+        let turn = rng.int(8) < 4;
+        let drawn = Dir::from_index(rng.int(4));
+        if turn {
+            dir = drawn;
+        }
+        // Four blocked sides at most; the game loops forever on a cell with
+        // none. The grids the draw produces always have a usable neighbour.
+        for _ in 0..4 {
+            if let Some((nx, ny)) = grid.neighbour(x, y, dir)
+                && !grid.cell(nx, ny).invalid
+            {
+                grid.connect(x, y, dir);
+                (x, y) = (nx, ny);
+                break;
+            }
+            dir = dir.next();
+        }
+    }
+}
+
+/// The dead-end pass of step 5. Passes run over the grid, column by column,
+/// until one adds no link. A valid cell with no room and exactly one link
+/// gets one more: from a random direction it tries up to eight directions
+/// (turning clockwise) for one that is in the grid and not linked yet, then
+/// links it only if the cell east of it is valid. Blue reads that east cell
+/// for all four directions, not the one it links to; the port keeps that.
+fn fill_dead_ends(grid: &mut Grid, rng: &mut DungeonRng) {
+    loop {
+        let mut changed = false;
+        for x in 0..grid.grid_x {
+            for y in 0..grid.grid_y {
+                let cell = *grid.cell(x, y);
+                if cell.invalid || cell.has_room || cell.link_count() != 1 {
+                    continue;
+                }
+                let mut dir = Dir::from_index(rng.int(4));
+                let mut found = None;
+                for _ in 0..8 {
+                    let open = grid.neighbour(x, y, dir).is_some() && !cell.link(dir);
+                    if open {
+                        found = Some(dir);
+                        break;
+                    }
+                    dir = dir.next();
+                }
+                if let Some(dir) = found
+                    && !grid.east_neighbour_invalid(x, y)
+                {
+                    grid.connect(x, y, dir);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
         }
     }
 }
@@ -668,6 +862,56 @@ mod tests {
             let (after_std3, after_std4, _, _) = first_floor_steps(stages.grid_y, stages.std3);
             assert_eq!(after_std3, stages.std4, "case {i}, step 3");
             assert_eq!(after_std4, stages.std5, "case {i}, step 4");
+        }
+    }
+
+    /// Walk length (floor-properties byte `+0x05`) of the first floor, pinned by
+    /// the RNG budget: the walk draws two numbers a step and the dead-end pass
+    /// draws none on these grids, so 33 steps need 15 walk steps.
+    const FIRST_FLOOR_WALK_STEPS: u8 = 15;
+
+    #[test]
+    fn connections_match_the_retail_rng_budget() {
+        for (i, stages) in std::iter::once(NATURAL_SEED)
+            .chain(FORCED_SEEDS)
+            .enumerate()
+        {
+            let (_, _, _, mut grid) = first_floor_steps(stages.grid_y, stages.std3);
+            let mut rng = DungeonRng::from_state(stages.std5);
+            let mut expect = rng;
+            assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
+            // Step 5 is 33 RNG steps on the first floor (std 5 in the table).
+            for _ in 0..33 {
+                expect.next_u16();
+            }
+            assert_eq!(rng.state(), expect.state(), "case {i}");
+        }
+    }
+
+    #[test]
+    fn connections_are_symmetric_and_leave_invalid_cells_once() {
+        for stages in std::iter::once(NATURAL_SEED).chain(FORCED_SEEDS) {
+            let (_, _, _, mut grid) = first_floor_steps(stages.grid_y, stages.std3);
+            let mut rng = DungeonRng::from_state(stages.std5);
+            assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
+            for x in 0..grid.width() {
+                for y in 0..grid.height() {
+                    let cell = *grid.cell(x, y);
+                    // The start cell is drawn over the whole grid, so an invalid
+                    // one can link out once; the walk never enters one.
+                    if cell.invalid {
+                        assert!(cell.link_count() <= 1, "({x}, {y})");
+                    }
+                    for dir in [Dir::East, Dir::North, Dir::West, Dir::South] {
+                        if !cell.link(dir) {
+                            continue;
+                        }
+                        let (nx, ny) = grid.neighbour(x, y, dir).expect("link leaves the grid");
+                        let other = *grid.cell(nx, ny);
+                        assert!(other.link(dir.opposite()), "({x}, {y}) {dir:?}");
+                    }
+                }
+            }
         }
     }
 
