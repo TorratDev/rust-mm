@@ -102,6 +102,13 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::0214BDBC | ResetFloor | void ResetFloor(void) | blue-verified | `GenerateFloor` call order and argument count |
 | ov_0001::02150958 | ProcessFixedRoom | bool ProcessFixedRoom(int fixedRoomNumber, void * floorProps) | blue-verified | `GenerateFloor` call order and argument count |
 | ov_0001::02151BF4 | GenerateStandardFloor | void GenerateStandardFloor(int a0, int a1, void * a2) | blue-verified | Layout cases 0, 1, 8, 11 |
+| ov_0001::0214FEB0 | GetGridPositions | void GetGridPositions(int * cellStartX, int * cellStartY, int gridSizeX, int gridSizeY) | blue-verified | `GenerateStandardFloor` step 1; writes `i * (56 / gridSizeX)` and `i * (32 / gridSizeY)`, no RNG |
+| ov_0001::0214FD7C | InitDungeonGrid | void InitDungeonGrid(void * grid, int gridSizeX, int gridSizeY) | blue-verified | Step 1 of every layout generator; clears each 30-byte cell, marks columns invalid from `gStandardGridMode`, no RNG |
+| ov_0001::0214FB4C | AssignRooms | void AssignRooms(void * grid, int gridSizeX, int gridSizeY, int numRooms) | blue-verified | `GenerateStandardFloor` step 3, room density as last argument; 129 RNG steps on the first floor like the retail trace (`floor_stages.py`) |
+| ov_0001::0214F7A8 | CreateRoomsAndAnchors | void CreateRoomsAndAnchors(void * grid, int gridSizeX, int gridSizeY, int * cellStartX, int * cellStartY, uint roomFlags) | blue-verified | `GenerateStandardFloor` step 4; places rooms (room index on each tile) and anchors (`0xFE`); RNG budget matches the retail trace |
+| ov_0001::021B4588 | gStandardGridMode | uchar | tentative | Set by `GenerateFloor` (0, 1 for the small layout, 2 for medium); `InitDungeonGrid` marks columns from `gridSizeX / 2` (1) or `gridSizeX * 3 / 4` (2) invalid |
+| ov_0001::021B45BC | gNumRoomsAssigned | int | tentative | Rooms counted by `AssignRooms`' first pass |
+| ov_0001::021B45C0 | gFloorPropsByteC | int | tentative | Floor-properties byte `+0x0C`, copied by `GenerateFloor` and cleared after its first attempt; gates a room flag in `CreateRoomsAndAnchors` |
 | ov_0001::021506B0 | GenerateOneRoomMonsterHouseFloor | void GenerateOneRoomMonsterHouseFloor(void) | blue-verified | Layout case 2 |
 | ov_0001::0215174C | GenerateOuterRingFloor | void GenerateOuterRingFloor(void * a0) | blue-verified | Layout case 3; 4 / 2 RNG calls like `pmd-red` |
 | ov_0001::021512B4 | GenerateCrossroadsFloor | void GenerateCrossroadsFloor(void * a0) | blue-verified | Layout case 4; 4 / 2 RNG calls like `pmd-red` |

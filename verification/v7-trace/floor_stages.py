@@ -5,8 +5,9 @@ Replays BOOT_INPUTS from power-on to the first dungeon floor (as
 retail_trace.py does) and records, at the entry of every floor-generation step
 (GenerateFloor, its layout generators, the 13 steps of GenerateStandardFloor,
 the spawn steps) and at the first turn, the dungeon RNG state, the arguments
-r0-r3, and the number of dungeon RNG steps since the previous entry. A
-reimplementation must use the same number of RNG steps between each pair of
+r0-r3, the first two stack words (the fifth and sixth arguments of functions
+that take them), and the number of dungeon RNG steps since the previous entry.
+A reimplementation must use the same number of RNG steps between each pair of
 checkpoints. With --seed, the dungeon RNG is forced to that state when
 GenerateFloor starts (see floor_oracle.py).
 
@@ -101,8 +102,10 @@ def main():
                 if not any(e["step"] == "GenerateFloor" for e in log):
                     return
                 done.append(True)
+            sp = regs.r13 & 0xFFFFFFFF
             log.append({"step": name, "rng": u32(G_DUNGEON_RNG),
-                        "args": [regs.r0, regs.r1, regs.r2, regs.r3]})
+                        "args": [regs.r0, regs.r1, regs.r2, regs.r3],
+                        "stackArgs": [u32(sp), u32(sp + 4)]})
         return hook
 
     for addr, name in STEPS.items():
