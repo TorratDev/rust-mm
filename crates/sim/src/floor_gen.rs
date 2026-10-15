@@ -30,6 +30,10 @@ pub struct FloorProperties {
     pub byte_08: u8,
     /// `+0x0C`: copied to `gFloorPropsByteC`; gates a room flag.
     pub byte_0c: u8,
+    /// `+0x0D`: bit 0 turns the secondary terrain on, bit 2 marks room imperfections.
+    pub byte_0d: u8,
+    /// `+0x15`: number of secondary-terrain ponds.
+    pub byte_15: u8,
     /// `+0x19`: percent chance of an itemless monster house.
     pub itemless_chance: u8,
 }
@@ -733,7 +737,7 @@ mod tests {
             byte_07: 4,
             byte_08: 6,
             byte_0c: 1,
-            itemless_chance: 0,
+            ..FloorProperties::default()
         };
         run(&mut mock, &props, &mut rng, &mut g, false).unwrap();
         assert_eq!(g.field_654, 9);
