@@ -139,7 +139,7 @@ Also note whether you tried an NDS loader extension (e.g. NTRGhidra), as #18 ask
 
 ## 5. REA (V9) on top of this project
 
-V9 ([#19](https://github.com/TorratDev/rust-mm/issues/19)) checks [REA](https://github.com/morluto/rea) against this project. REA is a Node.js MCP server that drives an existing Ghidra install; per its README, setup is `npx rea-agents setup` (needs Node.js and npm). Point it at the Ghidra install above and at the project built in step 2, then test the four capabilities listed in V9 (function search, xrefs into and between overlays, decompiled summaries on ARM and Thumb code, evidence notes) on the code around `ov_0001+0x72688`. Record the results in the V9 entry of [`verification.md`](verification.md#v9--rea-workflow-on-arm-ds-binaries). These REA steps come from its README and have not been run here.
+V9 ([#19](https://github.com/TorratDev/rust-mm/issues/19)) checked [REA](https://github.com/morluto/rea) 6.5.0 against this project and did not adopt it: on Windows its Ghidra provider rejects ARM targets, and it imports binaries itself instead of opening this project, so it never sees the overlay mapping. Use ghidra-cli (section 6) instead. Details in the V9 entry of [`verification.md`](verification.md#v9--rea-workflow-on-arm-ds-binaries).
 
 ## 6. ghidra-cli
 

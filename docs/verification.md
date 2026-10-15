@@ -12,9 +12,9 @@ Single log for the Phase 0 checks (V1–V9). Each check records its assumption, 
 | V4 | Non-audio formats identified; save media identified | Phase 2 | **Confirmed** — file survey complete (171 entries tagged); save media is 2 Mbit (256 KiB) flash, save layout mapped |
 | V5 | `pmd-red` decomp covers dungeon, combat, AI, RNG | Phase 3 | **Confirmed, with naming gaps** |
 | V6 | Blue reuses Red's data tables and constants | Phase 3 | **Confirmed** — 4 tables shared by value (type chart, effectiveness combination, attack and defense stat stages); 2 routine constants match (RNG step, damage calc) |
-| V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | **Confirmed** — retail Blue on Windows: replay from power-on to the first dungeon floor, one dump per turn on `RunFractionalTurn_Async`, byte-identical over 3 runs; RNG formulas and seed chain checked against the dumps. Windows CI result for the synthetic ROM still pending |
+| V7 | DS emulator can be scripted to dump RAM/RNG per turn | Phase 3 trace harness | **Confirmed** — retail Blue on Windows: replay from power-on to the first dungeon floor, one dump per turn on `RunFractionalTurn_Async`, byte-identical over 3 runs; RNG formulas and seed chain checked against the dumps. synthetic-ROM CI job passes on Linux and Windows |
 | V8 | Ghidra loads ARM9 and overlays at real addresses | Phase 3 | **Confirmed** — retail ARM9 and all 145 overlays mapped (Ghidra 12.1.4); type chart referenced from 4 places in overlay 1; the 142 overlays without code are data |
-| V9 | REA supports the planned Ghidra workflow on ARM DS binaries | Phase 3 | Pending — depends on V8 for the run; README reviewed |
+| V9 | REA supports the planned Ghidra workflow on ARM DS binaries | Phase 3 | **Replaced** — REA 6.5.0 rejects ARM targets on Windows and cannot open the V8 project; ghidra-cli 0.2.2 on the V8 project covers function search, xrefs, decompilation (ARM and Thumb) and notes |
 
 Outcome values: **confirmed**, **partial**, **replaced** (fallback adopted), **blocked**, **pending**.
 
@@ -197,7 +197,7 @@ Copy this section for each check.
     - Checks against [`re/rng.md`](re/rng.md), done by the script: in all 255 consecutive pairs, the dungeon RNG state is reachable from the previous one with `s * 0x5D588B65 + 1` (0–19 steps per fractional turn) and so is the global one (up to 672 steps). The first floor seed equals `GenerateDungeonRNGSeed` applied once to `(runSeed | 1) & 0xFFFFFF`, the preseed state after it matches, and the dungeon RNG state is 1,812 steps after `InitDungeonRNG(floorSeed)` (floor generation).
     - Speed: about 40 s for the whole run (boot replay plus trace) on a desktop PC.
     - The same replay drives [`floor_oracle.py`](../verification/v7-trace/floor_oracle.py), which forces the dungeon RNG at `GenerateFloor` and shows that the floor depends only on that state (results in [`re/dungeon-generation.md`](re/dungeon-generation.md#emulator-check)).
-- **Outcome:** confirmed. A scripted DeSmuME run dumps the dungeon state once per turn, byte-identically across runs, on the retail ROM. Still open: the Windows CI result for the synthetic-ROM job.
+- **Outcome:** confirmed. A scripted DeSmuME run dumps the dungeon state once per turn, byte-identically across runs, on the retail ROM. The synthetic-ROM job (`run_v7.sh`, which fails on any dump mismatch) passes on `ubuntu-latest` and `windows-latest` (CI run [38763275793](https://github.com/TorratDev/rust-mm/actions/runs/38763275793), 2026-10-15).
 - **Fallback adopted:** none. The melonDS GDB stub stays the fallback; the DeSmuME GDB stub shows that route works but is slow and has no input playback.
 - **Notes:**
   - Setup quirks: libdesmume needs a video driver even headless (`SDL_VIDEODRIVER=dummy`); on Linux it needs `libGL` and `glib` from the system. The apt `desmume-cli` defaults to the JIT; the GDB stub run used `--cpu-mode=0`. py-desmume ran the interpreter.
@@ -232,9 +232,24 @@ Copy this section for each check.
 ## V9 — REA workflow on ARM DS binaries
 
 - **Assumption:** REA supports the planned workflow with Ghidra on ARM DS binaries: function search, xrefs, decompiled-routine summaries and evidence notes.
-- **Date:** 2026-10-13
-- **Environment:** [`morluto/rea`](https://github.com/morluto/rea) shallow clone (read only). REA is an MCP server with Node.js/npm. Its native analysis uses an existing Hopper, Ghidra or IDA install.
-- **Evidence:** README reviewed. Native analysis is driven by an external Hopper, Ghidra or IDA install. Setup is `npx rea-agents setup`.
-- **Outcome:** pending. The README confirms the Ghidra dependency, so the run waits on V8.
-- **Fallback adopted:** none.
-- **Notes:** Still to do: install and check the REA–Ghidra bridge once V8 is unblocked; run it on a small ARM9 region and record supported features and limits. Setup outline: [`ghidra-setup.md`](ghidra-setup.md#5-rea-v9-on-top-of-this-project).
+- **Date:** 2026-10-13 (README review); 2026-10-15 (runs).
+- **Environment:** Windows 11. REA `rea-agents` 6.5.0 (npm, run through `npx`), Node.js from `C:\Program Files\nodejs`. Ghidra 12.1.4, JDK 25.0.4. [ghidra-cli](https://github.com/akiselev/ghidra-cli) 0.2.2. The V8 project (`rescue-arm9`: retail ARM9 + 145 overlays, after `RescueOverlayDiscover`, `RescueRngLabels` and `RescueApplySymbols`).
+- **Evidence:**
+  - **REA.** `rea doctor` finds Ghidra 12.1.4 and its headless launcher, and needs `JAVA_HOME` on a JDK 21 or newer (JDK 17 is rejected). With that set, `rea function overlay_0001.bin 0x0217ba94 --target-format raw-binary --architecture arm --entry-point 0x02138860 --provider ghidra` (decoded overlay 1 at its RAM address) fails before Ghidra starts: `target_format_unsupported`, "Windows Ghidra P0 accepts native PE and explicitly selected raw 6502 targets only." Hopper is macOS-only, and IDA needs an IDA install. REA's native commands take a binary path and import it themselves; nothing in REA opens an existing `.gpr` project. So even on Linux, where raw ARM is accepted, REA would see one raw image at one base address, without the overlay blocks, the autoloads or the symbols V8 applies, and without xrefs between overlays and the ARM9.
+  - **ghidra-cli on the V8 project** (one bridge, queries in under a second each):
+
+    | Capability | Command | Result |
+    |------------|---------|--------|
+    | Function search | `find function DungeonRand`, `find function RunFractionalTurn` | 5 matches in `ov_0001` (`DungeonRandInt` at `ov_0001::0219d058`, ...); `RunFractionalTurn_Async` at `ov_0001::021411bc` |
+    | Xrefs to data | `x-ref to ov_0001::021aaee8` (type chart) | the 4 literal-pool references found in V8 |
+    | Callers | `function x-refs ov_0001::0217ba94` | 3 callers in `ov_0001` |
+    | Callees | `disasm ov_0001::0217ba94` | `bl 0x02180644` (`MonsterIsType`); `function calls` lists callers, not callees, so use `disasm` or `x-ref from` |
+    | Xrefs into the ARM9 | `x-ref to 0x020df704` (`sPRNGState`) | reads and writes from `SetRNGSeed` and `GetRNGState`; overlay → ARM9 calls as in V8 |
+    | Decompile, ARM | `decompile ov_0001::0217ba94` | readable C: checks `MonsterIsType(pokemon, 14)`, then reads `gTypeEffectivenessChart` as `s16` at `type * 0x24 + defenderType * 2` for both defender types |
+    | Decompile, Thumb | `disasm 02000678`, `decompile 02000678` | `svc 3; bx lr` and `software_interrupt(3)` |
+    | Evidence notes | `comment set/get/list`, `tag add/get/delete` | plate comment and function tag written, read back, listed as JSON, then removed |
+
+  - **Thumb share.** A scratch script counting functions with `TMode = 1` finds 2 Thumb functions, both in the ARM9 (`0x02000246`, `0x02000678`). All of `ov_0000` (446), `ov_0001` (1,759) and `ov_0007` (108) is ARM, as are 3,076 ARM9 functions.
+- **Outcome:** **replaced.** REA does not support this workflow: on Windows its Ghidra provider rejects ARM targets, and on any OS it imports a binary itself instead of opening the overlay-mapped project. ghidra-cli on the V8 project supports all four capabilities, on ARM and Thumb code.
+- **Fallback adopted:** ghidra-cli plus Ghidra scripts ([`tools/ghidra`](../tools/ghidra)), as in [`ghidra-setup.md`](ghidra-setup.md#6-ghidra-cli). Evidence notes live in the repo as `docs/re/*.md` (addresses, xrefs, and emulator checks marked separately from guesses, as in [`re/rng.md`](re/rng.md)); Ghidra comments and tags mirror them in the project and can be exported with `comment list --json`.
+- **Notes:** Look at REA again if a release adds ARM raw images on Windows or opening an existing Ghidra project. Its Linux path was not run.

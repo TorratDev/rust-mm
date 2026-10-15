@@ -2,7 +2,7 @@
 
 **Goal:** Build a native Windows and Linux version of Blue Rescue Team in **Rust** with SDL3, without emulating the Nintendo DS or executing its original ARM code.
 
-Approach: reverse engineer the original game, understand its data and mechanics, and reimplement them in a portable engine. Use REA and Ghidra to speed up investigation, not to generate the whole port automatically.
+Approach: reverse engineer the original game, understand its data and mechanics, and reimplement them in a portable engine. Use Ghidra (driven through ghidra-cli) to speed up investigation, not to generate the whole port automatically.
 
 ## Language decision
 - **Rust (stable, edition 2024)** for engine, simulation and tools. Chosen over C++ for cargo, memory-safe binary parsers, and easy enforcement of a pure simulation crate.
@@ -38,7 +38,7 @@ Approach: reverse engineer the original game, understand its data and mechanics,
 - `sdl3` crate (SDL3 bindings; see V1).
 - Asset viewer UI: `egui`/`eframe` (see V2).
 - Tests: `insta` (snapshot tests for decoded formats), `proptest` (property tests for sim invariants).
-- Ghidra (see V8), REA (see V9), scriptable DS emulator (see V7) — observation and tracing only.
+- Ghidra (see V8) with ghidra-cli (see V9; replaces REA), scriptable DS emulator (see V7) — observation and tracing only.
 - CI: GitHub Actions matrix — `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`.
 
 ## Workspace layout
@@ -109,7 +109,7 @@ Milestone: understand the execution model and major subsystems.
 - Trace turn scheduler, movement, combat, status effects, enemy AI — using pmd-red as a map, verifying in Blue.
 - Investigate save serialization and RNG behavior (priority: prerequisite for Phase 6).
 - Build the golden-trace harness early (emulator scripts + `trace-harness` diff tool).
-- Use REA for function search, xrefs, summaries, evidence-backed notes.
+- Use ghidra-cli for function search, xrefs, decompilation and notes; record evidence in `docs/re/` (V9: REA replaced).
 - Glossary of structures/functions, separating verified findings from hypotheses.
 - Reverse engineer each subsystem when its implementation becomes necessary.
 
@@ -123,7 +123,7 @@ Done:
 - Tooling: ghidra-cli workflow, `tools/ghidra/Rescue*.java`, `RescueApplySymbols.java` driven by `symbols.md`.
 
 Partly done:
-- V9: REA not tested yet. #43 glossary still to write.
+- #43 glossary still to write. (V9 done: REA replaced by ghidra-cli.)
 - RNG leftovers: what uses the Mersenne Twister (callers `0200D4DC`, `0206C6E4`); the 16-bit generator from `pmd-red`'s `other_random.c` (multiplier 109, increment 1021) not found yet.
 - Turn loop: name the three end-of-turn functions ([`re/turns.md`](re/turns.md)).
 - #53: locate the quicksave sector.
@@ -164,7 +164,7 @@ Prioritize one complete, correct dungeon over many partial systems. Audio playba
 - Replay golden traces through the headless `sim`; diff state per turn.
 - Compare movement, combat, status, AI, inventory, map generation.
 - Property tests for sim invariants; differential testing vs. observed behavior.
-- Investigate discrepancies with REA/Ghidra instead of guessing.
+- Investigate discrepancies with Ghidra (ghidra-cli) instead of guessing.
 - Save/load cycles, unusual inputs, edge cases.
 - For randomness, compare distributions or use reproducible seeds.
 
