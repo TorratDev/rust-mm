@@ -44,7 +44,7 @@ Bit 24 is taken from the issue. Whether the stored size is in bits 0–23 is per
 
 ## BLZ ("backwards LZ")
 
-Footer: `0x00` (u32) = footer length in the top 8 bits (must be 8) and compressed length in the low 24 bits. `0x04` (u32) = growth in bytes. Decoding reads the stream from the end and writes the output from the end. Output is capped at 16 MiB (`blz::MAX_OUTPUT`). Full algorithm: the module comment in `blz.rs`.
+Footer: `0x00` (u32) = footer length in the top 8 bits and compressed length in the low 24 bits. The footer length is 8 in most overlays, but the Blue dump has 9 (overlay 6), so the decoder accepts 8–24. Bytes before the compressed region are stored raw. `0x04` (u32) = growth in bytes. Decoding reads the stream from the end and writes the output from the end. Output is capped at 16 MiB (`blz::MAX_OUTPUT`). Full algorithm: the module comment in `blz.rs`.
 
 **Open:** whether `arm9.bin` is BLZ-compressed. The survey tagged it *unknown* (453,292 bytes, entropy 7.21). The decoder is available, but the ARM9 compression flag is not decided. Answer it from the dump.
 

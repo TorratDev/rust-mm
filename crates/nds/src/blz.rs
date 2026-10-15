@@ -5,7 +5,7 @@
 //! footer at the end holds:
 //!
 //! - `0x00` (`u32`): low 24 bits = compressed length including the footer; high 8 bits =
-//!   footer length (normally 8);
+//!   footer length (8 in most overlays; the Blue dump also has 9);
 //! - `0x04` (`u32`): bytes the data grows by when decompressed.
 //!
 //! Each flag byte covers 8 tokens, most significant bit first. A `0` bit is one literal
@@ -32,7 +32,8 @@ pub fn decompress_limited(data: &[u8], max_out: usize) -> Result<Vec<u8>, NdsErr
     let header_len = (word0 >> 24) as usize;
     let enc_len = (word0 & 0x00FF_FFFF) as usize;
 
-    if header_len != 8 || enc_len < header_len || enc_len > len {
+    // The footer is normally 8 bytes, but the Blue dump has footers of 9 (overlay 6).
+    if !(8..=24).contains(&header_len) || enc_len < header_len || enc_len > len {
         return Err(NdsError::Malformed("BLZ footer"));
     }
     let total = len
