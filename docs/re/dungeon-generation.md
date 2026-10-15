@@ -44,6 +44,19 @@ Results (2026-10-14, 5 seeds × 3 global RNG values, plus the floor's natural se
 - **One tile byte follows the global RNG:** `+0x04` (Red `unk8`) is a graphics variant (an index into the tileset's cell table), which Red picks with the global `RandInt(4)` in `sub_80498A8`. It is cosmetic; the layout hash zeroes it.
 - **The natural seed reproduces the real run:** forcing the seed the game picks itself gives the same floor (stairs `(23, 8)`, 3 rooms, 1,802 RNG steps) as the unforced replay.
 
+### Whole-floor golden test
+
+`floor_oracle.py` also records the same hashes and counts at `GenerateFloor`'s return (`0x021525B4`, `generateEnd`), where `rescue_sim::floor_gen::generate_floor` ends, and can force the floor-properties layout byte (`--layouts`, written at dungeon `+0x1A2F6`, the properties `SpawnNonEnemies` gets in `r0`, at `GenerateFloor`'s entry). Its `layoutFnv1a`, the same as `rescue_sim::floor::layout_fnv1a`, is FNV-1a 64 over the first 12 bytes of each of the 56 × 32 tile records, row by row, with the graphics variant (`+0x04`) fed as 0. The last 8 bytes, the monster and object pointers, are left out: they are RAM addresses of entities the floor generator does not make. At `GenerateFloor`'s return the walkable-neighbour bytes are still all zero in the game, and the Rust floor never sets them.
+
+The test `whole_floors_match_the_floor_oracle` runs `generate_floor` from the recorded entry state and checks the RNG step count, `layoutFnv1a`, stairs, room count and terrain counts for the natural seed and `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`, each on layouts 1 (the first floor's), 0, 8, 11 and 2 (one-room monster house): 20 floors, 872 to 18,935 RNG steps, all matching. The expected values are committed in the test, so it runs without the ROM; regenerating them needs the ROM:
+
+```
+floor_oracle.py ROM out.jsonl --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts 1,0,8,11,2
+floor_oracle.py ROM out.jsonl --layouts 1,0,8,11,2
+```
+
+The first-turn values (`rngSteps` 1,802 for the natural seed and 1,761 for `0x12345678`) include the 22 / 20 steps after `GenerateFloor` returns, which are not ported.
+
 So the generator's inputs are the dungeon RNG state and the floor properties. A reimplementation can be tested against `floor_oracle.py`: generate a floor from the same seed and compare the layout hash, stairs and RNG step count. The reimplementation must be original code written from this description and our own analysis of Blue, not a translation of `pmd-red`'s source ([`legal.md`](../legal.md)).
 
 ## Reimplementation, step by step
