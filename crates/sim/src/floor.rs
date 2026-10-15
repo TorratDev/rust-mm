@@ -2509,6 +2509,291 @@ pub fn spawn_enemies(floor: &mut Floor, spawn: EnemySpawn, rng: &mut DungeonRng)
     mark_from_random(floor, &found, count, SPAWN_BLOCKED, rng);
 }
 
+/// Terrain bit `0x4`. Its meaning is not known yet. `StairsAlwaysReachable`
+/// treats a tile with it as open, and the last pass of `GenerateFloor` clears it.
+const TERRAIN_FLAG_04: u16 = 0x4;
+/// Terrain bit `0x200`: the stairs tile, set by [`resolve_invalid_spawns`].
+pub const TERRAIN_STAIRS: u16 = 0x200;
+/// Terrain bit `0x8000`: set by [`stairs_always_reachable`] on the open tiles
+/// the stairs cannot reach, when asked to mark them.
+pub const TERRAIN_UNREACHABLE: u16 = 0x8000;
+
+/// `ov_0001::0214C1A8` (`ResolveInvalidSpawns` in `pmd-red`; a
+/// `[red-hypothesis]` name). Uses no randomness. On every tile:
+///
+/// - a tile that is not open floor loses its trap marker, and also its item
+///   marker when it is an impassable or no-spawn tile (a buried item in a
+///   plain wall stays);
+/// - the stairs tile gets [`TERRAIN_STAIRS`] and loses its trap marker;
+/// - a tile with an item loses its trap marker.
+pub fn resolve_invalid_spawns(floor: &mut Floor) {
+    for tile in &mut floor.tiles {
+        let (terrain, spawn) = (&mut tile.terrain, &mut tile.spawn_or_visibility);
+        if *terrain & TERRAIN_TYPE_MASK != TERRAIN_FLOOR {
+            if *terrain & (TERRAIN_NO_SPAWN | TERRAIN_IMPASSABLE_WALL) != 0 {
+                *spawn &= !SPAWN_ITEM;
+            }
+            *spawn &= !SPAWN_TRAP;
+        }
+        if *spawn & SPAWN_STAIRS != 0 {
+            *terrain |= TERRAIN_STAIRS;
+            *spawn &= !SPAWN_TRAP;
+        }
+        if *spawn & SPAWN_ITEM != 0 {
+            *spawn &= !SPAWN_TRAP;
+        }
+    }
+}
+
+/// `ov_0001::0214A760` (`StairsAlwaysReachable(x, y, markUnreachable)` in
+/// `pmd-red`; a `[red-hypothesis]` name). Uses no randomness.
+///
+/// A tile blocks the walk when it is not open floor and lacks
+/// [`TERRAIN_FLAG_04`]. A tile of the secondary terrain without that bit is
+/// never entered either, but it does not block a diagonal step. The walk starts
+/// at `at` and steps to the four sides, and diagonally when neither of the
+/// two tiles beside the step blocks. With `mark_unreachable`, every tile loses
+/// [`TERRAIN_UNREACHABLE`] first, each tile that could be entered but was not
+/// reached gets it, and the answer is `true`. Otherwise the answer is whether
+/// every such tile is a no-spawn tile. The answer is `false` when `at` is not
+/// `stored`, the stairs position (dungeon `+0xC0BC`).
+pub fn stairs_always_reachable(
+    floor: &mut Floor,
+    at: (i16, i16),
+    stored: (i16, i16),
+    mark_unreachable: bool,
+) -> bool {
+    const BLOCKS: u8 = 0x1;
+    const SECONDARY: u8 = 0x2;
+    const VISITED: u8 = 0x80;
+    let mut map = vec![0_u8; WIDTH * HEIGHT];
+    for (cell, tile) in map.iter_mut().zip(&mut floor.tiles) {
+        if mark_unreachable {
+            tile.terrain &= !TERRAIN_UNREACHABLE;
+        }
+        if tile.terrain & TERRAIN_FLAG_04 == 0 {
+            match tile.terrain & TERRAIN_TYPE_MASK {
+                TERRAIN_FLOOR => {}
+                TERRAIN_SECONDARY => *cell = BLOCKS | SECONDARY,
+                _ => *cell = BLOCKS,
+            }
+        }
+    }
+    if at != stored {
+        return false;
+    }
+    // The game repeats a sweep over the map until no tile is added; the set
+    // it reaches is the same as this flood fill's.
+    let index = |x: i32, y: i32| Floor::index(x, y);
+    let mut todo: Vec<(i32, i32)> = vec![(i32::from(at.0), i32::from(at.1))];
+    while let Some((x, y)) = todo.pop() {
+        let Some(i) = index(x, y) else { continue };
+        if map[i] & VISITED != 0 {
+            continue;
+        }
+        map[i] |= VISITED;
+        for (dx, dy) in [(-1, 0), (0, -1), (1, 0), (0, 1)] {
+            if index(x + dx, y + dy).is_some_and(|n| map[n] & (VISITED | SECONDARY | BLOCKS) == 0) {
+                todo.push((x + dx, y + dy));
+            }
+        }
+        for (dx, dy) in [(-1, -1), (-1, 1), (1, -1), (1, 1)] {
+            let open = |x, y| index(x, y).is_some_and(|n| map[n] & BLOCKS == 0);
+            if index(x + dx, y + dy).is_some_and(|n| map[n] & (VISITED | SECONDARY | BLOCKS) == 0)
+                && open(x + dx, y)
+                && open(x, y + dy)
+            {
+                todo.push((x + dx, y + dy));
+            }
+        }
+    }
+    for (cell, tile) in map.iter().zip(&mut floor.tiles) {
+        if *cell == 0 {
+            if mark_unreachable {
+                tile.terrain |= TERRAIN_UNREACHABLE;
+            } else if tile.terrain & TERRAIN_NO_SPAWN == 0 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// `0206DB90` (`GetFloorType` in `pmd-red`; a `[red-hypothesis]` name): 2
+/// when dungeon byte `+0x668` is 1 and bytes `+0x641` and `+0x63D` are equal,
+/// else 1 when the fixed-room number (`+0x34B4`) is between 1 and 49, else 0.
+#[must_use]
+pub fn floor_type(byte_668: u8, byte_641: u8, byte_63d: u8, fixed_room: i16) -> u8 {
+    if byte_668 == 1 && byte_641 == byte_63d {
+        2
+    } else {
+        u8::from((1..0x32).contains(&fixed_room))
+    }
+}
+
+/// `ov_0001::02149AF8`, which `GenerateFloor` runs when a shop was made
+/// (`rect`, the shop's open area at `021B45CC`, is set). It shrinks the shop
+/// and marks items in its centre:
+///
+/// 1. `DungeonRandRange(3, width - 2)` and `DungeonRandRange(3, height - 2)`,
+///    each at least 3, are the narrowest the shop may become. (The game draws
+///    each up to 20 times, but always stops after the first.)
+/// 2. `DungeonRandRange(2, 4)` cuts per axis, while the shop is wider than the
+///    narrowest: `DungeonRandInt(100) < 50` drops the west column, else the
+///    east one. The dropped tiles lose [`TERRAIN_SHOP`]. Then the same for
+///    the north and south rows.
+/// 3. Shop tiles of the new area that are junctions lose [`TERRAIN_SHOP`].
+/// 4. Each shop tile of the 3 x 3 block around the centre that is neither a
+///    monster house nor a junction gets an item when
+///    `DungeonRandInt(100) < chances[row * 3 + column]`. `chances` is the
+///    9-entry table at `021AAA38` for floor-properties byte `+0x18`.
+pub fn finish_shop(
+    floor: &mut Floor,
+    rect: &mut [i32; 4],
+    chances: &[i16; 9],
+    rng: &mut DungeonRng,
+) {
+    let unshop = |floor: &mut Floor, x: i32, y: i32| {
+        if let Some(tile) = floor.tile_mut(x, y) {
+            tile.terrain &= !TERRAIN_SHOP;
+        }
+    };
+    let min_w = rng.range(3, rect[2] - rect[0] - 2).max(3);
+    let min_h = rng.range(3, rect[3] - rect[1] - 2).max(3);
+    let cuts = rng.range(2, 4);
+    for _ in 0..cuts {
+        if min_w >= rect[2] - rect[0] {
+            break;
+        }
+        let x = if rng.int(100) < 50 {
+            rect[0] += 1;
+            rect[0] - 1
+        } else {
+            rect[2] -= 1;
+            rect[2]
+        };
+        for y in rect[1]..rect[3] {
+            unshop(floor, x, y);
+        }
+    }
+    for _ in 0..cuts {
+        if min_h >= rect[3] - rect[1] {
+            break;
+        }
+        let y = if rng.int(100) < 50 {
+            rect[1] += 1;
+            rect[1] - 1
+        } else {
+            rect[3] -= 1;
+            rect[3]
+        };
+        for x in rect[0]..rect[2] {
+            unshop(floor, x, y);
+        }
+    }
+    for x in rect[0]..rect[2] {
+        for y in rect[1]..rect[3] {
+            let t = floor.tile(x, y).map_or(0, |t| t.terrain);
+            if t & TERRAIN_SHOP != 0 && t & TERRAIN_JUNCTION != 0 {
+                unshop(floor, x, y);
+            }
+        }
+    }
+    let (cx, cy) = ((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2);
+    for (column, x) in (cx - 1..cx + 2).enumerate() {
+        for (row, y) in (cy - 1..cy + 2).enumerate() {
+            let Some(tile) = floor.tile_mut(x, y) else {
+                continue;
+            };
+            let t = tile.terrain;
+            if t & TERRAIN_SHOP != 0
+                && t & (TERRAIN_MONSTER_HOUSE | TERRAIN_JUNCTION) == 0
+                && rng.int(100) < i32::from(chances[row * 3 + column])
+            {
+                tile.spawn_or_visibility |= SPAWN_ITEM;
+            }
+        }
+    }
+}
+
+/// `ov_0001::02151D4C`, which `GenerateFloor` runs on the whole map: every
+/// tile loses [`TERRAIN_FLAG_04`], and an open floor tile outside every room
+/// with more than two open floor neighbours becomes a junction. The game tests
+/// the east neighbour only for `x < 54` and the south one only for `x < 30`
+/// (it compares `x`, not `y`); the port keeps both. Uses no randomness.
+pub fn mark_hallway_junctions(floor: &mut Floor) {
+    let open = |floor: &Floor, x: i32, y: i32| {
+        floor
+            .tile(x, y)
+            .is_some_and(|t| t.terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR)
+    };
+    for x in 0..WIDTH as i32 {
+        for y in 0..HEIGHT as i32 {
+            let tile = floor.tile_mut(x, y).expect("in-map tile");
+            tile.terrain &= !TERRAIN_FLAG_04;
+            if tile.room != NO_ROOM || tile.terrain & TERRAIN_TYPE_MASK != TERRAIN_FLOOR {
+                continue;
+            }
+            let near = usize::from(x > 0 && open(floor, x - 1, y))
+                + usize::from(y > 0 && open(floor, x, y - 1))
+                + usize::from(x < 54 && open(floor, x + 1, y))
+                + usize::from(x < 30 && open(floor, x, y + 1));
+            if near > 2 {
+                floor.tile_mut(x, y).expect("in-map tile").terrain |= TERRAIN_JUNCTION;
+            }
+        }
+    }
+}
+
+/// `ov_0001::0214C13C`, which `GenerateFloor` runs last when the dungeon's
+/// byte in the table at `02091EFC` is 2: every tile of the secondary terrain
+/// becomes terrain type 3. Uses no randomness.
+pub fn secondary_to_terrain_3(floor: &mut Floor) {
+    for tile in &mut floor.tiles {
+        if tile.terrain & TERRAIN_TYPE_MASK == TERRAIN_SECONDARY {
+            tile.terrain |= TERRAIN_TYPE_MASK;
+        }
+    }
+}
+
+/// The chance argument `GenerateOneRoomMonsterHouseFloor` passes to step 10,
+/// so the house is always made when the other gates allow it.
+const ONE_ROOM_HOUSE_CHANCE: i32 = 999;
+
+/// `ov_0001::021506B0` (`GenerateOneRoomMonsterHouseFloor` in `pmd-red`; a
+/// `[red-hypothesis]` name), layout case 2 and the fallback of
+/// `GenerateFloor`: one 1 x 1 grid cell holding a room with a hallway mark,
+/// spanning tiles `(2, 2)` to `(54, 30)` (ends excluded), all open floor of
+/// room 0, then step 10 ([`generate_monster_house`]) with chance 999. Its RNG
+/// draws are step 10's.
+pub fn generate_one_room_monster_house(
+    floor: &mut Floor,
+    floor_type: u8,
+    house_blocked: bool,
+    rng: &mut DungeonRng,
+) -> RoomFeatures {
+    let mut grid = Grid::new(1, 1, GridMode::Full);
+    let cell = grid.cell_mut(0, 0);
+    set_bounds(cell, 2, 2, 0x36, 0x1E);
+    cell.hallway_mark = true;
+    for x in 2..0x36 {
+        for y in 2..0x1E {
+            open_tile(floor, x, y, 0);
+        }
+    }
+    let mut features = RoomFeatures::default();
+    generate_monster_house(
+        floor,
+        &mut grid,
+        ONE_ROOM_HOUSE_CHANCE,
+        floor_type,
+        house_blocked,
+        &mut features,
+        rng,
+    );
+    features
+}
+
 /// FNV-1a 64 over the spawn word (`u16`, little endian) of every tile, row by
 /// row; `spawnFnv1a` of `floor_stages.py`.
 #[must_use]
@@ -5187,31 +5472,36 @@ mod tests {
         }
     }
 
+    /// The floor and RNG of `row` at the entry of `SpawnNonEnemies`.
+    fn floor_at_spawn_non_enemies(row: &SpawnRow) -> (Floor, DungeonRng) {
+        let (mut floor, mut grid, mut rng) = floor_before_features(row.grid_y, row.std3, row.std5);
+        if row.house {
+            let mut features = RoomFeatures::default();
+            assert!(generate_monster_house(
+                &mut floor,
+                &mut grid,
+                100,
+                0,
+                false,
+                &mut features,
+                &mut rng
+            ));
+        }
+        generate_extra_hallways(&mut floor, &grid, GridMode::LeftHalf, 5, &mut rng);
+        reset_inner_boundary_tile_rows(&mut floor);
+        ensure_impassable_tiles_are_walls(&mut floor);
+        finalize_junctions(&mut floor);
+        generate_secondary_terrain(&mut floor, 0, 0, &mut rng);
+        rng.int(100);
+        (floor, rng)
+    }
+
     #[test]
     fn spawn_non_enemies_matches_the_retail_floors() {
         let (mut houses, mut buried, mut traps) = (0, 0, 0);
         for (i, row) in SPAWN_ROWS.iter().enumerate() {
             let what = format!("row {i}");
-            let (mut floor, mut grid, mut rng) =
-                floor_before_features(row.grid_y, row.std3, row.std5);
-            if row.house {
-                let mut features = RoomFeatures::default();
-                assert!(generate_monster_house(
-                    &mut floor,
-                    &mut grid,
-                    100,
-                    0,
-                    false,
-                    &mut features,
-                    &mut rng
-                ));
-            }
-            generate_extra_hallways(&mut floor, &grid, GridMode::LeftHalf, 5, &mut rng);
-            reset_inner_boundary_tile_rows(&mut floor);
-            ensure_impassable_tiles_are_walls(&mut floor);
-            finalize_junctions(&mut floor);
-            generate_secondary_terrain(&mut floor, 0, 0, &mut rng);
-            rng.int(100);
+            let (mut floor, mut rng) = floor_at_spawn_non_enemies(row);
             assert_eq!(
                 (rng.state(), tiles_fnv1a(&floor)),
                 row.entry,
@@ -5249,6 +5539,294 @@ mod tests {
             houses > 0 && buried > 0 && traps > 0,
             "{houses} {buried} {traps}"
         );
+    }
+
+    /// The end of `GenerateFloor` on the retail ROM, from `floor_stages.py`,
+    /// continuing a [`SPAWN_ROWS`] row (the `h` rows with `--force-enemies 8`):
+    /// the monster density at `SpawnEnemies`'s entry, the entry of
+    /// `ResolveInvalidSpawns` (RNG state and `spawnFnv1a`), `tilesFnv1a` at the
+    /// entry of `StairsAlwaysReachable` and at `GenerateFloor`'s return.
+    struct EndRow {
+        spawn_row: usize,
+        density: u8,
+        resolve: (u32, u64),
+        stairs_tiles: u64,
+        end_tiles: u64,
+    }
+
+    #[rustfmt::skip]
+    const END_ROWS: &[EndRow] = &[
+        // nat, 0x12345678, 0xCAFEBABF, 0x0BADF00D
+        EndRow { spawn_row: 0, density: 4, resolve: (488_216_349, 0x168c_98a6_9653_0186),
+            stairs_tiles: 0xcc63_4d71_7a3c_84df, end_tiles: 0x89bd_8007_0068_99e7 },
+        EndRow { spawn_row: 1, density: 4, resolve: (3_753_164_605, 0x7c8b_52f1_2688_b72e),
+            stairs_tiles: 0xdf09_ca30_3bec_e0d9, end_tiles: 0xa102_5cef_40f4_dab1 },
+        EndRow { spawn_row: 2, density: 4, resolve: (1_107_789_760, 0x88a3_09a8_f761_f77e),
+            stairs_tiles: 0xf94a_1466_3027_6055, end_tiles: 0xf94a_1466_3027_6055 },
+        EndRow { spawn_row: 3, density: 4, resolve: (1_251_734_382, 0x2d05_facc_c8a5_af9e),
+            stairs_tiles: 0x82c0_efd0_d269_d908, end_tiles: 0x82c0_efd0_d269_d908 },
+        // h1, h2, h3
+        EndRow { spawn_row: 7, density: 8, resolve: (1_374_228_436, 0x13ef_a52b_416a_ef1a),
+            stairs_tiles: 0x012f_c1a9_a27f_b8b3, end_tiles: 0xe7bf_474c_de32_aa1b },
+        EndRow { spawn_row: 8, density: 8, resolve: (1_063_878_624, 0x4dfc_c8ad_2a3a_5c26),
+            stairs_tiles: 0x9704_56d2_4543_7c41, end_tiles: 0x9704_56d2_4543_7c41 },
+        EndRow { spawn_row: 9, density: 8, resolve: (508_174_666, 0x1a9f_60d1_100f_9e4e),
+            stairs_tiles: 0x1c0c_ae3a_4208_9c0d, end_tiles: 0x1c0c_ae3a_4208_9c0d },
+    ];
+
+    /// The RNG steps from `from` to `to`.
+    fn steps_between(from: u32, to: u32) -> usize {
+        let mut rng = DungeonRng::from_state(from);
+        let mut steps = 0;
+        while rng.state() != to {
+            rng.next_u16();
+            steps += 1;
+        }
+        steps
+    }
+
+    #[test]
+    fn end_of_generate_floor_matches_the_retail_floors() {
+        let mut budget = Vec::new();
+        for row in END_ROWS {
+            let spawn = &SPAWN_ROWS[row.spawn_row];
+            let what = format!("spawn row {}", row.spawn_row);
+            let (mut floor, mut rng) = floor_at_spawn_non_enemies(spawn);
+            let mut state = unset_spawn_state();
+            spawn_non_enemies(
+                &mut floor,
+                spawn.counts,
+                spawn.itemless,
+                0,
+                spawn.trap_flag,
+                &mut state,
+                &mut rng,
+            );
+            let entry = rng.state();
+            let enemies = EnemySpawn {
+                density: row.density,
+                empty_house: spawn.itemless,
+                has_house: false,
+                extra: false,
+                leader: state.leader,
+            };
+            spawn_enemies(&mut floor, enemies, &mut rng);
+            assert_eq!(
+                (rng.state(), spawn_fnv1a(&floor)),
+                row.resolve,
+                "{what}: SpawnEnemies"
+            );
+            budget.push(steps_between(entry, rng.state()));
+
+            resolve_invalid_spawns(&mut floor);
+            assert_eq!(
+                tiles_fnv1a(&floor),
+                row.stairs_tiles,
+                "{what}: ResolveInvalidSpawns"
+            );
+            assert_eq!(spawn_fnv1a(&floor), row.resolve.1, "{what}: spawn markers");
+            let ty = floor_type(0, 0, 0, 0);
+            assert!(stairs_check(state.leader, state.stairs, ty, |x, y| {
+                stairs_always_reachable(&mut floor, (x, y), state.stairs, false)
+            }));
+            mark_hallway_junctions(&mut floor);
+            assert_eq!(
+                tiles_fnv1a(&floor),
+                row.end_tiles,
+                "{what}: GenerateFloor's return"
+            );
+            assert_eq!(
+                rng.state(),
+                row.resolve.0,
+                "{what}: no RNG after the spawns"
+            );
+        }
+        // `SpawnEnemies`'s RNG budget on the first floor (#107).
+        assert_eq!(budget[..2], [766, 738]);
+    }
+
+    type ShopEnd = ((u32, u64), (u32, u64, u64), [i32; 4]);
+
+    /// Forced shops on the retail ROM (`floor_stages.py --force-chance 9=100
+    /// --force-enemies 8 --force-shop-chances 10,20,...,90`), one per forced
+    /// seed: the `ResolveInvalidSpawns` entry (RNG state, `spawnFnv1a`), then
+    /// at `GenerateFloor`'s return the RNG state, `spawnFnv1a`, `tilesFnv1a`
+    /// and the shop area after the shop pass.
+    #[rustfmt::skip]
+    const SHOP_END_ROWS: [ShopEnd; 3] = [
+        ((2_650_950_347, 0x877e_bfe2_95f9_3e2e),
+            (1_127_281_132, 0x28b1_43d5_2ea7_70fc, 0x0dd0_71da_be3b_d7f8), [6, 10, 9, 13]),
+        ((104_311_929, 0xe92f_ae99_e54c_bb86),
+            (665_574_514, 0x2a38_dd01_02cd_e8d4, 0x6a5c_7fa2_85d0_bb55), [7, 20, 10, 23]),
+        ((1_141_612_429, 0x0d1a_41c1_9b46_9996),
+            (3_395_527_983, 0x9249_0f47_f964_6b54, 0x13b9_c40d_23d4_c852), [19, 14, 22, 17]),
+    ];
+
+    /// Our own 3 x 3 item chances, which the oracle writes over the game's.
+    const TEST_SHOP_CHANCES: [i16; 9] = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+    #[test]
+    fn shop_pass_matches_the_retail_floors() {
+        for (seed, (resolve, end, rect)) in FORCED_SEEDS.iter().zip(SHOP_END_ROWS) {
+            let what = format!("std3 {}", seed.std3);
+            let (mut floor, mut grid, mut rng) =
+                floor_before_features(seed.grid_y, seed.std3, seed.std5);
+            let mut features = RoomFeatures::default();
+            generate_maze_room(&mut floor, &mut grid, 0, false, &mut features, &mut rng);
+            assert!(generate_shop(
+                &mut floor,
+                &mut grid,
+                100,
+                0,
+                &mut features,
+                &mut rng
+            ));
+            generate_monster_house(&mut floor, &mut grid, 0, 0, false, &mut features, &mut rng);
+            generate_extra_hallways(&mut floor, &grid, GridMode::LeftHalf, 5, &mut rng);
+            reset_inner_boundary_tile_rows(&mut floor);
+            ensure_impassable_tiles_are_walls(&mut floor);
+            finalize_junctions(&mut floor);
+            generate_secondary_terrain(&mut floor, 0, 0, &mut rng);
+            rng.int(100);
+            let mut state = unset_spawn_state();
+            let counts = SpawnCounts {
+                items: 2,
+                traps: 0,
+                buried: 0,
+            };
+            spawn_non_enemies(&mut floor, counts, false, 0, false, &mut state, &mut rng);
+            let enemies = EnemySpawn {
+                density: 8,
+                empty_house: false,
+                has_house: false,
+                extra: false,
+                leader: state.leader,
+            };
+            spawn_enemies(&mut floor, enemies, &mut rng);
+            assert_eq!(
+                (rng.state(), spawn_fnv1a(&floor)),
+                resolve,
+                "{what}: SpawnEnemies"
+            );
+            resolve_invalid_spawns(&mut floor);
+            assert!(stairs_always_reachable(
+                &mut floor,
+                state.stairs,
+                state.stairs,
+                false
+            ));
+            let mut shop = features.shop_rect;
+            finish_shop(&mut floor, &mut shop, &TEST_SHOP_CHANCES, &mut rng);
+            mark_hallway_junctions(&mut floor);
+            assert_eq!(
+                (rng.state(), spawn_fnv1a(&floor), tiles_fnv1a(&floor)),
+                end,
+                "{what}: GenerateFloor's return"
+            );
+            assert_eq!(shop, rect, "{what}: shop area");
+        }
+    }
+
+    /// The fallback of `GenerateFloor` on the retail ROM (`floor_stages.py
+    /// --force-unreachable --force-enemies 8`, natural seed): after ten
+    /// rejected floors, `ResetFloor`, the one-room monster house, the junction
+    /// pass and the spawns again. The leader keeps the tile of the last attempt
+    /// (`ResetFloor` clears only the stairs).
+    #[test]
+    fn fallback_floor_matches_the_retail_floor() {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::from_state(1_181_537_947);
+        let features = generate_one_room_monster_house(&mut floor, 0, false, &mut rng);
+        assert!(features.monster_house);
+        assert_eq!(
+            (rng.state(), tiles_fnv1a(&floor)),
+            (2_763_307_944, 0x673d_0420_e7f1_abe5)
+        );
+        finalize_junctions(&mut floor);
+        assert_eq!(tiles_fnv1a(&floor), 0x673d_0420_e7f1_abe5);
+
+        let mut state = SpawnState {
+            leader: (24, 5),
+            ..unset_spawn_state()
+        };
+        let counts = SpawnCounts {
+            items: 2,
+            traps: 0,
+            buried: 0,
+        };
+        spawn_non_enemies(&mut floor, counts, false, 0, false, &mut state, &mut rng);
+        assert_eq!(
+            (rng.state(), spawn_fnv1a(&floor)),
+            (1_362_725_958, 0xeabf_272b_12b3_e1dc)
+        );
+        assert_eq!(state.stairs, (35, 27));
+        let enemies = EnemySpawn {
+            density: 8,
+            empty_house: false,
+            has_house: true,
+            extra: false,
+            leader: state.leader,
+        };
+        spawn_enemies(&mut floor, enemies, &mut rng);
+        assert_eq!(
+            (rng.state(), spawn_fnv1a(&floor)),
+            (2_325_641_190, 0xcc90_5992_3887_ccf4)
+        );
+        resolve_invalid_spawns(&mut floor);
+        mark_hallway_junctions(&mut floor);
+        assert_eq!(
+            (rng.state(), spawn_fnv1a(&floor), tiles_fnv1a(&floor)),
+            (2_325_641_190, 0xcc90_5992_3887_ccf4, 0xdfd7_73eb_48aa_6077)
+        );
+    }
+
+    /// Branches of `StairsAlwaysReachable` the retail floors do not reach,
+    /// and the small passes at the end of `GenerateFloor`.
+    #[test]
+    fn stairs_reachability_and_end_passes() {
+        let mut floor = one_room_floor();
+        let stairs = (6, 6);
+        assert!(stairs_always_reachable(&mut floor, stairs, stairs, false));
+        assert!(!stairs_always_reachable(&mut floor, stairs, (7, 7), false));
+
+        // A tile only reached through a diagonal between two walls is cut off,
+        // unless it is a no-spawn tile; marking flags it and answers yes.
+        open_tile(&mut floor, 15, 11, 3);
+        assert!(!stairs_always_reachable(&mut floor, stairs, stairs, false));
+        assert!(stairs_always_reachable(&mut floor, stairs, stairs, true));
+        let marked = tile_positions(&floor, |t, _, _| t & TERRAIN_UNREACHABLE != 0);
+        assert_eq!(marked, [(15, 11)]);
+        floor.tile_mut(15, 11).unwrap().terrain |= TERRAIN_NO_SPAWN;
+        assert!(stairs_always_reachable(&mut floor, stairs, stairs, false));
+        // A wall with bit `0x4` does not block: the tile is reached again.
+        floor.tile_mut(15, 11).unwrap().terrain &= !TERRAIN_NO_SPAWN;
+        floor.tile_mut(14, 11).unwrap().terrain |= TERRAIN_FLAG_04;
+        assert!(stairs_always_reachable(&mut floor, stairs, stairs, false));
+
+        assert_eq!(floor_type(1, 3, 3, 5), 2);
+        assert_eq!(floor_type(1, 3, 4, 5), 1);
+        assert_eq!(floor_type(0, 0, 0, 0x32), 0);
+
+        let mut floor = Floor::new();
+        floor.tile_mut(3, 3).unwrap().terrain = TERRAIN_SECONDARY | TERRAIN_JUNCTION;
+        secondary_to_terrain_3(&mut floor);
+        assert_eq!(floor.tile(3, 3).unwrap().terrain, 3 | TERRAIN_JUNCTION);
+
+        // A hallway T (open west, north and south) becomes a junction; the
+        // game's south test reads `x < 30`, so the same T at x = 40 does not.
+        let mut floor = Floor::new();
+        for (x, y) in [(10, 10), (9, 10), (10, 9), (10, 11)] {
+            open_tile(&mut floor, x, y, NO_ROOM);
+            open_tile(&mut floor, x + 30, y, NO_ROOM);
+        }
+        floor.tile_mut(10, 10).unwrap().terrain |= TERRAIN_FLAG_04;
+        mark_hallway_junctions(&mut floor);
+        assert_eq!(
+            floor.tile(10, 10).unwrap().terrain,
+            TERRAIN_FLOOR | TERRAIN_JUNCTION
+        );
+        assert_eq!(floor.tile(40, 10).unwrap().terrain, TERRAIN_FLOOR);
+        assert_eq!(floor.tile(9, 10).unwrap().terrain, TERRAIN_FLOOR);
     }
 
     /// A floor of one 10 x 6 room (room 3) in an otherwise walled map.

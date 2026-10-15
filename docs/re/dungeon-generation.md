@@ -32,7 +32,7 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 6. `DungeonRandInt(100) < itemlessMonsterHouseChance` decides an itemless monster house.
 7. `SpawnNonEnemies(props, itemless)` (4 / 7), `SpawnEnemies(props, itemless)` (2 / 2), `ResolveInvalidSpawns`.
 8. `GetFloorType` and `StairsAlwaysReachable(x, y, FALSE)`: if the stairs cannot be reached, `ResetFloor` and fall back to `GenerateOneRoomMonsterHouseFloor`, then finalise and spawn again (same as Red).
-9. Final calls (`sub_806C330`, `sub_8051654`, `sub_804B534(0, 0, 56, 32)`, `sub_804FC74`), then `CloseFile`.
+9. Final calls (`sub_806C330`, `sub_8051654`, `sub_804B534(0, 0, 56, 32)`, `sub_804FC74` in Red; Blue `0x02179060`, `0x02149AF8`, `0x02151D4C`, `0x0214C13C`), then `CloseFile`. See "End of `GenerateFloor`" below.
 
 ## Emulator check
 
@@ -68,10 +68,11 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 | std 11 `GenerateExtraHallways` `[red-hypothesis]` (last argument: floor property `+0x13`, the number of attempts; 5 on the first floor) | `ov_0001::0214FF30` | 16 | 31 | done (`generate_extra_hallways`) |
 | std 12, std 13, `ResetInnerBoundaryTileRows`, `EnsureImpassableTilesAreWalls`, `FinalizeJunctions` | | 0 | 0 | |
 | `GenerateSecondaryTerrainFormations` | `ov_0001::0214AAF8` | 1 | 1 | done (`generate_secondary_terrain`); off on the first floor, see below. The 1 step is the itemless-house draw that follows it |
-| `SpawnNonEnemies` | `ov_0001::0214B650` | 788 | 760 | |
-| `SpawnEnemies` | `ov_0001::0214B338` | 766 | 738 | |
-| `ResolveInvalidSpawns` | `ov_0001::0214C1A8` | 0 | 0 | |
-| `StairsAlwaysReachable` up to the first turn | `ov_0001::0214A760` | 22 | 20 | |
+| `SpawnNonEnemies` | `ov_0001::0214B650` | 788 | 760 | done (`spawn_non_enemies`) |
+| `SpawnEnemies` | `ov_0001::0214B338` | 766 | 738 | done (`spawn_enemies`) |
+| `ResolveInvalidSpawns` | `ov_0001::0214C1A8` | 0 | 0 | done (`resolve_invalid_spawns`) |
+| `StairsAlwaysReachable` up to `GenerateFloor`'s return | `ov_0001::0214A760` | 0 | 0 | done (`stairs_always_reachable`, `mark_hallway_junctions`; see "End of `GenerateFloor`") |
+| `GenerateFloor`'s return (`0x021525B4`) up to the first turn | | 22 | 20 | code after `GenerateFloor`, not ported |
 | **Total** | | **1,802** | **1,761** | |
 
 Each count is the number of RNG steps between the entry of that step and the entry of the next one.
@@ -208,7 +209,24 @@ Read from the disassembly; the names are ours. Arguments: the floor properties a
 
 Direct calls: 2 `DungeonRandRange` (floor count, house count) and 2 `DungeonRandInt` (the two starts), as the issue counts. `floor_stages.py` records, at the entry of `SpawnEnemies`, its inputs (`enemies`: `itemless`, `density`, `hasHouse`, `extra`, `houseLimit`) and, at the entry of `ResolveInvalidSpawns`, `placed` (spawn and tile hashes); `--force-enemies N` overrides the density.
 
-**Checks.** `rescue_sim::floor::spawn_enemies` has unit tests against the disassembly (gates, counts, draw order, the 18 and 4 limits, the leader's tile). **Not yet checked against the retail ROM:** the RNG budget (766 steps on the natural seed, 738 on `0x12345678`) and the spawn hash at the `ResolveInvalidSpawns` entry need a run of the oracle on a supported dump, which the author of this step did not have. The oracle changes above are untested for the same reason.
+**Checks.** `rescue_sim::floor::spawn_enemies` has unit tests against the disassembly (gates, counts, draw order, the 18 and 4 limits, the leader's tile). On the retail ROM it reaches the RNG state and the spawn hash of the `ResolveInvalidSpawns` entry (766 steps on the natural seed, 738 on `0x12345678`) for the natural seed, the three forced seeds and three forced monster houses with `--force-enemies 8`, and on the one-room fallback, which takes the house branch (see "End of `GenerateFloor`").
+
+### End of `GenerateFloor`
+
+Read from the disassembly; the names are ours unless marked. Only the shop pass draws from the RNG, and it runs only when a shop was made.
+
+- **`ResolveInvalidSpawns`** (`ov_0001::0214C1A8`, `[red-hypothesis]` name). For every tile: when the terrain type is not 1, the trap marker (spawn bit `0x4`) is cleared, and so is the item marker (`0x2`) when the tile has terrain bit `0x100` or `0x10` (a buried item in a plain wall stays). A tile with the stairs marker (`0x1`) gets terrain bit `0x200` and loses the trap marker; a tile with the item marker loses the trap marker.
+- **`GetFloorType`** (`0206DB90`, `[red-hypothesis]` name): 2 when dungeon byte `+0x668` is 1 and bytes `+0x641` and `+0x63D` are equal; else 1 when the fixed-room number `+0x34B4` is from 1 to 49; else 0.
+- **`StairsAlwaysReachable(x, y, markUnreachable)`** (`ov_0001::0214A760`, `[red-hypothesis]` name). It builds a 56 × 32 byte map: a tile without terrain bit `0x4` blocks when its terrain type is not 1, and is also "secondary" when its type is 2. With `markUnreachable`, terrain bit `0x8000` is cleared on every tile first. The stairs tile is the start; when `(x, y)` is not stairs pair B, the answer is no. The game then sweeps the map, x outer and y inner, until a sweep adds nothing: a tile marked to visit is visited and marks its four sides when they are not visited, blocking or secondary, and its diagonals when the diagonal tile is also free (mask `0x87`) and neither of the two tiles beside the step blocks. Last, every tile that is neither visited, blocking nor secondary is unreachable: with `markUnreachable` it gets terrain bit `0x8000`; without, the answer is no unless the tile has terrain bit `0x100`. The port uses a flood fill, which reaches the same set.
+- **After the stairs fallbacks.** When the pair at `021B45C8` (the shop's centre, set by step 9) is set, `0x02179060(x, y, 0x17C, 0)` adds or updates an entry in an 8-entry list of the dungeon (no tiles, no RNG; not ported). When the shop area at `021B45CC` is set, `0x02149AF8(props)` (below) runs and `+0x34AA` becomes 1; otherwise `+0x34AA` becomes 0. Then `0x02151D4C(0, 0, 56, 32)`, then `0x0214C13C` when the dungeon's byte in the table at `02091EFC` is 2, then `CloseFile`.
+- **Shop pass** (`0x02149AF8`). Narrowest width and height: `DungeonRandRange(3, w - 2)` and `DungeonRandRange(3, h - 2)`, each at least 3 (the game loops up to 20 times but always stops after one draw). `DungeonRandRange(2, 4)` is the number of cuts per axis: while the area is wider than the narrowest, `DungeonRandInt(100) < 50` removes the west column, else the east one, and its tiles lose terrain bit `0x20`; then the same for the north and south rows. Tiles of the area with both `0x20` and `0x8` lose `0x20`. Last, over the 3 × 3 block around the centre (`(x0 + x1) / 2`, `(y0 + y1) / 2`), each tile with `0x20` and without `0x40` and `0x8` gets the item marker when `DungeonRandInt(100)` is below its entry in a 3 × 3 table of 16-bit chances (rows by y). Floor-properties byte `+0x18` picks the table from the tables at `021AAA38`.
+- **`0x02151D4C(x0, y0, x1, y1)`**, run on the whole map: every tile loses terrain bit `0x4`; an open tile (type 1) with room `0xFF` gets the junction bit `0x8` when more than two of its sides are open. The game tests the east side only for `x < 54` and the south side only for `x < 30` (it compares `x` there, not `y`).
+- **`0x0214C13C`**: every tile of terrain type 2 becomes type 3.
+- **`GenerateOneRoomMonsterHouseFloor`** (`ov_0001::021506B0`, `[red-hypothesis]` name), layout case 2 and both fallbacks: a 1 × 1 grid whose cell holds a room and has the hallway mark (`+0x0A`, `+0x0B`), with bounds `(2, 2)` to `(54, 30)`. Every tile in it becomes open floor of room 0, then step 10 runs with chance 999. Its RNG draws are step 10's (129 steps in the fallback run below). The stairs fallback leaves pair A as the last attempt left it, because `ResetFloor` clears only pair B.
+
+`floor_stages.py` records checkpoints `StairsAlwaysReachable`, `FinishShop` (`0x02149AF8`) and `GenerateFloorEnd` (`0x021525B4`, right after `CloseFile`), with `placed` (spawn and tile hashes) at each and the pairs and shop area at the last. `--force-unreachable` makes every stairs check fail, to reach the fallback; `--force-shop-chances` replaces the shop's 3 × 3 chances with the test's own values, so the tests do not need the game's table.
+
+**Checks.** On the retail ROM, starting from the `SpawnEnemies` entry, the Rust steps reach the spawn hash at `ResolveInvalidSpawns`, the tile hash at `StairsAlwaysReachable`, the stairs check's acceptance, and the RNG state, spawn hash and tile hash at `GenerateFloorEnd`. This holds for the natural seed, the three forced seeds and three forced monster houses. GenerateFloor's tail draws nothing on those floors: the 22 / 20 steps of the table (21 and 19 for `0xCAFEBABF` and `0x0BADF00D`) all come after `GenerateFloor` returns. The fallback (`--force-unreachable`, natural seed) and three forced shops (`--force-chance 9=100`) are checked the same way. Unit tests cover the reachability branches the retail floors do not reach (no-spawn tiles, marking, wrong position), `GetFloorType`, `0x0214C13C` and the `x < 30` quirk.
 
 ## Dungeon struct offsets seen here
 
@@ -221,7 +239,7 @@ Direct calls: 2 `DungeonRandRange` (floor count, house count) and 2 `DungeonRand
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
 | `+0x34AC`, `+0x34B6`, `+0x678`, `+0xC0E0`..`+0xC0EC` | monster-house room, attempt index (maze gate), blocks the monster house (step 10), shop area bounds | — | steps 8 to 10 |
 | `+0x34A8`, `+0x678` | monster house present (byte), extra enemy spot (16 bit) | - | `SpawnEnemies`, steps 8 to 10 |
-| `+0xC0B8`, `+0xC0BA` / `+0xC0BC`, `+0xC0BE` / `+0x64D` | leader start / stairs positions (`-1` when unset) / trap flag for monster-house tiles | � | `SpawnNonEnemies` |
+| `+0xC0B8`, `+0xC0BA` / `+0xC0BC`, `+0xC0BE` / `+0x64D` | leader start / stairs positions (`-1` when unset) / trap flag for monster-house tiles | — | `SpawnNonEnemies` |
 | `+0x1A2F8`, `+0x1A2F9`, `+0x1A308` | `floorProperties.tileset`, `.bgMusic`, `.fixedRoomNumber` | `0x1C576`, `0x1C577`, `0x1C588` | `RunDungeon_Async` |
 
 The gap grows from −8 at `0x5C0` to −0x4A0 at `0x3800` and −0x560 at `0x3A0E`; inside `FloorProperties`, Blue has 2 bytes fewer between `bgMusic` and `fixedRoomNumber`.
