@@ -10,7 +10,7 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 
 1. Open the fixed-room file (`OpenFileAndGetFileDataPtr("fixedmap", 4)`; the handle is kept at dungeon `+0x11304`) and `ResetFloor`.
 2. `ProcessFixedRoom(fixedRoomNumber, floorProps)`: if the floor is one fixed room, generation ends here.
-3. Grid size: `DungeonRandRange(2, 9)` and `DungeonRandRange(2, 8)`, or `DungeonRandRange(2, 5)` and `DungeonRandRange(2, 4)` for a smaller grid. Each cell is the 56 × 32 map divided by the grid size.
+3. Grid size: `DungeonRandRange(2, 9)` and `DungeonRandRange(2, 8)`, or `DungeonRandRange(2, 5)` and `DungeonRandRange(2, 4)` when the layout byte is exactly 8. The pair is drawn again while `gridX >= 7` or `gridY >= 5`, at most 32 times, then falls back to 4 × 4. A size whose cells would be under 8 tiles (`56 / gridX` or `32 / gridY`) becomes 1. Each cell is the 56 × 32 map divided by the grid size.
 4. Layout switch on `layout & 0xF`, the same enum as Red's:
 
 | Case | Layout | Blue function | RNG calls inside (Range / Int) |
@@ -56,9 +56,9 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 |------|--------------|-------------:|------------------:|----------------|
 | `GenerateFloor` up to `GenerateStandardFloor` | `ov_0001::02151E7C` | 11 | 7 | |
 | std 1: grid bounds (`i × (56 / gridX)`, `i × (32 / gridY)`) | `ov_0001::0214FEB0` | 0 | 0 | done (`grid_bounds`) |
-| std 2: init grid cells (30-byte records; a mode flag can mark the right half or quarter invalid) | `ov_0001::0214FD7C` | 0 | 0 | |
-| std 3 (room density as last argument) | `ov_0001::0214FB4C` | 129 | 129 | |
-| std 4 | `ov_0001::0214F7A8` | 17 | 20 | |
+| std 2 `InitDungeonGrid`: clear the 30-byte cells; small and medium layouts mark columns `x >= gridX / 2` or `x >= gridX × 3 / 4` invalid | `ov_0001::0214FD7C` | 0 | 0 | done (`Grid::new`) |
+| std 3 `AssignRooms` (room density as last argument) | `ov_0001::0214FB4C` | 129 | 129 | done (`assign_rooms`) |
+| std 4 `CreateRoomsAndAnchors` | `ov_0001::0214F7A8` | 17 | 20 | done (`place_rooms`) |
 | std 5 | `ov_0001::0214F6A0` | 33 | 33 | |
 | std 6 | `ov_0001::0214E824` | 19 | 18 | |
 | std 7 | `ov_0001::0214DB54` | 0 | 4 | |
@@ -72,7 +72,13 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 | `StairsAlwaysReachable` up to the first turn | `ov_0001::0214A760` | 22 | 20 | |
 | **Total** | | **1,802** | **1,761** | |
 
-Each count is the number of RNG steps between the entry of that step and the entry of the next one. The floor reset (outer ring of tiles impassable, rooms cleared) and the tile layout are also in `rescue_sim::floor`.
+Each count is the number of RNG steps between the entry of that step and the entry of the next one.
+
+What steps 2 to 4 do, as read in Blue's code (the Rust tests start from the measured state at step 3's entry and reach the measured states at steps 4 and 5 for the natural seed and for forced seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D`; the last one gives a 4 × 3 grid):
+
+- **Grid.** The cells live in a `[gridX][15]` array of 30-byte records (column stride `0x1C2`). Bytes `+0`–`+7` are the room bounds (start x, start y, end x, end y, 16-bit, ends excluded), `+8` "invalid", `+0xA` "holds a room". Step 2 clears the record, sets "holds a room" and sets "invalid" for the unused columns. Which columns are unused comes from a byte that `GenerateFloor` sets to 0, 1 (small layout) or 2 (medium layout) (`gStandardGridMode` in [`symbols.md`](../symbols.md)).
+- **Step 3.** One `DungeonRandInt(3)`; the target is `−density` rooms when the density is negative, else `density` plus that value. A 256-entry list starts with that many "room" entries and gets 64 swaps of two `DungeonRandInt(gridX × gridY)` positions (128 calls). Valid cells then take entries in column order (x outer, y inner). With an odd `gridX`, the cell at row 1 of column `(gridX − 1) / 2` never keeps its room, but it is still counted. If fewer than two rooms were counted, valid cells are visited again in column order, each becoming a room when `DungeonRandInt(100) < 60`, until one does (at most 200 passes), and a byte at `ov_0001::021B4584` is cleared.
+- **Step 4.** Cells are visited row by row (y outer, x inner). Each valid cell's area starts 2 tiles after the cell's start and is 4 tiles narrower and 3 tiles shorter than the cell. A cell without a room gets an anchor: one floor tile with room number `0xFE`, at `DungeonRandRange` x and y kept 2 tiles (1 on the map's left and top grid edge) from the area's start and 4 tiles (2 on the right and bottom edge) from its end. A room takes `DungeonRandRange(5, width)` × `DungeonRandRange(4, height)`, rounded up to odd sizes when the result stays below the area's size, then limited to 3 / 2 of the other side (width first), and is placed at `DungeonRandInt` offsets in the area. Its tiles become floor (terrain type 1) with the room index (counted from 0 in visiting order). Then `DungeonRandInt(100) < 80` sets byte `+0x1D` when floor-properties byte `+0x0C` is non-zero, and bit 2 of floor-properties byte `+0x0D` sets byte `+0x1C`; when both would be set, one more `DungeonRandInt(100)` keeps `+0x1C` on 50 or more and `+0x1D` otherwise. So a room costs 5 or 6 RNG calls and an anchor 2: 3 rooms and an anchor (17) for the natural seed, 4 rooms (20) for the forced one. The floor reset (outer ring of tiles impassable, rooms cleared) and the tile layout are also in `rescue_sim::floor`.
 
 ## Dungeon struct offsets seen here
 
