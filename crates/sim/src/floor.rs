@@ -2833,6 +2833,30 @@ pub fn tiles_fnv1a(floor: &Floor) -> u64 {
     hash
 }
 
+/// FNV-1a 64 over the game's tile record without its two entity pointers:
+/// the first 12 of its 20 bytes (terrain, spawn word, graphics variant,
+/// room, walkable neighbours, `unkE`, little endian), with the graphics
+/// variant (`+0x04`, cosmetic, from the global RNG) fed as 0, row by row.
+/// `layoutFnv1a` of `verification/v7-trace/floor_oracle.py`.
+#[must_use]
+pub fn layout_fnv1a(floor: &Floor) -> u64 {
+    let mut hash = 0xCBF2_9CE4_8422_2325_u64;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let tile = floor.tile(x as i32, y as i32).expect("in-map tile");
+            let [t0, t1] = tile.terrain.to_le_bytes();
+            let [s0, s1] = tile.spawn_or_visibility.to_le_bytes();
+            let [w0, w1, w2, w3] = tile.walkable_neighbors;
+            let [u0, u1] = tile.unk_e.to_le_bytes();
+            for byte in [t0, t1, s0, s1, 0, tile.room, w0, w1, w2, w3, u0, u1] {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+            }
+        }
+    }
+    hash
+}
+
 fn set_bounds(cell: &mut GridCell, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
     // The game stores the bounds as 16-bit values.
     let short = |v: i32| i16::try_from(v).unwrap_or(i16::MAX);
@@ -5838,6 +5862,104 @@ mod tests {
             let (got, _, _) = whole_floor(*seed, &props, &mut steps);
             assert_eq!(got, end, "seed {seed:#x}: GenerateFloor's return");
             assert_eq!(steps.shop_rect, rect, "seed {seed:#x}: shop area");
+        }
+    }
+
+    /// A whole floor as `floor_oracle.py` records it at `GenerateFloor`'s
+    /// return (`generateEnd`).
+    struct OracleFloor {
+        /// Dungeon RNG state at `GenerateFloor`'s entry (`rngAtGenerate`).
+        entry: u32,
+        /// Floor-properties layout byte (`--layouts`).
+        layout: u8,
+        /// Dungeon RNG steps from `GenerateFloor`'s entry to its return.
+        steps: u32,
+        layout_fnv1a: u64,
+        /// Stairs (dungeon `+0xC0BC`).
+        stairs: (i16, i16),
+        /// Distinct room numbers other than `0xFF`.
+        rooms: usize,
+        /// Tiles of terrain type 0 (wall) and 1 (floor); no other type occurs.
+        terrain: (usize, usize),
+    }
+
+    const NATURAL_ENTRY: u32 = 0xB280_4D01;
+
+    /// `floor_oracle.py --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts
+    /// 0,8,11,2` plus the natural seed with `--layouts 1,0,8,11,2`, on the
+    /// first floor of a new game. Layout 1 of the forced seeds is the floor
+    /// the step tests check.
+    #[rustfmt::skip]
+    const ORACLE_FLOORS: &[OracleFloor] = &[
+        OracleFloor { entry: NATURAL_ENTRY, layout: 1, steps: 1780, layout_fnv1a: 0xf56d_01ac_d18e_338a, stairs: (23, 8), rooms: 3, terrain: (1526, 266) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 0, steps: 1157, layout_fnv1a: 0x3cc9_1b60_415e_e6a9, stairs: (50, 10), rooms: 5, terrain: (1489, 303) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 8, steps: 1993, layout_fnv1a: 0x47da_d695_6e5c_b4f6, stairs: (16, 5), rooms: 6, terrain: (1417, 375) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 11, steps: 2965, layout_fnv1a: 0x257a_4406_0201_455e, stairs: (37, 25), rooms: 5, terrain: (1395, 397) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 2, steps: 18931, layout_fnv1a: 0x59c2_502f_7ea4_d88a, stairs: (16, 25), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: 0x1234_5678, layout: 1, steps: 1741, layout_fnv1a: 0xeb41_617f_5f54_1eec, stairs: (7, 27), rooms: 4, terrain: (1544, 248) },
+        OracleFloor { entry: 0x1234_5678, layout: 0, steps: 872, layout_fnv1a: 0x498c_795e_e834_0ccf, stairs: (28, 28), rooms: 4, terrain: (1531, 261) },
+        OracleFloor { entry: 0x1234_5678, layout: 8, steps: 1669, layout_fnv1a: 0xefc9_74af_77dc_b079, stairs: (18, 15), rooms: 5, terrain: (1446, 346) },
+        OracleFloor { entry: 0x1234_5678, layout: 11, steps: 2355, layout_fnv1a: 0xc401_ad50_932a_0e21, stairs: (10, 24), rooms: 5, terrain: (1440, 352) },
+        OracleFloor { entry: 0x1234_5678, layout: 2, steps: 18919, layout_fnv1a: 0x7637_83d3_8829_f344, stairs: (47, 2), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: 0xCAFE_BABF, layout: 1, steps: 957, layout_fnv1a: 0x6d25_8090_ff0c_2ae6, stairs: (20, 25), rooms: 2, terrain: (1647, 145) },
+        OracleFloor { entry: 0xCAFE_BABF, layout: 0, steps: 1570, layout_fnv1a: 0x42a6_cccd_c899_1428, stairs: (15, 17), rooms: 6, terrain: (1497, 295) },
+        OracleFloor { entry: 0xCAFE_BABF, layout: 8, steps: 1910, layout_fnv1a: 0x4f27_2499_e9a4_fd91, stairs: (34, 12), rooms: 6, terrain: (1439, 353) },
+        OracleFloor { entry: 0xCAFE_BABF, layout: 11, steps: 1146, layout_fnv1a: 0x6fb1_cb91_6744_3e8b, stairs: (10, 24), rooms: 3, terrain: (1547, 245) },
+        OracleFloor { entry: 0xCAFE_BABF, layout: 2, steps: 18935, layout_fnv1a: 0xa4ef_8030_d758_ce02, stairs: (4, 5), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: 0x0BAD_F00D, layout: 1, steps: 1013, layout_fnv1a: 0xa628_96b1_0175_2769, stairs: (21, 14), rooms: 3, terrain: (1620, 172) },
+        OracleFloor { entry: 0x0BAD_F00D, layout: 0, steps: 2218, layout_fnv1a: 0x3f9a_bf88_082a_c4e8, stairs: (48, 25), rooms: 7, terrain: (1365, 427) },
+        OracleFloor { entry: 0x0BAD_F00D, layout: 8, steps: 2440, layout_fnv1a: 0x5dae_48b3_df0d_9138, stairs: (9, 22), rooms: 4, terrain: (1397, 395) },
+        OracleFloor { entry: 0x0BAD_F00D, layout: 11, steps: 1308, layout_fnv1a: 0x79a5_ecc5_4df8_d120, stairs: (7, 15), rooms: 4, terrain: (1564, 228) },
+        OracleFloor { entry: 0x0BAD_F00D, layout: 2, steps: 18919, layout_fnv1a: 0x9303_2d63_0c77_26fe, stairs: (19, 15), rooms: 1, terrain: (336, 1456) },
+    ];
+
+    /// Whole floors against `floor_oracle.py`: from the RNG state at
+    /// `GenerateFloor`'s entry, `generate_floor` with the ported steps must
+    /// use the same number of RNG steps and leave the same tiles (by
+    /// [`layout_fnv1a`]), stairs, room count and terrain counts as the game at
+    /// `GenerateFloor`'s return, for the natural seed and the forced seeds on
+    /// layouts 0, 1, 2, 8 and 11.
+    #[test]
+    fn whole_floors_match_the_floor_oracle() {
+        assert_eq!(natural_entry(), NATURAL_ENTRY);
+        for want in ORACLE_FLOORS {
+            let props = crate::floor_gen::FloorProperties {
+                layout: want.layout,
+                ..first_floor_props()
+            };
+            let mut floor = Floor::new();
+            let mut rng = DungeonRng::from_state(want.entry);
+            let mut g = crate::floor_gen::GenState::default();
+            let mut steps = crate::floor_gen::PortedSteps::default();
+            crate::floor_gen::generate_floor(
+                &props, false, &mut floor, &mut rng, &mut g, &mut steps, false,
+            )
+            .expect("runs to the end");
+
+            let mut end = want.entry;
+            for _ in 0..want.steps {
+                end = crate::rng::lcg_step(end);
+            }
+            let (mut rooms, mut terrain) = (std::collections::BTreeSet::new(), [0usize; 4]);
+            for y in 0..HEIGHT as i32 {
+                for x in 0..WIDTH as i32 {
+                    let tile = floor.tile(x, y).expect("in-map tile");
+                    terrain[usize::from(tile.terrain & 3)] += 1;
+                    if tile.room != NO_ROOM {
+                        rooms.insert(tile.room);
+                    }
+                }
+            }
+            let what = format!("entry {:#x}, layout {}", want.entry, want.layout);
+            assert_eq!(rng.state(), end, "{what}: RNG steps");
+            assert_eq!(layout_fnv1a(&floor), want.layout_fnv1a, "{what}: tiles");
+            assert_eq!(g.stairs_b, want.stairs, "{what}: stairs");
+            assert_eq!(rooms.len(), want.rooms, "{what}: rooms");
+            assert_eq!(
+                terrain,
+                [want.terrain.0, want.terrain.1, 0, 0],
+                "{what}: terrain"
+            );
         }
     }
 
