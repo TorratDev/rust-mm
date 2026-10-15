@@ -1,6 +1,7 @@
 //! ROM-gated checks of the NDS container against the configured dump (#28–#30).
 //! Counts come from `docs/file-survey.md`. Skipped unless a supported dump is configured.
 
+use rescue_data::typechart::parse_type_chart;
 use rescue_nds::binary::{overlay_data, read_overlay_tables};
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
@@ -32,10 +33,11 @@ rescue_tests::rom_test! {
         }
         let ov1 = arm9.iter().find(|o| o.id == 1).expect("overlay 1");
         let decoded = overlay_data(&bytes, &fs, ov1).expect("overlay 1 decodes");
-        let chart = &decoded[0x72688..0x72688 + 18 * 18 * 2];
-        for cell in chart.chunks_exact(2) {
-            let v = i16::from_le_bytes([cell[0], cell[1]]);
-            assert!((0..=3).contains(&v), "type chart cell {v} at {cell:?}");
+        let chart = parse_type_chart(&decoded[0x72688..]).expect("type chart parses");
+        for row in chart.0.iter() {
+            for &v in row.iter() {
+                assert!((0..=3).contains(&v), "type chart cell {v}");
+            }
         }
     }
 }

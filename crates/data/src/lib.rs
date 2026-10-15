@@ -6,3 +6,5 @@
 // crate's clippy.toml; scripts/check-determinism.sh backs this up in CI.
 #![deny(clippy::float_arithmetic)]
 #![deny(clippy::disallowed_types, clippy::disallowed_methods)]
+
+pub mod typechart;
