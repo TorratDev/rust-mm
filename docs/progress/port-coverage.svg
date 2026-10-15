@@ -1,0 +1,542 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<rect width="1200" height="760" fill="#0d1117"/>
+<text x="20" y="34" fill="#e6edf3" font-size="24" font-weight="600">Blue functions ported</text>
+<text x="1180" y="34" fill="#e6edf3" font-size="24" font-weight="600" text-anchor="end">8%</text>
+<text x="20" y="58" fill="#8b949e" font-size="13">14 of 178 functions in docs/symbols.md have a crates/sim reference · 3 groups (ARM9 + overlays)</text>
+<rect x="3.0" y="73.0" width="776.0" height="650.0" fill="#161b22" stroke="#30363d"/>
+<text x="11.0" y="89.0" fill="#c9d1d9" font-size="13" font-weight="600">ARM9  ·  1/116</text>
+<g><title>ARM9::0201F2E4 GameLoop_Async — not ported (blue-verified)</title><rect x="7.5" y="96.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="110.5" fill="#c9d1d9" font-size="11">GameLoo…</text>
+</g>
+<g><title>ARM9::0201F268 MainLoops_RunFrameActions — not ported (blue-verified)</title><rect x="7.5" y="159.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="173.0" fill="#c9d1d9" font-size="11">MainLoo…</text>
+</g>
+<g><title>ARM9::0201E3C8 RunGameMode_Async — not ported (blue-verified)</title><rect x="7.5" y="221.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="235.5" fill="#c9d1d9" font-size="11">RunGame…</text>
+</g>
+<g><title>ARM9::0201E204 LoadAndRunQuickSaveDungeon_Async — not ported (blue-verified)</title><rect x="7.5" y="284.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="298.0" fill="#c9d1d9" font-size="11">LoadAnd…</text>
+</g>
+<g><title>ARM9::0201DB70 LoadAndRunDungeon_Async — not ported (blue-verified)</title><rect x="7.5" y="346.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="360.5" fill="#c9d1d9" font-size="11">LoadAnd…</text>
+</g>
+<g><title>ARM9::0206DC20 RunDungeon_Async — not ported (blue-verified)</title><rect x="7.5" y="409.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="423.0" fill="#c9d1d9" font-size="11">RunDung…</text>
+</g>
+<g><title>ARM9::0201DCEC NDS_LoadOverlay_GroundMain — not ported (blue-verified)</title><rect x="7.5" y="471.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="485.5" fill="#c9d1d9" font-size="11">NDS_Loa…</text>
+</g>
+<g><title>ARM9::0201DCB4 NDS_UnloadOverlay_GroundMain — not ported (tentative)</title><rect x="7.5" y="534.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="548.0" fill="#c9d1d9" font-size="11">NDS_Unl…</text>
+</g>
+<g><title>ARM9::0201DAC4 RunOverlay7Mode — not ported (tentative)</title><rect x="7.5" y="596.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="610.5" fill="#c9d1d9" font-size="11">RunOver…</text>
+</g>
+<g><title>ARM9::02029C88 NDS_DebugInit — not ported (blue-verified)</title><rect x="7.5" y="659.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="12.5" y="673.0" fill="#c9d1d9" font-size="11">NDS_Deb…</text>
+</g>
+<g><title>ARM9::02029C50 ResetSoundEffectCounters — not ported (blue-verified)</title><rect x="73.9" y="96.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="110.5" fill="#c9d1d9" font-size="11">ResetSo…</text>
+</g>
+<g><title>ARM9::0202F344 ResetDialogueBox — not ported (blue-verified)</title><rect x="73.9" y="159.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="173.0" fill="#c9d1d9" font-size="11">ResetDi…</text>
+</g>
+<g><title>ARM9::02003794 LoadMonsterParameters — not ported (blue-verified)</title><rect x="73.9" y="221.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="235.5" fill="#c9d1d9" font-size="11">LoadMon…</text>
+</g>
+<g><title>ARM9::0200CEC4 InitializePlayTime — not ported (blue-verified)</title><rect x="73.9" y="284.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="298.0" fill="#c9d1d9" font-size="11">Initial…</text>
+</g>
+<g><title>ARM9::0200CB28 LoadGameOptions — not ported (blue-verified)</title><rect x="73.9" y="346.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="360.5" fill="#c9d1d9" font-size="11">LoadGam…</text>
+</g>
+<g><title>ARM9::0200C63C SetWindowBGColor — not ported (blue-verified)</title><rect x="73.9" y="409.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="423.0" fill="#c9d1d9" font-size="11">SetWind…</text>
+</g>
+<g><title>ARM9::0201181C LoadExclusivePokemon — not ported (blue-verified)</title><rect x="73.9" y="471.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="485.5" fill="#c9d1d9" font-size="11">LoadExc…</text>
+</g>
+<g><title>ARM9::020092A4 LoadFriendAreas — not ported (blue-verified)</title><rect x="73.9" y="534.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="548.0" fill="#c9d1d9" font-size="11">LoadFri…</text>
+</g>
+<g><title>ARM9::020086B4 LoadItemParameters — not ported (blue-verified)</title><rect x="73.9" y="596.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="610.5" fill="#c9d1d9" font-size="11">LoadIte…</text>
+</g>
+<g><title>ARM9::020089A4 LoadRescueTeamInfo — not ported (blue-verified)</title><rect x="73.9" y="659.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="78.9" y="673.0" fill="#c9d1d9" font-size="11">LoadRes…</text>
+</g>
+<g><title>ARM9::0200B940 LoadWazaParameters — not ported (blue-verified)</title><rect x="140.3" y="96.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="110.5" fill="#c9d1d9" font-size="11">LoadWaz…</text>
+</g>
+<g><title>ARM9::0200FCF4 LoadMailInfo — not ported (blue-verified)</title><rect x="140.3" y="159.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="173.0" fill="#c9d1d9" font-size="11">LoadMai…</text>
+</g>
+<g><title>ARM9::0200CAA4 InitializeGameOptions — not ported (blue-verified)</title><rect x="140.3" y="221.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="235.5" fill="#c9d1d9" font-size="11">Initial…</text>
+</g>
+<g><title>ARM9::02018D7C SetWindowTitle — not ported (blue-verified)</title><rect x="140.3" y="284.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="298.0" fill="#c9d1d9" font-size="11">SetWind…</text>
+</g>
+<g><title>ARM9::02012AE8 SetSavingIconCoords — not ported (blue-verified)</title><rect x="140.3" y="346.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="360.5" fill="#c9d1d9" font-size="11">SetSavi…</text>
+</g>
+<g><title>ARM9::0202A1AC ReadSaveFromPak — not ported (blue-verified)</title><rect x="140.3" y="409.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="423.0" fill="#c9d1d9" font-size="11">ReadSav…</text>
+</g>
+<g><title>ARM9::02021310 ThoroughlyResetScriptVars — not ported (blue-verified)</title><rect x="140.3" y="471.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="485.5" fill="#c9d1d9" font-size="11">Thoroug…</text>
+</g>
+<g><title>ARM9::02022188 MemoryAlloc — not ported (blue-verified)</title><rect x="140.3" y="534.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="548.0" fill="#c9d1d9" font-size="11">MemoryA…</text>
+</g>
+<g><title>ARM9::02022170 MemoryFree — not ported (blue-verified)</title><rect x="140.3" y="596.5" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="610.5" fill="#c9d1d9" font-size="11">MemoryF…</text>
+</g>
+<g><title>ARM9::0200D58C GetFirstIndexofMailType — not ported (blue-verified)</title><rect x="140.3" y="659.0" width="63.4" height="59.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="145.3" y="673.0" fill="#c9d1d9" font-size="11">GetFirs…</text>
+</g>
+<g><title>ARM9::0200D79C DeleteMailAtIndex — not ported (blue-verified)</title><rect x="206.6" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="110.5" fill="#c9d1d9" font-size="11">DeleteM…</text>
+</g>
+<g><title>ARM9::0200E8BC GeneratePelipperJobs — not ported (blue-verified)</title><rect x="270.1" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="275.1" y="110.5" fill="#c9d1d9" font-size="11">Generat…</text>
+</g>
+<g><title>ARM9::0202B0B8 PrepareQuickSaveRead — not ported (blue-verified)</title><rect x="333.5" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="338.5" y="110.5" fill="#c9d1d9" font-size="11">Prepare…</text>
+</g>
+<g><title>ARM9::0202AFD4 ReadQuickSave — not ported (blue-verified)</title><rect x="396.9" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="401.9" y="110.5" fill="#c9d1d9" font-size="11">ReadQui…</text>
+</g>
+<g><title>ARM9::0202AFC0 IsQuickSaveValid — not ported (blue-verified)</title><rect x="460.4" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="465.4" y="110.5" fill="#c9d1d9" font-size="11">IsQuick…</text>
+</g>
+<g><title>ARM9::0202AF8C FinishQuickSaveRead — not ported (blue-verified)</title><rect x="523.8" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="528.8" y="110.5" fill="#c9d1d9" font-size="11">FinishQ…</text>
+</g>
+<g><title>ARM9::02029C14 StopBGMResetSoundEffectCounters — not ported (blue-verified)</title><rect x="587.2" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="592.2" y="110.5" fill="#c9d1d9" font-size="11">StopBGM…</text>
+</g>
+<g><title>ARM9::02011A20 TransferBGPaletteBuffer — not ported (blue-verified)</title><rect x="650.7" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="655.7" y="110.5" fill="#c9d1d9" font-size="11">Transfe…</text>
+</g>
+<g><title>ARM9::0202A040 GetLanguage — not ported (blue-verified)</title><rect x="714.1" y="96.5" width="60.4" height="62.4" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="719.1" y="110.5" fill="#c9d1d9" font-size="11">GetLang…</text>
+</g>
+<g><title>ARM9::0207BED8 FS_LoadOverlayInfo — not ported (sdk-hypothesis)</title><rect x="206.6" y="161.9" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="175.9" fill="#c9d1d9" font-size="11">FS_Load…</text>
+</g>
+<g><title>ARM9::0207BB28 FS_UnloadOverlay — not ported (sdk-hypothesis)</title><rect x="206.6" y="224.1" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="238.1" fill="#c9d1d9" font-size="11">FS_Unlo…</text>
+</g>
+<g><title>ARM9::0207BC9C FS_StartOverlay — not ported (sdk-hypothesis)</title><rect x="206.6" y="286.3" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="300.3" fill="#c9d1d9" font-size="11">FS_Star…</text>
+</g>
+<g><title>ARM9::0207B7F8 FS_InitFile — not ported (sdk-hypothesis)</title><rect x="206.6" y="348.4" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="362.4" fill="#c9d1d9" font-size="11">FS_Init…</text>
+</g>
+<g><title>ARM9::0207BE40 FS_LoadOverlayImageAsync — not ported (sdk-hypothesis)</title><rect x="206.6" y="410.6" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="424.6" fill="#c9d1d9" font-size="11">FS_Load…</text>
+</g>
+<g><title>ARM9::0207B390 FS_WaitAsync — not ported (sdk-hypothesis)</title><rect x="206.6" y="472.8" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="486.8" fill="#c9d1d9" font-size="11">FS_Wait…</text>
+</g>
+<g><title>ARM9::0207B460 FS_CloseFile — not ported (sdk-hypothesis)</title><rect x="206.6" y="535.0" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="549.0" fill="#c9d1d9" font-size="11">FS_Clos…</text>
+</g>
+<g><title>ARM9::0201A54C OpenFileAndGetFileDataPtr — not ported (blue-verified)</title><rect x="206.6" y="597.1" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="611.1" fill="#c9d1d9" font-size="11">OpenFil…</text>
+</g>
+<g><title>ARM9::0201A22C CloseFile — not ported (blue-verified)</title><rect x="206.6" y="659.3" width="63.7" height="59.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="211.6" y="673.3" fill="#c9d1d9" font-size="11">CloseFi…</text>
+</g>
+<g><title>ARM9::020817E0 abs — not ported (blue-verified)</title><rect x="273.4" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="175.9" fill="#c9d1d9" font-size="11">abs</text>
+</g>
+<g><title>ARM9::0206DB90 GetFloorType — ported (blue-verified)</title><rect x="336.4" y="161.9" width="60.0" height="62.8" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="341.4" y="175.9" fill="#0d1117" font-size="11">GetFloo…</text>
+</g>
+<g><title>ARM9::02007A94 GetItemCountInInventory — not ported (blue-verified)</title><rect x="399.4" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="404.4" y="175.9" fill="#c9d1d9" font-size="11">GetItem…</text>
+</g>
+<g><title>ARM9::02008538 GetNumberOfFilledInventorySlots — not ported (blue-verified)</title><rect x="462.4" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="467.4" y="175.9" fill="#c9d1d9" font-size="11">GetNumb…</text>
+</g>
+<g><title>ARM9::0200B3E8 GetMoveBasePower — not ported (blue-verified)</title><rect x="525.4" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="530.4" y="175.9" fill="#c9d1d9" font-size="11">GetMove…</text>
+</g>
+<g><title>ARM9::0200B4CC GetMoveType — not ported (blue-verified)</title><rect x="588.5" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="593.5" y="175.9" fill="#c9d1d9" font-size="11">GetMove…</text>
+</g>
+<g><title>ARM9::0200B3A4 GetMoveBasePP — not ported (blue-verified)</title><rect x="651.5" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="656.5" y="175.9" fill="#c9d1d9" font-size="11">GetMove…</text>
+</g>
+<g><title>ARM9::0200B568 InitPokemonMove — not ported (blue-verified)</title><rect x="714.5" y="161.9" width="60.0" height="62.8" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="719.5" y="175.9" fill="#c9d1d9" font-size="11">InitPok…</text>
+</g>
+<g><title>ARM9::0200B510 InitZeroedPPPokemonMove — not ported (blue-verified)</title><rect x="273.4" y="227.7" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="241.7" fill="#c9d1d9" font-size="11">InitZer…</text>
+</g>
+<g><title>ARM9::02008588 InitializeMoneyItems — not ported (blue-verified)</title><rect x="273.4" y="289.5" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="303.5" fill="#c9d1d9" font-size="11">Initial…</text>
+</g>
+<g><title>ARM9::02007688 AddToTeamMoney — not ported (blue-verified)</title><rect x="273.4" y="351.2" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="365.2" fill="#c9d1d9" font-size="11">AddToTe…</text>
+</g>
+<g><title>ARM9::02007038 CountKecleonShopItems — not ported (blue-verified)</title><rect x="273.4" y="412.9" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="426.9" fill="#c9d1d9" font-size="11">CountKe…</text>
+</g>
+<g><title>ARM9::02006D70 CountKecleonWareItems — not ported (blue-verified)</title><rect x="273.4" y="474.6" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="488.6" fill="#c9d1d9" font-size="11">CountKe…</text>
+</g>
+<g><title>ARM9::02006DA4 AddKecleonShopItem — not ported (blue-verified)</title><rect x="273.4" y="536.3" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="550.3" fill="#c9d1d9" font-size="11">AddKecl…</text>
+</g>
+<g><title>ARM9::02006AE4 AddKecleonWareItem — not ported (blue-verified)</title><rect x="273.4" y="598.1" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="612.1" fill="#c9d1d9" font-size="11">AddKecl…</text>
+</g>
+<g><title>ARM9::02007014 InitKecleonShopItem — not ported (blue-verified)</title><rect x="273.4" y="659.8" width="64.2" height="58.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="278.4" y="673.8" fill="#c9d1d9" font-size="11">InitKec…</text>
+</g>
+<g><title>ARM9::020083D4 InitBulkItem — not ported (blue-verified)</title><rect x="340.6" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="241.7" fill="#c9d1d9" font-size="11">InitBul…</text>
+</g>
+<g><title>ARM9::020190CC InitFlash — not ported (blue-verified)</title><rect x="403.0" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="408.0" y="241.7" fill="#c9d1d9" font-size="11">InitFla…</text>
+</g>
+<g><title>ARM9::0207E598 CARD_IdentifyBackup — not ported (sdk-hypothesis)</title><rect x="465.4" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="470.4" y="241.7" fill="#c9d1d9" font-size="11">CARD_Id…</text>
+</g>
+<g><title>ARM9::02018F0C ReadFlashData — not ported (blue-verified)</title><rect x="527.8" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="532.8" y="241.7" fill="#c9d1d9" font-size="11">ReadFla…</text>
+</g>
+<g><title>ARM9::02018DC4 WriteFlashData — not ported (blue-verified)</title><rect x="590.3" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="595.3" y="241.7" fill="#c9d1d9" font-size="11">WriteFl…</text>
+</g>
+<g><title>ARM9::02029E2C ReadSaveSector — not ported (blue-verified)</title><rect x="652.7" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="657.7" y="241.7" fill="#c9d1d9" font-size="11">ReadSav…</text>
+</g>
+<g><title>ARM9::02029ECC WriteSaveSector — not ported (blue-verified)</title><rect x="715.1" y="227.7" width="59.4" height="63.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="720.1" y="241.7" fill="#c9d1d9" font-size="11">WriteSa…</text>
+</g>
+<g><title>ARM9::02029F6C sub_8011CA8 — not ported (blue-verified)</title><rect x="340.6" y="294.2" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="308.2" fill="#c9d1d9" font-size="11">sub_801…</text>
+</g>
+<g><title>ARM9::02029FD4 CalculateChecksum — not ported (blue-verified)</title><rect x="340.6" y="355.3" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="369.3" fill="#c9d1d9" font-size="11">Calcula…</text>
+</g>
+<g><title>ARM9::02029F98 ValidateChecksum — not ported (blue-verified)</title><rect x="340.6" y="416.3" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="430.3" fill="#c9d1d9" font-size="11">Validat…</text>
+</g>
+<g><title>ARM9::0202A53C WriteSavetoPak — not ported (blue-verified)</title><rect x="340.6" y="477.3" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="491.3" fill="#c9d1d9" font-size="11">WriteSa…</text>
+</g>
+<g><title>ARM9::0202A000 GetGameInternalName — not ported (blue-verified)</title><rect x="340.6" y="538.4" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="552.4" fill="#c9d1d9" font-size="11">GetGame…</text>
+</g>
+<g><title>ARM9::0202A060 sub_8011C34 — not ported (blue-verified)</title><rect x="340.6" y="599.4" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="613.4" fill="#c9d1d9" font-size="11">sub_801…</text>
+</g>
+<g><title>ARM9::0202A050 sub_8011C40 — not ported (blue-verified)</title><rect x="340.6" y="660.5" width="65.0" height="58.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="345.6" y="674.5" fill="#c9d1d9" font-size="11">sub_801…</text>
+</g>
+<g><title>ARM9::0202A070 sub_8011C28 — not ported (blue-verified)</title><rect x="408.6" y="294.2" width="58.5" height="64.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="308.2" fill="#c9d1d9" font-size="11">sub_80…</text>
+</g>
+<g><title>ARM9::0202A010 SetLanguage — not ported (tentative)</title><rect x="470.1" y="294.2" width="58.5" height="64.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="475.1" y="308.2" fill="#c9d1d9" font-size="11">SetLan…</text>
+</g>
+<g><title>ARM9::0201F884 SaveGlobalScriptVars — not ported (blue-verified)</title><rect x="531.5" y="294.2" width="58.5" height="64.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="536.5" y="308.2" fill="#c9d1d9" font-size="11">SaveGl…</text>
+</g>
+<g><title>ARM9::0201F81C RestoreGlobalScriptVars — not ported (blue-verified)</title><rect x="593.0" y="294.2" width="58.5" height="64.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="598.0" y="308.2" fill="#c9d1d9" font-size="11">Restor…</text>
+</g>
+<g><title>ARM9::0200409C SaveRecruitedPokemon — not ported (blue-verified)</title><rect x="654.5" y="294.2" width="58.5" height="64.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="659.5" y="308.2" fill="#c9d1d9" font-size="11">SaveRe…</text>
+</g>
+<g><title>ARM9::02003F2C RestoreRecruitedPokemon — not ported (blue-verified)</title><rect x="716.0" y="294.2" width="58.5" height="64.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="721.0" y="308.2" fill="#c9d1d9" font-size="11">Restor…</text>
+</g>
+<g><title>ARM9::02003AD0 SavePoke2s — not ported (blue-verified)</title><rect x="408.6" y="361.7" width="66.2" height="57.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="375.7" fill="#c9d1d9" font-size="11">SavePoke…</text>
+</g>
+<g><title>ARM9::020038AC RestorePoke2s — not ported (blue-verified)</title><rect x="408.6" y="421.6" width="66.2" height="57.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="435.6" fill="#c9d1d9" font-size="11">RestoreP…</text>
+</g>
+<g><title>ARM9::020069C8 SaveTeamInventory — not ported (blue-verified)</title><rect x="408.6" y="481.6" width="66.2" height="57.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="495.6" fill="#c9d1d9" font-size="11">SaveTeam…</text>
+</g>
+<g><title>ARM9::020068AC RestoreTeamInventory — not ported (blue-verified)</title><rect x="408.6" y="541.6" width="66.2" height="57.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="555.6" fill="#c9d1d9" font-size="11">RestoreT…</text>
+</g>
+<g><title>ARM9::02008758 SaveRescueTeamInfo — not ported (blue-verified)</title><rect x="408.6" y="601.6" width="66.2" height="57.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="615.6" fill="#c9d1d9" font-size="11">SaveResc…</text>
+</g>
+<g><title>ARM9::020086CC ReadRescueTeamInfo — not ported (blue-verified)</title><rect x="408.6" y="661.5" width="66.2" height="57.0" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="413.6" y="675.5" fill="#c9d1d9" font-size="11">ReadResc…</text>
+</g>
+<g><title>ARM9::02008D30 SaveFriendAreas — not ported (blue-verified)</title><rect x="477.7" y="361.7" width="57.0" height="66.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="482.7" y="375.7" fill="#c9d1d9" font-size="11">SaveFr…</text>
+</g>
+<g><title>ARM9::02008CB0 ReadSavedFriendAreas — not ported (blue-verified)</title><rect x="537.7" y="361.7" width="57.0" height="66.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="542.7" y="375.7" fill="#c9d1d9" font-size="11">ReadSa…</text>
+</g>
+<g><title>ARM9::02010F4C SaveAdventureData — not ported (blue-verified)</title><rect x="597.7" y="361.7" width="57.0" height="66.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="602.7" y="375.7" fill="#c9d1d9" font-size="11">SaveAd…</text>
+</g>
+<g><title>ARM9::02010EFC RestoreAdventureData — not ported (blue-verified)</title><rect x="657.6" y="361.7" width="57.0" height="66.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="662.6" y="375.7" fill="#c9d1d9" font-size="11">Restor…</text>
+</g>
+<g><title>ARM9::0200D0CC sub_8095624 — not ported (blue-verified)</title><rect x="717.6" y="361.7" width="57.0" height="66.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="722.6" y="375.7" fill="#c9d1d9" font-size="11">sub_80…</text>
+</g>
+<g><title>ARM9::0200D2B8 sub_80954CC — not ported (blue-verified)</title><rect x="477.7" y="430.9" width="68.4" height="55.1" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="482.7" y="444.9" fill="#c9d1d9" font-size="11">sub_8095…</text>
+</g>
+<g><title>ARM9::0200DB80 SaveMailInfo — not ported (blue-verified)</title><rect x="477.7" y="489.0" width="68.4" height="55.1" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="482.7" y="503.0" fill="#c9d1d9" font-size="11">SaveMail…</text>
+</g>
+<g><title>ARM9::0200DD5C RestoreMailInfo — not ported (blue-verified)</title><rect x="477.7" y="547.1" width="68.4" height="55.1" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="482.7" y="561.1" fill="#c9d1d9" font-size="11">RestoreM…</text>
+</g>
+<g><title>ARM9::0200C190 InitBitWriter — not ported (blue-verified)</title><rect x="477.7" y="605.2" width="68.4" height="55.1" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="482.7" y="619.2" fill="#c9d1d9" font-size="11">InitBitW…</text>
+</g>
+<g><title>ARM9::0200C1BC InitBitReader — not ported (blue-verified)</title><rect x="477.7" y="663.4" width="68.4" height="55.1" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="482.7" y="677.4" fill="#c9d1d9" font-size="11">InitBitR…</text>
+</g>
+<g><title>ARM9::0200C18C FinishBitSerializer — not ported (blue-verified)</title><rect x="549.1" y="430.9" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="554.1" y="444.9" fill="#c9d1d9" font-size="11">Finish…</text>
+</g>
+<g><title>ARM9::0200C0F4 WriteBits — not ported (blue-verified)</title><rect x="606.2" y="430.9" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="611.2" y="444.9" fill="#c9d1d9" font-size="11">WriteB…</text>
+</g>
+<g><title>ARM9::0200C050 ReadBits — not ported (blue-verified)</title><rect x="663.3" y="430.9" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="668.3" y="444.9" fill="#c9d1d9" font-size="11">ReadBi…</text>
+</g>
+<g><title>ARM9::020067CC WriteItemSlotBits — not ported (blue-verified)</title><rect x="720.4" y="430.9" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="725.4" y="444.9" fill="#c9d1d9" font-size="11">WriteI…</text>
+</g>
+<g><title>ARM9::0200680C ReadItemSlotBits — not ported (blue-verified)</title><rect x="549.1" y="503.5" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="554.1" y="517.5" fill="#c9d1d9" font-size="11">ReadIt…</text>
+</g>
+<g><title>ARM9::0200684C WriteHeldItemBits — not ported (blue-verified)</title><rect x="549.1" y="576.2" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="554.1" y="590.2" fill="#c9d1d9" font-size="11">WriteH…</text>
+</g>
+<g><title>ARM9::0200687C ReadHeldItemBits — not ported (blue-verified)</title><rect x="549.1" y="648.8" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="554.1" y="662.8" fill="#c9d1d9" font-size="11">ReadHe…</text>
+</g>
+<g><title>ARM9::0200617C WriteDungeonLocationBits — not ported (blue-verified)</title><rect x="606.2" y="503.5" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="611.2" y="517.5" fill="#c9d1d9" font-size="11">WriteD…</text>
+</g>
+<g><title>ARM9::02003E1C WritePoke1Bits — not ported (blue-verified)</title><rect x="663.3" y="503.5" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="668.3" y="517.5" fill="#c9d1d9" font-size="11">WriteP…</text>
+</g>
+<g><title>ARM9::0200388C WritePoke1LevelBits — not ported (blue-verified)</title><rect x="720.4" y="503.5" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="725.4" y="517.5" fill="#c9d1d9" font-size="11">WriteP…</text>
+</g>
+<g><title>ARM9::020094D8 WritePoke1MovesBits — not ported (blue-verified)</title><rect x="606.2" y="576.2" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="611.2" y="590.2" fill="#c9d1d9" font-size="11">WriteP…</text>
+</g>
+<g><title>ARM9::02009550 WritePoke1MoveBits — not ported (blue-verified)</title><rect x="606.2" y="648.8" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="611.2" y="662.8" fill="#c9d1d9" font-size="11">WriteP…</text>
+</g>
+<g><title>ARM9::020093F8 WritePoke2MovesBits — not ported (blue-verified)</title><rect x="663.3" y="576.2" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="668.3" y="590.2" fill="#c9d1d9" font-size="11">WriteP…</text>
+</g>
+<g><title>ARM9::0200B944 WriteBellyBits — not ported (blue-verified)</title><rect x="720.4" y="576.2" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="725.4" y="590.2" fill="#c9d1d9" font-size="11">WriteB…</text>
+</g>
+<g><title>ARM9::0200382C WriteHiddenPowerBits — not ported (blue-verified)</title><rect x="663.3" y="648.8" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="668.3" y="662.8" fill="#c9d1d9" font-size="11">WriteH…</text>
+</g>
+<g><title>ARM9::0200CEEC sub_8095824 — not ported (blue-verified)</title><rect x="720.4" y="648.8" width="54.1" height="69.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="725.4" y="662.8" fill="#c9d1d9" font-size="11">sub_80…</text>
+</g>
+<rect x="785.0" y="73.0" width="412.0" height="618.3" fill="#161b22" stroke="#30363d"/>
+<text x="793.0" y="89.0" fill="#c9d1d9" font-size="13" font-weight="600">ov_0001  ·  13/59</text>
+<g><title>ov_0001::0217BD94 CalcDamage — not ported (blue-verified)</title><rect x="789.5" y="96.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="110.5" fill="#c9d1d9" font-size="11">CalcDam…</text>
+</g>
+<g><title>ov_0001::0217CE88 sub_806E100 — not ported (blue-verified)</title><rect x="857.2" y="96.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="862.2" y="110.5" fill="#c9d1d9" font-size="11">sub_806…</text>
+</g>
+<g><title>ov_0001::0217CB3C WeightWeakTypePicker — not ported (blue-verified)</title><rect x="924.8" y="96.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="929.8" y="110.5" fill="#c9d1d9" font-size="11">WeightW…</text>
+</g>
+<g><title>ov_0001::0217BB94 sub_806F370_Async — not ported (blue-verified)</title><rect x="992.5" y="96.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="997.5" y="110.5" fill="#c9d1d9" font-size="11">sub_806…</text>
+</g>
+<g><title>ov_0001::0217BA94 sub_806F4A4 — not ported (blue-verified)</title><rect x="1060.2" y="96.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1065.2" y="110.5" fill="#c9d1d9" font-size="11">sub_806…</text>
+</g>
+<g><title>ov_0001::0217E890 HandleDealingDamage_Async — not ported (blue-verified)</title><rect x="1127.8" y="96.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1132.8" y="110.5" fill="#c9d1d9" font-size="11">HandleD…</text>
+</g>
+<g><title>ov_0001::0218067C AbilityIsActive — not ported (blue-verified)</title><rect x="789.5" y="156.8" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="170.8" fill="#c9d1d9" font-size="11">Ability…</text>
+</g>
+<g><title>ov_0001::021411BC RunFractionalTurn_Async — not ported (blue-verified)</title><rect x="857.2" y="156.8" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="862.2" y="170.8" fill="#c9d1d9" font-size="11">RunFrac…</text>
+</g>
+<g><title>ov_0001::0214067C IsFloorOver — not ported (blue-verified)</title><rect x="924.8" y="156.8" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="929.8" y="170.8" fill="#c9d1d9" font-size="11">IsFloor…</text>
+</g>
+<g><title>ov_0001::0214078C TrySpawnMonsterAndActivatePlusMinus_Async — not ported (blue-verified)</title><rect x="992.5" y="156.8" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="997.5" y="170.8" fill="#c9d1d9" font-size="11">TrySpaw…</text>
+</g>
+<g><title>ov_0001::02140FAC RunLeaderTurn_Async — not ported (blue-verified)</title><rect x="1060.2" y="156.8" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1065.2" y="170.8" fill="#c9d1d9" font-size="11">RunLead…</text>
+</g>
+<g><title>ov_0001::02195104 UpdateWindTurns — not ported (blue-verified)</title><rect x="1127.8" y="156.8" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1132.8" y="170.8" fill="#c9d1d9" font-size="11">UpdateW…</text>
+</g>
+<g><title>ov_0001::02140AC0 sub_8044574_Async — not ported (blue-verified)</title><rect x="789.5" y="217.2" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="231.2" fill="#c9d1d9" font-size="11">sub_804…</text>
+</g>
+<g><title>ov_0001::021408F8 sub_8044820_Async — not ported (blue-verified)</title><rect x="857.2" y="217.2" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="862.2" y="231.2" fill="#c9d1d9" font-size="11">sub_804…</text>
+</g>
+<g><title>ov_0001::021406F8 sub_8044AB4 — not ported (blue-verified)</title><rect x="924.8" y="217.2" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="929.8" y="231.2" fill="#c9d1d9" font-size="11">sub_804…</text>
+</g>
+<g><title>ov_0001::0219C23C GetLeader — not ported (blue-verified)</title><rect x="992.5" y="217.2" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="997.5" y="231.2" fill="#c9d1d9" font-size="11">GetLead…</text>
+</g>
+<g><title>ov_0001::02142AE4 EntityIsValid — not ported (blue-verified)</title><rect x="1060.2" y="217.2" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1065.2" y="231.2" fill="#c9d1d9" font-size="11">EntityI…</text>
+</g>
+<g><title>ov_0001::02181E58 CalcSpeedStage — not ported (blue-verified)</title><rect x="1127.8" y="217.2" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1132.8" y="231.2" fill="#c9d1d9" font-size="11">CalcSpe…</text>
+</g>
+<g><title>ov_0001::02185C70 TickStatusAndHealthRegen — not ported (blue-verified)</title><rect x="789.5" y="277.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="291.5" fill="#c9d1d9" font-size="11">TickSta…</text>
+</g>
+<g><title>ov_0001::02176B54 TryActivateArtificialWeatherAbilities — not ported (blue-verified)</title><rect x="857.2" y="277.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="862.2" y="291.5" fill="#c9d1d9" font-size="11">TryActi…</text>
+</g>
+<g><title>ov_0001::0218766C DisplayActions_Async — not ported (blue-verified)</title><rect x="924.8" y="277.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="929.8" y="291.5" fill="#c9d1d9" font-size="11">Display…</text>
+</g>
+<g><title>ov_0001::0213AFA8 DungeonRunFrameActions — not ported (blue-verified)</title><rect x="992.5" y="277.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="997.5" y="291.5" fill="#c9d1d9" font-size="11">Dungeon…</text>
+</g>
+<g><title>ov_0001::02151E7C GenerateFloor — ported (blue-verified)</title><rect x="1060.2" y="277.5" width="64.7" height="57.3" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="1065.2" y="291.5" fill="#0d1117" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::0214BDBC ResetFloor — not ported (blue-verified)</title><rect x="1127.8" y="277.5" width="64.7" height="57.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1132.8" y="291.5" fill="#c9d1d9" font-size="11">ResetFl…</text>
+</g>
+<g><title>ov_0001::02150958 ProcessFixedRoom — not ported (blue-verified)</title><rect x="789.5" y="337.8" width="66.6" height="55.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="351.8" fill="#c9d1d9" font-size="11">ProcessF…</text>
+</g>
+<g><title>ov_0001::02151BF4 GenerateStandardFloor — not ported (blue-verified)</title><rect x="789.5" y="396.5" width="66.6" height="55.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="410.5" fill="#c9d1d9" font-size="11">Generate…</text>
+</g>
+<g><title>ov_0001::0214FEB0 GetGridPositions — not ported (blue-verified)</title><rect x="789.5" y="455.1" width="66.6" height="55.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="794.5" y="469.1" fill="#c9d1d9" font-size="11">GetGridP…</text>
+</g>
+<g><title>ov_0001::0214FD7C InitDungeonGrid — ported (blue-verified)</title><rect x="789.5" y="513.8" width="66.6" height="55.7" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="794.5" y="527.8" fill="#0d1117" font-size="11">InitDung…</text>
+</g>
+<g><title>ov_0001::0214FB4C AssignRooms — ported (blue-verified)</title><rect x="789.5" y="572.4" width="66.6" height="55.7" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="794.5" y="586.4" fill="#0d1117" font-size="11">AssignRo…</text>
+</g>
+<g><title>ov_0001::0214F7A8 CreateRoomsAndAnchors — ported (blue-verified)</title><rect x="789.5" y="631.1" width="66.6" height="55.7" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="794.5" y="645.1" fill="#0d1117" font-size="11">CreateRo…</text>
+</g>
+<g><title>ov_0001::021506B0 GenerateOneRoomMonsterHouseFloor — ported (blue-verified)</title><rect x="859.1" y="337.8" width="64.3" height="57.7" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="864.1" y="351.8" fill="#0d1117" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::0215174C GenerateOuterRingFloor — not ported (blue-verified)</title><rect x="926.4" y="337.8" width="64.3" height="57.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="931.4" y="351.8" fill="#c9d1d9" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::021512B4 GenerateCrossroadsFloor — not ported (blue-verified)</title><rect x="993.7" y="337.8" width="64.3" height="57.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="998.7" y="351.8" fill="#c9d1d9" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::021504F4 GenerateTwoRoomsWithMonsterHouseFloor — not ported (blue-verified)</title><rect x="1060.9" y="337.8" width="64.3" height="57.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1065.9" y="351.8" fill="#c9d1d9" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::02151160 GenerateLineFloor — not ported (blue-verified)</title><rect x="1128.2" y="337.8" width="64.3" height="57.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1133.2" y="351.8" fill="#c9d1d9" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::02150FC0 GenerateCrossFloor — not ported (blue-verified)</title><rect x="859.1" y="398.5" width="67.1" height="55.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="864.1" y="412.5" fill="#c9d1d9" font-size="11">Generate…</text>
+</g>
+<g><title>ov_0001::02150DFC GenerateBeetleFloor — not ported (blue-verified)</title><rect x="859.1" y="456.8" width="67.1" height="55.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="864.1" y="470.8" fill="#c9d1d9" font-size="11">Generate…</text>
+</g>
+<g><title>ov_0001::02150A10 GenerateOuterRoomsFloor — not ported (blue-verified)</title><rect x="859.1" y="515.0" width="67.1" height="55.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="864.1" y="529.0" fill="#c9d1d9" font-size="11">Generate…</text>
+</g>
+<g><title>ov_0001::02149A70 ResetInnerBoundaryTileRows — ported (blue-verified)</title><rect x="859.1" y="573.3" width="67.1" height="55.3" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="864.1" y="587.3" fill="#0d1117" font-size="11">ResetInn…</text>
+</g>
+<g><title>ov_0001::0214C0E0 EnsureImpassableTilesAreWalls — ported (blue-verified)</title><rect x="859.1" y="631.5" width="67.1" height="55.3" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="864.1" y="645.5" fill="#0d1117" font-size="11">EnsureIm…</text>
+</g>
+<g><title>ov_0001::02149A08 GetTile — not ported (blue-verified)</title><rect x="929.2" y="398.5" width="63.6" height="58.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="934.2" y="412.5" fill="#c9d1d9" font-size="11">GetTile</text>
+</g>
+<g><title>ov_0001::0214D900 FinalizeJunctions — ported (blue-verified)</title><rect x="995.8" y="398.5" width="63.6" height="58.3" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="1000.8" y="412.5" fill="#0d1117" font-size="11">Finaliz…</text>
+</g>
+<g><title>ov_0001::0214AAF8 GenerateSecondaryTerrainFormations — ported (blue-verified)</title><rect x="1062.3" y="398.5" width="63.6" height="58.3" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="1067.3" y="412.5" fill="#0d1117" font-size="11">Generat…</text>
+</g>
+<g><title>ov_0001::0214B650 SpawnNonEnemies — ported (blue-verified)</title><rect x="1128.9" y="398.5" width="63.6" height="58.3" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="1133.9" y="412.5" fill="#0d1117" font-size="11">SpawnNo…</text>
+</g>
+<g><title>ov_0001::0214B338 SpawnEnemies — ported (blue-verified)</title><rect x="929.2" y="459.8" width="68.0" height="54.5" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="934.2" y="473.8" fill="#0d1117" font-size="11">SpawnEne…</text>
+</g>
+<g><title>ov_0001::0214C1A8 ResolveInvalidSpawns — ported (blue-verified)</title><rect x="929.2" y="517.3" width="68.0" height="54.5" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="934.2" y="531.3" fill="#0d1117" font-size="11">ResolveI…</text>
+</g>
+<g><title>ov_0001::0214A760 StairsAlwaysReachable — ported (blue-verified)</title><rect x="929.2" y="574.8" width="68.0" height="54.5" rx="3" fill="#3fb950" fill-opacity="0.85"/>
+<text x="934.2" y="588.8" fill="#0d1117" font-size="11">StairsAl…</text>
+</g>
+<g><title>ov_0001::021498F8 sub_80495E4 — not ported (blue-verified)</title><rect x="929.2" y="632.3" width="68.0" height="54.5" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="934.2" y="646.3" fill="#c9d1d9" font-size="11">sub_8049…</text>
+</g>
+<g><title>ov_0001::02149990 GetTileMut — not ported (blue-verified)</title><rect x="1000.2" y="459.8" width="62.1" height="59.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1005.2" y="473.8" fill="#c9d1d9" font-size="11">GetTile…</text>
+</g>
+<g><title>ov_0001::0214C0A8 ResetTile — not ported (blue-verified)</title><rect x="1065.3" y="459.8" width="62.1" height="59.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1070.3" y="473.8" fill="#c9d1d9" font-size="11">ResetTi…</text>
+</g>
+<g><title>ov_0001::021432E8 HasHeldItem — not ported (blue-verified)</title><rect x="1130.4" y="459.8" width="62.1" height="59.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1135.4" y="473.8" fill="#c9d1d9" font-size="11">HasHeld…</text>
+</g>
+<g><title>ov_0001::02180644 MonsterIsType — not ported (blue-verified)</title><rect x="1000.2" y="522.5" width="70.2" height="52.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1005.2" y="536.5" fill="#c9d1d9" font-size="11">MonsterI…</text>
+</g>
+<g><title>ov_0001::021805CC IsTacticSet — not ported (blue-verified)</title><rect x="1000.2" y="578.3" width="70.2" height="52.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1005.2" y="592.3" fill="#c9d1d9" font-size="11">IsTactic…</text>
+</g>
+<g><title>ov_0001::021803E0 GetMovePower — not ported (blue-verified)</title><rect x="1000.2" y="634.0" width="70.2" height="52.7" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1005.2" y="648.0" fill="#c9d1d9" font-size="11">GetMoveP…</text>
+</g>
+<g><title>ov_0001::02180418 GetMoveTypeForMonster — not ported (blue-verified)</title><rect x="1073.4" y="522.5" width="58.0" height="63.9" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1078.4" y="536.5" fill="#c9d1d9" font-size="11">GetMov…</text>
+</g>
+<g><title>ov_0001::02141F58 SpawnItemEntity — not ported (blue-verified)</title><rect x="1134.5" y="522.5" width="58.0" height="63.9" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1139.5" y="536.5" fill="#c9d1d9" font-size="11">SpawnI…</text>
+</g>
+<g><title>ov_0001::021440B0 SpawnItem — not ported (blue-verified)</title><rect x="1073.4" y="589.4" width="78.4" height="47.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1078.4" y="603.4" fill="#c9d1d9" font-size="11">SpawnItem</text>
+</g>
+<g><title>ov_0001::02142ADC GetEntityType — not ported (blue-verified)</title><rect x="1073.4" y="639.6" width="78.4" height="47.2" rx="3" fill="#484f58" fill-opacity="0.85"/>
+<text x="1078.4" y="653.6" fill="#c9d1d9" font-size="11">GetEntityT…</text>
+</g>
+<g><title>ov_0001::02142AC4 GetItemInfo — not ported (blue-verified)</title><rect x="1154.8" y="589.4" width="37.7" height="97.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+</g>
+<rect x="785.0" y="697.3" width="412.0" height="25.7" fill="#161b22" stroke="#30363d"/>
+<g><title>ov_0000::0214FC50 GroundStation_SetBank — not ported (blue-verified)</title><rect x="789.5" y="720.8" width="132.3" height="-2.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+</g>
+<g><title>ov_0000::0214FD00 GroundStation_LoadBank — not ported (tentative)</title><rect x="924.8" y="720.8" width="132.3" height="-2.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+</g>
+<g><title>ov_0000::0214FCA4 GroundStation_UnloadBank — not ported (tentative)</title><rect x="1060.2" y="720.8" width="132.3" height="-2.3" rx="3" fill="#484f58" fill-opacity="0.85"/>
+</g>
+<text x="20" y="748" fill="#8b949e" font-size="12">Green = referenced in crates/sim. Grey = not yet. Cells are equal weight (byte sizes need Ghidra).</text>
+</svg>
