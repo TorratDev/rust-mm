@@ -6,7 +6,6 @@ Plans and decisions live in [`docs/roadmap.md`](docs/roadmap.md). Assumption che
 
 The full policy is [`docs/legal.md`](docs/legal.md). Every contribution must follow it. In short:
 
-- **Never commit a ROM, save file or savestate.** Users supply their own legally acquired dump; the project never distributes one.
 - **Dumps are identified by SHA-1.** Tools accept only supported dumps and refuse others.
 - **Never commit extracted assets** (graphics, text, music, maps, scripts, data tables) or anything that embeds ROM bytes.
 - **Fixtures are generated at test time** from the user's dump. Tests skip cleanly when no dump is configured.
