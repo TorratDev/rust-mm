@@ -61,7 +61,7 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 | std 4 `CreateRoomsAndAnchors` | `ov_0001::0214F7A8` | 17 | 20 | done (`place_rooms`) |
 | std 5 `AssignGridCellConnections` (walk length: props `+0x05`) | `ov_0001::0214F6A0` (calls `0214F224`) | 33 | 33 | done (`assign_connections`), walk length 15 for the first floor |
 | std 6 `CreateHallways` (calls `0214E0C4` for each hallway) | `ov_0001::0214E824` | 19 | 18 | done (`create_hallways`); checked against the retail RNG states and the tile hash for four seeds |
-| std 7 | `ov_0001::0214DB54` | 0 | 4 | |
+| std 7 `EnsureConnectedGrid` `[red-hypothesis]` (calls `0214E0C4`) | `ov_0001::0214DB54` | 0 | 4 | done (`ensure_connected_grid`); checked against the retail RNG states and the tile hash for four seeds |
 | std 8–10 | `ov_0001::0214CF2C`, `0214D448`, `0214D190` | 0 | 0 | |
 | std 11 (last argument: floor property `+0x13`, probably the number of extra hallways) | `ov_0001::0214FF30` | 16 | 31 | |
 | std 12, std 13, `ResetInnerBoundaryTileRows`, `EnsureImpassableTilesAreWalls`, `FinalizeJunctions` | | 0 | 0 | |
@@ -100,6 +100,17 @@ Read from the disassembly; the names are ours. The function takes the grid, the 
 - **Extra links** (unless the flag is set). For each cell in column order, one draw `DungeonRandInt(100) < 5`. If it passes and the cell is a valid room cell with `+0x0B`, `+0x12` clear and `+0x09` clear, one draw `DungeonRandInt(4)` picks a side. If the neighbour on that side is valid, has a room, `+0x0B` set, `+0x09` and `+0x12` clear, the pair is linked: both cells get the union of their bounds, the tiles of that rectangle become floor of the cell's room number, and `+0x12` is set on both (`+0x11` on the cell that is not the one the draw started from, or on this cell for north and west). Which bounds the pair takes depends on the side (see `extra_west`, `extra_north`, `extra_east`, `extra_south`).
 - **Not known yet.** The roles of `+0x09` and `+0x11`; the caller that sets the flag; the out-of-map tile that the game returns for coordinates outside 56 × 32 (the port ignores writes there and reads them as not floor, which the first four floors do not exercise).
 - **Checks.** The RNG state at the entry of step 7 and `tilesFnv1a` (FNV-1a 64 over the terrain flags and room of the 56 × 32 tiles, row by row, from `floor_stages.py`) match the retail ROM for the natural seed and `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`.
+
+## Step 7: cells left without a hallway (`ov_0001::0214DB54`)
+
+Read from the disassembly; the names are ours. The arguments are the grid, its size, `xs` and `ys` from step 1 (the sixth argument is not read).
+
+- **First pass** (column order, x outer, y inner). It looks at each valid cell with `+0x0B` and `+0x11` clear, that is, one that step 6 neither linked nor merged.
+  - A cell without a room, or with `+0x09` set, has its start tile turned back to wall: terrain type 0, and the low three bits of the tile's second flag word cleared. No RNG.
+  - A room cell draws its anchor (`DungeonRandRange(start + 1, end − 1)`, x then y), then takes the first neighbour in the order north, south, west, east that is valid, has `+0x0B` set and has `+0x12` clear. Neighbour anchor: if it has a room, two draws (x then y; only the one the hallway needs is used), otherwise its start tile. It digs a hallway with `0214E0C4` with the same shapes and boundary arguments as step 6 (vertical first for north and south), then sets `+0x0B` on the cell and the link bytes on both cells (`+0x13`–`+0x16`). A cell with no usable neighbour stays unlinked, after its two draws.
+- **Second pass.** Every valid cell that is still without `+0x0B`, `+0x11` and `+0x0F` loses its room: every tile in its bounds becomes terrain type 0 with room `0xFF`. The role of `+0x0F` is not known; nothing in steps 1 to 7 sets it.
+- **RNG budget.** A room cell that finds a neighbour with a room costs 4 draws (the `0x12345678` floor), one without a room 2. The natural seed and the other forced seeds have no unlinked cell and draw nothing.
+- **Checks.** The RNG state and `tilesFnv1a` at the entry of step 8 match the retail ROM for the natural seed and `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`. Only `0x12345678` digs.
 
 ## Dungeon struct offsets seen here
 
