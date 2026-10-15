@@ -184,6 +184,12 @@ pub struct GridCell {
     /// `+0x12`: set by the extra-link pass on both linked cells; the pass
     /// skips cells with it set.
     pub extra_linked: bool,
+    /// `+0x0C`: the cell is the shop room (step 9).
+    pub shop: bool,
+    /// `+0x0E`: the cell is the monster house (step 10).
+    pub monster_house: bool,
+    /// `+0x10`: the cell is a maze room (step 8).
+    pub maze: bool,
     /// `+0x17`: a hallway still to dig to the north. Copied from `north` at the
     /// start of step 6 and cleared when the hallway is dug.
     pub dig_north: bool,
@@ -1123,6 +1129,360 @@ fn dig_segment(floor: &mut Floor, start: (i32, i32), end: (i32, i32), origin: (i
     true
 }
 
+/// Terrain flag set on the tiles inside the shop room (step 9).
+pub const TERRAIN_SHOP: u16 = 0x20;
+/// Terrain flag set on the tiles of the monster house (step 10).
+pub const TERRAIN_MONSTER_HOUSE: u16 = 0x40;
+
+/// Floor-wide state that steps 8 to 10 read and write besides the grid: bytes
+/// and words in overlay 1's data (`021B458C`...) and the dungeon struct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoomFeatures {
+    /// `021B4590`: step 8 made a maze room.
+    pub maze: bool,
+    /// `021B4594`: the floor has a monster house. Step 10 sets it and step 9
+    /// skips the shop when it is set; the other writers are not known yet.
+    pub monster_house: bool,
+    /// `021B458C`: step 9 made a shop; step 10 then makes no monster house.
+    pub shop: bool,
+    /// `021B45CC`: the shop's open area as `[x0, y0, x1, y1]`, ends excluded.
+    pub shop_rect: [i32; 4],
+    /// `021B45C8`: the middle of the shop area, `0xFFFF` twice without a shop.
+    pub shop_centre: (u16, u16),
+    /// Dungeon `+0xC0E0`: smallest x and y, largest x and y of the shop area.
+    pub shop_bounds: [i32; 4],
+    /// Dungeon `+0x34AC`: room number of the monster house ([`NO_ROOM`] without one).
+    pub monster_house_room: u8,
+}
+
+impl Default for RoomFeatures {
+    fn default() -> Self {
+        Self {
+            maze: false,
+            monster_house: false,
+            shop: false,
+            shop_rect: [-1; 4],
+            shop_centre: (0xFFFF, 0xFFFF),
+            shop_bounds: [0; 4],
+            monster_house_room: NO_ROOM,
+        }
+    }
+}
+
+/// Index of the set slot of the shuffled one-hot list of steps 8 and 10: the
+/// list starts with a single `true` at index 0, and 64 swaps of two draws of
+/// `DungeonRandInt(count)` move it. The index picks among `count` candidates.
+fn shuffled_pick(count: usize, rng: &mut DungeonRng) -> usize {
+    let cap = i32::try_from(count).unwrap_or(i32::MAX);
+    let mut slots = [false; 256];
+    slots[0] = true;
+    for _ in 0..64 {
+        let a = usize::try_from(rng.int(cap)).unwrap_or(0);
+        let b = usize::try_from(rng.int(cap)).unwrap_or(0);
+        slots.swap(a, b);
+    }
+    slots.iter().position(|&set| set).expect("one slot is set")
+}
+
+/// Cells in column order (x outer, y inner) that pass `test`.
+fn candidates(grid: &Grid, test: impl Fn(&GridCell) -> bool) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    for x in 0..grid.grid_x {
+        for y in 0..grid.grid_y {
+            if test(grid.cell(x, y)) {
+                found.push((x, y));
+            }
+        }
+    }
+    found
+}
+
+/// Width and height of a cell's bounds.
+fn span(cell: &GridCell) -> (i32, i32) {
+    (
+        i32::from(cell.end_x) - i32::from(cell.start_x),
+        i32::from(cell.end_y) - i32::from(cell.start_y),
+    )
+}
+
+/// Terrain type at `(x, y)`; outside the map it reads as wall.
+fn terrain_type(floor: &Floor, x: i32, y: i32) -> u16 {
+    floor
+        .tile(x, y)
+        .map_or(0, |t| t.terrain & TERRAIN_TYPE_MASK)
+}
+
+fn make_wall(floor: &mut Floor, x: i32, y: i32) {
+    if let Some(tile) = floor.tile_mut(x, y) {
+        tile.terrain &= !TERRAIN_TYPE_MASK;
+    }
+}
+
+/// Offsets of a maze step in the order of the direction numbers 0 to 3 (east,
+/// north, west, south): two tiles, with the tile between walled.
+const MAZE_STEPS: [(i32, i32); 4] = [(2, 0), (0, -2), (-2, 0), (0, 2)];
+
+/// Walls off a path through a room (`ov_0001::0214CAB8`). From `start` it
+/// draws a direction (`DungeonRandInt(4)`), turns the tile it stands on into
+/// wall, and takes the first of the four directions, from the drawn one on and
+/// turning by +1, whose tile two steps away is inside `bounds`
+/// (`[x0, y0, x1, y1]`, ends excluded) and still floor. It walls the tile
+/// between, moves there and draws again. It ends when no direction works.
+fn carve_maze_walls(floor: &mut Floor, rng: &mut DungeonRng, start: (i32, i32), bounds: [i32; 4]) {
+    let [x0, y0, x1, y1] = bounds;
+    let (mut x, mut y) = start;
+    loop {
+        let first = rng.int(4);
+        make_wall(floor, x, y);
+        let step = (0..4)
+            .map(|turn| MAZE_STEPS[usize::try_from((first + turn) & 3).unwrap_or(0)])
+            .find(|&(dx, dy)| {
+                let (nx, ny) = (x + dx, y + dy);
+                (x0..x1).contains(&nx)
+                    && (y0..y1).contains(&ny)
+                    && terrain_type(floor, nx, ny) == TERRAIN_FLOOR
+            });
+        let Some((dx, dy)) = step else { return };
+        make_wall(floor, x + dx / 2, y + dy / 2);
+        x += dx;
+        y += dy;
+    }
+}
+
+/// Turns the room of `cell` into a maze (`ov_0001::0214CC7C`, called with its
+/// second argument 0): marks the cell, then starts a wall path from every
+/// non-floor tile along a side of the room at every second position (north,
+/// east, south, west), and from every floor tile of the room's inner lattice.
+fn make_maze(
+    floor: &mut Floor,
+    cell: &mut GridCell,
+    features: &mut RoomFeatures,
+    rng: &mut DungeonRng,
+) {
+    features.maze = true;
+    cell.maze = true;
+    let bounds = [
+        i32::from(cell.start_x),
+        i32::from(cell.start_y),
+        i32::from(cell.end_x),
+        i32::from(cell.end_y),
+    ];
+    let [x0, y0, x1, y1] = bounds;
+    for x in (x0 + 1..x1 - 1).step_by(2) {
+        if terrain_type(floor, x, y0 - 1) != TERRAIN_FLOOR {
+            carve_maze_walls(floor, rng, (x, y0 - 1), bounds);
+        }
+    }
+    for y in (y0 + 1..y1 - 1).step_by(2) {
+        if terrain_type(floor, x1, y) != TERRAIN_FLOOR {
+            carve_maze_walls(floor, rng, (x1, y), bounds);
+        }
+    }
+    for x in (x0 + 1..x1 - 1).step_by(2) {
+        if terrain_type(floor, x, y1) != TERRAIN_FLOOR {
+            carve_maze_walls(floor, rng, (x, y1), bounds);
+        }
+    }
+    for y in (y0 + 1..y1 - 1).step_by(2) {
+        if terrain_type(floor, x0 - 1, y) != TERRAIN_FLOOR {
+            carve_maze_walls(floor, rng, (x0 - 1, y), bounds);
+        }
+    }
+    for x in (x0 + 3..x1 - 3).step_by(2) {
+        for y in (y0 + 3..y1 - 3).step_by(2) {
+            if terrain_type(floor, x, y) == TERRAIN_FLOOR {
+                make_wall(floor, x - 1, y);
+                carve_maze_walls(floor, rng, (x, y), bounds);
+            }
+        }
+    }
+}
+
+/// Generation step 8 of a standard floor (`ov_0001::0214CF2C`,
+/// `GenerateMazeRoom` in `pmd-red`): with `chance` percent (one draw of
+/// `DungeonRandInt(100)`, none when `chance` is 0), and only if
+/// `attempt_negative` (dungeon `+0x34B6 < 0`, checked after the draw), turns
+/// one room into a maze. The candidates are valid, hallway-linked room cells
+/// of odd width and height with no feature yet; a shuffled one-hot list picks
+/// one. Returns whether a maze was made. Written from the disassembly; see
+/// `docs/re/dungeon-generation.md`.
+pub fn generate_maze_room(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    chance: i32,
+    attempt_negative: bool,
+    features: &mut RoomFeatures,
+    rng: &mut DungeonRng,
+) -> bool {
+    if chance == 0 || !rng.outcome(chance) || !attempt_negative {
+        return false;
+    }
+    let found = candidates(grid, |c| {
+        let (w, h) = span(c);
+        !c.invalid
+            && !c.extra_mark
+            && c.hallway_mark
+            && c.has_room
+            && !c.shop
+            && !c.flag_0f
+            && !c.monster_house
+            && !c.flag_09
+            && w & 1 != 0
+            && h & 1 != 0
+    });
+    if found.is_empty() {
+        return false;
+    }
+    let (x, y) = found[shuffled_pick(found.len(), rng)];
+    let mut cell = *grid.cell(x, y);
+    make_maze(floor, &mut cell, features, rng);
+    *grid.cell_mut(x, y) = cell;
+    true
+}
+
+/// Generation step 9 of a standard floor (`ov_0001::0214D448`,
+/// `GenerateKecleonShop` in `pmd-red`). It always resets the shop centre to
+/// `0xFFFF`. Then, unless the floor has a monster house or `floor_type` is 2,
+/// and with `chance` percent (one draw), it shuffles two lists of the numbers
+/// 0 to 14 (200 swaps each, two draws of `DungeonRandInt(15)` per swap) and
+/// scans the pairs (column from the first list, row from the second, both
+/// inside the grid) for the first valid, hallway-linked room cell more than 4
+/// wide and 3 tall with no maze, `room_flag_b` or link marks. That cell
+/// becomes the shop: its area (one tile in from the room's start and end, and
+/// at least 3 rows tall) gets [`TERRAIN_SHOP`] and loses spawn bits `0x8` and
+/// `0x1`, and every room tile gets spawn bit `0x10`. Returns whether a shop
+/// was made. Written from the disassembly; see `docs/re/dungeon-generation.md`.
+pub fn generate_shop(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    chance: i32,
+    floor_type: u8,
+    features: &mut RoomFeatures,
+    rng: &mut DungeonRng,
+) -> bool {
+    features.shop_centre = (0xFFFF, 0xFFFF);
+    if features.monster_house || floor_type == 2 || chance == 0 || !rng.outcome(chance) {
+        return false;
+    }
+    let mut shuffled = || {
+        let mut list: [usize; 15] = std::array::from_fn(|i| i);
+        for _ in 0..200 {
+            let a = usize::try_from(rng.int(15)).unwrap_or(0);
+            let b = usize::try_from(rng.int(15)).unwrap_or(0);
+            list.swap(a, b);
+        }
+        list
+    };
+    let columns = shuffled();
+    let rows = shuffled();
+    let fits = |c: &GridCell| {
+        let (w, h) = span(c);
+        !c.invalid
+            && !c.extra_mark
+            && !c.extra_linked
+            && c.hallway_mark
+            && c.has_room
+            && !c.flag_09
+            && !c.maze
+            && !c.room_flag_b
+            && w.abs() > 4
+            && h.abs() > 3
+    };
+    let found = columns
+        .iter()
+        .filter(|&&x| x < grid.grid_x)
+        .flat_map(|&x| rows.iter().map(move |&y| (x, y)))
+        .find(|&(x, y)| y < grid.grid_y && fits(grid.cell(x, y)));
+    let Some((x, y)) = found else { return false };
+
+    let cell = grid.cell_mut(x, y);
+    features.shop = true;
+    cell.shop = true;
+    let (x0, y0) = (i32::from(cell.start_x) + 1, i32::from(cell.start_y) + 1);
+    let x1 = i32::from(cell.end_x) - 1;
+    let mut y1 = i32::from(cell.end_y) - 1;
+    if y1 - y0 < 3 {
+        y1 = i32::from(cell.end_y);
+    }
+    features.shop_rect = [x0, y0, x1, y1];
+    features.shop_bounds = [0x270F, 0x270F, -0x270F, -0x270F];
+    for tx in x0..x1 {
+        for ty in y0..y1 {
+            if let Some(tile) = floor.tile_mut(tx, ty) {
+                tile.terrain |= TERRAIN_SHOP;
+                tile.spawn_or_visibility &= !0x9;
+            }
+            let b = &mut features.shop_bounds;
+            b[0] = b[0].min(tx);
+            b[1] = b[1].min(ty);
+            b[2] = b[2].max(tx);
+            b[3] = b[3].max(ty);
+        }
+    }
+    for tx in i32::from(cell.start_x)..i32::from(cell.end_x) {
+        for ty in i32::from(cell.start_y)..i32::from(cell.end_y) {
+            if let Some(tile) = floor.tile_mut(tx, ty) {
+                tile.spawn_or_visibility |= 0x10;
+            }
+        }
+    }
+    // Both halves of the centre are `(a + b) / 2` as the game's signed divide
+    // computes it; the coordinates are positive.
+    let centre = |a: i32, b: i32| u16::try_from((a + b) / 2).unwrap_or(0);
+    features.shop_centre = (centre(x0, x1), centre(y0, y1));
+    true
+}
+
+/// Generation step 10 of a standard floor (`ov_0001::0214D190`,
+/// `GenerateMonsterHouse` in `pmd-red`): with `chance` percent (one draw, none
+/// when `chance` is 0), and only if no shop was made, `house_blocked` is false
+/// (dungeon `+0x678 == 0`) and `floor_type` is 0, turns one room into a
+/// monster house. The candidates are valid, hallway-linked room cells with no
+/// shop, maze or link marks; a shuffled one-hot list picks one, as in step 8.
+/// The cell gets `monster_house`, its tiles [`TERRAIN_MONSTER_HOUSE`], and the
+/// room number goes to [`RoomFeatures::monster_house_room`]. Returns whether a
+/// house was made. Written from the disassembly; see
+/// `docs/re/dungeon-generation.md`.
+pub fn generate_monster_house(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    chance: i32,
+    floor_type: u8,
+    house_blocked: bool,
+    features: &mut RoomFeatures,
+    rng: &mut DungeonRng,
+) -> bool {
+    if chance == 0 || !rng.outcome(chance) || features.shop || house_blocked || floor_type != 0 {
+        return false;
+    }
+    let found = candidates(grid, |c| {
+        !c.invalid
+            && !c.extra_mark
+            && c.hallway_mark
+            && c.has_room
+            && !c.shop
+            && !c.flag_0f
+            && !c.maze
+            && !c.flag_09
+    });
+    if found.is_empty() {
+        return false;
+    }
+    let (x, y) = found[shuffled_pick(found.len(), rng)];
+    let cell = grid.cell_mut(x, y);
+    features.monster_house = true;
+    cell.monster_house = true;
+    for tx in i32::from(cell.start_x)..i32::from(cell.end_x) {
+        for ty in i32::from(cell.start_y)..i32::from(cell.end_y) {
+            if let Some(tile) = floor.tile_mut(tx, ty) {
+                tile.terrain |= TERRAIN_MONSTER_HOUSE;
+                features.monster_house_room = tile.room;
+            }
+        }
+    }
+    true
+}
+
 /// FNV-1a 64 over the terrain flags (`u16`, little endian) and the room of
 /// every tile, row by row. `verification/v7-trace/floor_stages.py` computes the
 /// same value from the retail ROM (`tilesFnv1a` at the entry of step 7).
@@ -1710,6 +2070,979 @@ mod tests {
             ensure_connected_grid(&mut floor, &mut grid, &xs, &ys, &mut rng);
             assert_eq!(rng.state(), std8, "seed row {i}, step 8");
             assert_eq!(tiles_fnv1a(&floor), tiles, "seed row {i}, tiles");
+        }
+    }
+
+    /// One run of steps 8 to 10 on the retail ROM, from
+    /// `floor_stages.py --force-chance ... [--maze-gate]`: the three chances
+    /// forced on the steps, whether dungeon `+0x34B6` was set to -1 at step
+    /// 8's entry, the dungeon RNG state and `tilesFnv1a` at the entries of
+    /// steps 9, 10 and 11, and the state the steps left in the floor-wide
+    /// data at step 11's entry.
+    struct FeatureRun {
+        chances: [i32; 3],
+        maze_gate: bool,
+        checkpoints: [(u32, u64); 3],
+        maze: bool,
+        monster_house: bool,
+        shop: bool,
+        centre: (u16, u16),
+        rect: [i32; 4],
+        bounds: [i32; 4],
+        house_room: u8,
+    }
+
+    /// A forced seed (or the natural one) of the first floor: grid height and
+    /// the dungeon RNG state at the entries of steps 3 and 5, then its runs.
+    struct FeatureRow {
+        grid_y: usize,
+        std3: u32,
+        std5: u32,
+        runs: &'static [FeatureRun],
+    }
+
+    /// Steps 1 to 7 of the first floor from the recorded states.
+    fn floor_before_features(grid_y: usize, std3: u32, std5: u32) -> (Floor, Grid, DungeonRng) {
+        let (_, _, mut floor, mut grid) = first_floor_steps(grid_y, std3);
+        let mut rng = DungeonRng::from_state(std5);
+        assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
+        let (xs, ys) = grid_bounds(4, grid_y);
+        create_hallways(&mut floor, &mut grid, &xs, &ys, false, &mut rng);
+        ensure_connected_grid(&mut floor, &mut grid, &xs, &ys, &mut rng);
+        (floor, grid, rng)
+    }
+
+    /// Rows: the natural seed and the three forced seeds with the four
+    /// configurations (maze only, shop only, house only, all three), then 23
+    /// more forced seeds with all three.
+    const FEATURE_ROWS: &[FeatureRow] = &[
+        // natural seed
+        FeatureRow {
+            grid_y: 2,
+            std3: 1410305108,
+            std5: 2134860938,
+            runs: &[
+                FeatureRun {
+                    chances: [100, 0, 0],
+                    maze_gate: true,
+                    checkpoints: [
+                        (1634322581, 0x99dd_76b2_c541_3162),
+                        (1634322581, 0x99dd_76b2_c541_3162),
+                        (1634322581, 0x99dd_76b2_c541_3162),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 100, 0],
+                    maze_gate: false,
+                    checkpoints: [
+                        (717111574, 0x08aa_8f91_334e_3d50),
+                        (1798613775, 0x312b_6d1e_5783_7670),
+                        (1798613775, 0x312b_6d1e_5783_7670),
+                    ],
+                    maze: false,
+                    monster_house: false,
+                    shop: true,
+                    centre: (6, 26),
+                    rect: [5, 25, 8, 28],
+                    bounds: [5, 25, 7, 27],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 0, 100],
+                    maze_gate: false,
+                    checkpoints: [
+                        (717111574, 0x08aa_8f91_334e_3d50),
+                        (717111574, 0x08aa_8f91_334e_3d50),
+                        (2957822255, 0x021a_66d9_f9b5_bfd0),
+                    ],
+                    maze: false,
+                    monster_house: true,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 2,
+                },
+                FeatureRun {
+                    chances: [100, 100, 100],
+                    maze_gate: true,
+                    checkpoints: [
+                        (1634322581, 0x99dd_76b2_c541_3162),
+                        (2204092330, 0xf710_fd9b_97a0_cde2),
+                        (983766035, 0xf710_fd9b_97a0_cde2),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: true,
+                    centre: (20, 24),
+                    rect: [17, 19, 24, 29],
+                    bounds: [17, 19, 23, 28],
+                    house_room: 255,
+                },
+            ],
+        },
+        // 0x12345678
+        FeatureRow {
+            grid_y: 2,
+            std3: 985678915,
+            std5: 3860814012,
+            runs: &[
+                FeatureRun {
+                    chances: [100, 0, 0],
+                    maze_gate: true,
+                    checkpoints: [
+                        (521387549, 0xbe2e_be97_cb90_b781),
+                        (521387549, 0xbe2e_be97_cb90_b781),
+                        (521387549, 0xbe2e_be97_cb90_b781),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 100, 0],
+                    maze_gate: false,
+                    checkpoints: [
+                        (4001168455, 0x6185_0823_cb3c_1bb3),
+                        (528987620, 0xba23_8e86_db30_a813),
+                        (528987620, 0xba23_8e86_db30_a813),
+                    ],
+                    maze: false,
+                    monster_house: false,
+                    shop: true,
+                    centre: (7, 11),
+                    rect: [5, 10, 10, 13],
+                    bounds: [5, 10, 9, 12],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 0, 100],
+                    maze_gate: false,
+                    checkpoints: [
+                        (4001168455, 0x6185_0823_cb3c_1bb3),
+                        (4001168455, 0x6185_0823_cb3c_1bb3),
+                        (4245128324, 0x1654_d903_9acb_fa73),
+                    ],
+                    maze: false,
+                    monster_house: true,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 3,
+                },
+                FeatureRun {
+                    chances: [100, 100, 100],
+                    maze_gate: true,
+                    checkpoints: [
+                        (521387549, 0xbe2e_be97_cb90_b781),
+                        (548743762, 0x020e_2f56_7b73_dbe1),
+                        (2611230811, 0x020e_2f56_7b73_dbe1),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: true,
+                    centre: (7, 11),
+                    rect: [5, 10, 10, 13],
+                    bounds: [5, 10, 9, 12],
+                    house_room: 255,
+                },
+            ],
+        },
+        // 0xCAFEBABF
+        FeatureRow {
+            grid_y: 2,
+            std3: 1477956308,
+            std5: 3196431495,
+            runs: &[
+                FeatureRun {
+                    chances: [100, 0, 0],
+                    maze_gate: true,
+                    checkpoints: [
+                        (35589997, 0x9202_d91f_d697_3383),
+                        (35589997, 0x9202_d91f_d697_3383),
+                        (35589997, 0x9202_d91f_d697_3383),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 100, 0],
+                    maze_gate: false,
+                    checkpoints: [
+                        (2147750935, 0xf251_6ef3_4075_0e51),
+                        (1760264948, 0xbcf8_9554_27aa_08b1),
+                        (1760264948, 0xbcf8_9554_27aa_08b1),
+                    ],
+                    maze: false,
+                    monster_house: false,
+                    shop: true,
+                    centre: (8, 21),
+                    rect: [7, 19, 10, 24],
+                    bounds: [7, 19, 9, 23],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 0, 100],
+                    maze_gate: false,
+                    checkpoints: [
+                        (2147750935, 0xf251_6ef3_4075_0e51),
+                        (2147750935, 0xf251_6ef3_4075_0e51),
+                        (1244314004, 0xb572_543d_5347_e291),
+                    ],
+                    maze: false,
+                    monster_house: true,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 1,
+                },
+                FeatureRun {
+                    chances: [100, 100, 100],
+                    maze_gate: true,
+                    checkpoints: [
+                        (35589997, 0x9202_d91f_d697_3383),
+                        (1749313250, 0xa790_f224_de00_0663),
+                        (3196669227, 0xa790_f224_de00_0663),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: true,
+                    centre: (8, 21),
+                    rect: [7, 19, 10, 24],
+                    bounds: [7, 19, 9, 23],
+                    house_room: 255,
+                },
+            ],
+        },
+        // 0x0BADF00D
+        FeatureRow {
+            grid_y: 3,
+            std3: 3889763896,
+            std5: 2379107274,
+            runs: &[
+                FeatureRun {
+                    chances: [100, 0, 0],
+                    maze_gate: true,
+                    checkpoints: [
+                        (2402210748, 0x48c3_24d9_d0d0_4e97),
+                        (2402210748, 0x48c3_24d9_d0d0_4e97),
+                        (2402210748, 0x48c3_24d9_d0d0_4e97),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 100, 0],
+                    maze_gate: false,
+                    checkpoints: [
+                        (4249534461, 0x3299_603e_f26a_4dfd),
+                        (318166962, 0x4302_16fe_d41d_9f7d),
+                        (318166962, 0x4302_16fe_d41d_9f7d),
+                    ],
+                    maze: false,
+                    monster_house: false,
+                    shop: true,
+                    centre: (20, 15),
+                    rect: [18, 13, 23, 17],
+                    bounds: [18, 13, 22, 16],
+                    house_room: 255,
+                },
+                FeatureRun {
+                    chances: [0, 0, 100],
+                    maze_gate: false,
+                    checkpoints: [
+                        (4249534461, 0x3299_603e_f26a_4dfd),
+                        (4249534461, 0x3299_603e_f26a_4dfd),
+                        (146444626, 0xe9b1_2e60_556c_82bd),
+                    ],
+                    maze: false,
+                    monster_house: true,
+                    shop: false,
+                    centre: (65535, 65535),
+                    rect: [-1, -1, -1, -1],
+                    bounds: [0, 0, 0, 0],
+                    house_room: 0,
+                },
+                FeatureRun {
+                    chances: [100, 100, 100],
+                    maze_gate: true,
+                    checkpoints: [
+                        (2402210748, 0x48c3_24d9_d0d0_4e97),
+                        (471689613, 0xdf09_4233_b872_bc57),
+                        (2439132066, 0xdf09_4233_b872_bc57),
+                    ],
+                    maze: true,
+                    monster_house: false,
+                    shop: true,
+                    centre: (20, 15),
+                    rect: [18, 13, 23, 17],
+                    bounds: [18, 13, 22, 16],
+                    house_room: 255,
+                },
+            ],
+        },
+        // 0x08D12DFD
+        FeatureRow {
+            grid_y: 2,
+            std3: 1976947032,
+            std5: 284701749,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1482685133, 0xb243_3346_3e2b_e8ea),
+                    (2261251010, 0x67a9_33bc_14f8_760a),
+                    (49119627, 0x67a9_33bc_14f8_760a),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (20, 24),
+                rect: [17, 22, 24, 27],
+                bounds: [17, 22, 23, 26],
+                house_room: 255,
+            }],
+        },
+        // 0x11A25BFA
+        FeatureRow {
+            grid_y: 3,
+            std3: 2937234321,
+            std5: 1860216811,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1129668225, 0xbc4c_fafe_a003_4b05),
+                    (3786867654, 0xbc4c_fafe_a003_4b05),
+                    (2790326047, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0x28B7BC6F
+        FeatureRow {
+            grid_y: 3,
+            std3: 3280667150,
+            std5: 394156293,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1234432400, 0x99f8_655b_1034_795b),
+                    (1485895729, 0x0fa2_f100_26ec_56bb),
+                    (3318515286, 0x0fa2_f100_26ec_56bb),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (6, 14),
+                rect: [5, 13, 8, 16],
+                bounds: [5, 13, 7, 15],
+                house_room: 255,
+            }],
+        },
+        // 0x2E2AC0EA
+        FeatureRow {
+            grid_y: 2,
+            std3: 278952215,
+            std5: 898684437,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (745109359, 0xbc4c_fafe_a003_4b05),
+                    (1032167596, 0xbc4c_fafe_a003_4b05),
+                    (2333460445, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0x36FBEEE7
+        FeatureRow {
+            grid_y: 3,
+            std3: 3033275370,
+            std5: 3731767195,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1743667837, 0xbc4c_fafe_a003_4b05),
+                    (4193686578, 0xbc4c_fafe_a003_4b05),
+                    (2616171963, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0x3C6EF362
+        FeatureRow {
+            grid_y: 3,
+            std3: 2733681987,
+            std5: 2735416536,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (2138617104, 0x9a80_2fa2_5304_dbe2),
+                    (3892828593, 0x240d_35a8_0294_cbe2),
+                    (4028890582, 0x240d_35a8_0294_cbe2),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (19, 15),
+                rect: [17, 13, 22, 17],
+                bounds: [17, 13, 21, 16],
+                house_room: 255,
+            }],
+        },
+        // 0x3FCD1CE4
+        FeatureRow {
+            grid_y: 3,
+            std3: 2617097491,
+            std5: 3091852748,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (2129276439, 0xfce3_338f_d2b5_541d),
+                    (1227932916, 0x19f5_437c_0c5b_429d),
+                    (3004051525, 0x19f5_437c_0c5b_429d),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: true,
+                centre: (7, 15),
+                rect: [5, 13, 10, 17],
+                bounds: [5, 13, 9, 16],
+                house_room: 255,
+            }],
+        },
+        // 0x4540215F
+        FeatureRow {
+            grid_y: 3,
+            std3: 3289384834,
+            std5: 3735770515,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (755158840, 0xa75c_4def_bf7a_42d4),
+                    (3421306745, 0x20ec_8a2e_2ff7_b034),
+                    (3922689470, 0x20ec_8a2e_2ff7_b034),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (19, 15),
+                rect: [17, 14, 22, 17],
+                bounds: [17, 14, 21, 16],
+                house_room: 255,
+            }],
+        },
+        // 0x538453D7
+        FeatureRow {
+            grid_y: 2,
+            std3: 475179094,
+            std5: 2983244959,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (3453978614, 0x49be_58fb_03e9_7063),
+                    (377360751, 0x8d0a_3456_2ae9_8363),
+                    (2757502412, 0x8d0a_3456_2ae9_8363),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (6, 24),
+                rect: [3, 19, 10, 29],
+                bounds: [3, 19, 9, 28],
+                house_room: 255,
+            }],
+        },
+        // 0x5C5581D4
+        FeatureRow {
+            grid_y: 2,
+            std3: 1815861487,
+            std5: 3747341869,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1677308003, 0xdd63_be75_c4fd_fb92),
+                    (775123696, 0x6cd2_3517_3bcc_3d92),
+                    (3694438577, 0x6cd2_3517_3bcc_3d92),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (19, 25),
+                rect: [17, 21, 22, 29],
+                bounds: [17, 21, 21, 28],
+                house_room: 255,
+            }],
+        },
+        // 0x6A99B44C
+        FeatureRow {
+            grid_y: 3,
+            std3: 3385425883,
+            std5: 2404653519,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1659966976, 0xea56_ffab_9e1f_a316),
+                    (2369589345, 0xbbac_53ba_bff8_dd96),
+                    (3209961798, 0xbbac_53ba_bff8_dd96),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (5, 5),
+                rect: [3, 3, 8, 7],
+                bounds: [3, 3, 7, 6],
+                house_room: 255,
+            }],
+        },
+        // 0x78DDE6C4
+        FeatureRow {
+            grid_y: 3,
+            std3: 3641535347,
+            std5: 189740765,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (3769889763, 0xbc4c_fafe_a003_4b05),
+                    (2661667952, 0xbc4c_fafe_a003_4b05),
+                    (1480958001, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0x8A8042BE
+        FeatureRow {
+            grid_y: 3,
+            std3: 2809179589,
+            std5: 602133439,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (2446231134, 0xdc56_56ae_4b40_55ed),
+                    (441017463, 0x47d0_1ca3_6273_54cd),
+                    (4234756084, 0x47d0_1ca3_6273_54cd),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (20, 4),
+                rect: [18, 3, 23, 6],
+                bounds: [18, 3, 22, 5],
+                house_room: 255,
+            }],
+        },
+        // 0x8FF34739
+        FeatureRow {
+            grid_y: 3,
+            std3: 2304828844,
+            std5: 527474027,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (4233802329, 0xf85b_3582_03d6_515c),
+                    (745489406, 0x4a6e_893e_13ac_633c),
+                    (2535505207, 0x4a6e_893e_13ac_633c),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (6, 14),
+                rect: [4, 13, 9, 16],
+                bounds: [4, 13, 8, 15],
+                house_room: 255,
+            }],
+        },
+        // 0x98C47536
+        FeatureRow {
+            grid_y: 3,
+            std3: 3902873959,
+            std5: 1344564337,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (3950004238, 0xf533_f6a3_01c4_6d3e),
+                    (1314137831, 0x87e2_d9c3_aa48_9a1e),
+                    (3803891236, 0x87e2_d9c3_aa48_9a1e),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (19, 4),
+                rect: [17, 3, 22, 6],
+                bounds: [17, 3, 21, 5],
+                house_room: 255,
+            }],
+        },
+        // 0xA195A333
+        FeatureRow {
+            grid_y: 3,
+            std3: 4281705724,
+            std5: 2454085806,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (257296975, 0x0472_d239_7daa_bc69),
+                    (4106879756, 0x8308_338c_1bf2_0fa9),
+                    (2876946365, 0x8308_338c_1bf2_0fa9),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: true,
+                centre: (21, 5),
+                rect: [19, 3, 24, 7],
+                bounds: [19, 3, 23, 6],
+                house_room: 255,
+            }],
+        },
+        // 0xA708A7AE
+        FeatureRow {
+            grid_y: 3,
+            std3: 3853845675,
+            std5: 2451130894,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (3755740336, 0xbc4c_fafe_a003_4b05),
+                    (1002191825, 0xbc4c_fafe_a003_4b05),
+                    (1117131894, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0xB54CDA26
+        FeatureRow {
+            grid_y: 2,
+            std3: 1249533463,
+            std5: 2240918293,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (343456879, 0xbc4c_fafe_a003_4b05),
+                    (3735443884, 0xbc4c_fafe_a003_4b05),
+                    (2037499101, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0xBE1E0823
+        FeatureRow {
+            grid_y: 3,
+            std3: 2238119330,
+            std5: 2333177289,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1627689667, 0xbc4c_fafe_a003_4b05),
+                    (763949776, 0xbc4c_fafe_a003_4b05),
+                    (1516157969, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0xCC623A9B
+        FeatureRow {
+            grid_y: 3,
+            std3: 3417439566,
+            std5: 1590288527,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (605186286, 0xf1e2_6a50_f80b_1790),
+                    (3562049351, 0x7b82_47d4_5ff1_5030),
+                    (2365330436, 0x7b82_47d4_5ff1_5030),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (6, 15),
+                rect: [4, 14, 9, 17],
+                bounds: [4, 14, 8, 16],
+                house_room: 255,
+            }],
+        },
+        // 0xEC48C90D
+        FeatureRow {
+            grid_y: 3,
+            std3: 2841193272,
+            std5: 3064137930,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (3698024808, 0xbc4c_fafe_a003_4b05),
+                    (1792820329, 0xbc4c_fafe_a003_4b05),
+                    (1797521518, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0xF1BBCD88
+        FeatureRow {
+            grid_y: 3,
+            std3: 3513480615,
+            std5: 3226624689,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (2899397911, 0xbc4c_fafe_a003_4b05),
+                    (2866249716, 0xbc4c_fafe_a003_4b05),
+                    (157218629, 0xbc4c_fafe_a003_4b05),
+                ],
+                maze: false,
+                monster_house: false,
+                shop: false,
+                centre: (65535, 65535),
+                rect: [-1, -1, -1, -1],
+                bounds: [0, 0, 0, 0],
+                house_room: 255,
+            }],
+        },
+        // 0xFA8CFB85
+        FeatureRow {
+            grid_y: 3,
+            std3: 4002331848,
+            std5: 490432218,
+            runs: &[FeatureRun {
+                chances: [100, 100, 100],
+                maze_gate: true,
+                checkpoints: [
+                    (1811794642, 0xb7e1_9d1b_1850_4419),
+                    (1540390971, 0xdc0e_f1e2_9b4e_af59),
+                    (4062879816, 0xdc0e_f1e2_9b4e_af59),
+                ],
+                maze: true,
+                monster_house: false,
+                shop: true,
+                centre: (20, 5),
+                rect: [17, 3, 24, 7],
+                bounds: [17, 3, 23, 6],
+                house_room: 255,
+            }],
+        },
+    ];
+
+    #[test]
+    fn maze_shop_and_monster_house_match_the_retail_floors() {
+        for (i, row) in FEATURE_ROWS.iter().enumerate() {
+            for (j, run) in row.runs.iter().enumerate() {
+                let (mut floor, mut grid, mut rng) =
+                    floor_before_features(row.grid_y, row.std3, row.std5);
+                let mut features = RoomFeatures::default();
+                let [maze, shop, house] = run.chances;
+                let mut seen = Vec::new();
+                generate_maze_room(
+                    &mut floor,
+                    &mut grid,
+                    maze,
+                    run.maze_gate,
+                    &mut features,
+                    &mut rng,
+                );
+                seen.push((rng.state(), tiles_fnv1a(&floor)));
+                generate_shop(&mut floor, &mut grid, shop, 0, &mut features, &mut rng);
+                seen.push((rng.state(), tiles_fnv1a(&floor)));
+                generate_monster_house(
+                    &mut floor,
+                    &mut grid,
+                    house,
+                    0,
+                    false,
+                    &mut features,
+                    &mut rng,
+                );
+                seen.push((rng.state(), tiles_fnv1a(&floor)));
+                let what = format!("row {i}, run {j}");
+                assert_eq!(seen, run.checkpoints, "{what}: RNG state and tiles");
+                assert_eq!(features.maze, run.maze, "{what}: maze");
+                assert_eq!(features.monster_house, run.monster_house, "{what}: house");
+                assert_eq!(features.shop, run.shop, "{what}: shop");
+                assert_eq!(features.shop_centre, run.centre, "{what}: centre");
+                assert_eq!(features.shop_rect, run.rect, "{what}: rect");
+                assert_eq!(features.shop_bounds, run.bounds, "{what}: bounds");
+                assert_eq!(
+                    features.monster_house_room, run.house_room,
+                    "{what}: house room"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn features_with_zero_chance_draw_nothing() {
+        for stages in std::iter::once(NATURAL_SEED).chain(FORCED_SEEDS) {
+            let (mut floor, mut grid, mut rng) =
+                floor_before_features(stages.grid_y, stages.std3, stages.std5);
+            let (before, tiles) = (rng.state(), tiles_fnv1a(&floor));
+            let mut features = RoomFeatures::default();
+            assert!(!generate_maze_room(
+                &mut floor,
+                &mut grid,
+                0,
+                true,
+                &mut features,
+                &mut rng
+            ));
+            assert!(!generate_shop(
+                &mut floor,
+                &mut grid,
+                0,
+                0,
+                &mut features,
+                &mut rng
+            ));
+            assert!(!generate_monster_house(
+                &mut floor,
+                &mut grid,
+                0,
+                0,
+                false,
+                &mut features,
+                &mut rng
+            ));
+            assert_eq!(rng.state(), before);
+            assert_eq!(tiles_fnv1a(&floor), tiles);
+            assert_eq!(features, RoomFeatures::default());
+        }
+    }
+
+    /// Gates the retail floors cannot reach (read from the disassembly): a
+    /// closed maze gate still costs the chance draw; a monster house already
+    /// on the floor, or floor type 2, stops the shop before any draw; a shop,
+    /// a blocked house or another floor type stops the house after its draw.
+    #[test]
+    fn feature_gates_cost_the_documented_draws() {
+        let stages = NATURAL_SEED;
+        let setup = || floor_before_features(stages.grid_y, stages.std3, stages.std5);
+        let one_draw = {
+            let mut rng = DungeonRng::from_state(setup().2.state());
+            rng.int(100);
+            rng.state()
+        };
+        let start = setup().2.state();
+
+        let (mut floor, mut grid, mut rng) = setup();
+        let mut f = RoomFeatures::default();
+        assert!(!generate_maze_room(
+            &mut floor, &mut grid, 100, false, &mut f, &mut rng
+        ));
+        assert_eq!(rng.state(), one_draw);
+
+        let (mut floor, mut grid, mut rng) = setup();
+        let mut f = RoomFeatures {
+            monster_house: true,
+            ..RoomFeatures::default()
+        };
+        assert!(!generate_shop(
+            &mut floor, &mut grid, 100, 0, &mut f, &mut rng
+        ));
+        assert_eq!(rng.state(), start);
+        let mut f = RoomFeatures::default();
+        assert!(!generate_shop(
+            &mut floor, &mut grid, 100, 2, &mut f, &mut rng
+        ));
+        assert_eq!(rng.state(), start);
+
+        for (shop, blocked, floor_type) in [(true, false, 0), (false, true, 0), (false, false, 1)] {
+            let (mut floor, mut grid, mut rng) = setup();
+            let mut f = RoomFeatures {
+                shop,
+                ..RoomFeatures::default()
+            };
+            assert!(!generate_monster_house(
+                &mut floor, &mut grid, 100, floor_type, blocked, &mut f, &mut rng
+            ));
+            assert_eq!(rng.state(), one_draw);
         }
     }
 
