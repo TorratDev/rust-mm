@@ -169,6 +169,27 @@ pub struct GridCell {
     pub west: bool,
     /// `+0x16`: linked to the cell east of it (`+x`). Step 5.
     pub east: bool,
+    /// `+0x09`: flag not known yet; the extra-link pass of step 6 skips cells
+    /// with it set. Nothing in steps 1 to 5 sets it.
+    pub flag_09: bool,
+    /// `+0x0B`: set by step 6 when a hallway is dug to or from the cell.
+    /// The extra-link pass needs it set on both cells.
+    pub hallway_mark: bool,
+    /// `+0x11`: set on the cell that the extra-link pass of step 6 links
+    /// (the role of the flag is not known yet).
+    pub extra_mark: bool,
+    /// `+0x12`: set by the extra-link pass on both linked cells; the pass
+    /// skips cells with it set.
+    pub extra_linked: bool,
+    /// `+0x17`: a hallway still to dig to the north. Copied from `north` at the
+    /// start of step 6 and cleared when the hallway is dug.
+    pub dig_north: bool,
+    /// `+0x18`: a hallway still to dig to the south (copy of `south`).
+    pub dig_south: bool,
+    /// `+0x19`: a hallway still to dig to the west (copy of `west`).
+    pub dig_west: bool,
+    /// `+0x1A`: a hallway still to dig to the east (copy of `east`).
+    pub dig_east: bool,
 }
 
 /// A side of a grid cell, numbered as `ov_0001::0214F224` numbers its walk
@@ -514,7 +535,8 @@ pub fn assign_connections(
 /// The walk of step 5. Each step draws `DungeonRandInt(8)` and then
 /// `DungeonRandInt(4)`; the new direction is used when the first draw is below
 /// 4 (half the steps). The walker turns clockwise while the way is blocked by
-/// the grid edge or an invalid cell, then links to the cell it moves to.
+/// the grid edge, then links to the cell it moves to. An invalid cell in that
+/// direction ends the step without a move and without a turn.
 fn walk(grid: &mut Grid, start: (usize, usize), steps: u8, rng: &mut DungeonRng) {
     let (mut x, mut y) = start;
     let mut dir = Dir::from_index(rng.int(4));
@@ -527,11 +549,11 @@ fn walk(grid: &mut Grid, start: (usize, usize), steps: u8, rng: &mut DungeonRng)
         // Four blocked sides at most; the game loops forever on a cell with
         // none. The grids the draw produces always have a usable neighbour.
         for _ in 0..4 {
-            if let Some((nx, ny)) = grid.neighbour(x, y, dir)
-                && !grid.cell(nx, ny).invalid
-            {
-                grid.connect(x, y, dir);
-                (x, y) = (nx, ny);
+            if let Some((nx, ny)) = grid.neighbour(x, y, dir) {
+                if !grid.cell(nx, ny).invalid {
+                    grid.connect(x, y, dir);
+                    (x, y) = (nx, ny);
+                }
                 break;
             }
             dir = dir.next();
@@ -576,6 +598,411 @@ fn fill_dead_ends(grid: &mut Grid, rng: &mut DungeonRng) {
             break;
         }
     }
+}
+
+/// Largest number of tiles one hallway segment digs (the game's counter).
+const MAX_SEGMENT_TILES: usize = 56;
+
+/// Generation step 6 of a standard floor (`ov_0001::0214E824`, which calls
+/// `ov_0001::0214E0C4` to dig each hallway). Digs the hallways between cells
+/// that step 5 linked, then (unless `skip_extra`) a random pass that links
+/// some more pairs of room cells. `xs` and `ys` are the cell boundaries from
+/// [`grid_bounds`]. Written from the disassembly; see
+/// `docs/re/dungeon-generation.md`.
+pub fn create_hallways(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    xs: &[i32],
+    ys: &[i32],
+    skip_extra: bool,
+    rng: &mut DungeonRng,
+) {
+    let (grid_x, grid_y) = (grid.grid_x, grid.grid_y);
+    // Each valid cell takes a copy of its links as the hallways still to dig,
+    // after the map edge clears the links that point off the grid.
+    for x in 0..grid_x {
+        for y in 0..grid_y {
+            let cell = grid.cell_mut(x, y);
+            if cell.invalid {
+                cell.dig_north = false;
+                cell.dig_south = false;
+                cell.dig_west = false;
+                cell.dig_east = false;
+                continue;
+            }
+            if y == 0 {
+                cell.north = false;
+            }
+            if y + 1 >= grid_y {
+                cell.south = false;
+            }
+            if x == 0 {
+                cell.west = false;
+            }
+            if x + 1 >= grid_x {
+                cell.east = false;
+            }
+            cell.dig_north = cell.north;
+            cell.dig_south = cell.south;
+            cell.dig_west = cell.west;
+            cell.dig_east = cell.east;
+        }
+    }
+
+    for x in 0..grid_x {
+        for y in 0..grid_y {
+            if grid.cell(x, y).invalid {
+                continue;
+            }
+            let c = *grid.cell(x, y);
+            let x0 = anchor_x(&c, rng);
+            let y0 = anchor_y(&c, rng);
+            if c.dig_north {
+                let n = *grid.cell(x, y - 1);
+                if !n.invalid {
+                    let x1 = anchor_x(&n, rng);
+                    dig_hallway(
+                        floor,
+                        (x0, i32::from(c.start_y)),
+                        (x1, i32::from(n.end_y) - 1),
+                        true,
+                        xs[x],
+                        ys[y],
+                    );
+                }
+                grid.cell_mut(x, y).dig_north = false;
+                grid.cell_mut(x, y).hallway_mark = true;
+                let n = grid.cell_mut(x, y - 1);
+                n.dig_south = false;
+                n.hallway_mark = true;
+            }
+            if c.dig_south {
+                let s = *grid.cell(x, y + 1);
+                if !s.invalid {
+                    let x1 = anchor_x(&s, rng);
+                    dig_hallway(
+                        floor,
+                        (x0, i32::from(c.end_y) - 1),
+                        (x1, i32::from(s.start_y)),
+                        true,
+                        xs[x],
+                        ys[y + 1] - 1,
+                    );
+                }
+                grid.cell_mut(x, y).dig_south = false;
+                grid.cell_mut(x, y).hallway_mark = true;
+                let s = grid.cell_mut(x, y + 1);
+                s.dig_north = false;
+                s.hallway_mark = true;
+            }
+            if c.dig_west {
+                let w = *grid.cell(x - 1, y);
+                if !w.invalid {
+                    let y1 = anchor_y(&w, rng);
+                    dig_hallway(
+                        floor,
+                        (i32::from(c.start_x), y0),
+                        (i32::from(w.start_x) - 1, y1),
+                        false,
+                        xs[x],
+                        ys[y],
+                    );
+                }
+                grid.cell_mut(x, y).dig_west = false;
+                grid.cell_mut(x, y).hallway_mark = true;
+                let w = grid.cell_mut(x - 1, y);
+                w.dig_east = false;
+                w.hallway_mark = true;
+            }
+            if c.dig_east {
+                let e = *grid.cell(x + 1, y);
+                if !e.invalid {
+                    let y1 = anchor_y(&e, rng);
+                    dig_hallway(
+                        floor,
+                        (i32::from(c.end_x) - 1, y0),
+                        (i32::from(e.start_x), y1),
+                        false,
+                        xs[x + 1] - 1,
+                        ys[y],
+                    );
+                }
+                grid.cell_mut(x, y).dig_east = false;
+                grid.cell_mut(x, y).hallway_mark = true;
+                let e = grid.cell_mut(x + 1, y);
+                e.dig_west = false;
+                e.hallway_mark = true;
+            }
+        }
+    }
+
+    if skip_extra {
+        return;
+    }
+    for x in 0..grid_x {
+        for y in 0..grid_y {
+            // The game draws once per cell here, before it checks the cell.
+            if !rng.outcome(5) {
+                continue;
+            }
+            let c = *grid.cell(x, y);
+            if c.invalid || !c.hallway_mark || c.extra_linked || c.flag_09 || !c.has_room {
+                continue;
+            }
+            match rng.int(4) {
+                0 => extra_west(floor, grid, x, y),
+                1 => extra_north(floor, grid, x, y),
+                2 => extra_east(floor, grid, x, y),
+                _ => extra_south(floor, grid, x, y),
+            }
+        }
+    }
+}
+
+/// Whether a neighbour may take an extra link in step 6 (the checks of
+/// `ov_0001::0214E824`'s second part, shared by the four directions).
+fn extra_link_allowed(cell: &GridCell) -> bool {
+    !cell.invalid && cell.hallway_mark && cell.has_room && !cell.flag_09 && !cell.extra_linked
+}
+
+/// The room bound of a cell's start tile, read as the room that the extra
+/// link paints over its rectangle.
+fn room_at_cell_start(floor: &Floor, cell: &GridCell) -> u8 {
+    floor
+        .tile(i32::from(cell.start_x), i32::from(cell.start_y))
+        .map_or(NO_ROOM, |tile| tile.room)
+}
+
+/// Paints the tiles `[x0, x1) x [y0, y1)` as floor of `room`.
+fn paint_floor(floor: &mut Floor, (x0, x1): (i32, i32), (y0, y1): (i32, i32), room: u8) {
+    for x in x0..x1 {
+        for y in y0..y1 {
+            if let Some(tile) = floor.tile_mut(x, y) {
+                tile.terrain = (tile.terrain & !TERRAIN_TYPE_MASK) | TERRAIN_FLOOR;
+                tile.room = room;
+            }
+        }
+    }
+}
+
+/// The extra link to the west: cell `(x - 1, y)` takes the bounds of both
+/// cells (the start column stays, the end moves to this cell's end).
+fn extra_west(floor: &mut Floor, grid: &mut Grid, x: usize, y: usize) {
+    if x < 1 {
+        return;
+    }
+    let other = *grid.cell(x - 1, y);
+    if !extra_link_allowed(&other) {
+        return;
+    }
+    let c = *grid.cell(x, y);
+    let room = room_at_cell_start(floor, &c);
+    let y0 = i32::from(other.start_y).min(i32::from(c.start_y));
+    let y1 = i32::from(other.end_y).max(i32::from(c.end_y));
+    paint_floor(
+        floor,
+        (i32::from(other.start_x), i32::from(c.end_x)),
+        (y0, y1),
+        room,
+    );
+    let o = grid.cell_mut(x - 1, y);
+    o.end_x = c.end_x;
+    o.start_y = y0 as i16;
+    o.end_y = y1 as i16;
+    o.extra_linked = true;
+    let c = grid.cell_mut(x, y);
+    c.extra_linked = true;
+    c.hallway_mark = false;
+    c.extra_mark = true;
+}
+
+/// The extra link to the north: cell `(x, y - 1)` takes the bounds of both
+/// cells.
+fn extra_north(floor: &mut Floor, grid: &mut Grid, x: usize, y: usize) {
+    if y < 1 {
+        return;
+    }
+    let other = *grid.cell(x, y - 1);
+    if !extra_link_allowed(&other) {
+        return;
+    }
+    let c = *grid.cell(x, y);
+    let room = room_at_cell_start(floor, &c);
+    let x0 = i32::from(other.start_x).min(i32::from(c.start_x));
+    let x1 = i32::from(other.end_x).max(i32::from(c.end_x));
+    paint_floor(
+        floor,
+        (x0, x1),
+        (i32::from(other.start_y), i32::from(c.end_y)),
+        room,
+    );
+    let o = grid.cell_mut(x, y - 1);
+    o.start_x = x0 as i16;
+    o.end_x = x1 as i16;
+    o.end_y = c.end_y;
+    o.extra_linked = true;
+    let c = grid.cell_mut(x, y);
+    c.extra_linked = true;
+    c.hallway_mark = false;
+    c.extra_mark = true;
+}
+
+/// The extra link to the east: this cell takes the bounds of both cells.
+fn extra_east(floor: &mut Floor, grid: &mut Grid, x: usize, y: usize) {
+    if x + 1 >= grid.grid_x {
+        return;
+    }
+    let other = *grid.cell(x + 1, y);
+    if !extra_link_allowed(&other) {
+        return;
+    }
+    let c = *grid.cell(x, y);
+    let room = room_at_cell_start(floor, &c);
+    let y0 = i32::from(c.start_y).min(i32::from(other.start_y));
+    let y1 = i32::from(c.end_y).max(i32::from(other.end_y));
+    paint_floor(
+        floor,
+        (i32::from(c.start_x), i32::from(other.end_x)),
+        (y0, y1),
+        room,
+    );
+    let c = grid.cell_mut(x, y);
+    c.end_x = other.end_x;
+    c.start_y = y0 as i16;
+    c.end_y = y1 as i16;
+    c.extra_linked = true;
+    let o = grid.cell_mut(x + 1, y);
+    o.extra_linked = true;
+    o.hallway_mark = false;
+    o.extra_mark = true;
+}
+
+/// The extra link to the south: this cell takes the bounds of both cells.
+fn extra_south(floor: &mut Floor, grid: &mut Grid, x: usize, y: usize) {
+    if y + 1 >= grid.grid_y {
+        return;
+    }
+    let other = *grid.cell(x, y + 1);
+    if !extra_link_allowed(&other) {
+        return;
+    }
+    let c = *grid.cell(x, y);
+    let room = room_at_cell_start(floor, &c);
+    let x0 = i32::from(c.start_x).min(i32::from(other.start_x));
+    let x1 = i32::from(c.end_x).max(i32::from(other.end_x));
+    paint_floor(
+        floor,
+        (x0, x1),
+        (i32::from(c.start_y), i32::from(other.end_y)),
+        room,
+    );
+    let c = grid.cell_mut(x, y);
+    c.start_x = x0 as i16;
+    c.end_x = x1 as i16;
+    c.end_y = other.end_y;
+    c.extra_linked = true;
+    let o = grid.cell_mut(x, y + 1);
+    o.extra_linked = true;
+    o.hallway_mark = false;
+    o.extra_mark = true;
+}
+
+/// Start of a cell's anchor on the x axis: a random point inside the room, or
+/// the cell's start when it has no room. Draws only for a room.
+fn anchor_x(cell: &GridCell, rng: &mut DungeonRng) -> i32 {
+    if cell.has_room {
+        rng.range(i32::from(cell.start_x) + 1, i32::from(cell.end_x) - 1)
+    } else {
+        i32::from(cell.start_x)
+    }
+}
+
+/// The y counterpart of [`anchor_x`].
+fn anchor_y(cell: &GridCell, rng: &mut DungeonRng) -> i32 {
+    if cell.has_room {
+        rng.range(i32::from(cell.start_y) + 1, i32::from(cell.end_y) - 1)
+    } else {
+        i32::from(cell.start_y)
+    }
+}
+
+/// Digs one hallway (`ov_0001::0214E0C4`). With `vertical_first` it goes down
+/// the column of `from` to row `ty`, along that row to the column of `to`, then
+/// down to `to`. Otherwise it goes along the row of `from` to column `tx`, down
+/// that column, then along to `to`. Digging stops early at a floor tile that
+/// is not the start point, and the rest of the hallway is left out.
+fn dig_hallway(
+    floor: &mut Floor,
+    from: (i32, i32),
+    to: (i32, i32),
+    vertical_first: bool,
+    tx: i32,
+    ty: i32,
+) {
+    let (x0, y0) = from;
+    let (x1, y1) = to;
+    // The first segment that stops ends the hallway; `&&` skips the rest.
+    let _ = if vertical_first {
+        dig_segment(floor, from, (x0, ty), from)
+            && dig_segment(floor, (x0, ty), (x1, ty), from)
+            && dig_segment(floor, (x1, ty), to, from)
+    } else {
+        dig_segment(floor, from, (tx, y0), from)
+            && dig_segment(floor, (tx, y0), (tx, y1), from)
+            && dig_segment(floor, (tx, y1), to, from)
+    };
+}
+
+/// One straight run of [`dig_hallway`], from `start` to `end` (exclusive of
+/// `end`). Returns false when the run stopped on floor, which ends the whole
+/// hallway.
+fn dig_segment(floor: &mut Floor, start: (i32, i32), end: (i32, i32), origin: (i32, i32)) -> bool {
+    let (mut x, mut y) = start;
+    let mut dug = 0;
+    while (x, y) != end {
+        if dug >= MAX_SEGMENT_TILES {
+            return false;
+        }
+        dug += 1;
+        let is_floor = floor
+            .tile(x, y)
+            .is_some_and(|tile| tile.terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR);
+        if !is_floor {
+            if let Some(tile) = floor.tile_mut(x, y) {
+                tile.terrain = (tile.terrain & !TERRAIN_TYPE_MASK) | TERRAIN_FLOOR;
+            }
+        } else if (x, y) != origin {
+            return false;
+        }
+        if x != end.0 {
+            x += if x < end.0 { 1 } else { -1 };
+        } else {
+            y += if y < end.1 { 1 } else { -1 };
+        }
+    }
+    true
+}
+
+/// FNV-1a 64 over the terrain flags (`u16`, little endian) and the room of
+/// every tile, row by row. `verification/v7-trace/floor_stages.py` computes the
+/// same value from the retail ROM (`tilesFnv1a` at the entry of step 7).
+#[must_use]
+pub fn tiles_fnv1a(floor: &Floor) -> u64 {
+    let mut hash = 0xCBF2_9CE4_8422_2325_u64;
+    let mut feed = |byte: u8| {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    };
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let tile = floor.tile(x as i32, y as i32).expect("in-map tile");
+            for byte in tile.terrain.to_le_bytes() {
+                feed(byte);
+            }
+            feed(tile.room);
+        }
+    }
+    hash
 }
 
 fn set_bounds(cell: &mut GridCell, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
@@ -870,21 +1297,48 @@ mod tests {
     /// draws none on these grids, so 33 steps need 15 walk steps.
     const FIRST_FLOOR_WALK_STEPS: u8 = 15;
 
+    /// The dungeon RNG state at the entry of step 6 (the end of step 5), in the
+    /// order of [`NATURAL_SEED`] and [`FORCED_SEEDS`], from the retail ROM.
+    /// Step 5 takes 33 RNG steps for the natural, `0x12345678` and `0x0BADF00D`
+    /// seeds and 34 for `0xCAFEBABF`.
+    const STEP6_ENTRY: [u32; 4] = [3_888_478_419, 958_992_781, 96_248_885, 756_241_683];
+
     #[test]
     fn connections_match_the_retail_rng_budget() {
-        for (i, stages) in std::iter::once(NATURAL_SEED)
+        for (i, (stages, std6)) in std::iter::once(NATURAL_SEED)
             .chain(FORCED_SEEDS)
+            .zip(STEP6_ENTRY)
             .enumerate()
         {
             let (_, _, _, mut grid) = first_floor_steps(stages.grid_y, stages.std3);
             let mut rng = DungeonRng::from_state(stages.std5);
-            let mut expect = rng;
             assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
-            // Step 5 is 33 RNG steps on the first floor (std 5 in the table).
-            for _ in 0..33 {
-                expect.next_u16();
-            }
-            assert_eq!(rng.state(), expect.state(), "case {i}");
+            assert_eq!(rng.state(), std6, "case {i}, step 6 entry");
+        }
+    }
+
+    /// Step 6 checkpoints from the retail ROM, in the order of
+    /// [`NATURAL_SEED`] and [`FORCED_SEEDS`]: the dungeon RNG state at the
+    /// entry of step 7 and `tilesFnv1a` (the tile hash of
+    /// `floor_stages.py`) at the same point.
+    const HALLWAY_RESULTS: [(u32, u64); 4] = [
+        (717_111_574, 0x08aa_8f91_334e_3d50),
+        (3_678_770_459, 0x6e15_e485_50cd_b376),
+        (2_147_750_935, 0xf251_6ef3_4075_0e51),
+        (4_249_534_461, 0x3299_603e_f26a_4dfd),
+    ];
+
+    #[test]
+    fn hallways_match_the_retail_rng_budget_and_tiles() {
+        let cases = std::iter::once(NATURAL_SEED).chain(FORCED_SEEDS);
+        for (i, (stages, (std7, tiles))) in cases.zip(HALLWAY_RESULTS).enumerate() {
+            let (_, _, mut floor, mut grid) = first_floor_steps(stages.grid_y, stages.std3);
+            let mut rng = DungeonRng::from_state(stages.std5);
+            assign_connections(&mut grid, FIRST_FLOOR_WALK_STEPS, false, &mut rng);
+            let (xs, ys) = grid_bounds(4, stages.grid_y);
+            create_hallways(&mut floor, &mut grid, &xs, &ys, false, &mut rng);
+            assert_eq!(rng.state(), std7, "case {i}, step 7");
+            assert_eq!(tiles_fnv1a(&floor), tiles, "case {i}, tiles");
         }
     }
 
