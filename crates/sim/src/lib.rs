@@ -8,4 +8,5 @@
 #![deny(clippy::disallowed_types, clippy::disallowed_methods)]
 
 pub mod floor;
+pub mod floor_gen;
 pub mod rng;

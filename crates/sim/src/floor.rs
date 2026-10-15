@@ -402,6 +402,175 @@ fn open_tile(floor: &mut Floor, x: i32, y: i32, room: u8) {
     }
 }
 
+/// Grid draws allowed before `GenerateFloor` gives up and uses 4 × 4.
+const MAX_GRID_DRAWS: usize = 32;
+
+/// Layout attempts (the inner retry loop of `GenerateFloor`) before it falls
+/// back to a one-room monster house.
+pub const MAX_LAYOUT_ATTEMPTS: usize = 10;
+
+/// Stairs attempts (the outer retry loop) before the same fallback.
+pub const MAX_STAIRS_ATTEMPTS: usize = 10;
+
+/// Floor tiles that must belong to rooms for an attempt to count.
+pub const MIN_ROOM_TILES: usize = 30;
+
+/// Distinct rooms that must exist for an attempt to count.
+pub const MIN_ROOMS: usize = 2;
+
+/// A layout generator that `GenerateFloor` calls instead of the standard one.
+/// The variants are named after the Blue function each case calls; their own
+/// RNG calls are not part of the prologue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// Case 2: `GenerateOneRoomMonsterHouseFloor`.
+    OneRoomMonsterHouse,
+    /// Case 3: `GenerateOuterRingFloor`.
+    OuterRing,
+    /// Case 4: `GenerateCrossroadsFloor`.
+    Crossroads,
+    /// Case 5: `GenerateTwoRoomsWithMonsterHouseFloor`.
+    TwoRoomsMonsterHouse,
+    /// Case 6: `GenerateLineFloor`.
+    Line,
+    /// Case 7: `GenerateCrossFloor`.
+    Cross,
+    /// Case 9: `GenerateBeetleFloor`.
+    Beetle,
+}
+
+/// What `GenerateFloor` decides before it calls a layout generator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutPlan {
+    /// `GenerateStandardFloor(grid_x, grid_y, props)`, with the cells in
+    /// `mode` in use (cases 0, 8, 1 and 11, and the nibbles 12 to 15, which
+    /// the switch sends to the standard generator).
+    Standard {
+        grid_x: usize,
+        grid_y: usize,
+        mode: GridMode,
+    },
+    /// `GenerateOuterRoomsFloor(grid_x, grid_y, props)` (case 10).
+    OuterRooms { grid_x: usize, grid_y: usize },
+    /// Another layout generator (cases 2 to 7 and 9).
+    Other(Layout),
+}
+
+/// Draws the grid size `GenerateFloor` uses for the layout byte `layout`:
+/// `DungeonRandRange(2, 9)` and `(2, 8)`, or `(2, 5)` and `(2, 4)` when the
+/// byte is exactly 8. A draw is kept when `grid_x < 7` and `grid_y < 5`. The
+/// game makes at most [`MAX_GRID_DRAWS`] draws (a counter starts at 32 and
+/// goes down on each rejected draw); when the last one is rejected the grid is
+/// 4 × 4.
+fn draw_grid_size(layout: u8, rng: &mut DungeonRng) -> (usize, usize) {
+    let (x_range, y_range) = if layout == 8 {
+        ((2, 5), (2, 4))
+    } else {
+        ((2, 9), (2, 8))
+    };
+    for _ in 0..MAX_GRID_DRAWS {
+        let x = usize::try_from(rng.range(x_range.0, x_range.1)).unwrap_or(0);
+        let y = usize::try_from(rng.range(y_range.0, y_range.1)).unwrap_or(0);
+        if x < 7 && y < 5 {
+            return shrink_thin_cells(x, y);
+        }
+    }
+    shrink_thin_cells(4, 4)
+}
+
+/// `GenerateFloor` makes a cell count of 1 on an axis whose cells would be
+/// under 8 tiles (`56 / grid_x` or `32 / grid_y` under 8). After the draw
+/// limits above no drawn size reaches this, but the game checks it anyway.
+fn shrink_thin_cells(x: usize, y: usize) -> (usize, usize) {
+    let x = if WIDTH / x <= 7 { 1 } else { x };
+    let y = if HEIGHT / y <= 7 { 1 } else { y };
+    (x, y)
+}
+
+/// Runs `GenerateFloor`'s grid-size draw and layout switch for the layout
+/// byte `layout` (the value of `layout & 0xF` picks the case).
+///
+/// The RNG calls, in order: the grid size (see [`draw_grid_size`]), then, for
+/// cases 1 and 11, one `DungeonRandInt(2)` that picks the grid height
+/// `r + 2`. The other cases make no call here. Nibbles 12 to 15 take the
+/// standard generator with the large grid, as the game's jump table does.
+#[must_use]
+pub fn plan_layout(layout: u8, rng: &mut DungeonRng) -> LayoutPlan {
+    let (grid_x, grid_y) = draw_grid_size(layout, rng);
+    let small_or_medium = |mode: GridMode, rng: &mut DungeonRng| LayoutPlan::Standard {
+        grid_x: 4,
+        grid_y: usize::try_from(rng.int(2)).unwrap_or(0) + 2,
+        mode,
+    };
+    match layout & 0xF {
+        1 => small_or_medium(GridMode::LeftHalf, rng),
+        2 => LayoutPlan::Other(Layout::OneRoomMonsterHouse),
+        3 => LayoutPlan::Other(Layout::OuterRing),
+        4 => LayoutPlan::Other(Layout::Crossroads),
+        5 => LayoutPlan::Other(Layout::TwoRoomsMonsterHouse),
+        6 => LayoutPlan::Other(Layout::Line),
+        7 => LayoutPlan::Other(Layout::Cross),
+        9 => LayoutPlan::Other(Layout::Beetle),
+        10 => LayoutPlan::OuterRooms { grid_x, grid_y },
+        11 => small_or_medium(GridMode::LeftThreeQuarters, rng),
+        _ => LayoutPlan::Standard {
+            grid_x,
+            grid_y,
+            mode: GridMode::Full,
+        },
+    }
+}
+
+/// Whether a generated floor counts as an attempt: at least
+/// [`MIN_ROOM_TILES`] floor tiles with a room number, and at least
+/// [`MIN_ROOMS`] distinct room numbers below 64.
+///
+/// Read from `GenerateFloor`: a tile counts when its terrain type is floor
+/// and its room byte is at most `0xF0` (so anchors, `0xFE`, and `NO_ROOM` do
+/// not). Room numbers of 64 and above count as tiles but not as rooms.
+#[must_use]
+pub fn attempt_has_rooms(floor: &Floor) -> bool {
+    let mut room_tiles = 0usize;
+    let mut rooms = [false; 64];
+    for y in 0..HEIGHT as i32 {
+        for x in 0..WIDTH as i32 {
+            let Some(tile) = floor.tile(x, y) else {
+                continue;
+            };
+            if tile.terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR && tile.room <= 0xF0 {
+                room_tiles += 1;
+                if let Some(seen) = rooms.get_mut(usize::from(tile.room)) {
+                    *seen = true;
+                }
+            }
+        }
+    }
+    let distinct = rooms.iter().filter(|seen| **seen).count();
+    room_tiles >= MIN_ROOM_TILES && distinct >= MIN_ROOMS
+}
+
+/// Whether the stairs check of `GenerateFloor` accepts the floor. `first` and
+/// `second` are the two stored positions (`-1` when unset, as the game
+/// stores them); `floor_type` is `GetFloorType()`. A set first position with
+/// floor type 1 is accepted outright; otherwise the second position must be
+/// set and `reachable` (`StairsAlwaysReachable` with `markUnreachable` off)
+/// must say yes.
+pub fn stairs_check(
+    first: (i16, i16),
+    second: (i16, i16),
+    floor_type: u8,
+    reachable: impl FnOnce(i16, i16) -> bool,
+) -> bool {
+    let unset = |(x, y): (i16, i16)| x == -1 || y == -1;
+    if unset(first) {
+        return false;
+    }
+    if floor_type == 1 {
+        return true;
+    }
+    !unset(second) && reachable(second.0, second.1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +669,145 @@ mod tests {
             assert_eq!(after_std3, stages.std4, "case {i}, step 3");
             assert_eq!(after_std4, stages.std5, "case {i}, step 4");
         }
+    }
+
+    #[test]
+    fn layout_prologue_reaches_standard_floor_entry() {
+        // A forced seed is the dungeon RNG state at `GenerateFloor`'s entry, so
+        // the prologue (grid size and the small-layout draw) must end in the
+        // state recorded at `GenerateStandardFloor`'s entry (std3), with the
+        // same grid height. The first floor of a new game uses layout byte 1.
+        let cases = [
+            (0x1234_5678, 2, 985_678_915, Some(7)),
+            (0xCAFE_BABF, 2, 1_477_956_308, None),
+            (0x0BAD_F00D, 3, 3_889_763_896, None),
+        ];
+        for (seed, grid_y, std3, steps) in cases {
+            let mut rng = DungeonRng::from_state(seed);
+            let plan = plan_layout(1, &mut rng);
+            assert_eq!(
+                plan,
+                LayoutPlan::Standard {
+                    grid_x: 4,
+                    grid_y,
+                    mode: GridMode::LeftHalf,
+                },
+                "seed {seed:#x}"
+            );
+            assert_eq!(rng.state(), std3, "seed {seed:#x}");
+            if let Some(steps) = steps {
+                // Count the RNG steps the prologue took.
+                let mut counted = DungeonRng::from_state(seed);
+                let mut n = 0;
+                while counted.state() != std3 {
+                    counted.next_u16();
+                    n += 1;
+                }
+                assert_eq!(n, steps, "seed {seed:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn layout_switch_cases() {
+        // Cases that make no call beyond the grid draw.
+        let mut rng = DungeonRng::new(1);
+        assert_eq!(
+            plan_layout(2, &mut rng),
+            LayoutPlan::Other(Layout::OneRoomMonsterHouse)
+        );
+        assert_eq!(plan_layout(7, &mut rng), LayoutPlan::Other(Layout::Cross));
+        assert!(matches!(
+            plan_layout(10, &mut rng),
+            LayoutPlan::OuterRooms { .. }
+        ));
+        // Nibbles 12 to 15 are not in the jump table; the game sends them to
+        // the standard generator with the full grid.
+        for nibble in 12..16u8 {
+            assert!(matches!(
+                plan_layout(nibble, &mut rng),
+                LayoutPlan::Standard {
+                    mode: GridMode::Full,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn grid_size_stays_small_and_large_layout_is_full() {
+        for seed in 1..200u32 {
+            let mut rng = DungeonRng::new(seed * 7919);
+            match plan_layout(0, &mut rng) {
+                LayoutPlan::Standard {
+                    grid_x,
+                    grid_y,
+                    mode,
+                } => {
+                    assert!((2..9).contains(&grid_x) && (2..8).contains(&grid_y));
+                    assert_eq!(mode, GridMode::Full);
+                }
+                other => panic!("seed {seed}: {other:?}"),
+            }
+            // Layout byte 8 draws from the smaller ranges.
+            let mut rng = DungeonRng::new(seed * 7919);
+            match plan_layout(8, &mut rng) {
+                LayoutPlan::Standard { grid_x, grid_y, .. } => {
+                    assert!((2..6).contains(&grid_x) && (2..5).contains(&grid_y));
+                }
+                other => panic!("seed {seed}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn attempt_needs_rooms_and_room_tiles() {
+        let mut floor = Floor::new();
+        for x in 1..=15 {
+            open_tile(&mut floor, x, 1, 0);
+            open_tile(&mut floor, x, 2, 1);
+        }
+        // 30 tiles in two rooms: enough.
+        assert!(attempt_has_rooms(&floor));
+
+        // Anchors (0xFE) do not count as room tiles.
+        let mut anchors = Floor::new();
+        for x in 1..=15 {
+            open_tile(&mut anchors, x, 1, ANCHOR_ROOM);
+            open_tile(&mut anchors, x, 2, 0);
+        }
+        assert!(!attempt_has_rooms(&anchors));
+
+        // One room only.
+        let mut one = Floor::new();
+        for x in 1..=15 {
+            open_tile(&mut one, x, 1, 0);
+            open_tile(&mut one, x, 2, 0);
+        }
+        assert!(!attempt_has_rooms(&one));
+
+        // Two rooms but only 29 tiles.
+        let mut short = Floor::new();
+        for x in 1..=14 {
+            open_tile(&mut short, x, 1, 0);
+            open_tile(&mut short, x, 2, 1);
+        }
+        open_tile(&mut short, 15, 1, 0);
+        assert!(!attempt_has_rooms(&short));
+    }
+
+    #[test]
+    fn stairs_check_follows_the_game_order() {
+        let unset = (-1, -1);
+        let set = (5, 6);
+        // A missing first position always fails, whatever the rest.
+        assert!(!stairs_check(unset, set, 1, |_, _| true));
+        // Floor type 1 accepts a set first position without a reachability test.
+        assert!(stairs_check(set, unset, 1, |_, _| panic!("not called")));
+        // Otherwise the second position must be set and reachable.
+        assert!(!stairs_check(set, unset, 0, |_, _| true));
+        assert!(!stairs_check(set, set, 0, |_, _| false));
+        assert!(stairs_check(set, set, 0, |x, y| (x, y) == (5, 6)));
     }
 
     #[test]

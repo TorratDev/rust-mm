@@ -54,7 +54,7 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 
 | Step | Blue address | Natural seed | Seed `0x12345678` | Status in Rust |
 |------|--------------|-------------:|------------------:|----------------|
-| `GenerateFloor` up to `GenerateStandardFloor` | `ov_0001::02151E7C` | 11 | 7 | |
+| `GenerateFloor` up to `GenerateStandardFloor` | `ov_0001::02151E7C` | 11 | 7 | partly: the entry, grid size, layout switch and retry loops (`floor_gen::generate_floor`), checked for the forced seeds; ResetFloor, the layout generators and the spawns are behind `FloorSteps` |
 | std 1: grid bounds (`i × (56 / gridX)`, `i × (32 / gridY)`) | `ov_0001::0214FEB0` | 0 | 0 | done (`grid_bounds`) |
 | std 2 `InitDungeonGrid`: clear the 30-byte cells; small and medium layouts mark columns `x >= gridX / 2` or `x >= gridX × 3 / 4` invalid | `ov_0001::0214FD7C` | 0 | 0 | done (`Grid::new`) |
 | std 3 `AssignRooms` (room density as last argument) | `ov_0001::0214FB4C` | 129 | 129 | done (`assign_rooms`) |
@@ -92,6 +92,44 @@ What steps 2 to 4 do, as read in Blue's code (the Rust tests start from the meas
 | `+0x1A2F8`, `+0x1A2F9`, `+0x1A308` | `floorProperties.tileset`, `.bgMusic`, `.fixedRoomNumber` | `0x1C576`, `0x1C577`, `0x1C588` | `RunDungeon_Async` |
 
 The gap grows from −8 at `0x5C0` to −0x4A0 at `0x3800` and −0x560 at `0x3A0E`; inside `FloorProperties`, Blue has 2 bytes fewer between `bgMusic` and `fixedRoomNumber`.
+
+## Prologue and retry loops in Rust
+
+`rescue_sim::floor::plan_layout` covers the grid size draw and the layout switch (`GenerateFloor` steps 3 and 4). Its RNG calls are the grid draw and, for layouts 1 and 11, one `DungeonRandInt(2)` for the grid height `r + 2`. Forced seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D` reach the state recorded at `GenerateStandardFloor`'s entry, and seed `0x12345678` takes 7 RNG steps. Both match the table above.
+
+`rescue_sim::floor_gen::generate_floor` runs the whole of `GenerateFloor` in the order of the disassembly below: the entry reset, the grid draw and layout switch, the fixed-room branch, both retry loops, the fallbacks and the final steps. The steps it calls that are not ported yet (ResetFloor's body, the layout generators, the spawns, the fixed-room placements) are behind the `FloorSteps` trait. The driver can stop at `GenerateStandardFloor`'s entry (`GenStop::StandardFloor`), which is the checkpoint the forced-seed tests use.
+
+`attempt_has_rooms` and `stairs_check` are the two acceptance tests of the loops (`rescue_sim::floor`).
+
+### Control flow (read from the overlay 1 disassembly)
+
+The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM base `0x02138860`). The addresses below are Blue's; the names of unnamed callees are not known.
+
+- **Grid draw** (`0x021520CC`–`0x02152170`): draws `DungeonRandRange(2, 9)` then `(2, 8)`, or `(2, 5)` then `(2, 4)` when the layout byte is 8. Accepts when `grid_x < 7` and `grid_y < 5`. A counter starts at 32 and drops on each rejected draw; when it reaches 0 the grid is 4 × 4. So at most **32 draws**.
+- **Layout switch** (`0x021521C0`): jump table on `layout & 0xF`. Nibbles 12–15 fall through to the standard generator (`b 0x2152250`), so they are not an error case.
+- **Outer loop** (10 tries, register `sb`, `0x0215200C`–`0x021524B8`). At each try it sets the stairs pair A (`+0xC0B8`, `+0xC0BA`) and pair B (`+0xC0BC`, `+0xC0BE`) to `-1`. After the spawns it checks the stairs (see below); a failure starts the next try.
+- **Inner loop** (10 tries, register `sl`, `0x02152044`–`0x021523D0`). At each try it:
+  - stores `sl` in `+0x34B6` (the attempt index of the layout loop);
+  - from try 2 on, clears `gFloorPropsByteC` (`021B45C0`);
+  - clears the retry flag at `021B45A4`, sets the pair at `021B45C8` to `-1`, calls `ResetFloor`, sets pair A to `-1` and clears `+0x34A8`;
+  - if `+0x34B4` (fixed room) is non-zero, calls `ProcessFixedRoom`. A non-zero result ends the inner loop; zero skips to the finalising steps without a layout;
+  - otherwise runs the layout switch.
+- **Finalising** (`0x021522EC`): `ResetInnerBoundaryTileRows`, `EnsureImpassableTilesAreWalls`, then the retry flag at `021B45A4`. If it is set, the next inner try starts. Nothing in overlay 1 sets it (only `GenerateFloor` clears and reads it), so in overlay 1 it is always 0 and the check never fires.
+- **Layout acceptance** (`0x02152304`–`0x021523C0`). Over all tiles (x 0..56, y 0..32): a tile counts when its terrain type is 1 (floor) and its room byte is at most `0xF0`. Those tiles are the room tiles (`fp`). Room bytes below 64 mark a distinct-room array (`rooms`). Accept when `fp >= 30` and `rooms >= 2`; otherwise the next inner try. This is `attempt_has_rooms`.
+- **Inner fallback** (after try 10): pair `021B45C8` set to `-1`, `GenerateOneRoomMonsterHouseFloor`, `+0x34A8 = 1`.
+- **Then**: `FinalizeJunctions`. `GenerateSecondaryTerrainFormations(1, props)` runs **only when the layout set a flag** (`[sp+0x10]`). The flag is set by the standard path (layouts 0, 8, 12–15), layout 1, layout 11, layouts 3, 4, 6 and 10, and not by 2, 5, 7 and 9. This differs from the step 5 entry above, which says the call is unconditional.
+- **Spawns**: `DungeonRandInt(100) < props+0x19` gives `itemless`; `SpawnNonEnemies(props, itemless)`, `SpawnEnemies(props, itemless)`, `ResolveInvalidSpawns`.
+- **Stairs check** (`0x0215244C`–`0x021524B0`, `stairs_check`): if pair A has a `-1` component, fail. If `GetFloorType() == 1` (`0x0206DB90`), accept. Otherwise, if pair B has a `-1` component, fail; else accept when `StairsAlwaysReachable(B.x, B.y, FALSE)` is non-zero.
+- **Outer fallback** (after try 10): pair `021B45C8` = `-1`, `ResetFloor`, `GenerateOneRoomMonsterHouseFloor`, `+0x34A8 = 1`, `FinalizeJunctions`, `SpawnNonEnemies(props, 0)`, `SpawnEnemies(props, 0)`, `ResolveInvalidSpawns`.
+- **End**: `+0x34AA` is set from `021B45CC` (`< 0` → 0, else `0x2149AF8(props)` and 1), then `0x2151D4C(0, 0, 56, 32)`, an optional call on `021B45A8`, and `CloseFile`.
+
+### Still not done
+
+- ResetFloor's body (`0x0214BDBC`): the driver calls it through `FloorSteps::reset_floor`. The body also clears the 8 × 8 cell records, a 64-entry pointer table and stairs pair B, and marks the walls next to the map edge. Not decoded in full yet.
+- The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
+- Unnamed callees: `0x02179060` (called with the pair C position and `0x17C`), `0x02149AF8` (called with the props pointer), `0x0214C13C`, `0x02151D4C` (called with `0, 0, 56, 32`).
+- The layout generators, the spawns, the stairs marker and `GenerateStandardFloor` steps 5 and up: their own issues. The driver calls them through `FloorSteps`.
+- Checks against the retail ROM for the natural seed (no ROM in this environment; the forced seeds are checked).
 
 ## Open questions
 
