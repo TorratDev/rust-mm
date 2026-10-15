@@ -132,9 +132,9 @@ def main():
                 entry["args"][3] = forced[step_no]
             if name == "std8" and a.maze_gate:
                 emu.memory.write_short(u32(G_DUNGEON) + 0x34B6, 0xFFFF)
-            if name in ("std7", "std8", "std9", "std10", "std11"):
-                # Tile hash at the entry of steps 7 to 11, to check the hallways (step 6), step 7
-                # and the optional rooms (steps 8 to 10).
+            if name in ("std7", "std8", "std9", "std10", "std11", "std12"):
+                # Tile hash at the entry of steps 7 to 12, to check the hallways (step 6), step 7
+                # the optional rooms (steps 8 to 10) and the extra hallways (step 11).
                 entry["tilesFnv1a"] = tiles_fnv1a()
             if name in ("std8", "std9", "std10", "std11"):
                 dun = u32(G_DUNGEON)

@@ -65,7 +65,7 @@ RNG calls per step on the first floor of a new game (small layout, a 4 × 2 grid
 | std 8 `GenerateMazeRoom` `[red-hypothesis]` (chance: props `+0x09`) | `ov_0001::0214CF2C` | 0 | 0 | done (`generate_maze_room`); fires only with the gate forced, see below |
 | std 9 `GenerateKecleonShop` `[red-hypothesis]` (chance: props `+0x07`) | `ov_0001::0214D448` | 0 | 0 | done (`generate_shop`) |
 | std 10 `GenerateMonsterHouse` `[red-hypothesis]` (chance: props `+0x08`) | `ov_0001::0214D190` | 0 | 0 | done (`generate_monster_house`) |
-| std 11 (last argument: floor property `+0x13`, probably the number of extra hallways) | `ov_0001::0214FF30` | 16 | 31 | |
+| std 11 `GenerateExtraHallways` `[red-hypothesis]` (last argument: floor property `+0x13`, the number of attempts; 5 on the first floor) | `ov_0001::0214FF30` | 16 | 31 | done (`generate_extra_hallways`) |
 | std 12, std 13, `ResetInnerBoundaryTileRows`, `EnsureImpassableTilesAreWalls`, `FinalizeJunctions` | | 0 | 0 | |
 | `GenerateSecondaryTerrainFormations` | `ov_0001::0214AAF8` | 1 | 1 | |
 | `SpawnNonEnemies` | `ov_0001::0214B650` | 788 | 760 | |
@@ -124,6 +124,17 @@ Cell fields (30-byte record) that these steps read or set: `+0x0C` shop (`GridCe
 - **Step 9.** Always sets the pair at `021B45C8` (two `u16`) to `0xFFFF`. Skipped, with no draw, when `021B4594` is set (a monster house exists; step 10 sets it, other writers unknown) or `GetFloorType() == 2`. Then `chance != 0` and one draw `< chance`. Two lists of 0 to 14 are shuffled with 200 swaps each (two `DungeonRandInt(15)` per swap, 800 draws in all). The scan takes the columns of the first list that are inside the grid and, for each, all rows of the second list that are inside the grid, and picks the first valid cell with a hallway, a room, no `+0x09`, `+0x10`, `+0x11`, `+0x12`, `+0x1D`, and width above 4 and height above 3. The cell gets `+0x0C`; byte `021B458C` is set; the shop area is the room minus one tile on each side (`x0 = start_x + 1`, `x1 = end_x - 1`, `y0 = start_y + 1`, `y1 = end_y - 1`, or `end_y` when that leaves fewer than 3 rows), stored at `021B45CC`; the area's tiles get terrain bit `0x20` and lose the low spawn bits `0x8` and `0x1`; the centre (`(x0 + x1) / 2`, `(y0 + y1) / 2`) goes to `021B45C8`; the smallest and largest x and y of the area go to dungeon `+0xC0E0` (initialised to `9999`, `9999`, `-9999`, `-9999`). All tiles of the room get spawn bit `0x10`.
 - **Step 10.** `chance != 0`, one draw `< chance`, then `021B458C` clear (no shop), dungeon `+0x678` (16 bit) zero and `GetFloorType() == 0`. Candidates as in step 8 without the width and height test and without `+0x0E`, but with `+0x10` clear; the same shuffle picks one. The cell gets `+0x0E`, byte `021B4594` is set, its tiles get terrain bit `0x40`, and the room number goes to dungeon `+0x34AC`. A candidate-less floor draws only the chance.
 - **RNG budget** (forced chance 100): step 8 costs 1 (gate closed) or 1 plus 2 × 64 plus the maze paths (about 140 to 160 with the gate open on these floors); step 9 costs 1 plus 800 whether or not a room qualifies; step 10 costs 1 plus 128 plus 0 (a shop exists, so only the first draw). `GetFloorType() == 2` and dungeon `+0x678` are not reachable on the first floor, so those two gates and the `021B4594` skip are read from the code only.
+
+### Step 11: extra hallways
+
+Read from the disassembly; the names are ours. Arguments: grid, grid width and height, and the attempt count (floor properties `+0x13`, 5 on the first floor). Checked on the natural seed and `0x12345678`, `0xCAFEBABF` and `0x0BADF00D`: the RNG state (16, 31, 10 and 10 steps) and `tilesFnv1a` at the entry of step 12 match the retail ROM. The branch that stops a turn east on the small and medium layouts (`gStandardGridMode` 1 and 2) is read from the disassembly; no checked floor reaches it.
+
+Per attempt:
+
+1. `DungeonRandInt(gridX)`, `DungeonRandInt(gridY)` pick a cell. It must be valid (`+0x08` clear), hold a room (`+0x0A`), have `+0x0B` set and not be a maze (`+0x10`); otherwise the attempt ends with no more draws.
+2. A point in the room: `DungeonRandRange(start_x, end_x)`, then `DungeonRandRange(start_y, end_y)`. Then `DungeonRandInt(4)` times 2 gives a direction in the 8-way table (0 south, 2 east, 4 north, 6 west). Three rounds turn it away from the grid edge: 0 to 2 on the last row, 2 to 4 on the last column, 4 to 6 on the first row, 6 to 0 on the first column.
+3. From the point it steps in that direction while the tile's room number is unchanged, then while the tile is floor. It stops the attempt if that tile is terrain type 2, if the 5 x 5 block around it leaves the map, or if the tile to its left or right is floor.
+4. `DungeonRandInt(3) + 3` is the run length. While the tile is inside the map (not within 1 of the edge), not floor and without the wall flag `0x10`: the tile becomes floor unless one of its four 2 x 2 corner blocks would be all floor; the loop ends if the tile left or right of it is floor; each step uses up one of the run; at the end of a run it draws a new length (`DungeonRandInt(3) + 3`) and `DungeonRandInt(100)`, below 50 turns to the right (direction + 2) and otherwise to the left (direction - 2); then the loop ends when the tile is past x = 31 (small layout) or x = 47 (medium) and the direction is east. Then it steps.
 
 ## Dungeon struct offsets seen here
 
