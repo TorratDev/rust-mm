@@ -199,6 +199,17 @@ The shuffle (`0214BD40`) is `2n` swaps of two entries picked by `DungeonRandInt(
 
 **Checks.** `rescue_sim::floor::spawn_non_enemies` reaches the RNG state of `SpawnEnemies`'s entry (788 steps on the natural seed, 760 on `0x12345678`), with the same spawn hash, terrain hash, stairs and leader, for the natural seed, the three forced seeds, and forced counts (more items, buried items and traps, trap flag on and off) and forced monster houses (`--force-chance 10=100`). Not exercised on the retail ROM: `GetFloorType() == 2` and `isEmptyMonsterHouse` (the first floor has neither); both are covered by unit tests against the disassembly.
 
+### Enemy spawn spots (`ov_0001::0214B338`, `SpawnEnemies`)
+
+Read from the disassembly; the names are ours. Arguments: the floor properties and `isEmptyMonsterHouse`. Like the previous step it only marks tiles, here with the blocked bit `0x8` of the second tile word; the species and the monsters come from later steps, so it needs neither the spawn tables nor the monster structs. Floor-properties byte `+0x06` is the monster density `d`. Scans are in column order (x outer, y inner); "room tile" means terrain type 1, a room number other than `0xFF`, and neither terrain bit `0x20` (shop) nor `0x100`.
+
+1. **Floor spots.** The count is `DungeonRandRange(d / 2, d)` raised to 1 when `d >= 1`, and 0 otherwise. Candidates: room tiles without terrain bit `0x8`, without spawn bits `0x1` and `0x2`, and not the leader's tile (pair A, `+0xC0B8`, `+0xC0BA`). With any candidate, a non-zero 16-bit value at dungeon `+0x678` adds 1 to the count (so it can place one spot on a density-0 floor). With a count above 0: shuffle, `DungeonRandInt(n)` start, that many consecutive entries get spawn bit `0x8` (wrapping).
+2. **Monster house**, only when the byte at dungeon `+0x34A8` is non-zero. The limit is a 16-bit constant at `021AA088` (12), or 3 when `isEmptyMonsterHouse`, times 3 / 2 (18 or 4). Candidates: room tiles with terrain bit `0x40`, not the leader's tile; existing spawn bits do not exclude them. With any candidate, `DungeonRandRange(7 n / 10, 8 n / 10)` raised to 1 and cut to the limit; shuffle, start, marks as above.
+
+Direct calls: 2 `DungeonRandRange` (floor count, house count) and 2 `DungeonRandInt` (the two starts), as the issue counts. `floor_stages.py` records, at the entry of `SpawnEnemies`, its inputs (`enemies`: `itemless`, `density`, `hasHouse`, `extra`, `houseLimit`) and, at the entry of `ResolveInvalidSpawns`, `placed` (spawn and tile hashes); `--force-enemies N` overrides the density.
+
+**Checks.** `rescue_sim::floor::spawn_enemies` has unit tests against the disassembly (gates, counts, draw order, the 18 and 4 limits, the leader's tile). **Not yet checked against the retail ROM:** the RNG budget (766 steps on the natural seed, 738 on `0x12345678`) and the spawn hash at the `ResolveInvalidSpawns` entry need a run of the oracle on a supported dump, which the author of this step did not have. The oracle changes above are untested for the same reason.
+
 ## Dungeon struct offsets seen here
 
 | Blue | Red field | Red | Evidence |
@@ -209,6 +220,7 @@ The shuffle (`0214BD40`) is `2n` swaps of two entries picked by `DungeonRandInt(
 | `+0x11304` | fixed-room file handle | — | `GenerateFloor` |
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
 | `+0x34AC`, `+0x34B6`, `+0x678`, `+0xC0E0`..`+0xC0EC` | monster-house room, attempt index (maze gate), blocks the monster house (step 10), shop area bounds | — | steps 8 to 10 |
+| `+0x34A8`, `+0x678` | monster house present (byte), extra enemy spot (16 bit) | - | `SpawnEnemies`, steps 8 to 10 |
 | `+0xC0B8`, `+0xC0BA` / `+0xC0BC`, `+0xC0BE` / `+0x64D` | leader start / stairs positions (`-1` when unset) / trap flag for monster-house tiles | � | `SpawnNonEnemies` |
 | `+0x1A2F8`, `+0x1A2F9`, `+0x1A308` | `floorProperties.tileset`, `.bgMusic`, `.fixedRoomNumber` | `0x1C576`, `0x1C577`, `0x1C588` | `RunDungeon_Async` |
 
