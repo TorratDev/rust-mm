@@ -2406,6 +2406,109 @@ pub fn spawn_non_enemies(
     }
 }
 
+/// What `SpawnEnemies` reads besides the tiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnemySpawn {
+    /// Floor-properties byte `+0x06`: the monster density.
+    pub density: u8,
+    /// `isEmptyMonsterHouse`, the itemless-house draw of `GenerateFloor`.
+    pub empty_house: bool,
+    /// Dungeon byte `+0x34A8`: the floor has a monster house.
+    pub has_house: bool,
+    /// Dungeon `+0x678` (16 bit) is non-zero: one more spawn spot outside the house.
+    pub extra: bool,
+    /// Pair A (`+0xC0B8`, `+0xC0BA`): the leader's tile, which gets no monster.
+    pub leader: (i16, i16),
+}
+
+/// The most spawn marks a monster house gets (a 16-bit constant at
+/// `021AA088`, read from the overlay); 3 when the house is empty.
+const HOUSE_SPAWN_LIMIT: i32 = 12;
+
+/// `ov_0001::0214B338` (`SpawnEnemies(props, isEmptyMonsterHouse)` in
+/// `pmd-red`; a `[red-hypothesis]` name). It only marks tiles with the
+/// blocked bit `0x8`; the species come from later steps. In order:
+///
+/// 1. **Floor spots.** `DungeonRandRange(density / 2, density)`, at least 1
+///    (0 when the density is 0), is the count. Candidates: room floor tiles
+///    that are not a shop, junction or no-spawn tile, have neither the stairs
+///    nor the item marker, and are not the leader's tile. With any candidate,
+///    `extra` adds 1; with a count above 0: shuffle, `DungeonRandInt` start,
+///    that many marks.
+/// 2. **Monster house**, when `has_house`: the limit is
+///    [`HOUSE_SPAWN_LIMIT`] (3 when `empty_house`) times 3 / 2. Candidates:
+///    the same room tiles with the monster-house bit (any markers, so they may
+///    already hold an item or trap). With any candidate, the count is
+///    `DungeonRandRange(7 n / 10, 8 n / 10)`, at least 1 and at most the
+///    limit; shuffle, start, marks.
+///
+/// Written from the disassembly; see `docs/re/dungeon-generation.md`.
+pub fn spawn_enemies(floor: &mut Floor, spawn: EnemySpawn, rng: &mut DungeonRng) {
+    let leader = |x: u8, y: u8| spawn.leader == (i16::from(x), i16::from(y));
+    let room_tile = |t: u16, room: u8| {
+        t & TERRAIN_TYPE_MASK == TERRAIN_FLOOR
+            && room != NO_ROOM
+            && t & (TERRAIN_SHOP | TERRAIN_NO_SPAWN) == 0
+    };
+
+    let density = i32::from(spawn.density);
+    let mut count = if density >= 1 {
+        rng.range(density / 2, density).max(1)
+    } else {
+        0
+    };
+    let mut found = Vec::new();
+    for x in 0..WIDTH as u8 {
+        for y in 0..HEIGHT as u8 {
+            let tile = floor.tile(i32::from(x), i32::from(y)).expect("in-map tile");
+            let (t, s) = (tile.terrain, tile.spawn_or_visibility);
+            if room_tile(t, tile.room)
+                && s & (SPAWN_ITEM | SPAWN_STAIRS) == 0
+                && t & TERRAIN_JUNCTION == 0
+                && !leader(x, y)
+            {
+                found.push((x, y));
+            }
+        }
+    }
+    if !found.is_empty() {
+        count += i32::from(spawn.extra);
+        if count != 0 {
+            shuffle_positions(&mut found, rng);
+            mark_from_random(floor, &found, count, SPAWN_BLOCKED, rng);
+        }
+    }
+
+    if !spawn.has_house {
+        return;
+    }
+    let limit = (if spawn.empty_house {
+        3
+    } else {
+        HOUSE_SPAWN_LIMIT
+    }) * 3
+        / 2;
+    let mut found = Vec::new();
+    for x in 0..WIDTH as u8 {
+        for y in 0..HEIGHT as u8 {
+            let tile = floor.tile(i32::from(x), i32::from(y)).expect("in-map tile");
+            if room_tile(tile.terrain, tile.room)
+                && tile.terrain & TERRAIN_MONSTER_HOUSE != 0
+                && !leader(x, y)
+            {
+                found.push((x, y));
+            }
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    let len = i32::try_from(found.len()).unwrap_or(i32::MAX);
+    let count = rng.range(len * 7 / 10, len * 8 / 10).clamp(1, limit);
+    shuffle_positions(&mut found, rng);
+    mark_from_random(floor, &found, count, SPAWN_BLOCKED, rng);
+}
+
 /// FNV-1a 64 over the spawn word (`u16`, little endian) of every tile, row by
 /// row; `spawnFnv1a` of `floor_stages.py`.
 #[must_use]
@@ -5218,6 +5321,91 @@ mod tests {
         assert_eq!(marked(&with_flag, 2), marked(&without, 2));
         assert_eq!(marked(&without, 4), 0);
         assert!((1..=7).contains(&(marked(&with_flag, 2) + marked(&with_flag, 4))));
+    }
+
+    /// `SpawnEnemies`, read from the disassembly: the gates, the counts and the
+    /// RNG draws, on one 60-tile room.
+    #[test]
+    fn spawn_enemies_gates_and_counts() {
+        let base = EnemySpawn {
+            density: 0,
+            empty_house: false,
+            has_house: false,
+            extra: false,
+            leader: (6, 6),
+        };
+        let marked = |floor: &Floor| tile_positions(floor, |_, s, _| s & SPAWN_BLOCKED != 0).len();
+
+        // Density 0, no house, no extra: nothing is drawn or marked.
+        let mut floor = one_room_floor();
+        let mut rng = DungeonRng::from_state(9);
+        spawn_enemies(&mut floor, base, &mut rng);
+        assert_eq!((rng.state(), marked(&floor)), (9, 0));
+
+        // `extra` alone gives one mark: shuffle (2 * 59 swaps of 2 draws) and a
+        // start, over the 59 tiles other than the leader's.
+        let mut rng = DungeonRng::from_state(9);
+        spawn_enemies(
+            &mut floor,
+            EnemySpawn {
+                extra: true,
+                ..base
+            },
+            &mut rng,
+        );
+        let mut expected = DungeonRng::from_state(9);
+        for _ in 0..2 * 2 * 59 + 1 {
+            expected.int(59);
+        }
+        assert_eq!((rng.state(), marked(&floor)), (expected.state(), 1));
+        assert_eq!(floor.tile(6, 6).unwrap().spawn_or_visibility, 0);
+
+        // Density 6 draws the range first: 3 to 6 marks, never on items or stairs.
+        let mut floor = one_room_floor();
+        floor.tile_mut(7, 7).unwrap().spawn_or_visibility |= SPAWN_STAIRS;
+        floor.tile_mut(8, 7).unwrap().spawn_or_visibility |= SPAWN_ITEM;
+        let mut rng = DungeonRng::from_state(9);
+        let count = DungeonRng::from_state(9).range(3, 6);
+        spawn_enemies(&mut floor, EnemySpawn { density: 6, ..base }, &mut rng);
+        assert!((3..=6).contains(&count));
+        assert_eq!(marked(&floor), usize::try_from(count).unwrap());
+        assert_eq!(floor.tile(7, 7).unwrap().spawn_or_visibility, SPAWN_STAIRS);
+        assert_eq!(floor.tile(8, 7).unwrap().spawn_or_visibility, SPAWN_ITEM);
+
+        // A house adds marks over its own tiles (items and traps do not exclude
+        // them): the 41 to 47 of 59 are capped at 18 (4 when empty). The leader's tile stays free.
+        let mut house = one_room_floor();
+        for x in 5..15 {
+            for y in 5..11 {
+                let tile = house.tile_mut(x, y).unwrap();
+                tile.terrain |= TERRAIN_MONSTER_HOUSE;
+                tile.spawn_or_visibility = SPAWN_ITEM;
+            }
+        }
+        let with_house = EnemySpawn {
+            has_house: true,
+            ..base
+        };
+        let go = |spawn| {
+            let mut floor = house.clone();
+            let mut rng = DungeonRng::from_state(3);
+            spawn_enemies(&mut floor, spawn, &mut rng);
+            (
+                marked(&floor),
+                floor.tile(6, 6).unwrap().spawn_or_visibility,
+            )
+        };
+        let (n, leader_bits) = go(with_house);
+        assert_eq!(leader_bits, SPAWN_ITEM);
+        assert_eq!(n, 18);
+        assert_eq!(
+            go(EnemySpawn {
+                empty_house: true,
+                ..with_house
+            })
+            .0,
+            4
+        );
     }
 
     #[test]

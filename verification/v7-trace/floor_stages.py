@@ -14,7 +14,7 @@ GenerateFloor starts (see floor_oracle.py).
 Usage:
   floor_stages.py ROM OUT.jsonl [--seed S] [--force-chance 8=P,9=P,10=P] [--maze-gate]
                   [--force-structures N] [--force-secondary N]
-                  [--force-spawn ITEMS,BURIED,TRAPS[,TRAPFLAG]] [--boot-inputs FILE]
+                  [--force-spawn ITEMS,BURIED,TRAPS[,TRAPFLAG]] [--force-enemies N] [--boot-inputs FILE]
 Output: one JSON line per checkpoint; only states, counts and arguments.
 """
 
@@ -90,6 +90,9 @@ def main():
                    help="ITEMS,BURIED,TRAPS[,TRAPFLAG]: at SpawnNonEnemies' entry, set floor-properties "
                         "bytes +0x0F (items), +0x14 (buried items) and +0x10 (traps), and dungeon +0x64D "
                         "(the trap flag), so that the step places more than the first floor's properties ask")
+    p.add_argument("--force-enemies", type=int,
+                   help="at SpawnEnemies' entry, set floor-properties byte +0x06 (the monster density) "
+                        "to N, so that the step places more than the first floor's properties ask")
     p.add_argument("--boot-inputs", default=os.path.join(HERE, "boot_to_dungeon.txt"))
     p.add_argument("--max-boot-frames", type=int, default=30000)
     a = p.parse_args()
@@ -187,7 +190,17 @@ def main():
                     "houseLimit": struct.unpack("<h", bytes(emu.memory.read(0x21AA194, 0x21AA196, 1, False)))[0],
                 }
             if name == "SpawnEnemies":
+                props = regs.r0 & 0xFFFFFFFF
                 dun = u32(G_DUNGEON)
+                if a.force_enemies:
+                    emu.memory.write_byte(props + 6, a.force_enemies)
+                entry["enemies"] = {
+                    "itemless": regs.r1 & 0xFF,
+                    "density": bytes(emu.memory.read(props + 6, props + 7, 1, False))[0],
+                    "hasHouse": bytes(emu.memory.read(dun + 0x34A8, dun + 0x34A9, 1, False))[0],
+                    "extra": struct.unpack("<h", bytes(emu.memory.read(dun + 0x678, dun + 0x67A, 1, False)))[0],
+                    "houseLimit": struct.unpack("<h", bytes(emu.memory.read(0x21AA088, 0x21AA08A, 1, False)))[0],
+                }
                 entry["spawned"] = {
                     "spawnFnv1a": spawn_fnv1a(),
                     "tilesFnv1a": tiles_fnv1a(),
@@ -196,6 +209,8 @@ def main():
                     "stairsRoom": bytes(emu.memory.read(0x21B4598, 0x21B4599, 1, False))[0],
                     "houseRoom": bytes(emu.memory.read(dun + 0x34AC, dun + 0x34AD, 1, False))[0],
                 }
+            if name == "ResolveInvalidSpawns":
+                entry["placed"] = {"spawnFnv1a": spawn_fnv1a(), "tilesFnv1a": tiles_fnv1a()}
             if name == "std8" and a.maze_gate:
                 emu.memory.write_short(u32(G_DUNGEON) + 0x34B6, 0xFFFF)
             if name in ("std7", "std8", "std9", "std10", "std11", "std12", "std13",
