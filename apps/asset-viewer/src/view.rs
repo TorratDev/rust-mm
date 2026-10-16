@@ -205,7 +205,19 @@ fn sub_file(g: &Game, pack: &str, name: &str, data: &[u8], opt: Options, v: &mut
                 "sprite: {}",
                 g.species_name(sprite::species_of(n).unwrap_or(0))
             );
-            sprite_view(&sprite::Sprite::parse(data)?, &g.sprite_palettes, opt, v)?;
+            // The game draws every piece of a monster in its overworld palette, not in the
+            // palette bits of each piece (Red: sprite.c, `axData->paletteNum`).
+            let mut s = sprite::Sprite::parse(data)?;
+            let pal = g
+                .species_palettes
+                .get(usize::from(sprite::species_of(n).unwrap_or(0)))
+                .copied();
+            if let Some(pal) = pal {
+                for piece in s.frames.iter_mut().flatten() {
+                    piece.attr2 = (piece.attr2 & 0x0FFF) | (u16::from(pal) << 12);
+                }
+            }
+            sprite_view(&s, &g.sprite_palettes, opt, v)?;
         }
         ("effect.sbin", n) if n.starts_with("efob") => {
             v.kind = format!("effect object {n}");

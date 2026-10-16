@@ -41,6 +41,10 @@ rescue_tests::rom_test! {
         assert!(index::search(&back, "kao025").iter().any(|r| r.format == "portrait"));
         assert!(!index::search(&back, "tileset").is_empty());
         assert!(index::search(&back, "Oran Berry").iter().any(|r| r.format == "item"));
+        // Statue (species palette 5) is not drawn all black: its pieces use the overworld palette.
+        let statue = view::view(&g, "monster.sbin", Some("ax422"), view::Options::default());
+        let img = statue.image.unwrap();
+        assert!(img.pixels.chunks_exact(4).any(|p| p[3] == 255 && p[..3] != [0, 0, 0]));
         assert_eq!(index::search(&back, "effect object").len(), 139);
         assert_eq!(index::search(&back, "effect background").len(), 8);
         assert!(index::search(&back, "level growth").iter().any(|r| r.name == "Bulbasaur"));

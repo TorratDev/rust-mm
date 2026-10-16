@@ -34,6 +34,8 @@ pub struct Game {
     pub packs: Vec<Pack>,
     /// Species names by index (empty if `monspara` failed to parse).
     pub species: Vec<String>,
+    /// Overworld palette per species (`monspara`): the palette a monster's sprite is drawn in.
+    pub species_palettes: Vec<u8>,
     /// Move names.
     pub moves: Vec<String>,
     /// Item names.
@@ -90,14 +92,15 @@ impl Game {
             fs,
             packs,
             species: Vec::new(),
+            species_palettes: Vec::new(),
             moves: Vec::new(),
             items: Vec::new(),
             sprite_palettes: Vec::new(),
         };
         if let Some(d) = g.sub("system.sbin", "monspara") {
-            g.species = species::parse_species(d)
-                .map(|v| v.into_iter().map(|s| s.name).collect())
-                .unwrap_or_default();
+            let parsed = species::parse_species(d).unwrap_or_default();
+            g.species = parsed.iter().map(|s| s.name.clone()).collect();
+            g.species_palettes = parsed.iter().map(|s| s.palette).collect();
         }
         if let Some(d) = g.sub("system.sbin", "wazapara") {
             g.moves = moves::parse_moves(d)
