@@ -11,7 +11,7 @@ One spec per parser, with its verification status. Issue: [#41](https://github.c
 | [portraits.md](portraits.md) | `crates/formats` `portrait` | verified |
 | [sprites.md](sprites.md) | `crates/formats` `sprite` | verified; animation meanings open |
 | [tilesets.md](tilesets.md) | `crates/formats` `tileset` | verified; autotile bit order a hypothesis |
-| [maps.md](maps.md) | `crates/formats` `ground` | partial: BPC compression open |
+| [maps.md](maps.md) | `crates/formats` `ground` | verified: maps render (BPA frame info, layer priority open) |
 | [text.md](text.md) | `crates/formats` `text`, `font` | verified; some control codes open |
 | [data.md](data.md) | `crates/data` | verified; equals Red for species, moves, items |
 | [save.md](save.md) | save layout (#53) | research notes |
@@ -20,8 +20,8 @@ One spec per parser, with its verification status. Issue: [#41](https://github.c
 
 Collected from the "Unknown fields" sections:
 
-- [ ] Ground BPC tile compression: decode, then render ground maps ([maps.md](maps.md)).
-- [ ] Ground collision and data layers, `X1`/`X2` parts ([maps.md](maps.md)).
+- [x] Ground BPC tile compression: decode, then render ground maps ([maps.md](maps.md)).
+- [ ] Ground collision and data layers, BPA frame info, layer priority, maps without their own tiles ([maps.md](maps.md)).
 - [ ] Sprite animation group meanings and direction order; piece and step unknowns ([sprites.md](sprites.md)).
 - [ ] Autotile neighbour bit order (E/W) and the 48 trailing bytes; `canm` slot targets ([tilesets.md](tilesets.md)).
 - [ ] Text codes `#+`, `#>`, `#1`–`#9`, `$v`, `$n`; portrait-change code ([text.md](text.md)).

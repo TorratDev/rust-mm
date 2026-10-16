@@ -334,26 +334,8 @@ fn sub_file(g: &Game, pack: &str, name: &str, data: &[u8], opt: Options, v: &mut
         }
         ("ground.sbin", n) if n.ends_with('m') => {
             let m = ground::parse_bma(data)?;
-            v.kind = "ground map (chunk numbers)".into();
-            // Chunk numbers as gray levels: the BPC tiles are not decodable yet.
-            let layer = m.layers.first().cloned().unwrap_or_default();
-            let (w, h) = (usize::from(m.width_chunks), usize::from(m.height_chunks));
-            let mut px = Vec::with_capacity(w * h * 4);
-            for row in &layer {
-                for &c in row {
-                    let l = (c.wrapping_mul(37) % 200) as u8 + 40;
-                    px.extend(if c == 0 {
-                        [0, 0, 0, 255]
-                    } else {
-                        [l, l, l, 255]
-                    });
-                }
-            }
-            v.image = Some(Rgba {
-                width: w,
-                height: h,
-                pixels: px,
-            });
+            let base = &n[..n.len() - 1];
+            v.kind = "ground map".into();
             v.lines.push(format!(
                 "{}x{} tiles, {}x{} chunks, {} layers, collision {}",
                 m.width_tiles,
@@ -363,8 +345,42 @@ fn sub_file(g: &Game, pack: &str, name: &str, data: &[u8], opt: Options, v: &mut
                 m.layers.len(),
                 m.has_collision
             ));
+            let (Some(c), Some(p)) = (g.sub(pack, &format!("{base}c")), g.sub(pack, base)) else {
+                v.kind = "chunk map without tiles or palettes of its own".into();
+                return Ok(());
+            };
+            let (bpc, bpl) = (ground::parse_bpc(c)?, ground::parse_bpl(p)?);
+            let bpa: Vec<_> = (1..=4)
+                .map(|i| {
+                    g.sub(pack, &format!("{base}{i}"))
+                        .and_then(|d| ground::parse_bpa(d).ok())
+                })
+                .collect();
+            // One image per layer, top to bottom; layer priority is not decoded.
+            let layers = (0..m.layers.len())
+                .map(|l| {
+                    Ok(rgba(
+                        &ground::render_layer(&bpc, &bpa, &m, l)?,
+                        &bpl.palettes,
+                    ))
+                })
+                .collect::<Result<Vec<_>, rescue_formats::error::FormatError>>()?;
+            v.image = Some(grid(&layers, 1));
+            v.lines.push(format!(
+                "{} tiles, {} chunks, animated (BPA) tiles at frame 0",
+                bpc.tiles, bpc.chunks
+            ));
+        }
+        ("ground.sbin", n) if n.ends_with('c') => {
+            let b = ground::parse_bpc(data)?;
+            v.kind = "ground tiles (gray)".into();
+            v.image = Some(rgba(
+                &graphics::tile_sheet(&b.chr, Depth::Bpp4, 16)?,
+                &[gray16()],
+            ));
             v.lines
-                .push("tiles not rendered: Blue's BPC compression is not decoded yet".into());
+                .push(format!("{} tiles, {} chunks", b.tiles, b.chunks));
+            v.bytes = b.chr;
         }
         ("ground.sbin", n) if !n.ends_with('c') => {
             if let Ok(b) = ground::parse_bpl(data) {
