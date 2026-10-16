@@ -6,7 +6,7 @@ Issue: [#33](https://github.com/TorratDev/rust-mm/issues/33). Code: `crates/form
 
 ## Resource IDs
 
-`NNN` is the species index ([`data.md`](data.md)). The palettes are not in the file: piece's name one of the 14 palettes in `monster.sbin` `palet` (14 x 16 RGBX).
+`NNN` is the species index ([`data.md`](data.md)). The palettes are not in the file: pieces name one of the 14 palettes in `monster.sbin` `palet` (14 x 16 RGBX).
 
 ## Layout
 
@@ -22,17 +22,17 @@ SIR0. Content header, five `u32`:
 
 The frame table runs up to the offsets table (frame count = length / 4); the image table runs up to the content header.
 
-**Frame** (pointer from the frame table): piece's of 10 bytes until one has attr1 bit 11 set.
+**Frame** (pointer from the frame table): pieces of 10 bytes until one has attr1 bit 11 set.
 
 | Offset | Size | Field |
 |--------|------|-------|
 | `+0` | 2 | image index; `-1` = reuse tiles already loaded at this piece's tile number |
-| `+2` | 2 | unknown (0 in all but 5 of 122,469 piece's) |
+| `+2` | 2 | unknown (0 in all but 5 of 122,469 pieces) |
 | `+4` | 2 | OAM attr0: y in bits 0–9 (relative to 512), shape in bits 14–15 |
 | `+6` | 2 | OAM attr1: x in bits 0–8 (relative to 256), bit 10 unknown, bit 11 last piece, bit 12 hflip, bit 13 vflip, size in bits 14–15 |
 | `+8` | 2 | OAM attr2: tile number bits 0–9 (32-byte units in the frame's VRAM), priority bits 10–11, palette bits 12–15 |
 
-Rendering: for each piece with an image, copy the image into the frame's VRAM at `tile * 32`; then draw the piece's last to first (earlier OAM entries are on top), each as `w/8 x h/8` 4bpp tiles in 1D order from its tile number. Color 0 is transparent.
+Rendering: for each piece with an image, copy the image into the frame's VRAM at `tile * 32`; then draw the pieces last to first (earlier OAM entries are on top), each as `w/8 x h/8` 4bpp tiles in 1D order from its tile number. Color 0 is transparent.
 
 **Image** (pointer from the image table): strips of `{u32 pointer, u32 length}` until a length of 0; pointer 0 means `length` zero bytes. The concatenation is the piece's 4bpp tiles.
 
@@ -50,7 +50,7 @@ Rendering: for each piece with an image, copy the image into the frame's VRAM at
 
 ## Unknown fields
 
-- Palette: the game draws a monster's piece's in the species' `overworldPalette` (the palette byte of its `monspara` entry), not in each piece's palette bits. Red does this in `sprite.c` (`axData->paletteNum`). 403 of 423 sprites already agree with their species. Statue (`ax422`) names palette 13 in its piece's but palette 5 in its species entry, and palette 13 is a placeholder (Red's `monster_sbin_palet.c`). The viewer uses the species palette. In Blue's ARM9 code, the species byte is read by `GetPokemonOverworldPalette` (`020020A0`, see [`symbols.md`](../symbols.md)), and the sprite loader `FUN_02028628` stores it as the monster sprite's palette. Traced further: the in-dungeon party HUD (`ov_0001::02155760`) passes the value to `FUN_020198ac`, which stores it in the object at `+0x13`. The OAM writer `FUN_02019CCC` copies each piece's own `attr2` (palette bits included). The consumer is `FUN_02019CCC`: unless the OAM entry's `unk6_1` bit is set, it replaces the piece palette bits with the object's palette byte (`+0x0F` of the object). Red sets `unk6_1` to 0 at its only use and never sets it, so the override applies to these sprites. The viewer rule (every piece uses the species palette) therefore matches the game. Open: the five piece's with a non-zero `unk2` field. In Red, `sUnknown_2025682` (the palette they would take) is never written, so it stays 0; in Blue this path is traced and the premise is different: see "Piece field +2" below. Diglett's tiny frames (group index 13, pose 277) match Red's dig-in animation (a single small piece, followed by poses 278 and up), so they are intended, not missing pixels. 19 sprites mix palettes inside one sprite, so those exceptions are open.
+- Palette: the game draws a monster's pieces in the species' `overworldPalette` (the palette byte of its `monspara` entry), not in each piece's palette bits. Red does this in `sprite.c` (`axData->paletteNum`). 403 of 423 sprites already agree with their species. Statue (`ax422`) names palette 13 in its pieces but palette 5 in its species entry, and palette 13 is a placeholder (Red's `monster_sbin_palet.c`). The viewer uses the species palette. In Blue's ARM9 code, the species byte is read by `GetPokemonOverworldPalette` (`020020A0`, see [`symbols.md`](../symbols.md)), and the sprite loader `FUN_02028628` stores it as the monster sprite's palette. Traced further: the in-dungeon party HUD (`ov_0001::02155760`) passes the value to `FUN_020198ac`, which stores it in the object at `+0x13`. The OAM writer `FUN_02019CCC` copies each piece's own `attr2` (palette bits included). The consumer is `FUN_02019CCC`: unless the OAM entry's `unk6_1` bit is set, it replaces the piece palette bits with the object's palette byte (`+0x0F` of the object). Red sets `unk6_1` to 0 at its only use and never sets it, so the override applies to these sprites. The viewer rule (every piece uses the species palette) therefore matches the game. Open: the five pieces with a non-zero `unk2` field. In Red, `sUnknown_2025682` (the palette they would take) is never written, so it stays 0; in Blue this path is traced and the premise is different: see "Piece field +2" below. Diglett's tiny frames (group index 13, pose 277) match Red's dig-in animation (a single small piece, followed by poses 278 and up), so they are intended, not missing pixels. 19 sprites mix palettes inside one sprite, so those exceptions are open.
 - Direction order is verified: group direction `0` faces the viewer (south), then clockwise: `1` south-east, `2` east, `3` north-east, `4` north (back view), `5` north-west, `6` west, `7` south-west. Checked by eye on `ax025` in the viewer. It matches Red's `DIRECTION_*` order (`include/constants/direction.h`).
 - Verified in Blue (`ov_0001::0217AD64`): group 5 is sleep, group 7 is the default idle pose, group 11 is bide. The other IDs are not confirmed.
 - Animation IDs, traced in Blue on 2026-10-16. An animation group number is `entity+0x6A` (`SetMonsterAnimAndDir`, `ov_0001::0217AED0`). Two sources set it. The older idea that a per-slot value at dungeon `+0x158DC` supplies walk and hit IDs is wrong: that table holds sprite handles (`GetMonsterSpriteHandle`, `ov_0001::02178C04`).
@@ -77,7 +77,8 @@ Rendering: for each piece with an image, copy the image into the frame's VRAM at
     | 13, 14 | species-special one-shots (see above); also cutscenes | blue-verified (mechanism), pose unknown |
     | 15, 16 | cutscene scripts only (`021A0734`, `021A273C`, `021A298C`) | blue-verified call sites, pose unknown |
     | 98, 99 | not groups: spin sentinels for Cut/Spin Slash (98) and Weather Ball, Bone Rush, Mud-Slap, Leech Seed and others (99) | blue-verified |
-  - Not traced: the other fields of the move table (`+0` to `+0x18`), and the fallback when a species lacks a requested group.
+  - Move entry layout (36 bytes, nine little-endian words), checked on moves 1, 3, 9, 12, 154, 56, 95, 18 and 430: `+0x10` anim (default group), `+0x14` default sound effect (`0x3E5` in most entries), `+0x1C` override count, `+0x20` start index into the override list. The words at `+0x00`, `+0x04`, `+0x08`, `+0x0C` and `+0x18` vary per move and are not traced.
+  - Missing groups: no bounds check was found in `FUN_02012848`, so a species lacking a group the move table asks for is not handled in the code paths traced. Not verified in game.
 - Visual review, 2026-10-16 (#133): every sprite's group sheet (first frame of each group and direction, all 423 sprites) was read at full size by two Sonnet reviewers; no defect found. Frame sheets (every frame) were seen for about 150 of the 13-group sprites in ax001–211 and the 16 non-13-group ones in that range except ax001, 004, 006, 007, 009, 025, 038, 050, 051; in ax212–422 all non-13-group sprites and part of the 13-group ones. Not seen: those frame sheets, and nothing was compared with the game on screen. Gardevoir (`ax307`) frames 216 and 225 are blank on purpose: one piece on an all-transparent image, alternated with visible frames at growing durations in groups 14 and 15 (a flicker-out, 68 step references). Statue (`ax422`) uses the same 13 frames in every group and direction.
-- Piece field `+2`, `[blue-verified]` (`FUN_02019CCC`, 2026-10-16): it is not a palette. Its high byte (`+3`) is added to the object`s depth key (`obj[0x16] + (field >> 8)`, clamped to 0–255) that picks the slot the OAM entry is queued in, so it reorders piece's front to back. The viewer can ignore it, which only affects overlap order of those five piece's. attr1 bit 10 is the `unk6_1` bit: when set, the writer keeps the piece`s own palette bits instead of the species palette (not measured how many piece's set it). Still unknown: step flags, the four per-frame points and the second step offset.
-- Effect object's in `effect.sbin` use the same piece's and steps, without images or per-frame points: see [`effects.md`](effects.md).
+- Piece field `+2`, `[blue-verified]` (`FUN_02019CCC`, 2026-10-16): it is not a palette. Its high byte (`+3`) is added to the object's depth key (`obj[0x16] + (field >> 8)`, clamped to 0–255) that picks the slot the OAM entry is queued in, so it reorders pieces front to back. The viewer can ignore it, which only affects overlap order of those five pieces. attr1 bit 10 is the `unk6_1` bit: when set, the writer keeps the piece's own palette bits instead of the species palette (2,526 of 122,469 pieces, in 15 sprites: ax050, ax051, ax065, ax097, ax108, ax110, ax296, ax332, ax357, ax383, ax384, ax413, ax417, ax419 and ax422; local check, 2026-10-16). Still unknown: step flags, the four per-frame points and the second step offset.
+- Effect objects in `effect.sbin` use the same pieces and steps, without images or per-frame points: see [`effects.md`](effects.md).
