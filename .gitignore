@@ -58,3 +58,6 @@ roms/
 
 # Local config (holds the path to your ROM dump, see docs/supported-dumps.md)
 rescue.toml
+
+# Resource index built from the user's dump (holds game data, see apps/asset-viewer)
+rescue-index.tsv

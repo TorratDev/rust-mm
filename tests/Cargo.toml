@@ -18,6 +18,7 @@ rescue-sim.workspace = true
 rescue-save.workspace = true
 
 [dev-dependencies]
+rescue-asset-viewer = { path = "../apps/asset-viewer" }
 proptest.workspace = true
 insta.workspace = true
 rescue-nds = { workspace = true, features = ["test-support"] }
