@@ -18,6 +18,18 @@ pub enum FormatError {
     Malformed(&'static str),
     /// The declared output size exceeds the caller's limit.
     TooLarge { size: usize, max: usize },
+    /// A field holds a value the format does not allow.
+    Invalid { what: &'static str, detail: String },
+}
+
+impl FormatError {
+    /// Shorthand for [`FormatError::Invalid`].
+    pub fn invalid(what: &'static str, detail: impl Into<String>) -> Self {
+        FormatError::Invalid {
+            what,
+            detail: detail.into(),
+        }
+    }
 }
 
 impl fmt::Display for FormatError {
@@ -31,6 +43,7 @@ impl fmt::Display for FormatError {
             FormatError::TooLarge { size, max } => {
                 write!(f, "declared size {size} exceeds limit {max}")
             }
+            FormatError::Invalid { what, detail } => write!(f, "{what}: {detail}"),
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "rescue-asset-viewer"
-description = "Asset viewer tool (egui)."
+description = "Asset viewer tool (egui) and resource index CLI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,3 +13,6 @@ workspace = true
 [dependencies]
 rescue-nds.workspace = true
 rescue-formats.workspace = true
+rescue-data.workspace = true
+egui.workspace = true
+eframe.workspace = true
