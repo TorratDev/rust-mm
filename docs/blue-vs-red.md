@@ -50,3 +50,22 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Magic | `0x06061320` | `0x05071412` | **different value** |
 | Checksum | sum of the other 32-bit words in word 0 | same | same |
 | Sections | 8 sections, same sizes and order | same | same |
+
+## Data tables ([`formats/data.md`](formats/data.md), #37)
+
+Compared field by field against pmd-red's `data/monster/monster_data.json`,
+`data/move/move_data.json` and `data/item/item_data.json` (2026-10-16, Blue EUR dump).
+
+| Item | Blue | Red (`pmd-red`) | Verdict |
+|------|------|-----------------|---------|
+| Container | SIR0 sub-files in `system.sbin` (`monspara`, `wazapara`, `itempara`) | same names in Red's `system` pack | same layout |
+| Species | 424 entries of 0x48 bytes | `MonsterDataEntry`, 424 entries | **all numeric fields identical** (palette, sizes, speed, stats, exp, weight, dex, recruit rate, alphabet/parent) |
+| Moves | 413 entries of 0x24 bytes; learnsets 8 bytes per species | `MoveDataEntry`, `MoveLearnset` | **all numeric fields identical** (power, PP, AI weight, accuracies, hits, upgrade, crit, flags, targeting) |
+| Items | 240 entries of 0x20 bytes | `ItemDataEntry`, 240 entries | **all numeric fields identical** (prices, sprite, AI flags, order, spawn range, palette) |
+| Translations | `wazapar{f,g,i,s}`, `itempar{f,g,i,s}`: same tables with translated text | single language | **Blue only** |
+| Level growth | `lvmpNNN`: 421 files, SIR0 + AT4PX, 100 x 12-byte `LevelData` | `LevelData` | same record layout; values not yet compared |
+| Dungeon floors | `mapparam`: 64 dungeons, 1764 `FloorProperties`, 839 monster, 148 trap, 183 item lists | `DungeonMapParam2` | same layout; values not yet compared |
+| Type chart | overlay 1 `0x72688` | `gTypeEffectivenessChart` | same values (V6) |
+
+Not compared yet: type and ability enum fields (Red's JSON uses names), level growth
+values, dungeon floor data.

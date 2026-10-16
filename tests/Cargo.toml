@@ -19,4 +19,5 @@ rescue-save.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+insta.workspace = true
 rescue-nds = { workspace = true, features = ["test-support"] }
