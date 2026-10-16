@@ -50,6 +50,7 @@ Rendering: for each piece with an image, copy the image into the frame's VRAM at
 
 ## Unknown fields
 
-- Group meanings (walk, attack, hurt, ...) and the direction order: not mapped. Red's animation IDs are a lead `[red-hypothesis]`.
+- Direction order is verified: group direction `0` faces the viewer (south), then clockwise: `1` south-east, `2` east, `3` north-east, `4` north (back view), `5` north-west, `6` west, `7` south-west. Checked by eye on `ax025` in the viewer. It matches Red's `DIRECTION_*` order (`include/constants/direction.h`).
+- Group meanings are not confirmed. Red's monster sprite code (`src/dungeon_mon_sprite_render.c`) selects animation IDs 0–12 by state `[red-hypothesis]`: `sub_806CEBC` picks 5 while asleep, 11 while bide-ing and 7 otherwise (idle); `sub_806CE94` sets 6, a counted pose that returns to the state's ID after 16 steps (a hit reaction); group 0 is probably walking, since Red uses `0 || 7` with a speed check. Blue's groups have not been checked against these yet.
 - Piece field `+2`, attr1 bit 10, step flags, the four per-frame points and the second step offset.
 - Effect objects in `effect.sbin` use the same pieces and steps, without images or per-frame points: see [`effects.md`](effects.md).
