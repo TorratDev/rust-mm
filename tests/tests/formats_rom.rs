@@ -4,7 +4,9 @@
 
 use rescue_formats::archive::Archive;
 use rescue_formats::gfx::MapEntry;
-use rescue_formats::{font, ground, portrait, px, sir0::Sir0, sprite::Sprite, text, tileset};
+use rescue_formats::{
+    effect, font, ground, portrait, px, sir0::Sir0, sprite::Sprite, text, tileset,
+};
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
 
@@ -239,5 +241,33 @@ rescue_tests::rom_test! {
                 let _ = tileset::parse_palette_anim(&d);
             }
         }
+    }
+}
+
+rescue_tests::rom_test! {
+    /// 139 effect objects and 8 backgrounds parse; every object pose renders (empty
+    /// poses are null pointers and are skipped), every background frame has a tilemap.
+    fn effects_decode(rom) {
+        let bytes = rom.read();
+        let data = rom_file(&bytes, "effect.sbin");
+        let arc = Archive::parse(&data).unwrap();
+        let (mut objects, mut backgrounds) = (0, 0);
+        for e in arc.entries() {
+            let sub = arc.data(&data, e).unwrap();
+            if e.name.starts_with("efob") {
+                let o = effect::parse_object(sub).unwrap_or_else(|err| panic!("{}: {err}", e.name));
+                for i in 0..o.sprite.frames.len() {
+                    if !o.sprite.frames[i].is_empty() {
+                        o.sprite.render_frame(i).unwrap_or_else(|err| panic!("{} pose {i}: {err}", e.name));
+                    }
+                }
+                objects += 1;
+            } else if e.name.starts_with("efbg") {
+                let b = effect::parse_background(sub).unwrap_or_else(|err| panic!("{}: {err}", e.name));
+                assert!(b.frames.iter().flatten().all(|f| !f.map.is_empty()), "{}", e.name);
+                backgrounds += 1;
+            }
+        }
+        assert_eq!((objects, backgrounds), (139, 8));
     }
 }

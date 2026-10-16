@@ -72,7 +72,7 @@ proptest! {
 
     #[test]
     fn random_blue_formats_never_panic(data in prop::collection::vec(any::<u8>(), 0..1024)) {
-        use rescue_formats::{archive::Archive, font, ground, portrait, px, sir0::Sir0, sprite::Sprite, text, tileset};
+        use rescue_formats::{archive::Archive, effect, font, ground, portrait, px, sir0::Sir0, sprite::Sprite, text, tileset};
         let _ = Archive::parse(&data);
         let _ = ground::parse_bma(&data);
         let _ = ground::parse_bpl(&data);
@@ -92,6 +92,12 @@ proptest! {
         let _ = tileset::parse_autotile(&s);
         let _ = tileset::parse_palette_anim(&s);
         let _ = font::parse_font(&s);
+        if let Ok(o) = effect::parse_object(&s) {
+            for i in 0..o.sprite.frames.len().min(16) {
+                let _ = o.sprite.render_frame(i);
+            }
+        }
+        let _ = effect::parse_background(&s);
         let _ = rescue_data::species::parse_species(&s);
         let _ = rescue_data::moves::parse_moves(&s);
         let _ = rescue_data::item::parse_items(&s);

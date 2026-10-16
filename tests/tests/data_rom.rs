@@ -49,7 +49,7 @@ rescue_tests::rom_test! {
         let darc = Archive::parse(&dun).unwrap();
         let mp = dungeon::parse_mapparam(darc.get(&dun, "mapparam").unwrap(), items.len()).unwrap();
         assert_eq!((mp.dungeons.len(), mp.floor_properties.len()), (64, 1764));
-        assert_eq!((mp.monster_spawns.len(), mp.trap_chances.len(), mp.item_spawns.len()), (839, 148, 183));
+        assert_eq!((mp.monster_spawns.len(), mp.trap_chances.len(), mp.item_spawns.len()), (839, 148, 178));
         for f in mp.dungeons.iter().flatten() {
             assert!(usize::from(f.properties) < mp.floor_properties.len());
             assert!(usize::from(f.monsters) < mp.monster_spawns.len());

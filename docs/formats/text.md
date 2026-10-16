@@ -26,8 +26,11 @@ Issue: [#36](https://github.com/TorratDev/rust-mm/issues/36). Code: `crates/form
 | `#W` | `WaitButton` | wait for a button `[red-hypothesis]` |
 | `#=<b>` | `SetX` | move the cursor to x = byte `b` |
 | `#y<b>` | `SetY` | move the cursor vertically `[hypothesis]` |
-| `#+`, `#>`, `#1`–`#9` | `Code` | not identified |
-| `$m<n>`, `$i<n>`, `$d<n>`, `$v<n>`, `$n<n>`, `$h`, `$t` | `Var` | placeholders: monster name, item, number, ..., hero, team `[red-hypothesis]` |
+| `#+` | `Code('+')` | centre the line `[red-hypothesis]`, Red's `CENTER_ALIGN`: 616 uses in English, 254 at a string start |
+| `#>` | `Code('>')` | alignment operator `[red-hypothesis]`, Red's `UNK_MACRO_3E`: 45 uses, each just before a number or name |
+| `#1`–`#9` | `Code` | not identified: 1 to 11 uses each, all at a string start, in the help topic titles |
+| `$m<n>`, `$i<n>`, `$d<n>`, `$n<n>`, `$t`, `$h` | `Var` | monster (`POKEMON_n`), item (`MOVE_ITEM_n`), number (`VALUE_n`), name (`NAME_n`), team name, friend area `[red-hypothesis]`, from Red's `charmap.txt` |
+| `$v<n>` | `Var` | not identified: `$v0` 11 uses, `$v1` 3 uses in English |
 | `~XX` | (text) | literal character with hex code `XX` (`~27` apostrophe, `~2c` comma) |
 
 ## Fonts
@@ -38,5 +41,8 @@ Issue: [#36](https://github.com/TorratDev/rust-mm/issues/36). Code: `crates/form
 
 ## Unknown fields
 
-- `#+`, `#>`, `#1`–`#9`; exact `$v`, `$n` meanings; which code changes the portrait.
+- `#1`–`#9` and `$v`; which code changes the portrait.
+- Whether `#+` and `#>` behave as Red's `CENTER_ALIGN` and alignment macro in Blue. The counts above agree with that reading; a renderer check settles it.
+- Red's `charmap.txt` also lists `#~` (wait frames) and `#_` (`UNK_MACRO_5F_*`). Blue's strings have not been checked for them yet.
 - Glyph flags; how `kanji_a` and `kanji_b` split the character set.
+- Two-byte game glyphs (`Token::Glyph`) have no Unicode mapping yet. The "readable UTF-8" goal holds for the Latin-1 text and the control codes only; glyphs stay as codes until their images are matched to characters.

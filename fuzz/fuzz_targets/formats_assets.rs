@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use rescue_formats::{font, ground, portrait, sprite::Sprite, text, tileset};
+use rescue_formats::{effect, font, ground, portrait, sprite::Sprite, text, tileset};
 
 fuzz_target!(|data: &[u8]| {
     let s = [&b"SIR0"[..], data].concat();
@@ -14,6 +14,12 @@ fuzz_target!(|data: &[u8]| {
             let _ = sp.render_frame(i);
         }
     }
+    if let Ok(o) = effect::parse_object(&s) {
+        for i in 0..o.sprite.frames.len().min(64) {
+            let _ = o.sprite.render_frame(i);
+        }
+    }
+    let _ = effect::parse_background(&s);
     let _ = tileset::parse_autotile(&s);
     let _ = tileset::parse_palette_anim(&s);
     let _ = tileset::parse_metatiles(data);

@@ -2,7 +2,7 @@
 
 Issue: [#37](https://github.com/TorratDev/rust-mm/issues/37). Code: `crates/data/src/` (`species.rs`, `moves.rs`, `item.rs`, `dungeon.rs`, `types.rs`). Tests: `tests/tests/data_rom.rs` (counts, cross-table index checks, a SHA-1 snapshot per table), mutation test in `tests/tests/formats_rom.rs`. Viewer: `system.sbin` → `monspara`, `wazapara`, `itempara`, `lvmpNNN`. Red/Blue comparison: [`blue-vs-red.md`](../blue-vs-red.md#data-tables-formatsdatamd-37).
 
-**Verification status:** verified against Blue (2026-10-16): every table parses, indices between tables are consistent, and species, moves and items equal Red's values field for field. Field names are Red's (`pmd-red` structs).
+**Verification status:** verified against Blue (2026-10-16): every table parses, indices between tables are consistent, and species, moves and items equal Red's values field for field. Field names are Red's (`pmd-red` structs). Level growth, floor properties, floors, monster, trap and item lists match the Red dump exactly ([`blue-vs-red.md`](../blue-vs-red.md#data-tables-formatsdatamd-37)).
 
 | Table | Where | Layout |
 |-------|-------|--------|
@@ -22,7 +22,7 @@ Content header, five pointers:
 
 1. per-dungeon floor tables (64 pointers). A floor is 16 bytes: `s16` floor-properties index, `s16` monster list, `s16` trap list, `s16` item lists for normal / shop / monster house / buried, `s16` unused. A dungeon's table runs to the next one.
 2. `FloorProperties` array: 1764 x 28 bytes (Red's struct: layout, room density, tileset, music, weather, ...).
-3. item spawn lists (183): `u16` weights; a value `>= 30000` means `value - 30000` zeros. Expanded length = 12 categories + 240 item IDs.
+3. item spawn lists (178): `u16` weights; a value `>= 30000` means `value - 30000` zeros. Expanded length = 12 categories + 240 item IDs.
 4. monster spawn lists (839): 6 bytes `{u16 species (bits 0–8) | level (bits 9–15), s16 weight[2]}` until species 0.
 5. trap chance lists (148): 20 `u16` each.
 
@@ -32,6 +32,6 @@ Species index = `kaoNNN`, `axNNN`, `lvmpNNN` number. Dungeon index = position in
 
 ## Unknown fields
 
-- Species bytes `0x12`, `0x1A`, `0x30`–`0x33`, `0x46`; move bytes `0x07`, `0x1A`–`0x1B`; item byte `0x1F` (padding in Red).
+- Species bytes `0x0A`–`0x0B` and `0x46`–`0x47` differ from Red in every species (Red has no field there); `0x12`, `0x1A`, `0x30`–`0x33`, `0x46`; move bytes `0x07`, `0x1A`–`0x1B`; item byte `0x1F` (padding in Red).
 - The unused sixth `s16` of each floor; floor 0 of each dungeon (a placeholder in Red).
 - Dungeon names and floor counts outside `mapparam` (Red keeps them in `gDungeons`).

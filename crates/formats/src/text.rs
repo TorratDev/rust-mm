@@ -35,10 +35,12 @@ pub enum Token {
     SetX(u8),
     /// `#y<b>`: move the cursor to y = `b` (`[hypothesis]`).
     SetY(u8),
-    /// Other `#<x>` codes (`#+`, `#>`, `#1`..`#9`; meaning not yet confirmed).
+    /// Other `#<x>` codes: `#+` (centre the line, `[red-hypothesis]`), `#>` (alignment,
+    /// `[red-hypothesis]`), `#1`..`#9` (meaning not yet confirmed).
     Code(char),
-    /// `$<kind><n>` placeholder: `m` monster name, `i` item, `d` number, `h` hero,
-    /// `t` team, `v`, `n` (Red-style names, `[red-hypothesis]`).
+    /// `$<kind><n>` placeholder: `m` monster, `i` item, `d` number, `n` name, `t` team
+    /// name, `h` friend area (`[red-hypothesis]`, from Red's `charmap.txt`); `v` is not
+    /// identified.
     Var {
         /// Kind letter.
         kind: char,

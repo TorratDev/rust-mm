@@ -26,11 +26,13 @@ Blue does not store BGR555 palettes in its files. Every palette is 4 bytes per c
 | `dungeon.sbin` | `bNN*` tilesets, fonts, UI parts | [`tilesets.md`](tilesets.md) |
 | `ground.sbin` | town and scene maps | [`maps.md`](maps.md) |
 | `system.sbin` | fonts | [`text.md`](text.md#fonts) |
-| `effect.sbin`, `ornament.sbin`, `titlemenu.sbin`, `sample.sbin` | effects, title screens, UI | not specified yet (open) |
+| `effect.sbin` | effect objects and backgrounds | [`effects.md`](effects.md) |
+| `ornament.sbin`, `titlemenu.sbin`, `sample.sbin` | ornaments, title screens, samples | not specified yet (open) |
 
 No Nitro containers (NCLR, NCGR, NSCR, NCER, NANR) are used.
 
 ## Open items
 
-- `effect.sbin` (`efbg`, `efob` SIR0), `ornament.sbin`, `titlemenu.sbin` and `sample.sbin` layouts are not decoded; the viewer shows their AT4PX parts as raw tile sheets and RGBX parts as palettes.
+- `effect.sbin` objects (`efob`) and backgrounds (`efbg`) are decoded ([`effects.md`](effects.md)); their frame meanings are open.
+- `ornament.sbin`, `titlemenu.sbin` and `sample.sbin` layouts are not decoded; the viewer shows their AT4PX parts as raw tile sheets and RGBX parts as palettes.
 - `nitro_haltscreen*.sbin` decodes (AT4PX, 49152 bytes, 8bpp-indexed text) but its pixel layout (two 128-pixel halves) is not pinned down.

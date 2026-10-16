@@ -70,6 +70,22 @@ fn pointer_table(s: &Sir0<'_>, mut at: usize) -> Result<Vec<usize>> {
     Ok(out)
 }
 
+/// Like [`pointer_table`], but stops at the first pointer that names a header entry. The
+/// item list table is followed directly by the header's pointers, which the SIR0 list also
+/// marks, so counting them would add five bogus lists.
+fn pointer_table_before(s: &Sir0<'_>, mut at: usize, header: &[usize]) -> Result<Vec<usize>> {
+    let mut out = Vec::new();
+    while s.pointers.binary_search(&at).is_ok() {
+        let target = s.ptr(at, "mapparam table")?;
+        if header.contains(&target) {
+            break;
+        }
+        out.push(target);
+        at += 4;
+    }
+    Ok(out)
+}
+
 /// Parses `mapparam`. `item_ids` is the number of item IDs (the `itempara` length), which
 /// fixes the expanded length of item lists.
 pub fn parse_mapparam(data: &[u8], item_ids: usize) -> Result<MapParam> {
@@ -151,7 +167,7 @@ pub fn parse_mapparam(data: &[u8], item_ids: usize) -> Result<MapParam> {
         .collect::<Result<Vec<_>>>()?;
 
     let want = ITEM_CATEGORIES + item_ids;
-    let item_spawns = pointer_table(&s, h[2])?
+    let item_spawns = pointer_table_before(&s, h[2], &h)?
         .into_iter()
         .map(|start| {
             let mut out = Vec::with_capacity(want);

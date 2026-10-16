@@ -7,6 +7,7 @@
 
 pub mod archive;
 pub mod compress;
+pub mod effect;
 pub mod error;
 pub mod font;
 pub mod gfx;
