@@ -59,14 +59,18 @@ Compared field by field against pmd-red's `data/monster/monster_data.json`,
 | Item | Blue | Red (`pmd-red`) | Verdict |
 |------|------|-----------------|---------|
 | Container | SIR0 sub-files in `system.sbin` (`monspara`, `wazapara`, `itempara`) | same names in Red's `system` pack | same layout |
-| Species | 424 entries of 0x48 bytes | `MonsterDataEntry`, 424 entries | **all numeric fields identical** (palette, sizes, speed, stats, exp, weight, dex, recruit rate, alphabet/parent) |
+| Species | 424 entries of 0x48 bytes | `MonsterDataEntry`, 424 entries (`monspara`, `SIRO`) | **all numeric fields identical**, including types and abilities; all 424 names identical. Bytes `0x0A`–`0x0B` and `0x46`–`0x47` differ in every species, and Red's struct has no field there (padding in Red, unknown in Blue) |
 | Moves | 413 entries of 0x24 bytes; learnsets 8 bytes per species | `MoveDataEntry`, `MoveLearnset` | **all numeric fields identical** (power, PP, AI weight, accuracies, hits, upgrade, crit, flags, targeting) |
 | Items | 240 entries of 0x20 bytes | `ItemDataEntry`, 240 entries | **all numeric fields identical** (prices, sprite, AI flags, order, spawn range, palette) |
 | Translations | `wazapar{f,g,i,s}`, `itempar{f,g,i,s}`: same tables with translated text | single language | **Blue only** |
-| Level growth | `lvmpNNN`: 421 files, SIR0 + AT4PX, 100 x 12-byte `LevelData` | `LevelData` | same record layout; values not yet compared |
-| Dungeon floors | `mapparam`: 64 dungeons, 1764 `FloorProperties`, 839 monster, 148 trap, 183 item lists | `DungeonMapParam2` | same layout; values not yet compared |
+| Level growth | `lvmpNNN`: 421 files, SIR0 + AT4PX, 100 x 12-byte `LevelData` | `LevelData`, `lvmpNNN` in the Red system archive (`SIRO` + AT4PX) | **all 421 files identical** (expected EXP, HP, attack and defence gains, all 100 levels) |
+| Dungeon floors | `mapparam`: 64 dungeons, 1831 floors, 1764 `FloorProperties`, 839 monster, 148 trap, 178 item lists | `DungeonMapParam2` (`SIRO`, five VA pointers) | **all identical** in every table (floors: properties, monster, trap and item indices; floor properties and lists: raw values). The parser had counted five header pointers as item lists (183); fixed to 178. |
 | Type chart | overlay 1 `0x72688` | `gTypeEffectivenessChart` | same values (V6) |
 
-Not compared yet: type and ability enum fields (Red's JSON uses names). Level growth values and
-dungeon floor data are not compared: Red's copies of those files are in Red's ROM, which is not
-extracted in the reference checkout, and the checkout's assembly holds only their names.
+Level growth and dungeon floor data were compared on 2026-10-17 against the Red dump held in the
+repository (`rs-pmdr.gba`, SHA-1 `afee3b060dd5fd4a68afb1b003456aef3a2af073`). Its SHA-1 differs from
+the reference `pmd_red.gba` in `reference/pmd-red/red.sha1` (`9f4cfc5b…`), so this is another
+revision, and the comparison is against that revision. Tables are read from the Red ROM, which
+is never extracted into the repository.
+
+Not compared yet: moves and items. The Red move table at `0x243BCC` gives the right names for some entries, but the stride or order differs from Blue's, so the layout is not mapped yet.
