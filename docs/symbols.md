@@ -39,6 +39,12 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::0219E6AC | SetAnimForced | void SetAnimForced(void * entity, uchar anim) | blue-verified | Cutscene helper: sets the animation, then stores `anim` at `monster+0xDB` (99 means none) |
 | 02023E9C | GetMoveAnimId | uchar GetMoveAnimId(int species, int move) | blue-verified | Default anim byte `+0x10` of the 36-byte move entry at `02098CF0`, replaced by a matching `{species, anim, sfx}` record from the table at `020A0868` |
 | 02002438 | IsOneShotAnim | uchar IsOneShotAnim(int species, uint anim) | blue-verified | Byte table `0208BEAC` (`0 1 1 1 1 0 ...`) for anim < 13; for 13 and up a species list at `0208BEF8` |
+| 02025674 | GetMoveEntry | void * GetMoveEntry(int move) | blue-verified | `DAT_02025684 + move*0x24`: the 36-byte move entry at ARM9 `02098CF0` |
+| 02025688 | GetMoveEntry2 | void * GetMoveEntry2(int move) | blue-verified | Same stride, base `DAT_02025698`: the second table indexed by the move's four ids (`+0x00..+0x06`) |
+| 020241C0 | MoveHasTypeFourAt | bool MoveHasTypeFourAt(void * move, int slot) | blue-verified | Reads move word `slot` (0..3), looks it up in `GetMoveEntry2`, returns whether that entry's first word is 4. Used in `PlayMoveAttackerAnim` |
+| 02024238 | MoveHasTypeFour | bool MoveHasTypeFour(void * move) | blue-verified | Any of the four move words whose `GetMoveEntry2` entry has first word 4 |
+| 020242D4 | GetMoveSfxId | uint GetMoveSfxId(int species, int move) | blue-verified | Override sfx from the `020A0868` record (`+4`), else the default at move entry `+0x18` |
+| 02012848 | InitSpriteState | void InitSpriteState(ushort * state, void * sprite, int group, int dir, ...) | blue-verified | Sets a sprite state from `sprite->group table[group*4][dir*4]`; no bounds check on `group` |
 | 020020A0 | GetPokemonOverworldPalette | uchar GetPokemonOverworldPalette(short species, bool recolorShopKecleon) | blue-verified | Returns the species byte at `+8` of its 0x48-byte `monspara` entry (`overworldPalette`); returns 10 when `recolorShopKecleon` is set. Like `pmd-red` `GetPokemonOverworldPalette`. Its caller `FUN_02028628` stores the result as the monster sprite's palette at struct `+0x52D4` |
 | 02003794 | LoadMonsterParameters | void LoadMonsterParameters(void) | blue-verified | `GameLoop_Async` call order |
 | 0200CEC4 | InitializePlayTime | void InitializePlayTime(void) | blue-verified | `GameLoop_Async` call order |
