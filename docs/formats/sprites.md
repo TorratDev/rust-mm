@@ -79,6 +79,38 @@ Rendering: for each piece with an image, copy the image into the frame's VRAM at
     | 98, 99 | not groups: spin sentinels for Cut/Spin Slash (98) and Weather Ball, Bone Rush, Mud-Slap, Leech Seed and others (99) | blue-verified |
   - Move entry layout (36 bytes), decoded from the readers `FUN_02023E9C`, `FUN_020242D4`, `FUN_020241C0`, `FUN_02024238` and `FUN_02023BDC` (2026-10-16): `+0x00`, `+0x02`, `+0x04`, `+0x06`: four move ids, each looked up in a second 36-byte table at `DAT_02025698`; the test `== 4` on the first word of that entry is used to choose the attacker or the leader as the animated entity (`FUN_020241C0`) and to decide a wait (`FUN_02024238`) `[blue-verified reads, meaning hypothesis]`. `+0x08`: a byte read on the move-id path (`FUN_02023BDC`), meaning not resolved. `+0x10`: default anim group. `+0x18` (4 bytes): default sound effect, `0x3E5` in most entries (`FUN_020242D4`). `+0x1C`: override count, `+0x20`: start index into the 12-byte override list at `020A0868` (`{i16 species, i16 anim, i32 sfx}`).
   - Red cross-check (pret/pmd-red at the pinned commit, `src/dungeon_mon_sprite_render.c`, read 2026-10-16): its follow-up table `gUnknown_8106EC8` has the same rows as Blue's `021AE1D0` table (row 0: 0->0, 1->1; rows 1 and 2: 5->5, 6->6, 11->11 in row 2 only, others ->7), and the same sources: `sub_806CE94` sets 6, `sub_806CDD4` is the explicit setter, `sub_806CEBC` gives the default. Red's source uses only the numbers, with no pose names, so the poses of groups 1–4, 8–10, 12–16 are still not named by any source here; only in-game footage would settle them.
+  - In-game poses, observed (2026-10-16, py-desmume on the retail dump, species 158, the partner at the first floor, direction 0). The emulator writes `+0x6A` = group each frame on the leader and crops the leader's tile at frames 4 and 14 after the write. Descriptions are of the picture only; the move names are the only evidence for which action a group serves, and they are marked as such. This is one species and one direction, so the other directions and species still need checking.
+    | Group | Pose on screen (dir 0) | Likely use (hypothesis) |
+    |-------|------------------------|-------------------------|
+    | 0 | standing, mouth closed; little change over 14 frames | walk / step |
+    | 1 | crouch and lunge forward, leaves the tile to the lower right | physical lunge (Tackle type) |
+    | 2 | forward strike with an arm, close to the body | close strike (Scratch, Pound, Bite type) |
+    | 3 | body rises, tail raised tall | ranged or raised pose |
+    | 4 | tall rear with a dark fin and open body | ranged or special (large raised pose) |
+    | 5 | lying low and forward, sleeping-style | asleep (verified in the code) |
+    | 6 | mouth wide open, shock/sweat marks around the head | hit reaction (verified in the code) |
+    | 7 | standing, mouth closed | idle (verified in the code) |
+    | 8 | tail swung low to the lower left | tail or kick swing |
+    | 9 | body raised upward, mouth closed | quick or leaping movement |
+    | 10 | hop: body moves up out of the tile | hop or dive (Bounce, Dive type) |
+    | 11 | arms spread wide, crouched | bide and charge (verified in the code) |
+    | 12 | stretched body, tail up | status cast |
+    | 13 | crouched forward with a big fin | close attack |
+    | 14 | wide open jaws, lunging bite | bite |
+    | 15 | upright with spines raised | special (charged) |
+    | 16 | wide open mouth, roaring | roar (Roar or intimidation type) |
+    | 17 | hunched, arms in | recover or hurt |
+    | 18 | open mouth with shock marks | stunned or sneezing |
+    | 19 | rear with tail up | charge |
+    | 20 | rear with spines and tail | charge (like 15) |
+    | 21 | open mouth, snapping | bite (like 14) |
+    | 22 | body stretched forward in a dash | rush |
+    | 23 | spread legs with a spiny tail arc | spin |
+    | 24 | flat dash forward | rush (like 22) |
+    | 25 | crouched, low posture | rest or low pose |
+    | 26 | side pose, walking-like | walk variant |
+    | 27 | side pose, walking-like | walk variant |
+  - Not done: the same check for directions 1–7, and for other species, to confirm the groups mean the same thing everywhere. The hypothesis column is not verified against move names in-game.
   - Missing groups: `FUN_02012848` reads `group table[group*4][dir*4]` with no bounds check and no fallback (verified in its decompile, 2026-10-16). So a sprite must have every group the move table or the state code can ask for. Whether any species breaks this was not checked in game.
 - Visual review, 2026-10-16 (#133): every sprite's group sheet (first frame of each group and direction, all 423 sprites) was read at full size by two Sonnet reviewers; no defect found. Frame sheets (every frame) were seen for about 150 of the 13-group sprites in ax001–211 and the 16 non-13-group ones in that range except ax001, 004, 006, 007, 009, 025, 038, 050, 051; in ax212–422 all non-13-group sprites and part of the 13-group ones. Not seen: those frame sheets, and nothing was compared with the game on screen. Gardevoir (`ax307`) frames 216 and 225 are blank on purpose: one piece on an all-transparent image, alternated with visible frames at growing durations in groups 14 and 15 (a flicker-out, 68 step references). Statue (`ax422`) uses the same 13 frames in every group and direction.
 - Frames review, 2026-10-16 (completed): every frame sheet for the 187 thirteen-group sprites in ax212–422 was read at thumbnail size, and no defect was found. Sprites 360 and 332/336 have solid flash silhouettes and black frames that look like effects, not decode errors. Sprite 404 has a white X face mark, and 422 shows one identical frame set in every group. Not compared with the game on screen.
