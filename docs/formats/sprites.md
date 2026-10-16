@@ -1,0 +1,54 @@
+# Creature sprites (`monster.sbin` `axNNN`)
+
+Issue: [#33](https://github.com/TorratDev/rust-mm/issues/33). Code: `crates/formats/src/sprite.rs`. Tests: unit tests; `tests/tests/formats_rom.rs` (`sprites_decode`, mutation test), `tests/tests/viewer_rom.rs`. Viewer: `monster.sbin` → `axNNN` (animation, direction, play).
+
+**Verification status:** verified against Blue (2026-10-16). All 423 files parse; every frame of every sprite renders; Bulbasaur's 71 images checked by eye. Layout invariants (tables back to back, image sizes equal piece sizes, running VRAM tile numbers) hold in all 423 files.
+
+## Resource IDs
+
+`NNN` is the species index ([`data.md`](data.md)). The palettes are not in the file: pieces name one of the 14 palettes in `monster.sbin` `palet` (14 x 16 RGBX).
+
+## Layout
+
+SIR0. Content header, five `u32`:
+
+| Offset | Field |
+|--------|-------|
+| `+0x00` | frame table pointer |
+| `+0x04` | animation group table pointer |
+| `+0x08` | group count (13 to 28) |
+| `+0x0C` | image table pointer |
+| `+0x10` | per-frame offsets pointer |
+
+The frame table runs up to the offsets table (frame count = length / 4); the image table runs up to the content header.
+
+**Frame** (pointer from the frame table): pieces of 10 bytes until one has attr1 bit 11 set.
+
+| Offset | Size | Field |
+|--------|------|-------|
+| `+0` | 2 | image index; `-1` = reuse tiles already loaded at this piece's tile number |
+| `+2` | 2 | unknown (0 in all but 5 of 122,469 pieces) |
+| `+4` | 2 | OAM attr0: y in bits 0–9 (relative to 512), shape in bits 14–15 |
+| `+6` | 2 | OAM attr1: x in bits 0–8 (relative to 256), bit 10 unknown, bit 11 last piece, bit 12 hflip, bit 13 vflip, size in bits 14–15 |
+| `+8` | 2 | OAM attr2: tile number bits 0–9 (32-byte units in the frame's VRAM), priority bits 10–11, palette bits 12–15 |
+
+Rendering: for each piece with an image, copy the image into the frame's VRAM at `tile * 32`; then draw the pieces last to first (earlier OAM entries are on top), each as `w/8 x h/8` 4bpp tiles in 1D order from its tile number. Color 0 is transparent.
+
+**Image** (pointer from the image table): strips of `{u32 pointer, u32 length}` until a length of 0; pointer 0 means `length` zero bytes. The concatenation is the piece's 4bpp tiles.
+
+**Per-frame offsets:** 16 bytes per frame, four `(i16 x, i16 y)` points. Explorers calls them head, left hand, right hand, centre `[hypothesis]`.
+
+**Animation group** (pointer from the group table): 8 pointers, one per direction, each to a sequence of 12-byte steps ended by a zero duration:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| `+0` | 1 | duration in game frames |
+| `+1` | 1 | flags (unknown) |
+| `+2` | 2 | frame index |
+| `+4` | 4 | sprite offset `(i16, i16)` |
+| `+8` | 4 | second offset, probably the shadow `[hypothesis]` |
+
+## Unknown fields
+
+- Group meanings (walk, attack, hurt, ...) and the direction order: not mapped. Red's animation IDs are a lead `[red-hypothesis]`.
+- Piece field `+2`, attr1 bit 10, step flags, the four per-frame points and the second step offset.

@@ -1,4 +1,4 @@
-# Compression: Nitro codecs
+# Compression: Nitro codecs and PX
 
 Issue: [#31](https://github.com/TorratDev/rust-mm/issues/31). Code: `crates/formats/src/compress.rs`. BLZ (overlays) is in [`nds-container.md`](nds-container.md#blz-backwards-lz).
 
@@ -22,6 +22,34 @@ The decoder stops at the declared size. The limit is checked before allocation (
 
 ## Open items
 
-- `message_*.str` starts with `20 34 00 00`. The survey guessed Huffman 4-bit, but this is unverified. Decode it with each codec and check the result.
-- `nitro_haltscreen*.sbin` start with `AT4P`, which may be an AT4PX container (not implemented).
-- Encoders are not written, so there are no round-trip tests yet.
+- Nitro encoders are not written, so the Nitro codecs have no round-trip tests. PX has a literal-only encoder in its tests.
+
+## PX: AT4PX and PKDPX
+
+Code: `crates/formats/src/px.rs`. Tests: unit tests (literal round trip, patterns, back-references, bad input) and `tests/tests/formats_rom.rs`.
+
+**Verification status:** verified against Blue (2026-10-16). All 154 AT4PX sub-files decode to exactly their stored size; portraits, sprites, tilesets and the halt screens decode to clean images. No PKDPX is present in this dump; the 32-bit size variant is implemented from the same rule.
+
+| Offset | Size | Field |
+|--------|------|-------|
+| `0x00` | 5 | magic `AT4PX` or `PKDPX` |
+| `0x05` | 2 | container length, header included |
+| `0x07` | 9 | control nibbles `f[0..9]` |
+| `0x10` | 2 / 4 | decoded size (`u16` AT4PX, `u32` PKDPX) |
+| `0x12` / `0x14` | | stream |
+
+A command byte covers 8 items, MSB first. Bit set: copy one literal byte. Bit clear: read byte `b`, `h = b >> 4`, `l = b & 0xF`:
+
+- `h == f[i]` (first match): write 4 nibbles as 2 bytes `n0<<4|n1`, `n2<<4|n3`. `i == 0`: all four are `l`. `i` in 1–4: all `l` except `n[i-1] = l - 1`. `i` in 5–8: all `l` except `n[i-5] = l + 1` (mod 16).
+- otherwise: back-reference of `h + 3` bytes starting `0x1000 - ((l << 8) | next)` bytes before the end of the output.
+
+The pattern rule was settled on Blue's portraits: the other three candidate readings (base `l±1` with one nibble back at `l`, swapped nibble order) leave stray pixels and score worse on a smoothness count over all 13 Bulbasaur faces.
+
+## Which codecs Blue uses
+
+- **BLZ**: ARM9 static area and all 145 overlays ([`nds-container.md`](nds-container.md)).
+- **AT4PX**: inside the pack archives (portrait and learnset payloads, tilesets, title and halt screens).
+- **Nitro LZ10/LZ11/Huffman/RLE**: not found in this dump. Sub-files starting `10 00 00 00` (`hpNfont*`, `fontsp`) are 8x8 fonts with a glyph count of 16, not LZ10.
+- **Ground BPC tiles**: compressed with a scheme not identified yet ([`maps.md`](maps.md)).
+
+`message_*.str` is **not compressed**: `20 34 00 00` is the first entry of a `u32` offset table (0x3420 / 4 = 3336 strings, [`text.md`](text.md)).

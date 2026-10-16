@@ -166,9 +166,14 @@ mod tests {
 
     #[test]
     fn move_streams() {
-        let d = [0x21, 5, 0x81, 0x02, 9, 0];
-        assert_eq!(stream(&d, 0, true).unwrap(), [(0x21, 5), (0x82, 9)]);
-        assert_eq!(stream(&[3, 4, 0], 0, false).unwrap(), [(3, 0), (4, 0)]);
-        assert!(stream(&[3, 4], 0, false).is_err());
+        // Offset 0 is the null pointer, so the streams start at 1.
+        let d = [0xFF, 0x21, 5, 0x81, 0x02, 9, 0];
+        assert_eq!(stream(&d, 1, true).unwrap(), [(0x21, 5), (0x82, 9)]);
+        assert_eq!(
+            stream(&[0xFF, 3, 4, 0], 1, false).unwrap(),
+            [(3, 0), (4, 0)]
+        );
+        assert!(stream(&[0xFF, 3, 4], 1, false).is_err());
+        assert_eq!(stream(&d, 0, true).unwrap(), []);
     }
 }

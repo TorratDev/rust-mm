@@ -2,7 +2,7 @@
 
 Issues: [#28](https://github.com/TorratDev/rust-mm/issues/28) header, [#29](https://github.com/TorratDev/rust-mm/issues/29) FNT/FAT, [#30](https://github.com/TorratDev/rust-mm/issues/30) binaries, overlays and BLZ. Code: `crates/nds` (`header.rs`, `fs.rs`, `binary.rs`, `blz.rs`). Layout is from GBATEK, little-endian.
 
-**Verification status:** implemented and tested on synthetic ROMs. The ROM-gated checks in `tests/tests/nds_rom.rs` have not run against the reference dump in this environment, so the counts below (24 named files, 169 FAT entries, 145 overlays) are from [`file-survey.md`](../file-survey.md) and still need that run.
+**Verification status:** implemented and tested on synthetic ROMs, and verified against the Blue EUR dump (2026-10-16): `tests/tests/nds_rom.rs` passes with `RESCUE_REQUIRE_ROM=1` (24 named files, 169 FAT entries, 145 overlays, type chart in overlay 1).
 
 ## Header (`0x000`–`0x1FF`)
 
