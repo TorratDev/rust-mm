@@ -71,6 +71,10 @@ impl Game {
         let mut packs = Vec::new();
         for f in fs.files() {
             let data = fs.data(&rom, f.id).map_err(|e| e.to_string())?;
+            // Only `.sbin` pack files: message `.str` tables also parse as archives.
+            if !f.path.ends_with(".sbin") {
+                continue;
+            }
             if let Ok(archive) = Archive::parse(data) {
                 packs.push(Pack {
                     path: f.path.clone(),

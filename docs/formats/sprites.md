@@ -52,3 +52,4 @@ Rendering: for each piece with an image, copy the image into the frame's VRAM at
 
 - Group meanings (walk, attack, hurt, ...) and the direction order: not mapped. Red's animation IDs are a lead `[red-hypothesis]`.
 - Piece field `+2`, attr1 bit 10, step flags, the four per-frame points and the second step offset.
+- Effect objects in `effect.sbin` use the same pieces and steps, without images or per-frame points: see [`effects.md`](effects.md).

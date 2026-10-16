@@ -4,7 +4,7 @@
 
 use rescue_data::{item, moves, species};
 use rescue_formats::graphics::{self, Depth, IndexedImage, Palette};
-use rescue_formats::{font, ground, portrait, px, sprite, text, tileset};
+use rescue_formats::{effect, font, ground, portrait, px, sprite, text, tileset};
 
 use crate::game::Game;
 
@@ -138,6 +138,42 @@ fn whole_file(g: &Game, path: &str, data: &[u8], v: &mut View) -> R {
     Ok(())
 }
 
+/// Plays `s` at the animation group and direction in `opt`: the frame that `opt.tick`
+/// lands on, with its timing, plus counts.
+fn sprite_view(s: &sprite::Sprite, palettes: &[Palette], opt: Options, v: &mut View) -> R {
+    let group = opt.group.min(s.groups.len().saturating_sub(1));
+    let seq = s
+        .groups
+        .get(group)
+        .map(|d| &d[opt.direction % sprite::DIRECTIONS]);
+    let total: u32 = seq
+        .map(|q| q.iter().map(|st| u32::from(st.duration)).sum())
+        .unwrap_or(0);
+    let mut t = if total > 0 { opt.tick % total } else { 0 };
+    let step = seq.and_then(|q| {
+        q.iter().find(|st| {
+            let hit = t < u32::from(st.duration);
+            t = t.saturating_sub(u32::from(st.duration));
+            hit
+        })
+    });
+    if let Some(st) = step {
+        let f = s.render_frame(usize::from(st.frame))?;
+        v.image = Some(rgba(&f.image, palettes));
+        v.lines.push(format!(
+            "frame {} for {} ticks, offset {:?}, shadow {:?}",
+            st.frame, st.duration, st.offset, st.shadow
+        ));
+    }
+    v.lines.push(format!(
+        "{} groups, {} frames, {} images",
+        s.groups.len(),
+        s.frames.len(),
+        s.images.len()
+    ));
+    Ok(())
+}
+
 fn sub_file(g: &Game, pack: &str, name: &str, data: &[u8], opt: Options, v: &mut View) -> R {
     match (pack, name) {
         ("monster.sbin", n) if portrait::species_of(n).is_some() => {
@@ -169,37 +205,29 @@ fn sub_file(g: &Game, pack: &str, name: &str, data: &[u8], opt: Options, v: &mut
                 "sprite: {}",
                 g.species_name(sprite::species_of(n).unwrap_or(0))
             );
-            let s = sprite::Sprite::parse(data)?;
-            let group = opt.group.min(s.groups.len().saturating_sub(1));
-            let seq = s
-                .groups
-                .get(group)
-                .map(|d| &d[opt.direction % sprite::DIRECTIONS]);
-            let total: u32 = seq
-                .map(|q| q.iter().map(|st| u32::from(st.duration)).sum())
-                .unwrap_or(0);
-            let mut t = if total > 0 { opt.tick % total } else { 0 };
-            let step = seq.and_then(|q| {
-                q.iter().find(|st| {
-                    let hit = t < u32::from(st.duration);
-                    t = t.saturating_sub(u32::from(st.duration));
-                    hit
-                })
-            });
-            if let Some(st) = step {
-                let f = s.render_frame(usize::from(st.frame))?;
-                v.image = Some(rgba(&f.image, &g.sprite_palettes));
-                v.lines.push(format!(
-                    "frame {} for {} ticks, offset {:?}, shadow {:?}",
-                    st.frame, st.duration, st.offset, st.shadow
-                ));
+            sprite_view(&sprite::Sprite::parse(data)?, &g.sprite_palettes, opt, v)?;
+        }
+        ("effect.sbin", n) if n.starts_with("efob") => {
+            v.kind = format!("effect object {n}");
+            let o = effect::parse_object(data)?;
+            sprite_view(&o.sprite, std::slice::from_ref(&o.palette), opt, v)?;
+        }
+        ("effect.sbin", n) if n.starts_with("efbg") => {
+            v.kind = format!("effect background {n}");
+            let b = effect::parse_background(data)?;
+            let banks: Vec<Palette> = b.palette.chunks(16).map(<[_]>::to_vec).collect();
+            let sheet = graphics::tile_sheet(&b.tiles, Depth::Bpp4, 16)?;
+            v.image = Some(rgba(&sheet, &banks));
+            for (i, f) in b.frames.iter().enumerate() {
+                v.lines.push(match f {
+                    Some(f) => format!(
+                        "frame {i}: header {:?}, {} map entries",
+                        f.header,
+                        f.map.len()
+                    ),
+                    None => format!("frame {i}: null"),
+                });
             }
-            v.lines.push(format!(
-                "{} groups, {} frames, {} images",
-                s.groups.len(),
-                s.frames.len(),
-                s.images.len()
-            ));
         }
         ("monster.sbin", "palet")
         | ("titlemenu.sbin", _)

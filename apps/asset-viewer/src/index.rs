@@ -6,7 +6,8 @@
 
 use std::fmt::Write as _;
 
-use rescue_formats::{font, ground, portrait, px, sir0::Sir0, sprite, text, tileset};
+use rescue_data::{dungeon, species};
+use rescue_formats::{effect, font, ground, portrait, px, sir0::Sir0, sprite, text, tileset};
 
 use crate::game::Game;
 
@@ -104,6 +105,20 @@ pub fn build(g: &Game) -> Vec<Resource> {
             info: format!("species {i}"),
         });
     }
+    if let Some(p) = g.pack("dungeon.sbin")
+        && let Some(d) = p.archive.get(&p.data, "mapparam").ok()
+        && let Ok(mp) = dungeon::parse_mapparam(d, g.items.len())
+    {
+        for (i, floors) in mp.dungeons.iter().enumerate() {
+            out.push(Resource {
+                file: "dungeon.sbin".into(),
+                sub: "mapparam".into(),
+                format: "dungeon".into(),
+                name: String::new(),
+                info: format!("dungeon {i}, {} floors", floors.len()),
+            });
+        }
+    }
     out
 }
 
@@ -194,6 +209,78 @@ pub fn classify(g: &Game, pack: &str, name: &str, d: &[u8]) -> (String, String, 
             format!("{} glyphs, 12x12", f.len()),
         );
     }
+    if pack == "system.sbin"
+        && let Some(sp) = name
+            .strip_prefix("lvmp")
+            .and_then(|n| n.parse::<u16>().ok())
+        && let Ok(levels) = species::parse_level_data(d)
+    {
+        return (
+            "level growth".into(),
+            g.species_name(sp),
+            format!("{} levels", levels.len()),
+        );
+    }
+    if pack == "effect.sbin"
+        && name.starts_with("efob")
+        && let Ok(o) = effect::parse_object(d)
+    {
+        let info = format!(
+            "{} poses, {} animations, {} tiles",
+            o.sprite.frames.len(),
+            o.sprite.groups.len(),
+            o.sprite.tiles.len() / 32
+        );
+        return ("effect object".into(), String::new(), info);
+    }
+    if pack == "effect.sbin"
+        && name.starts_with("efbg")
+        && let Ok(b) = effect::parse_background(d)
+    {
+        let info = format!("{} frames, {} tiles", b.frames.len(), b.tiles.len() / 32);
+        return ("effect background".into(), String::new(), info);
+    }
+    if pack == "dungeon.sbin"
+        && let Some((n, part)) = tileset_part(name)
+    {
+        match part {
+            "canm" => {
+                if let Ok(slots) = tileset::parse_palette_anim(d) {
+                    let animated = slots.iter().flatten().count();
+                    return (
+                        "tileset animation".into(),
+                        format!("tileset {n}"),
+                        format!("{animated} animated slots"),
+                    );
+                }
+            }
+            "cex" => {
+                if let Ok(table) = tileset::parse_autotile(d) {
+                    return (
+                        "autotile table".into(),
+                        format!("tileset {n}"),
+                        format!("{} entries", table.len()),
+                    );
+                }
+            }
+            "fon" | "cel" => {
+                if let Ok(raw) = px::decompress(d, px::DEFAULT_LIMIT) {
+                    let info = if part == "cel" {
+                        format!("{} metatiles", tileset::parse_metatiles(&raw).len())
+                    } else {
+                        format!("{} tiles", raw.len() / 32)
+                    };
+                    let format = if part == "cel" {
+                        "tileset metatiles"
+                    } else {
+                        "tileset tiles"
+                    };
+                    return (format.into(), format!("tileset {n}"), info);
+                }
+            }
+            _ => {}
+        }
+    }
     if px::kind(d).is_some() {
         let n = px::header(d).map(|h| h.decoded_size).unwrap_or(0);
         return (
@@ -206,6 +293,13 @@ pub fn classify(g: &Game, pack: &str, name: &str, d: &[u8]) -> (String, String, 
         return ("sir0".into(), String::new(), format!("{size} bytes"));
     }
     ("raw".into(), String::new(), format!("{size} bytes"))
+}
+
+/// Tileset number and part (`canm`, `cex`, `fon`, `cel`, ...) of a `bNN<part>` sub-file.
+fn tileset_part(name: &str) -> Option<(u8, &str)> {
+    let rest = name.strip_prefix('b')?;
+    let split = rest.find(|c: char| !c.is_ascii_digit())?;
+    Some((rest[..split].parse().ok()?, &rest[split..]))
 }
 
 /// Case-insensitive substring search over every field.

@@ -96,12 +96,15 @@ pub struct Sprite {
     /// Frames, each a list of pieces.
     pub frames: Vec<Vec<Piece>>,
     /// Per-frame reference points (4 `(x, y)` pairs; Explorers calls them head, hands,
-    /// centre: `[hypothesis]`).
+    /// centre: `[hypothesis]`). Empty for effect objects, which have none.
     pub offsets: Vec<[(i16, i16); 4]>,
     /// Images: 4bpp tile data in 1D order.
     pub images: Vec<Vec<u8>>,
     /// Animation groups: per group, one step sequence per direction.
     pub groups: Vec<[Vec<AnimStep>; DIRECTIONS]>,
+    /// 4bpp tiles already in VRAM before any frame loads. Effect objects keep their
+    /// tiles here ([`crate::effect`]); creature sprites leave it empty.
+    pub tiles: Vec<u8>,
 }
 
 /// A rendered frame: image plus where the sprite origin sits inside it.
@@ -116,6 +119,63 @@ pub struct RenderedFrame {
 /// Species number from an `axNNN` sub-file name.
 pub fn species_of(name: &str) -> Option<u16> {
     name.strip_prefix("ax")?.parse().ok()
+}
+
+/// Pieces of one frame, read from `at` through the piece with the last-piece flag.
+pub(crate) fn read_pieces(data: &[u8], mut at: usize) -> Result<Vec<Piece>> {
+    let mut pieces = Vec::new();
+    loop {
+        let img = bytes::i16_at(data, at, "sprite piece")?;
+        let p = Piece {
+            image: u16::try_from(img).ok(),
+            unknown: bytes::u16_at(data, at + 2, "sprite piece")?,
+            attr0: bytes::u16_at(data, at + 4, "sprite piece")?,
+            attr1: bytes::u16_at(data, at + 6, "sprite piece")?,
+            attr2: bytes::u16_at(data, at + 8, "sprite piece")?,
+        };
+        at += 10;
+        pieces.push(p);
+        if p.is_last() {
+            return Ok(pieces);
+        }
+        if pieces.len() >= MAX_PIECES {
+            return Err(Error::invalid("sprite frame", "no last-piece flag"));
+        }
+    }
+}
+
+/// Animation steps of one direction, read from `at` up to the zero-duration terminator.
+/// Every step must name one of the `frame_count` frames.
+pub(crate) fn read_steps(data: &[u8], mut at: usize, frame_count: usize) -> Result<Vec<AnimStep>> {
+    let mut seq = Vec::new();
+    loop {
+        let duration = bytes::u8_at(data, at, "sprite animation")?;
+        if duration == 0 {
+            return Ok(seq);
+        }
+        let i16_at = |o| bytes::i16_at(data, at + o, "sprite animation");
+        let step = AnimStep {
+            duration,
+            flags: bytes::u8_at(data, at + 1, "sprite animation")?,
+            frame: bytes::u16_at(data, at + 2, "sprite animation")?,
+            offset: (i16_at(4)?, i16_at(6)?),
+            shadow: (i16_at(8)?, i16_at(10)?),
+        };
+        if usize::from(step.frame) >= frame_count {
+            return Err(Error::invalid(
+                "sprite animation",
+                format!("frame {} of {frame_count}", step.frame),
+            ));
+        }
+        seq.push(step);
+        at += 12;
+        if seq.len() > MAX_SEQUENCE {
+            return Err(Error::invalid(
+                "sprite animation",
+                "sequence has no terminator",
+            ));
+        }
+    }
 }
 
 impl Sprite {
@@ -134,27 +194,8 @@ impl Sprite {
         let frame_count = (offsets_at - frames_at) / 4;
         let mut frames = Vec::with_capacity(frame_count);
         for i in 0..frame_count {
-            let mut at = s.ptr(frames_at + i * 4, "sprite frame table")?;
-            let mut pieces = Vec::new();
-            loop {
-                let img = bytes::i16_at(data, at, "sprite piece")?;
-                let p = Piece {
-                    image: u16::try_from(img).ok(),
-                    unknown: bytes::u16_at(data, at + 2, "sprite piece")?,
-                    attr0: bytes::u16_at(data, at + 4, "sprite piece")?,
-                    attr1: bytes::u16_at(data, at + 6, "sprite piece")?,
-                    attr2: bytes::u16_at(data, at + 8, "sprite piece")?,
-                };
-                at += 10;
-                pieces.push(p);
-                if p.is_last() {
-                    break;
-                }
-                if pieces.len() >= MAX_PIECES {
-                    return Err(Error::invalid("sprite frame", "no last-piece flag"));
-                }
-            }
-            frames.push(pieces);
+            let at = s.ptr(frames_at + i * 4, "sprite frame table")?;
+            frames.push(read_pieces(data, at)?);
         }
         let offsets = (0..frame_count)
             .map(|i| {
@@ -197,35 +238,8 @@ impl Sprite {
             let dirs_at = s.ptr(groups_at + g * 4, "sprite group table")?;
             let mut dirs: [Vec<AnimStep>; DIRECTIONS] = Default::default();
             for (d, seq) in dirs.iter_mut().enumerate() {
-                let mut at = s.ptr(dirs_at + d * 4, "sprite direction table")?;
-                loop {
-                    let duration = bytes::u8_at(data, at, "sprite animation")?;
-                    if duration == 0 {
-                        break;
-                    }
-                    let i16_at = |o| bytes::i16_at(data, at + o, "sprite animation");
-                    let step = AnimStep {
-                        duration,
-                        flags: bytes::u8_at(data, at + 1, "sprite animation")?,
-                        frame: bytes::u16_at(data, at + 2, "sprite animation")?,
-                        offset: (i16_at(4)?, i16_at(6)?),
-                        shadow: (i16_at(8)?, i16_at(10)?),
-                    };
-                    if usize::from(step.frame) >= frame_count {
-                        return Err(Error::invalid(
-                            "sprite animation",
-                            format!("frame {} of {frame_count}", step.frame),
-                        ));
-                    }
-                    seq.push(step);
-                    at += 12;
-                    if seq.len() > MAX_SEQUENCE {
-                        return Err(Error::invalid(
-                            "sprite animation",
-                            "sequence has no terminator",
-                        ));
-                    }
-                }
+                let at = s.ptr(dirs_at + d * 4, "sprite direction table")?;
+                *seq = read_steps(data, at, frame_count)?;
             }
             groups.push(dirs);
         }
@@ -234,6 +248,7 @@ impl Sprite {
             offsets,
             images,
             groups,
+            tiles: Vec::new(),
         })
     }
 
@@ -245,8 +260,14 @@ impl Sprite {
             .frames
             .get(index)
             .ok_or_else(|| Error::invalid("sprite", format!("no frame {index}")))?;
+        if pieces.is_empty() {
+            return Err(Error::invalid(
+                "sprite",
+                format!("frame {index} has no pieces"),
+            ));
+        }
         let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
-        let mut vram = Vec::new();
+        let mut vram = self.tiles.clone();
         for p in pieces {
             let (w, h) = p.size();
             x0 = x0.min(p.x());

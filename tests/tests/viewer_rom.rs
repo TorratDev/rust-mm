@@ -14,7 +14,7 @@ rescue_tests::rom_test! {
             for e in p.archive.entries() {
                 let v = view::view(&g, &p.path, Some(&e.name), view::Options::default());
                 assert!(!v.lines.iter().any(|l| l.starts_with("decode error")), "{}/{}: {:?}", p.path, e.name, v.lines.last());
-                let must_draw = ["portrait", "sprite", "tileset", "font", "palettes", "ground map"]
+                let must_draw = ["portrait", "sprite", "effect", "tileset", "font", "palettes", "ground map"]
                     .iter()
                     .any(|k| v.kind.starts_with(k));
                 if must_draw {
@@ -41,5 +41,9 @@ rescue_tests::rom_test! {
         assert!(index::search(&back, "kao025").iter().any(|r| r.format == "portrait"));
         assert!(!index::search(&back, "tileset").is_empty());
         assert!(index::search(&back, "Oran Berry").iter().any(|r| r.format == "item"));
+        assert_eq!(index::search(&back, "effect object").len(), 139);
+        assert_eq!(index::search(&back, "effect background").len(), 8);
+        assert!(index::search(&back, "level growth").iter().any(|r| r.name == "Bulbasaur"));
+        assert!(index::search(&back, "dungeon 63").iter().any(|r| r.format == "dungeon"));
     }
 }

@@ -67,5 +67,6 @@ Compared field by field against pmd-red's `data/monster/monster_data.json`,
 | Dungeon floors | `mapparam`: 64 dungeons, 1764 `FloorProperties`, 839 monster, 148 trap, 183 item lists | `DungeonMapParam2` | same layout; values not yet compared |
 | Type chart | overlay 1 `0x72688` | `gTypeEffectivenessChart` | same values (V6) |
 
-Not compared yet: type and ability enum fields (Red's JSON uses names), level growth
-values, dungeon floor data.
+Not compared yet: type and ability enum fields (Red's JSON uses names). Level growth values and
+dungeon floor data are not compared: Red's copies of those files are in Red's ROM, which is not
+extracted in the reference checkout, and the checkout's assembly holds only their names.
