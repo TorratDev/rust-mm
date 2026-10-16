@@ -19,6 +19,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rescue-nds = { path = "../crates/nds" }
 rescue-formats = { path = "../crates/formats" }
+rescue-data = { path = "../crates/data" }
 
 # Own workspace, so cargo does not treat it as part of the root one.
 [workspace]
@@ -48,6 +49,27 @@ bench = false
 [[bin]]
 name = "formats_gfx"
 path = "fuzz_targets/formats_gfx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_containers"
+path = "fuzz_targets/formats_containers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formats_assets"
+path = "fuzz_targets/formats_assets.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "data_tables"
+path = "fuzz_targets/data_tables.rs"
 test = false
 doc = false
 bench = false

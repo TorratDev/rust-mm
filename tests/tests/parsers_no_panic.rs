@@ -69,4 +69,34 @@ proptest! {
             let _ = render_tile(tile, &palette, MapEntry::from_raw(0xFFFF));
         }
     }
+
+    #[test]
+    fn random_blue_formats_never_panic(data in prop::collection::vec(any::<u8>(), 0..1024)) {
+        use rescue_formats::{archive::Archive, font, ground, portrait, px, sir0::Sir0, sprite::Sprite, text, tileset};
+        let _ = Archive::parse(&data);
+        let _ = ground::parse_bma(&data);
+        let _ = ground::parse_bpl(&data);
+        let _ = ground::parse_bpc(&data);
+        let _ = text::parse_bin(&data);
+        let _ = text::parse_str(&data);
+        let _ = text::decode(&data);
+        let _ = font::parse_fixed_font(&data);
+        let s = [&b"SIR0"[..], &data].concat();
+        let _ = Sir0::parse(&s);
+        let _ = portrait::parse(&s);
+        if let Ok(sp) = Sprite::parse(&s) {
+            for i in 0..sp.frames.len().min(16) {
+                let _ = sp.render_frame(i);
+            }
+        }
+        let _ = tileset::parse_autotile(&s);
+        let _ = tileset::parse_palette_anim(&s);
+        let _ = font::parse_font(&s);
+        let _ = rescue_data::species::parse_species(&s);
+        let _ = rescue_data::moves::parse_moves(&s);
+        let _ = rescue_data::item::parse_items(&s);
+        let _ = rescue_data::dungeon::parse_mapparam(&s, 240);
+        let _ = px::decompress(&[&b"AT4PX"[..], &data].concat(), 1 << 16);
+        let _ = px::decompress(&[&b"PKDPX"[..], &data].concat(), 1 << 16);
+    }
 }

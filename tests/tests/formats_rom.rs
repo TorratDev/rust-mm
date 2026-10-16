@@ -167,3 +167,56 @@ rescue_tests::rom_test! {
         assert!(maps > 190, "{maps} maps");
     }
 }
+
+rescue_tests::rom_test! {
+    /// Mutation check (#38): real sub-files with a few bytes flipped must give `Ok` or
+    /// `Err`, never a panic, hang or runaway allocation. Deterministic (fixed LCG).
+    fn mutated_assets_never_panic(rom) {
+        let bytes = rom.read();
+        let mut seed: u64 = 0x5EED;
+        let mut next = move || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize
+        };
+        let mon = rom_file(&bytes, "monster.sbin");
+        let marc = Archive::parse(&mon).unwrap();
+        let sys = rom_file(&bytes, "system.sbin");
+        let sarc = Archive::parse(&sys).unwrap();
+        let dun = rom_file(&bytes, "dungeon.sbin");
+        let darc = Archive::parse(&dun).unwrap();
+        let picks: Vec<(&str, Vec<u8>)> = vec![
+            ("ax001", marc.get(&mon, "ax001").unwrap().to_vec()),
+            ("ax150", marc.get(&mon, "ax150").unwrap().to_vec()),
+            ("kao001", marc.get(&mon, "kao001").unwrap().to_vec()),
+            ("kanji_a", sarc.get(&sys, "kanji_a").unwrap().to_vec()),
+            ("wazapara", sarc.get(&sys, "wazapara").unwrap().to_vec()),
+            ("monspara", sarc.get(&sys, "monspara").unwrap().to_vec()),
+            ("lvmp001", sarc.get(&sys, "lvmp001").unwrap().to_vec()),
+            ("mapparam", darc.get(&dun, "mapparam").unwrap().to_vec()),
+            ("b00cex", darc.get(&dun, "b00cex").unwrap().to_vec()),
+            ("b00canm", darc.get(&dun, "b00canm").unwrap().to_vec()),
+        ];
+        for (_name, base) in &picks {
+            for _ in 0..150 {
+                let mut d = base.clone();
+                for _ in 0..1 + next() % 4 {
+                    let i = next() % d.len();
+                    d[i] = next() as u8;
+                }
+                if let Ok(s) = Sprite::parse(&d) {
+                    for f in 0..s.frames.len().min(8) {
+                        let _ = s.render_frame(f);
+                    }
+                }
+                let _ = portrait::parse(&d);
+                let _ = font::parse_font(&d);
+                let _ = rescue_data::moves::parse_moves(&d);
+                let _ = rescue_data::species::parse_species(&d);
+                let _ = rescue_data::species::parse_level_data(&d);
+                let _ = rescue_data::dungeon::parse_mapparam(&d, 240);
+                let _ = tileset::parse_autotile(&d);
+                let _ = tileset::parse_palette_anim(&d);
+            }
+        }
+    }
+}
