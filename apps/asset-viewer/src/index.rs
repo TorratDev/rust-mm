@@ -173,7 +173,7 @@ pub fn classify(g: &Game, pack: &str, name: &str, d: &[u8]) -> (String, String, 
             return (
                 "ground tiles".into(),
                 base.into(),
-                format!("{} tiles, {} chunks (compressed)", b.tiles, b.chunks),
+                format!("{} tiles, {} chunks", b.tiles, b.chunks),
             );
         }
         if let Ok(b) = ground::parse_bpl(d) {

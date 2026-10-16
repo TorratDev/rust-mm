@@ -3,6 +3,7 @@
 //! (docs/rom-tests.md). Asserts counts and sizes only, never ROM bytes.
 
 use rescue_formats::archive::Archive;
+use rescue_formats::gfx::MapEntry;
 use rescue_formats::{font, ground, portrait, px, sir0::Sir0, sprite::Sprite, text, tileset};
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
@@ -143,28 +144,48 @@ rescue_tests::rom_test! {
 }
 
 rescue_tests::rom_test! {
-    /// Every ground map's palette (BPL), BPC header and chunk map (BMA) parse, and the
-    /// map only names chunks its BPC declares. A collision/data tail is present exactly
-    /// when the header flag says so.
+    /// Every ground map's palette (BPL), tiles and chunks (BPC) and chunk map (BMA)
+    /// decode, the map only names chunks its BPC declares, chunks only name tiles of the
+    /// BPC or its animated (BPA) slots and palettes the BPL has, and every map renders. A
+    /// collision/data tail is present exactly when the header flag says so.
     fn ground_maps_parse(rom) {
         let bytes = rom.read();
         let data = rom_file(&bytes, "ground.sbin");
         let arc = Archive::parse(&data).unwrap();
-        let mut maps = 0;
+        let (mut maps, mut rendered) = (0, 0);
         for e in arc.entries().iter().filter(|e| e.name.len() > 1 && e.name.ends_with('m')) {
             let base = &e.name[..e.name.len() - 1];
             let bma = ground::parse_bma(arc.data(&data, e).unwrap()).unwrap_or_else(|err| panic!("{}: {err}", e.name));
             assert_eq!(bma.has_collision || bma.has_data_layer, !bma.extra.is_empty(), "{}", e.name);
-            if let Some(c) = arc.find(&format!("{base}c")) {
-                let bpc = ground::parse_bpc(arc.data(&data, c).unwrap()).unwrap();
-                assert!(bma.layers.iter().flatten().flatten().all(|&ch| ch < bpc.chunks), "{}", e.name);
-            }
-            if let Some(p) = arc.find(base) {
-                ground::parse_bpl(arc.data(&data, p).unwrap()).unwrap_or_else(|err| panic!("{base}: {err}"));
-            }
             maps += 1;
+            // A few maps (`B01P02A`, ...) have no tiles or palettes of their own.
+            let (Some(c), Some(p)) = (arc.find(&format!("{base}c")), arc.find(base)) else {
+                continue;
+            };
+            let bpc = ground::parse_bpc(arc.data(&data, c).unwrap()).unwrap_or_else(|err| panic!("{base}c: {err}"));
+            assert!(bma.layers.iter().flatten().flatten().all(|&ch| ch < bpc.chunks), "{}", e.name);
+            let bpl = ground::parse_bpl(arc.data(&data, p).unwrap()).unwrap_or_else(|err| panic!("{base}: {err}"));
+            let vram_tiles = bpc.tiles + bpc.bpa_tiles.iter().sum::<u16>();
+            for &raw in &bpc.chunk_map {
+                let t = MapEntry::from_raw(raw);
+                assert!(t.tile < vram_tiles && (t.tile == 0 || usize::from(t.palette) < bpl.palettes.len()), "{base}c: entry {raw:#06x}");
+            }
+            // Each declared animated-tile slot `n` is part `X{n+1}` with that many tiles.
+            let bpa: Vec<_> = (1..=4)
+                .map(|i| arc.find(&format!("{base}{i}")).map(|f| ground::parse_bpa(arc.data(&data, f).unwrap()).unwrap()))
+                .collect();
+            for (slot, &n) in bpc.bpa_tiles.iter().enumerate() {
+                assert_eq!(bpa[slot].as_ref().map_or(0, |b| b.tiles), n, "{base} BPA slot {slot}");
+            }
+            let drawn = (0..bma.layers.len()).any(|l| {
+                let img = ground::render_layer(&bpc, &bpa, &bma, l).unwrap_or_else(|err| panic!("{}: {err}", e.name));
+                img.pixels.iter().any(Option::is_some)
+            });
+            assert!(drawn, "{} renders empty", e.name);
+            rendered += 1;
         }
-        assert!(maps > 190, "{maps} maps");
+        assert!(maps > 190 && rendered > 180, "{maps} maps, {rendered} rendered");
+        eprintln!("{maps} maps, {rendered} rendered");
     }
 }
 
