@@ -26,6 +26,7 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 02029C50 | ResetSoundEffectCounters | void ResetSoundEffectCounters(void) | blue-verified | `GameLoop_Async` call order |
 | 02029CF4 | NDS_DebugPrintf | - | tentative | Takes a format string and arguments, for example `"GroundStation_SetBank %d"` |
 | 0202F344 | ResetDialogueBox | void ResetDialogueBox(void) | blue-verified | `GameLoop_Async` and `LoadAndRunQuickSaveDungeon_Async` call order |
+| ov_0001::0217AD64 | GetDefaultMonsterAnimId | uint GetDefaultMonsterAnimId(void * entity) | blue-verified | Returns the animation a monster shows when not acting: 5 while asleep, 11 while bide-ing, else 7; Sudowoodo with 127 turns asleep stays on 7. Same logic as `pmd-red` `sub_806CEBC` |
 | 020020A0 | GetPokemonOverworldPalette | uchar GetPokemonOverworldPalette(short species, bool recolorShopKecleon) | blue-verified | Returns the species byte at `+8` of its 0x48-byte `monspara` entry (`overworldPalette`); returns 10 when `recolorShopKecleon` is set. Like `pmd-red` `GetPokemonOverworldPalette`. Its caller `FUN_02028628` stores the result as the monster sprite's palette at struct `+0x52D4` |
 | 02003794 | LoadMonsterParameters | void LoadMonsterParameters(void) | blue-verified | `GameLoop_Async` call order |
 | 0200CEC4 | InitializePlayTime | void InitializePlayTime(void) | blue-verified | `GameLoop_Async` call order |
