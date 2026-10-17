@@ -61,3 +61,10 @@ rescue.toml
 
 # Resource index built from the user's dump (holds game data, see apps/asset-viewer)
 rescue-index.tsv
+
+# Obsidian vault at docs/: share the config, keep per-user state local
+docs/.obsidian/workspace.json
+docs/.obsidian/workspace-mobile.json
+docs/.obsidian/cache
+docs/.obsidian/plugins/
+docs/.trash/
