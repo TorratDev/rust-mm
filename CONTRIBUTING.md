@@ -1,6 +1,15 @@
 # Contributing
 
-Plans and decisions live in [`docs/roadmap.md`](docs/roadmap.md). Assumption checks are logged in [`docs/verification.md`](docs/verification.md). External sources and their trust levels are in [`docs/references.md`](docs/references.md).
+Plans and decisions live in [`docs/roadmap.md`](docs/roadmap.md), with larger plans in [`docs/plans/`](docs/plans/README.md). Assumption checks are logged in [`docs/verification.md`](docs/verification.md). External sources and their trust levels are in [`docs/references.md`](docs/references.md).
+
+## Docs vault (Obsidian)
+
+`docs/` is an [Obsidian](https://obsidian.md) vault. Open the `docs/` folder as the vault (not the repo root), then start from [`docs/index.md`](docs/index.md).
+
+- Write links as standard Markdown (`[text](file.md)`), not `[[wikilinks]]`, so the notes read on GitHub too.
+- Do not add YAML frontmatter to notes. GitHub shows it as a table at the top of the page.
+- New plans start from [`docs/templates/plan.md`](docs/templates/plan.md); new RE findings from [`docs/templates/re-finding.md`](docs/templates/re-finding.md). Insert them with the Templates plugin.
+- The shared settings in `docs/.obsidian/` are committed. Workspace layout and caches are not.
 
 ## Legal hygiene policy
 
