@@ -121,7 +121,15 @@ rescue_tests::rom_test! {
             assert_eq!((strs.len(), bins.len()), (3336, 3335), "{lang}");
             assert!(strs.iter().zip(&bins).all(|(a, b)| a == b), "{lang}");
             for st in &strs {
-                text::decode(st);
+                for t in text::decode(st) {
+                    match t {
+                        // Known codes must take their arguments; a leftover `Code` for one means the
+                        // argument bytes leaked as text.
+                        text::Token::Code(c) => assert!(!"CcRrPpWn:+=y.;_S>[~".contains(c), "{lang}: {c:?} in {st:?}"),
+                        text::Token::Text(x) => assert!(String::from_utf8(x.clone().into_bytes()).is_ok(), "{lang}"),
+                        _ => {}
+                    }
+                }
             }
         }
         let s = rom_file(&bytes, "message_e.str");
