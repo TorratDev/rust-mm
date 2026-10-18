@@ -2,7 +2,7 @@
 
 Names, addresses and layouts for Blue's structs, fields, functions, globals and enums. Every Phase 3 RE issue uses these names, so a name means the same thing everywhere. Full evidence for each area stays in its topic page; this page holds the summary and the tag.
 
-Dump: `BlueRescueTeamEur` (EUR, NDS), SHA-1 in [`verification.md`](verification.md). Machine-readable rows for the Ghidra import are in [`symbols.md`](symbols.md) (functions and globals only).
+Dump: `BlueRescueTeamEur` (EUR, NDS), SHA-1 in [`verification.md`](verification.md). Machine-readable rows for the Ghidra import are in [`symbols.md`](symbols.md) (functions and globals only). `symbols.md` is the source: the Globals and Functions tables below repeat its rows, and a change to one goes into both. The four RNG functions (`SeedRng`, `RandInt`, `InitDungeonRNG`, `DungeonRandInt`) have no `symbols.md` row yet; their evidence is in [`re/rng.md`](re/rng.md).
 
 ## Tagging rule
 
