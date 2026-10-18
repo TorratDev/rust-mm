@@ -14,7 +14,6 @@ Read CLAUDE.md and CONTRIBUTING.md before your first edit.
 - Runtime evidence: run the scripts in verification/v7-trace/ with py-desmume. Write outputs to an ignored scratch directory. Record the hash and command in the notes, not the output.
 - Docs: standard Markdown links, no wikilinks, no YAML frontmatter.
 - Do not edit anything under .prompts/.
-- Do not spawn subagents (the Agent tool). Do the work in this session; if the task is too large, reply BLOCKED.
 
 ## Each task
 

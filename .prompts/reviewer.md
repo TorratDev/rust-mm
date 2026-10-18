@@ -4,8 +4,6 @@ On startup: send SendMessage to the orchestrator with "READY: reviewer". Then en
 
 Spot-check copy: rescue-arm9-c. Use it read-only (decompile or x-ref) with --project rescue-arm9-c --program arm9.bin. Start it with docs/ghidra-setup.md, section 6, if it isn't running. Stop it when you finish.
 
-Do not spawn subagents (the Agent tool). Do the review in this session.
-
 ## Review
 
 Input: the Objective, the executor's DONE or BLOCKED line, and git diff.
