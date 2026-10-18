@@ -19,7 +19,9 @@ Evidence: ghidra-cli decompile of `ov_0001::0215174C` and its callees, in the `r
 | ov_0001::0214D448 | shop room (std 9) | ghidra-cli decompile; the argument is a value read through a global |
 | ov_0001::0214D190 | monster house (std 10) | ghidra-cli decompile; the argument is a value read through a global |
 | ov_0001::0214FF30 | extra hallways (std 11) | ghidra-cli decompile; last argument is `props[+0x13]` |
-| ov_0001::0214E3DC | not named | ghidra-cli decompile; 2 `DungeonRandInt` call sites, purpose not read yet |
+| ov_0001::0214E3DC | room imperfections (std 12) | ghidra-cli decompile; conditions and the 60 % draw match [`dungeon-generation.md`](dungeon-generation.md), step 12 |
+| ov_0001::021B45B0 | shop chance copy | ghidra-cli: literal `0x021525E4` points here; `GenerateFloor` copies `props +0x07` into it |
+| ov_0001::021B45AC | monster-house chance copy | ghidra-cli: literal `0x021525E8` points here; `GenerateFloor` copies `props +0x08` into it |
 | ov_0001::0219D014 | DungeonRandRange | [`rng.md`](rng.md) |
 | ov_0001::0219D058 | DungeonRandInt | [`rng.md`](rng.md) |
 
@@ -32,9 +34,9 @@ Evidence: ghidra-cli decompile of `ov_0001::0215174C` and its callees, in the `r
 4. `assign grid-cell connections` (`0214F6A0`), with the same arguments as the standard path.
 5. `create hallways` (`0214E824`), with a pointer to the stack value that holds the dig list.
 6. `ensure the grid is connected` (`0214DB54`).
-7. Shop room (`0214D448`) and monster house (`0214D190`). Both take a value read through a global, not `props`. The standard path's chances come from `props +0x07` and `+0x08` (see [`dungeon-generation.md`](dungeon-generation.md)). The globals' values are not known.
+7. Shop room (`0214D448`) and monster house (`0214D190`). Each takes a chance read through a global: `*021B45B0` and `*021B45AC`. Those globals are copies of `props +0x07` and `+0x08`, which `GenerateFloor` writes at its start. So case 3 uses the same chances as the standard path's steps 9 and 10 (see [`dungeon-generation.md`](dungeon-generation.md)).
 8. Extra hallways (`0214FF30`) with `props[+0x13]` as the attempt count. This matches step 11 in [`dungeon-generation.md`](dungeon-generation.md).
-9. `0214E3DC(grid, 6, 4)`: not read yet.
+9. `0214E3DC(grid, 6, 4)`: step 12, room imperfections. Its conditions and the 60 % draw match [`dungeon-generation.md`](dungeon-generation.md), so it runs on this layout's rooms the same way.
 
 No maze step (std 8) and no finalising passes (`ResetInnerBoundaryTileRows`, `EnsureImpassableTilesAreWalls`, `FinalizeJunctions`) appear in the body. Whether those run after this function is not checked.
 
@@ -49,8 +51,6 @@ No maze step (std 8) and no finalising passes (`ResetInnerBoundaryTileRows`, `En
 
 ## Open questions
 - Emulator check: run a floor that takes layout 3 with `floor_stages.py` / `floor_oracle.py` and compare the RNG state after the cell loop and after each callee. Needs `RESCUE_ROM` and `py-desmume`.
-- Name `0214E3DC` (2 Int draws) and find its role.
-- Find the meaning of the two globals that feed the shop and monster-house calls (`DAT_02151bec`, `DAT_02151bf0`).
 - Map the post-loop flag offsets to named cell fields.
 - Confirm the mask constant (`DAT_0219d078`, assumed `0xFFFF`) and the cell stride literal.
 - Check what follows this function: the finalising passes, and whether `GenerateFloor` runs them for this layout.
