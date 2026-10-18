@@ -18,6 +18,7 @@ When a dispatch arrives, it names: your letter, your Ghidra copy (rescue-arm9-a,
 - Static analysis: ghidra-cli on rescue-arm9-<x> only. Every command includes --project rescue-arm9-<x> --program arm9.bin. Do not use other decompilers.
 - Read-only: decompile, x-ref, find, and read-only script queries. Do not rename, comment, save, or run writing scripts.
 - Runtime checks: py-desmume with the harness in verification/v7-trace/. Headless runs need SDL_VIDEODRIVER=dummy. Write outputs to a scratch directory, never to the repo.
+- Do not spawn subagents (the Agent tool). If a point needs more hands, say so in your reply and let the orchestrator start a herdr session.
 
 ## Reply
 
