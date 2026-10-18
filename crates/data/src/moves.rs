@@ -3,7 +3,7 @@
 //! Content header: `{move table pointer, learnset table pointer}`. Moves are Red's
 //! 0x24-byte `MoveDataEntry`; learnsets are `{level-up stream pointer, TM/HM stream
 //! pointer}` per species. A stream is move IDs (1 byte, or 2 when bit 7 of the first is
-//! set: `(b1 & 0x7F) << 7 | (b0 & 0x7F)`), each followed by a level byte for level-up
+//! set: `(b0 & 0x7F) << 7 | (b1 & 0x7F)`), each followed by a level byte for level-up
 //! streams; 0 ends it.
 
 use rescue_formats::read::{self as bytes, cstr_at};
@@ -147,6 +147,11 @@ pub fn parse_moves(data: &[u8]) -> Result<MoveData> {
         .collect::<Result<Vec<_>>>()?;
     let learnsets = (0..(s.data_offset - learn_at) / 8)
         .map(|i| {
+            // Blue reads an empty stream for species 420 and 421 whatever the table holds
+            // (`FUN_0200b448`, `FUN_0200b48c`), though the table has TM/HM entries for them.
+            if matches!(i, 420 | 421) {
+                return Ok(Learnset::default());
+            }
             let at = learn_at + i * 8;
             Ok(Learnset {
                 level_up: stream(data, s.ptr(at, "level-up moves")?, true)?,

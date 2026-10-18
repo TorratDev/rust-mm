@@ -2,7 +2,7 @@
 //! Asserts counts, cross-table consistency and a few well-known facts; the snapshot
 //! records only a SHA-1 of each parsed table, never the values.
 
-use rescue_data::{dungeon, item, moves, species, types};
+use rescue_data::{dungeon, item, moves, recruit, species, types};
 use rescue_formats::archive::Archive;
 use rescue_nds::binary::{overlay_data, read_overlay_tables};
 use rescue_nds::fs::Filesystem;
@@ -29,6 +29,9 @@ rescue_tests::rom_test! {
         assert_eq!((mons[1].name.as_str(), mons[1].types), ("Bulbasaur", [4, 8]));
         let mv = moves::parse_moves(arc.get(&sys, "wazapara").unwrap()).unwrap();
         assert_eq!((mv.moves.len(), mv.learnsets.len()), (413, 424));
+        // Blue reads an empty learnset for species 420 and 421, whatever the table holds.
+        assert_eq!(mv.learnsets[420], moves::Learnset::default());
+        assert_eq!(mv.learnsets[421], moves::Learnset::default());
         assert!(mv.learnsets.iter().flat_map(|l| l.level_up.iter().map(|m| m.0).chain(l.tm_hm.iter().copied()))
             .all(|m| usize::from(m) < mv.moves.len()));
         let items = item::parse_items(arc.get(&sys, "itempara").unwrap()).unwrap();
@@ -50,6 +53,9 @@ rescue_tests::rom_test! {
         let mp = dungeon::parse_mapparam(darc.get(&dun, "mapparam").unwrap(), items.len()).unwrap();
         assert_eq!((mp.dungeons.len(), mp.floor_properties.len()), (64, 1764));
         assert_eq!((mp.monster_spawns.len(), mp.trap_chances.len(), mp.item_spawns.len()), (839, 148, 178));
+        // 8-byte records; each list's terminator ends where the next list starts (checked by
+        // the parser, which fails otherwise).
+        assert_eq!(mp.monster_spawns.iter().map(Vec::len).sum::<usize>(), 5632);
         for f in mp.dungeons.iter().flatten() {
             assert!(usize::from(f.properties) < mp.floor_properties.len());
             assert!(usize::from(f.monsters) < mp.monster_spawns.len());
@@ -64,10 +70,12 @@ rescue_tests::rom_test! {
         let ov1 = overlay_data(&bytes, &fs, arm9.iter().find(|o| o.id == 1).unwrap()).unwrap();
         let chart = types::type_chart(&ov1).unwrap();
         assert!(chart.iter().flatten().all(|v| (0..=3).contains(v)));
+        let recruit = recruit::recruit_rate_by_level(&ov1).unwrap();
+        assert!(recruit[90..].iter().all(|&r| r == 240));
 
         let summary = format!(
-            "species {}\nmoves {}\nitems {} ({})\nlevels {}\nmapparam {}\ntype chart {}\n",
-            digest(&mons), digest(&mv), items.len(), digest(&items), digest(&levels), digest(&mp), digest(&chart)
+            "species {}\nmoves {}\nitems {} ({})\nlevels {}\nmapparam {}\ntype chart {}\nrecruit {}\n",
+            digest(&mons), digest(&mv), items.len(), digest(&items), digest(&levels), digest(&mp), digest(&chart), digest(&recruit)
         );
         insta::assert_snapshot!(summary);
     }

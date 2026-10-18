@@ -133,7 +133,8 @@ pub fn parse_mapparam(data: &[u8], item_ids: usize) -> Result<MapParam> {
 
     let monster_spawns = monster_lists
         .iter()
-        .map(|&start| {
+        .enumerate()
+        .map(|(k, &start)| {
             let mut out = Vec::new();
             let mut o = start;
             loop {
@@ -146,10 +147,21 @@ pub fn parse_mapparam(data: &[u8], item_ids: usize) -> Result<MapParam> {
                     level: (packed >> 9) as u8,
                     weights: [i16_(o + 2)?, i16_(o + 4)?],
                 });
-                o += 6;
+                // 8-byte records; the fourth halfword is always 0 padding.
+                o += 8;
                 if out.len() > 64 {
                     return Err(FormatError::invalid("monster spawn list", "no terminator"));
                 }
+            }
+            // The terminator record ends exactly where the next list starts (838 of 838
+            // checked in Blue's data; the last list is followed by other data).
+            if let Some(&next) = monster_lists.get(k + 1)
+                && o + 8 != next
+            {
+                return Err(FormatError::invalid(
+                    "monster spawn list",
+                    format!("terminator at {o:#x} does not end at {next:#x}"),
+                ));
             }
             Ok(out)
         })

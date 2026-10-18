@@ -66,6 +66,18 @@ Compared field by field against pmd-red's `data/monster/monster_data.json`,
 | Level growth | `lvmpNNN`: 421 files, SIR0 + AT4PX, 100 x 12-byte `LevelData` | `LevelData`, `lvmpNNN` in the Red system archive (`SIRO` + AT4PX) | **all 421 files identical** (expected EXP, HP, attack and defence gains, all 100 levels) |
 | Dungeon floors | `mapparam`: 64 dungeons, 1831 floors, 1764 `FloorProperties`, 839 monster, 148 trap, 178 item lists | `DungeonMapParam2` (`SIRO`, five VA pointers) | **all identical** in every table (floors: properties, monster, trap and item indices; floor properties and lists: raw values). The parser had counted five header pointers as item lists (183); fixed to 178. |
 | Type chart | overlay 1 `0x72688` | `gTypeEffectivenessChart` | same values (V6) |
+| Monster spawn record | 8 bytes `{u16 species \| level, s16 weight[2], u16 pad}`; loader `FUN_ov_0001__02138ccc`, end test `FUN_02000eec` | `str_spawn_pokemon_data.h`, comment "R=0x8 \| B=0x6" | **8 bytes in Blue; Red's "B=0x6" comment is wrong** (blue-verified). The parser used 6 bytes and kept one entry per list (839 instead of 5632) |
+| Monster spawn terminator | each list's species-0 record ends where the next list starts (838 of 838; the last list is followed by other data) | not checked | blue-verified; the parser now fails otherwise |
+| Monster spawn cap | loop cap of 32 entries per list (the largest list in the file has 11) | not checked | blue-verified (investigator C); Red not checked |
+| Learnsets of species 420 and 421 | empty stream from `FUN_0200b448`, `FUN_0200b48c`, `FUN_02001844` (pointer `0x02091C84`); the table has 2 and 59 TM/HM moves for them | not checked | **Blue only** (blue-verified); the parser now returns empty learnsets for them |
+| Level gate on learnset moves | moves 0xEE, 0xEF, 0x110, 0x162 skipped unless a monster field at `+0xA` is at least 333 (`02091E18`–`02091E34`) | not checked | blue-verified values; field meaning unknown |
+| Learn cap | 413 moves (`DAT_02001a2c`) | not checked | blue-verified |
+| Regen byte | speed `(b & 0x7F) << 1`; bit 7 is a separate flag (`FUN_02002368`) | regen byte, not split | **Blue reads a flag in bit 7** (blue-verified); flag meaning unknown |
+| Recruit level table | `gRecruitRateByLevel`, 101 `s16` in overlay 1 at `0x7210C` | `gRecruitRateByLevel`, `dungeon_config.c` | **identical**, 240 at levels 90–100 (blue-verified) |
+| Recruit formula | `FUN_ov_0001__0217f9b8`: roll 1000, `-999` fails, Friend Bow +100, level rate | `DungeonMonRecruit` | **identical** (blue-verified) |
+| Special item IDs | `0x69`, `0x77`–`0x7A` excluded from normal items (`FUN_0200747c`) | not checked | blue-verified; Red not checked |
+| Special move IDs | 8, 0x3C, 0x4B, 0x64, 0x97, 0x99, 0x9C, 0xCD, 0x15C (`FUN_020092bc`) | not checked | blue-verified; Red not checked |
+| Item move ID | `u16` at `+0x18` (`FUN_02007670`) | `ItemDataEntry` field | Blue is unsigned; the parser was `i16` and is now `u16` (blue-verified) |
 
 Level growth and dungeon floor data were compared on 2026-10-17 against the Red dump held in the
 repository (`rs-pmdr.gba`, SHA-1 `afee3b060dd5fd4a68afb1b003456aef3a2af073`). Its SHA-1 differs from
@@ -73,4 +85,4 @@ the reference `pmd_red.gba` in `reference/pmd-red/red.sha1` (`9f4cfc5b…`), so 
 revision, and the comparison is against that revision. Tables are read from the Red ROM, which
 is never extracted into the repository.
 
-Not compared yet: moves and items. The Red move table at `0x243BCC` gives the right names for some entries, but the stride or order differs from Blue's, so the layout is not mapped yet.
+Moves and items were compared with `pmd-red`'s JSON data (the first table above). Blue's accessors for the move and item fields were also checked against the offsets in `data.md` (2026-10-18). The Red ROM's move table at `0x243BCC` has not been mapped; the comparison did not need it.
