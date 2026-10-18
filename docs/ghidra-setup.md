@@ -87,6 +87,9 @@ The GUI path uses the same script, but it has not been run in this repository's 
 
 Auto-analysis only follows code from entry points it knows, and it leaves literal-pool words untyped, so references through them are missing. On the supported dump only overlays 0, 1 and 7 hold code (the other 142 are data, see V8 in [`verification.md`](verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses)). After the import, run [`RescueOverlayDiscover.java`](../tools/ghidra/RescueOverlayDiscover.java) on those three:
 
+```sh
+ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueOverlayDiscover.java -- all ov_0000 ov_0001 ov_0007
+```
 ```powershell
 ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueOverlayDiscover.java -- all ov_0000 ov_0001 ov_0007
 ```
@@ -97,6 +100,10 @@ ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueOv
 
 [`symbols.md`](symbols.md) lists every function and global named so far. [`RescueApplySymbols.java`](../tools/ghidra/RescueApplySymbols.java) applies the whole table (names, signatures, data types), then checks each row and ends with `all checks passed`. [`RescueRngLabels.java`](../tools/ghidra/RescueRngLabels.java) does the same for the RNG and also checks the RNG constants.
 
+```sh
+ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueRngLabels.java
+ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueApplySymbols.java
+```
 ```powershell
 ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueRngLabels.java
 ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueApplySymbols.java
@@ -145,8 +152,13 @@ V9 ([#19](https://github.com/TorratDev/rust-mm/issues/19)) checked [REA](https:/
 
 [ghidra-cli](https://github.com/akiselev/ghidra-cli) (GPL-3.0, tested with v0.2.2) runs Ghidra headless as a resident "bridge" and answers queries from the command line in well under a second: decompile, cross-references, renames, signatures, scripts. It is how the RNG work in [`re/rng.md`](re/rng.md) was done.
 
-Setup (Windows example; the release zip holds one `ghidra.exe`):
+Setup (Linux and Windows; the release zip holds one `ghidra` binary, `ghidra.exe` on Windows):
 
+```sh
+ghidra config set ghidra_install_dir ~/tools/ghidra_12.1.4_PUBLIC
+ghidra config set ghidra_project_dir ~/rescue-re/ghidra
+ghidra doctor
+```
 ```powershell
 ghidra config set ghidra_install_dir C:\tools\ghidra_12.1.4_PUBLIC
 ghidra config set ghidra_project_dir C:\rescue-re\ghidra
@@ -155,6 +167,12 @@ ghidra doctor
 
 Use:
 
+```sh
+ghidra --project rescue-arm9 --program arm9.bin decompile ov_0001::0219d058
+ghidra --project rescue-arm9 --program arm9.bin x-ref to 0x020df704
+ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueRngLabels.java
+ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueNdsReport.java -- ov_0001+0x72688
+```
 ```powershell
 ghidra --project rescue-arm9 --program arm9.bin decompile ov_0001::0219d058
 ghidra --project rescue-arm9 --program arm9.bin x-ref to 0x020df704
@@ -166,7 +184,7 @@ Things to know:
 
 - **One opener at a time.** The bridge opens the project like the GUI does. Save and close the GUI before you start the bridge, and stop the bridge (`ghidra --project rescue-arm9 stop`) before you reopen the GUI. Changes made through the bridge are on disk after it stops.
 - **Stop it when you are done.** The bridge listens on `127.0.0.1` without authentication and can run scripts, so any local program could drive it while it runs.
-- **Starting from a script:** the first command starts the bridge as a child process, which keeps the caller's output pipe open. When you capture output (for example `$x = ghidra ...` in PowerShell), start it first with `Start-Process ghidra -ArgumentList '--project','rescue-arm9','--program','arm9.bin','start'` and wait for `ghidra --project rescue-arm9 status` to show `State: running`.
+- **Starting from a script:** the first command starts the bridge as a child process, which keeps the caller's output pipe open. When you capture output (for example `x=$(ghidra ...)` in bash, or `$x = ghidra ...` in PowerShell), start it first, detached from the pipe: on Linux `ghidra --project rescue-arm9 --program arm9.bin start >/dev/null 2>&1 &` (in PowerShell, `Start-Process ghidra -ArgumentList '--project','rescue-arm9','--program','arm9.bin','start'`), then wait for `ghidra --project rescue-arm9 status` to show `State: running`.
 - **Script arguments** go after `--`. `script run` does not show compile errors; compile the script with `javac` against Ghidra's jars to see them. A script method must not reuse a `FlatProgramAPI` name (`find`, `setPlateComment`, ...).
 - Overlay addresses are written `ov_NNNN::ADDRESS`. Calls from the ARM9 into an overlay land on the `ram` address, not the overlay's.
 
