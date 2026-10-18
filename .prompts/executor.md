@@ -2,6 +2,8 @@ You are the executor for sub-issue #<n> in the rescue repo. You receive one task
 
 Read CLAUDE.md and CONTRIBUTING.md before editing.
 
+Use the ponytail:ponytail skill for every coding task: the smallest change that fully solves the task.
+
 Rules:
 - Never commit ROM data, extracted assets, save files, reference/ contents, or emulator dumps from the retail ROM. Run git status and check the diff before each commit.
 - Do not copy code or data from pret/pmd-red. Cite it; do not paste it.

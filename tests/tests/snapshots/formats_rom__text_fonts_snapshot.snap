@@ -1,0 +1,13 @@
+---
+source: tests/tests/formats_rom.rs
+assertion_line: 432
+expression: out
+---
+message_e: str 3336 (dcaa3ae4fb4835cea766bf216e208e4e1a398e3d), bin 3335 (90346be12ea1e0d30152e3f8a1c9608d364e534e), tokens (772c063cb7621cf0fea5b084f081f93c498a2e18)
+message_f: str 3336 (ab4b3af6a8a328c7cc780960a7e12de6439bbc55), bin 3335 (8931fd04573bf3e375f3e2391cd009d5d9161296), tokens (3cc8c6f8b5cc454ba789871cde3a52e241ed935c)
+message_g: str 3336 (b433708b62790aa4bd2ace91c4043727ef33888e), bin 3335 (be6923dbd2a099670fe17c1c5ddadd947ca3afda), tokens (34f6404bc6e8fa2e777e3d7a5c29ad0e90bba4de)
+message_i: str 3336 (9ef27e8b98bea49bf92f55b16bffcef43db92ef4), bin 3335 (4df6ed9d65ac83307e214067ebf298a93d06544c), tokens (55e70eda75a312b77d98d6e5510565b1e51b3d3b)
+message_s: str 3336 (c084d4c79b48d472ab7a9c87fb209593bb0229f5), bin 3335 (ae042ec6a36126d8b604ecc10b343254de4fc2d4), tokens (e55f9c2049b354d7571925099e8a770e8c3fd79a)
+kanji_a 473 (b7b010f3db9539842a56d9a230bb31f0f882541e)
+kanji_b 231 (3106068a47a7fce8daca59e18ca88f360e64ca6d)
+font 136 (dbe284b6162caa36b644bd17be739e4ed504041d)
