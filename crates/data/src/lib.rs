@@ -17,6 +17,7 @@
 pub mod dungeon;
 pub mod item;
 pub mod moves;
+pub mod recruit;
 pub mod species;
 pub mod types;
 

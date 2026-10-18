@@ -28,7 +28,7 @@ pub struct Item {
     /// AI use flags: on self, thrown at allies, thrown at enemies.
     pub ai_flags: [bool; 3],
     /// Move taught (TMs/HMs, orbs).
-    pub move_id: i16,
+    pub move_id: u16,
     /// Storage order.
     pub order: u8,
     /// Spawn amount range.
@@ -60,7 +60,7 @@ pub fn parse_items(data: &[u8]) -> Result<Vec<Item>> {
                 icon: e[0xD],
                 description: text(0x10, "item description")?,
                 ai_flags: [e[0x14] != 0, e[0x15] != 0, e[0x16] != 0],
-                move_id: i16::from_le_bytes([e[0x18], e[0x19]]),
+                move_id: u16::from_le_bytes([e[0x18], e[0x19]]),
                 order: e[0x1A],
                 spawn_amount: [e[0x1B], e[0x1C]],
                 palette: e[0x1D],

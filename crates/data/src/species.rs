@@ -36,8 +36,10 @@ pub struct Species {
     pub abilities: [u8; 2],
     /// Shadow size.
     pub shadow_size: u8,
-    /// HP regeneration speed.
+    /// HP regeneration speed: the byte's low 7 bits, doubled (Blue `FUN_02002368`).
     pub regen_speed: u8,
+    /// Bit 7 of the regeneration byte. Meaning unknown.
+    pub regen_flag: bool,
     /// Moves unless leader.
     pub can_move: bool,
     /// Chance to be asleep on spawn.
@@ -60,10 +62,14 @@ pub struct Species {
     pub evolution_requirement: (i16, u16),
     /// National dex number and internal number.
     pub dex: [i16; 2],
-    /// Recruit rate (per mille in Red: `[red-hypothesis]`).
+    /// Recruit rate, per mille (blue-verified: `FUN_ov_0001__0217f9b8`).
     pub recruit_rate: i16,
     /// Alphabetical order number and parent species.
     pub alphabet_parent: [i16; 2],
+    /// Byte `+0x12`, read by overlay 1 (`FUN_02002288`). Meaning unknown.
+    pub byte_12: u8,
+    /// Byte `+0x33`, read by overlay 1 (`FUN_020022a4`). Meaning unknown.
+    pub byte_33: u8,
 }
 
 /// Parses `monspara`.
@@ -95,7 +101,8 @@ pub fn parse_species(data: &[u8]) -> Result<Vec<Species>> {
                 friend_area: u8_(0x16),
                 abilities: [u8_(0x17), u8_(0x18)],
                 shadow_size: u8_(0x19),
-                regen_speed: u8_(0x1B),
+                regen_speed: (u8_(0x1B) & 0x7F) << 1,
+                regen_flag: u8_(0x1B) & 0x80 != 0,
                 can_move: u8_(0x1C) != 0,
                 chance_asleep: u8_(0x1D),
                 base_hp: u16_(0x1E),
@@ -109,6 +116,8 @@ pub fn parse_species(data: &[u8]) -> Result<Vec<Species>> {
                 dex: [i16_(0x3C), i16_(0x3E)],
                 recruit_rate: i16_(0x40),
                 alphabet_parent: [i16_(0x42), i16_(0x44)],
+                byte_12: u8_(0x12),
+                byte_33: u8_(0x33),
             })
         })
         .collect()
