@@ -18,7 +18,7 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 | 0, 8 | large | `GenerateStandardFloor(gridX, gridY, props)` | 0 / 0 |
 | 1 | small | `DungeonRandInt(2)`, then `GenerateStandardFloor(4, r + 2, props)` | 0 / 0 |
 | 2 | one room, monster house | `GenerateOneRoomMonsterHouseFloor` | 0 / 0 |
-| 3 | outer ring | `GenerateOuterRingFloor` | 4 / 2 |
+| 3 | outer ring | `GenerateOuterRingFloor` ([notes](outer-ring-floor.md)) | 4 / 2 |
 | 4 | crossroads | `GenerateCrossroadsFloor` | 4 / 2 |
 | 5 | two rooms, monster house | `GenerateTwoRoomsWithMonsterHouseFloor` | 2 / 2 |
 | 6 | line | `GenerateLineFloor` | 0 / 0 |
