@@ -4,11 +4,11 @@
 //! `.str`: `u32` offset table (first offset / 4 = string count), then NUL-terminated
 //! strings. `.bin` holds the same strings as `{u16 entry size in 16-bit words, string,
 //! NUL, pad to even}` records. Not compressed: the survey's "Huffman" guess came from
-//! the first offset's low byte (0x20).
+//! the first offset's low byte (0x20). The game never opens the `.bin` files.
 //!
-//! Encoding: single bytes are Latin-1 (`0x0A` newline); `0x81..=0x9F` lead a two-byte
-//! game glyph (button icons, symbols; Shift-JIS-like codes); `#`, `$` and `~` start
-//! control codes, kept as [`Token`]s.
+//! Encoding: single bytes are Latin-1 (`0x0A` newline). `0x81`..`0x84` and `0x87` lead a
+//! two-byte game glyph (button icons, symbols). `~XX` is a hex-byte escape. `#` and `$`
+//! start control codes and variables, kept as [`Token`]s.
 
 use crate::read::{self as bytes, Error, Result};
 
@@ -19,33 +19,68 @@ pub enum Token {
     Text(String),
     /// Line break (`0x0A`).
     Newline,
-    /// `#C<x>`: set text color `x`.
+    /// `#C<x>`: push text color `x`.
     Color(char),
-    /// `#R`: end `#C` color.
+    /// `#R`: pop the text color.
     ColorEnd,
-    /// `#c<x>`: set the alternative (name) color `x`.
+    /// `#c<x>`: push the alternative (name) color `x`.
     AltColor(char),
-    /// `#r`: end `#c` color.
+    /// `#r`: pop the alternative color.
     AltColorEnd,
-    /// `#P`: wait for a button, then new page.
+    /// `#P`: new page, then wait for a button.
     PageBreak,
+    /// `#p`: as `#P`, with a flag set (flag meaning unknown).
+    PageBreakFlagged,
     /// `#W`: wait for a button.
     WaitButton,
-    /// `#=<b>`: move the cursor to x = `b` pixels.
+    /// `#=<b>`: set x to `b`.
     SetX(u8),
-    /// `#y<b>`: move the cursor to y = `b` (`[hypothesis]`).
+    /// `#y<b>`: set y to `b`.
     SetY(u8),
-    /// Other `#<x>` codes: `#+` (centre the line, `[red-hypothesis]`), `#>` (alignment,
-    /// `[red-hypothesis]`), `#1`..`#9` (meaning not yet confirmed).
+    /// `#.<b>`: add `b` to x.
+    AddX(u8),
+    /// `#n`: next line, x back to the saved origin, y + 11.
+    LineFeed,
+    /// `#:`: save x.
+    SaveX,
+    /// `#;<b>`: set x to the saved x plus `b`.
+    SavedX(u8),
+    /// `#+`: centre the line.
+    Centre,
+    /// `#>NNN.`: set x to the decimal `NNN`.
+    SetXAbs(u16),
+    /// `#_<b>`: push the shade from table entry `b`.
+    Shade(u8),
+    /// `#S<b><c>`: write `c & 0x7F` into table entry `b & 0x7F`.
+    SetTable {
+        /// Table index.
+        index: u8,
+        /// Value written.
+        value: u8,
+    },
+    /// `#~<b>`: wait `b` frames.
+    WaitFrames(u8),
+    /// `#[ ... ]`: the bytes between the brackets, passed to a game callback.
+    Tag(Vec<u8>),
+    /// Other `#<x>` codes (`#1`..`#9`, ...): meaning not identified.
     Code(char),
-    /// `$<kind><n>` placeholder: `m` monster, `i` item, `d` number, `n` name, `t` team
-    /// name, `h` friend area (`[red-hypothesis]`, from Red's `charmap.txt`); `v` is not
-    /// identified.
+    /// `$<kind><n>` placeholder: `m` monster, `i` item, `d` number, `n` name (with a
+    /// slot digit); `mm` runtime monster id and `t` team name, `h` friend area (no
+    /// digit). The table contents are not identified.
     Var {
         /// Kind letter.
         kind: char,
         /// Slot digit, if present.
         index: Option<u8>,
+    },
+    /// `$v<N><W>` / `$V<N><W>`: number from slot `N`, `W` wide; `$V` pads with zeros.
+    Number {
+        /// `$V` rather than `$v`.
+        zero_pad: bool,
+        /// Slot digit.
+        index: u8,
+        /// Width digit.
+        width: u8,
     },
     /// Two-byte game glyph.
     Glyph(u16),
@@ -117,39 +152,24 @@ pub fn decode(s: &[u8]) -> Vec<Token> {
         let next = s.get(i + 1).copied();
         let tok = match (b, next) {
             (b'\n', _) => Some((Token::Newline, 1)),
-            (b'#', Some(c)) => Some(match c {
-                b'C' | b'c' if i + 2 < s.len() => {
-                    let x = char::from(s[i + 2]);
-                    (
-                        if c == b'C' {
-                            Token::Color(x)
-                        } else {
-                            Token::AltColor(x)
-                        },
-                        3,
-                    )
-                }
-                b'R' => (Token::ColorEnd, 2),
-                b'r' => (Token::AltColorEnd, 2),
-                b'P' => (Token::PageBreak, 2),
-                b'W' => (Token::WaitButton, 2),
-                b'=' if i + 2 < s.len() => (Token::SetX(s[i + 2]), 3),
-                b'y' if i + 2 < s.len() => (Token::SetY(s[i + 2]), 3),
-                _ => (Token::Code(char::from(c)), 2),
-            }),
-            (b'$', Some(k)) if k.is_ascii_alphabetic() => {
-                let d = s
-                    .get(i + 2)
-                    .filter(|d| d.is_ascii_digit())
-                    .map(|d| d - b'0');
-                Some((
-                    Token::Var {
-                        kind: char::from(k),
-                        index: d,
-                    },
-                    2 + usize::from(d.is_some()),
-                ))
+            (b'#', Some(_)) => Some(hash_code(s, i)),
+            (b'$', Some(b'$')) => {
+                text.push('$');
+                i += 2;
+                continue;
             }
+            (b'$', Some(b'-')) => {
+                i += 2;
+                continue;
+            }
+            (b'$', Some(k)) if k.is_ascii_alphabetic() => match dollar(s, i) {
+                Some(t) => Some(t),
+                None => {
+                    // Unknown letter: the game prints it without the `$`.
+                    i += 1;
+                    continue;
+                }
+            },
             (b'~', _) if i + 2 < s.len() => {
                 let hex = std::str::from_utf8(&s[i + 1..i + 3])
                     .ok()
@@ -163,7 +183,9 @@ pub fn decode(s: &[u8]) -> Vec<Token> {
                     None => None,
                 }
             }
-            (0x81..=0x9F, Some(lo)) => Some((Token::Glyph(u16::from(b) << 8 | u16::from(lo)), 2)),
+            (0x81..=0x84 | 0x87, Some(lo)) => {
+                Some((Token::Glyph(u16::from(b) << 8 | u16::from(lo)), 2))
+            }
             _ => None,
         };
         match tok {
@@ -182,6 +204,100 @@ pub fn decode(s: &[u8]) -> Vec<Token> {
     out
 }
 
+/// The `#` code at `s[i..]` (`s[i] == b'#'`, and `s[i + 1]` exists): its token and length.
+/// A code whose arguments are missing decodes as [`Token::Code`].
+fn hash_code(s: &[u8], i: usize) -> (Token, usize) {
+    let c = s[i + 1];
+    let arg = s.get(i + 2).copied();
+    match (c, arg) {
+        (b'C', Some(x)) => (Token::Color(char::from(x)), 3),
+        (b'c', Some(x)) => (Token::AltColor(char::from(x)), 3),
+        (b'R', _) => (Token::ColorEnd, 2),
+        (b'r', _) => (Token::AltColorEnd, 2),
+        (b'P', _) => (Token::PageBreak, 2),
+        (b'p', _) => (Token::PageBreakFlagged, 2),
+        (b'W', _) => (Token::WaitButton, 2),
+        (b'n', _) => (Token::LineFeed, 2),
+        (b':', _) => (Token::SaveX, 2),
+        (b'+', _) => (Token::Centre, 2),
+        (b'=', Some(x)) => (Token::SetX(x), 3 + skip_dot(s, i + 3)),
+        (b'y', Some(x)) => (Token::SetY(x), 3 + skip_dot(s, i + 3)),
+        (b'.', Some(x)) => (Token::AddX(x), 3),
+        (b';', Some(x)) => (Token::SavedX(x), 3),
+        (b'_', Some(x)) => (Token::Shade(x), 3 + skip_dot(s, i + 3)),
+        (b'~', Some(x)) => (Token::WaitFrames(x), 3),
+        (b'S', Some(x)) if i + 3 < s.len() => (
+            Token::SetTable {
+                index: x & 0x7F,
+                value: s[i + 3] & 0x7F,
+            },
+            4,
+        ),
+        (b'>', _) => set_x_abs(s, i).unwrap_or((Token::Code('>'), 2)),
+        (b'[', _) => match s[i + 2..].iter().position(|&b| b == b']') {
+            Some(end) => (Token::Tag(s[i + 2..i + 2 + end].to_vec()), end + 3),
+            None => (Token::Code('['), 2),
+        },
+        _ => (Token::Code(char::from(c)), 2),
+    }
+}
+
+/// Length of the optional `.` at `s[j]` that `#=`, `#y` and `#_` skip after their byte
+/// (`FUN_02014098`). `#.`, `#;` and `#~` do not skip it.
+fn skip_dot(s: &[u8], j: usize) -> usize {
+    usize::from(s.get(j) == Some(&b'.'))
+}
+
+/// `#>NNN.` at `s[i..]`: decimal digits, then the `.` that ends them. `None` without both.
+fn set_x_abs(s: &[u8], i: usize) -> Option<(Token, usize)> {
+    let digits = s[i + 2..].iter().take_while(|d| d.is_ascii_digit()).count();
+    let end = i + 2 + digits;
+    if digits == 0 || s.get(end) != Some(&b'.') {
+        return None;
+    }
+    let x = std::str::from_utf8(&s[i + 2..end]).ok()?.parse().ok()?;
+    Some((Token::SetXAbs(x), digits + 3))
+}
+
+/// The `$` placeholder at `s[i..]` (`s[i] == b'$'`, `s[i + 1]` a letter). `None` for a
+/// letter the game does not handle.
+fn dollar(s: &[u8], i: usize) -> Option<(Token, usize)> {
+    let dig = |j: usize| s.get(j).filter(|d| d.is_ascii_digit()).map(|d| d - b'0');
+    let k = s[i + 1];
+    Some(match k {
+        b'v' | b'V' => (
+            Token::Number {
+                zero_pad: k == b'V',
+                index: dig(i + 2)?,
+                width: dig(i + 3)?,
+            },
+            4,
+        ),
+        b'm' if s.get(i + 2) == Some(&b'm') => (
+            Token::Var {
+                kind: 'm',
+                index: None,
+            },
+            3,
+        ),
+        b'd' | b'm' | b'i' | b'n' => (
+            Token::Var {
+                kind: char::from(k),
+                index: Some(dig(i + 2)?),
+            },
+            3,
+        ),
+        b't' | b'h' => (
+            Token::Var {
+                kind: char::from(k),
+                index: None,
+            },
+            2,
+        ),
+        _ => return None,
+    })
+}
+
 /// Plain readable text: control codes dropped, placeholders as `{m0}`, glyphs as
 /// `{gXXXX}`.
 pub fn to_plain(tokens: &[Token]) -> String {
@@ -197,6 +313,14 @@ pub fn to_plain(tokens: &[Token]) -> String {
                     s.push(char::from(b'0' + d));
                 }
                 s.push('}');
+            }
+            Token::Number {
+                zero_pad,
+                index,
+                width,
+            } => {
+                let v = if *zero_pad { 'V' } else { 'v' };
+                s.push_str(&format!("{{{v}{index}{width}}}"));
             }
             Token::Glyph(g) => s.push_str(&format!("{{g{g:04X}}}")),
             _ => {}
@@ -245,5 +369,126 @@ mod tests {
         );
         assert_eq!(to_plain(&t), "Hi {m0}'s\nx{g8160}é");
         assert_eq!(decode(b"#"), [Token::Text("#".into())]);
+    }
+
+    #[test]
+    fn glyph_leads_are_narrow() {
+        assert_eq!(decode(b"\x85\x40"), [Token::Text("\u{85}@".into())]);
+        assert_eq!(decode(b"\x87\x40"), [Token::Glyph(0x8740)]);
+    }
+
+    #[test]
+    fn hash_codes_consume_their_arguments() {
+        let t = decode(b"#=\x05#yx#.\x01#:#;\x02#+#n#p#P#W#~\x09#_\x03#S\x12\x34#R#r#c\x41end");
+        assert_eq!(
+            t,
+            [
+                Token::SetX(5),
+                Token::SetY(b'x'),
+                Token::AddX(1),
+                Token::SaveX,
+                Token::SavedX(2),
+                Token::Centre,
+                Token::LineFeed,
+                Token::PageBreakFlagged,
+                Token::PageBreak,
+                Token::WaitButton,
+                Token::WaitFrames(9),
+                Token::Shade(3),
+                Token::SetTable {
+                    index: 0x12,
+                    value: 0x34
+                },
+                Token::ColorEnd,
+                Token::AltColorEnd,
+                Token::AltColor('A'),
+                Token::Text("end".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn optional_dot_after_set_codes() {
+        assert_eq!(decode(b"#=@.x"), [Token::SetX(64), Token::Text("x".into())]);
+        assert_eq!(decode(b"#y@.x"), [Token::SetY(64), Token::Text("x".into())]);
+        assert_eq!(
+            decode(b"#_@.x"),
+            [Token::Shade(64), Token::Text("x".into())]
+        );
+        // The dot is not skipped after these.
+        assert_eq!(
+            decode(b"#.\x01.x"),
+            [Token::AddX(1), Token::Text(".x".into())]
+        );
+        assert_eq!(
+            decode(b"#;\x02.x"),
+            [Token::SavedX(2), Token::Text(".x".into())]
+        );
+        assert_eq!(
+            decode(b"#~\x09.x"),
+            [Token::WaitFrames(9), Token::Text(".x".into())]
+        );
+    }
+
+    #[test]
+    fn set_x_absolute() {
+        assert_eq!(
+            decode(b"#>123.x"),
+            [Token::SetXAbs(123), Token::Text("x".into())]
+        );
+        assert_eq!(
+            decode(b"#>.x"),
+            [Token::Code('>'), Token::Text(".x".into())]
+        );
+    }
+
+    #[test]
+    fn tags_and_unknown_codes() {
+        assert_eq!(
+            decode(b"#[ab]c"),
+            [Token::Tag(b"ab".to_vec()), Token::Text("c".into())]
+        );
+        assert_eq!(
+            decode(b"#[ab"),
+            [Token::Code('['), Token::Text("ab".into())]
+        );
+        assert_eq!(decode(b"#5"), [Token::Code('5')]);
+    }
+
+    #[test]
+    fn variables() {
+        assert_eq!(
+            decode(b"$v12$V34"),
+            [
+                Token::Number {
+                    zero_pad: false,
+                    index: 1,
+                    width: 2
+                },
+                Token::Number {
+                    zero_pad: true,
+                    index: 3,
+                    width: 4
+                },
+            ]
+        );
+        assert_eq!(
+            decode(b"$mm$m0$t$$$-$e1"),
+            [
+                Token::Var {
+                    kind: 'm',
+                    index: None
+                },
+                Token::Var {
+                    kind: 'm',
+                    index: Some(0)
+                },
+                Token::Var {
+                    kind: 't',
+                    index: None
+                },
+                Token::Text("$e1".into()),
+            ]
+        );
     }
 }
