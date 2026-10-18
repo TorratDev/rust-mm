@@ -46,11 +46,23 @@ No maze step (std 8) and no finalising passes (`ResetInnerBoundaryTileRows`, `En
 - The body runs 24 cell iterations. A figure of 64 draws in the loop (from an earlier investigation) does not match this structure. It is not used here.
 - Callees' dynamic counts (std 5 to 11) are in [`dungeon-generation.md`](dungeon-generation.md) for the standard path, not measured for this layout.
 
+## Emulator check (floor oracle)
+- Command: `floor_oracle.py ROM OUT.jsonl --seeds 0x12345678 --layouts 3`, run from `verification/v7-trace/` with py-desmume 0.0.9 in a scratch venv.
+- ROM: the supported dump `BlueRescueTeamEur`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- Script: `floor_oracle.py`, SHA-1 `5515cabe4adadb664fd862227ace80e9c0d87acf`.
+- Result for layout 3, seed `0x12345678` (`rngAtGenerate` 305419896):
+  - RNG steps: 1705 from `GenerateFloor`'s entry to the first turn, 1683 to its return (`0x021525B4`).
+  - Rooms: 8 (distinct room numbers, excluding `0xFF`). Stairs at (32, 20). Terrain counts: type 0: 1357, type 1: 435.
+  - Layout FNV-1a 64 at the first turn: `13806b64f622e3c1`. At the return: `c32e3bac3f2c7b7b`.
+  - Layout SHA-256 (prefix) at the first turn: `cb9d5f74c4d52865`.
+
+What this run confirms: the floor builds with 8 rooms on the 6 × 4 grid, and it gives a whole-floor fixture for a reimplementation. What it does not confirm: the per-step draw count (4 Range / 2 Int static, and the dynamic count per cell). The oracle reports totals only; `floor_stages.py` has no option to force a layout, so per-step checkpoints for case 3 need that script extended.
+
 ## Red comparison
 `pmd-red` names this layout "outer ring" [red-hypothesis]. Blue's code uses the same 4 / 2 static call count (as the table says), but the emulator check that would confirm the layout and the draw count is not done.
 
 ## Open questions
-- Emulator check: run a floor that takes layout 3 with `floor_stages.py` / `floor_oracle.py` and compare the RNG state after the cell loop and after each callee. Needs `RESCUE_ROM` and `py-desmume`.
+- Per-step RNG checkpoints for layout 3: extend `floor_stages.py` to force the layout byte, then compare the RNG state after the cell loop and after each callee. The whole-floor oracle run is done (see above).
 - Map the post-loop flag offsets to named cell fields.
 - Confirm the mask constant (`DAT_0219d078`, assumed `0xFFFF`) and the cell stride literal.
 - Check what follows this function: the finalising passes, and whether `GenerateFloor` runs them for this layout.
