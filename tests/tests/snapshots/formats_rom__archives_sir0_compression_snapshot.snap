@@ -1,0 +1,13 @@
+---
+source: tests/tests/formats_rom.rs
+assertion_line: 327
+expression: out
+---
+dungeon: entries 804 (6956dabed74247f4362141255bd32b4e74fb5f15), sir0 583 (f4a10bd7d3eff5a406f5d183941dfd4f5f7fbf84), px 136 (0eadb16a7bea7c225099e223b8d9623b7b43338e)
+effect: entries 147 (adc74c371f012f576d390c0dc9344202e5f6b2ee), sir0 147 (7a0b5bc3e3024765a09b60f77043daf62ff6a9b2), px 0 (97d170e1550eee4afc0af065b78cda302a97674c)
+ground: entries 724 (71dae3421f180dcf42cf87f20951e854f5aab12a), sir0 0 (97d170e1550eee4afc0af065b78cda302a97674c), px 0 (97d170e1550eee4afc0af065b78cda302a97674c)
+monster: entries 497 (f3c79c378015b1ff482fa1a3f34e4dde6532aef4), sir0 496 (6b54b20bb7aa5b462b5d3ed8dac65d1c923bafe5), px 0 (97d170e1550eee4afc0af065b78cda302a97674c)
+ornament: entries 75 (e8c2036ed766ab0fe922f62da5180b5614eacea7), sir0 40 (a7884b5af0e0e55af329efb19bcb2d9dc74ba4da), px 0 (97d170e1550eee4afc0af065b78cda302a97674c)
+sample: entries 6 (cae90cd6148e76aa08f50c4a02b5bad1783adfc2), sir0 2 (a94d92a2932c6712be79e04bb28338e136de9d19), px 2 (60b2e3ef051858ef72127afe9ed3fcc50ed160b6)
+system: entries 454 (94c1040b9de941b677458e4e5ddd7e20addd6601), sir0 439 (a494af6a514561eba30619fc0ffa35aac23a6050), px 5 (c465d8fd89ba75d16089afebb7efb91d1f615bf6)
+titlemenu: entries 30 (c3af325f4d685567a89904ffa25a862192b8c810), sir0 8 (28a2026d696aa51c967aba19c340990dc4bf5100), px 11 (b2a1a9ddd911ee493ff7015567eb019637c67ffb)

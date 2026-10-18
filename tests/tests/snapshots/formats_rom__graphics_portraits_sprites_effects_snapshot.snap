@@ -1,0 +1,10 @@
+---
+source: tests/tests/formats_rom.rs
+assertion_line: 372
+expression: summary
+---
+palettes 14 (1bc8880e6b4c5c357de62ab4ac6a8e294d33c1f3)
+portrait files 73 (3f7c907f8aee53062e9df1bb30bd6d100d2f7166)
+sprites 423 (8b85c7b313bd9b8515b004f55c67c1c82187af11)
+effect objects 139 (6e6b508d99e777fd191bbe8a4b74de99cfcdcd34)
+effect backgrounds 8 (a71e531bfc18cb01db9da5b0207c108999523259)
