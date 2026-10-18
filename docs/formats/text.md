@@ -49,6 +49,8 @@ Each code takes the arguments listed here, so they never show as text. Parser `F
 | `#[ … ]` | up to `]` | `Tag` | span passed to a game callback (state + 0x12); the bytes are kept |
 | `#1`–`#9`, other | none | `Code` | not identified; decoded as `Code(c)` |
 
+An optional `.` after the byte of `#=`, `#y` and `#_` is skipped, so `#=@.x` is `SetX(0x40)` then `x` `[blue-verified]`: `decompile 02014098`, `if (pcVar5[3] == '.') param_2 = pcVar5 + 4`. `#.`, `#;` and `#~` do not skip it. `#>NNN.` ends with that dot.
+
 A code with its arguments missing at the end of a string decodes as `Code`. `#>` followed by no digits, or without the closing `.`, also decodes as `Code('>')`.
 
 ## Variables (`$`, typed as `Var` and `Number`)
@@ -98,4 +100,3 @@ Not verified; do not treat these as known:
 - `kanji_b` buffer destination: the loader writes to `0x06206100`, but the runtime pointer is `0x06616BE4`.
 - Fallback glyph entry at `0x020938E0` (bitmap `0x020939E0`, code `0x81A1`, width 7): its +8 word is nonzero, so it may not be a valid entry.
 - Two-byte game glyphs (`Token::Glyph`) have no Unicode mapping yet. "Readable UTF-8" holds for the Latin-1 text and the control codes; glyphs stay as codes until their images are matched to characters.
-- Whether the `#` argument bytes may be followed by an optional `.` (the parser skips one after a numeric argument). The decoder only handles that dot for `#>NNN.`.

@@ -220,11 +220,11 @@ fn hash_code(s: &[u8], i: usize) -> (Token, usize) {
         (b'n', _) => (Token::LineFeed, 2),
         (b':', _) => (Token::SaveX, 2),
         (b'+', _) => (Token::Centre, 2),
-        (b'=', Some(x)) => (Token::SetX(x), 3),
-        (b'y', Some(x)) => (Token::SetY(x), 3),
+        (b'=', Some(x)) => (Token::SetX(x), 3 + skip_dot(s, i + 3)),
+        (b'y', Some(x)) => (Token::SetY(x), 3 + skip_dot(s, i + 3)),
         (b'.', Some(x)) => (Token::AddX(x), 3),
         (b';', Some(x)) => (Token::SavedX(x), 3),
-        (b'_', Some(x)) => (Token::Shade(x), 3),
+        (b'_', Some(x)) => (Token::Shade(x), 3 + skip_dot(s, i + 3)),
         (b'~', Some(x)) => (Token::WaitFrames(x), 3),
         (b'S', Some(x)) if i + 3 < s.len() => (
             Token::SetTable {
@@ -240,6 +240,12 @@ fn hash_code(s: &[u8], i: usize) -> (Token, usize) {
         },
         _ => (Token::Code(char::from(c)), 2),
     }
+}
+
+/// Length of the optional `.` at `s[j]` that `#=`, `#y` and `#_` skip after their byte
+/// (`FUN_02014098`). `#.`, `#;` and `#~` do not skip it.
+fn skip_dot(s: &[u8], j: usize) -> usize {
+    usize::from(s.get(j) == Some(&b'.'))
 }
 
 /// `#>NNN.` at `s[i..]`: decimal digits, then the `.` that ends them. `None` without both.
@@ -398,6 +404,29 @@ mod tests {
                 Token::AltColor('A'),
                 Token::Text("end".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn optional_dot_after_set_codes() {
+        assert_eq!(decode(b"#=@.x"), [Token::SetX(64), Token::Text("x".into())]);
+        assert_eq!(decode(b"#y@.x"), [Token::SetY(64), Token::Text("x".into())]);
+        assert_eq!(
+            decode(b"#_@.x"),
+            [Token::Shade(64), Token::Text("x".into())]
+        );
+        // The dot is not skipped after these.
+        assert_eq!(
+            decode(b"#.\x01.x"),
+            [Token::AddX(1), Token::Text(".x".into())]
+        );
+        assert_eq!(
+            decode(b"#;\x02.x"),
+            [Token::SavedX(2), Token::Text(".x".into())]
+        );
+        assert_eq!(
+            decode(b"#~\x09.x"),
+            [Token::WaitFrames(9), Token::Text(".x".into())]
         );
     }
 

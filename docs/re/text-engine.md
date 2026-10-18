@@ -44,6 +44,7 @@ Dump: `BlueRescueTeamEur` ([`supported-dumps.md`](../supported-dumps.md)). Addre
 
 **`#` codes** `[blue-verified]` for the arguments and the action; meanings `[red-hypothesis]` unless noted
 - Argument layout, from `02014098`: `#=b`, `#yb`, `#.b`, `#;b`, `#_b`, `#~b` take one byte; `#Sbc` two; `#Cc`, `#cc` one char; `#n`, `#:`, `#+`, `#P`, `#p`, `#W`, `#R`, `#r` none; `#>NNN.` decimal digits ending in `.`; `#[ … ]` a span up to `]`.
+- Optional dot `[blue-verified]`: after the byte of `#=`, `#y` and `#_`, the parser skips a `.` (`if (pcVar5[3] == '.') param_2 = pcVar5 + 4`, `decompile 02014098`). It does not for `#.`, `#;` or `#~`. `#>NNN.` uses the same dot as its terminator. The decoder does this; 60 strings in the five `message_*.str` (12 per file) have `#=@.` and would leak a `.` otherwise.
 - `#+` centres: x = (box width × 8 − text width) / 2 `[blue-verified]`. Red's meaning matches.
 - `#>` sets an absolute x. It is not an alignment operator (the red note said alignment).
 - `#_b` pushes a shade from table `DAT_020143bc` (the old doc said unknown).
@@ -81,7 +82,6 @@ Red's `charmap.txt` names `CENTER_ALIGN` (`#+`), `UNK_MACRO_3E` (`#>`) and `UNK_
 - Flag meanings of font glyphs; which font gets which flag.
 - `kanji_b` buffer destination: loader writes `0x06206100`, runtime pointer `0x06616BE4`.
 - Fallback glyph entry at `020938E0`: its +8 word is nonzero, so it may not be a valid entry.
-- Whether a `.` may follow other numeric arguments, as the parser skips one after `#>`.
 
 ## Links
 - Symbols: [symbols.md](../symbols.md) (not changed here; see the note in the PR).
