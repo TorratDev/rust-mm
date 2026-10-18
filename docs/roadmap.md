@@ -133,7 +133,7 @@ Not started:
 
 Rust floor generator (`crates/sim/src/floor.rs`), checked step by step against `verification/v7-trace/floor_stages.py` (RNG state and arguments at 26 checkpoints):
 - Done: map, reset, step 1 (grid bounds).
-- Next: step 2 `InitGrid` (`ov_0001::0214FD7C`), step 3 (`0214FB4C`, 129 RNG calls), then steps 4-13 of `GenerateStandardFloor`, the cleanup and spawn passes, and the other layout generators. The plan is in [`re/dungeon-generation.md`](re/dungeon-generation.md), "Reimplementation, step by step".
+- Next: the other layout generators (cases 3-7, 9, 10 and the fixed rooms; tracker [#111](https://github.com/TorratDev/rust-mm/issues/111)), then the whole-floor golden test (#110). Steps 1 to 13, the cleanup and spawn passes are ported. The plan is in [`re/dungeon-generation.md`](re/dungeon-generation.md), "Reimplementation, step by step".
 
 
 ## Phase 4 — Build the native engine
