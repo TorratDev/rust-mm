@@ -1,6 +1,7 @@
 //! ROM-gated checks of Blue's own formats (#33, #34) against the configured dump: every
 //! `.sbin` archive parses, every portrait and sprite decodes. Skipped without a ROM
-//! (docs/rom-tests.md). Asserts counts and sizes only, never ROM bytes.
+//! (docs/rom-tests.md). Asserts counts and sizes only, never ROM bytes. The `*_snapshot`
+//! tests (#143) record a SHA-1 of each parsed format, never the values (as in `data_rom.rs`).
 
 use rescue_formats::archive::Archive;
 use rescue_formats::gfx::MapEntry;
@@ -9,6 +10,7 @@ use rescue_formats::{
 };
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
+use rescue_nds::rom::Sha1;
 
 /// Bytes of the named ROM file.
 fn rom_file(rom: &[u8], path: &str) -> Vec<u8> {
@@ -16,6 +18,16 @@ fn rom_file(rom: &[u8], path: &str) -> Vec<u8> {
     let fs = Filesystem::parse(rom, &header).expect("FNT/FAT parse");
     let f = fs.get(path).unwrap_or_else(|| panic!("{path} missing"));
     fs.data(rom, f.id).expect("file bytes").to_vec()
+}
+
+/// SHA-1 of the `Debug` form of a parsed value.
+fn digest(v: &impl std::fmt::Debug) -> String {
+    Sha1::of_bytes(format!("{v:?}").as_bytes()).to_string()
+}
+
+/// SHA-1 of a byte slice.
+fn digest_bytes(b: &[u8]) -> String {
+    Sha1::of_bytes(b).to_string()
 }
 
 rescue_tests::rom_test! {
@@ -286,5 +298,137 @@ rescue_tests::rom_test! {
             }
         }
         assert_eq!((objects, backgrounds), (139, 8));
+    }
+}
+
+rescue_tests::rom_test! {
+    /// Digests of each archive's directory, its SIR0 sub-files and its AT4PX/PKDPX
+    /// decompressed payloads.
+    fn archives_sir0_compression_snapshot(rom) {
+        let bytes = rom.read();
+        let mut out = String::new();
+        for name in ["dungeon", "effect", "ground", "monster", "ornament", "sample", "system", "titlemenu"] {
+            let data = rom_file(&bytes, &format!("{name}.sbin"));
+            let arc = Archive::parse(&data).unwrap();
+            let (mut sir0, mut px_n) = (Vec::new(), Vec::new());
+            for e in arc.entries() {
+                let sub = arc.data(&data, e).unwrap();
+                if px::kind(sub).is_some() {
+                    px_n.push(digest_bytes(&px::decompress(sub, px::DEFAULT_LIMIT).unwrap()));
+                } else if Sir0::is_sir0(sub) {
+                    sir0.push(digest(&Sir0::parse(sub).unwrap()));
+                }
+            }
+            out += &format!(
+                "{name}: entries {} ({}), sir0 {} ({}), px {} ({})\n",
+                arc.entries().len(), digest(&arc), sir0.len(), digest(&sir0), px_n.len(), digest(&px_n)
+            );
+        }
+        insta::assert_snapshot!(out);
+    }
+}
+
+rescue_tests::rom_test! {
+    /// Digests of the graphics primitives (monster palettes), portraits,
+    /// sprites and effects.
+    fn graphics_portraits_sprites_effects_snapshot(rom) {
+        let bytes = rom.read();
+        let mon = rom_file(&bytes, "monster.sbin");
+        let marc = Archive::parse(&mon).unwrap();
+        let palettes = rescue_formats::graphics::rgbx_palettes16(marc.get(&mon, "palet").unwrap()).unwrap();
+        let mut portraits = Vec::new();
+        let mut sprites = Vec::new();
+        for e in marc.entries() {
+            let sub = marc.data(&mon, e).unwrap();
+            if e.name.starts_with("kao") {
+                portraits.push(portrait::parse(sub).unwrap());
+            } else if e.name.starts_with("ax") {
+                let s = Sprite::parse(sub).unwrap();
+                let frames: Vec<_> = (0..s.frames.len()).map(|i| s.render_frame(i).unwrap()).collect();
+                sprites.push((s, frames));
+            }
+        }
+        let fx = rom_file(&bytes, "effect.sbin");
+        let farc = Archive::parse(&fx).unwrap();
+        let (mut objects, mut backgrounds) = (Vec::new(), Vec::new());
+        for e in farc.entries() {
+            let sub = farc.data(&fx, e).unwrap();
+            if e.name.starts_with("efob") {
+                let o = effect::parse_object(sub).unwrap();
+                let poses: Vec<_> = (0..o.sprite.frames.len())
+                    .filter(|&i| !o.sprite.frames[i].is_empty())
+                    .map(|i| o.sprite.render_frame(i).unwrap())
+                    .collect();
+                objects.push((o, poses));
+            } else if e.name.starts_with("efbg") {
+                backgrounds.push(effect::parse_background(sub).unwrap());
+            }
+        }
+        let summary = format!(
+            "palettes {} ({})\nportrait files {} ({})\nsprites {} ({})\neffect objects {} ({})\neffect backgrounds {} ({})\n",
+            palettes.len(), digest(&palettes), portraits.len(), digest(&portraits), sprites.len(), digest(&sprites),
+            objects.len(), digest(&objects), backgrounds.len(), digest(&backgrounds)
+        );
+        insta::assert_snapshot!(summary);
+    }
+}
+
+rescue_tests::rom_test! {
+    /// Digests of every dungeon tileset (with each metatile rendered) and every ground map.
+    fn tilesets_ground_snapshot(rom) {
+        let bytes = rom.read();
+        let dun = rom_file(&bytes, "dungeon.sbin");
+        let darc = Archive::parse(&dun).unwrap();
+        let tilesets: Vec<_> = tileset::indices(&darc)
+            .into_iter()
+            .map(|id| {
+                let t = tileset::Tileset::load(&darc, &dun, id).unwrap();
+                let rendered: Vec<_> = (0..t.metatiles.len()).map(|m| t.render_metatile(m).unwrap()).collect();
+                (id, t, rendered)
+            })
+            .collect();
+        let gnd = rom_file(&bytes, "ground.sbin");
+        let garc = Archive::parse(&gnd).unwrap();
+        let mut maps = Vec::new();
+        for e in garc.entries().iter().filter(|e| e.name.len() > 1 && e.name.ends_with('m')) {
+            let base = &e.name[..e.name.len() - 1];
+            let bma = ground::parse_bma(garc.data(&gnd, e).unwrap()).unwrap();
+            let bpc = garc.find(&format!("{base}c")).map(|f| ground::parse_bpc(garc.data(&gnd, f).unwrap()).unwrap());
+            let bpl = garc.find(base).map(|f| ground::parse_bpl(garc.data(&gnd, f).unwrap()).unwrap());
+            maps.push((e.name.clone(), bma, bpc, bpl));
+        }
+        let summary = format!(
+            "tilesets {} ({})\nground maps {} ({})\n",
+            tilesets.len(), digest(&tilesets), maps.len(), digest(&maps)
+        );
+        insta::assert_snapshot!(summary);
+    }
+}
+
+rescue_tests::rom_test! {
+    /// Digests of the decoded message tables in all five languages and of the fonts.
+    fn text_fonts_snapshot(rom) {
+        let bytes = rom.read();
+        let mut out = String::new();
+        for lang in ["e", "f", "g", "i", "s"] {
+            let (s, b) = (rom_file(&bytes, &format!("message_{lang}.str")), rom_file(&bytes, &format!("message_{lang}.bin")));
+            let strs = text::parse_str(&s).unwrap();
+            let bins = text::parse_bin(&b).unwrap();
+            let tokens: Vec<_> = strs.iter().map(|s| text::decode(s)).collect();
+            out += &format!(
+                "message_{lang}: str {} ({}), bin {} ({}), tokens ({})\n",
+                strs.len(), digest(&strs), bins.len(), digest(&bins), digest(&tokens)
+            );
+        }
+        let sys = rom_file(&bytes, "system.sbin");
+        let arc = Archive::parse(&sys).unwrap();
+        let a = font::parse_font(arc.get(&sys, "kanji_a").unwrap()).unwrap();
+        let b = font::parse_font(arc.get(&sys, "kanji_b").unwrap()).unwrap();
+        let f = font::parse_fixed_font(arc.get(&sys, "font").unwrap()).unwrap();
+        out += &format!(
+            "kanji_a {} ({})\nkanji_b {} ({})\nfont {} ({})\n",
+            a.len(), digest(&a), b.len(), digest(&b), f.len(), digest(&f)
+        );
+        insta::assert_snapshot!(out);
     }
 }
