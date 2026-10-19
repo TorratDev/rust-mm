@@ -231,3 +231,5 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 0200B944 | WriteBellyBits | void WriteBellyBits(void * seri, void * belly) | blue-verified | 16, 16 bits, like `pmd-red` |
 | 0200382C | WriteHiddenPowerBits | void WriteHiddenPowerBits(void * seri, void * hiddenPower) | blue-verified | 10, 5 bits, like `pmd-red` |
 | 0200CEEC | sub_8095824 | void sub_8095824(void * a, void * b) | blue-verified | Same 13-field mail record as `pmd-red` |
+| 0201187C | GetDirectionTowardsPosition | uchar GetDirectionTowardsPosition(void * pos, void * targetPos) | red-hypothesis | Signs of the x and y deltas index a table; called by `DisplayActions_Async` (`ov_0001::0218766C`) |
+| ov_0001::02188030 | RunMonsterAI | void RunMonsterAI(void * pokemon, uint unused) | red-hypothesis | Candidate. Called as `(x, 0)` and `(x, 1)` from `sub_8044574_Async`; writes `decoyAITracker` (`+0xDD`) and `aiNotNextToTarget` (`+0x71`) |

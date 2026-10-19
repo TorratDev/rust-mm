@@ -55,6 +55,18 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Entity info | maxHPStat | `+0x10` | `[blue-verified]` | Max HP stat. | `TickStatusAndHealthRegen` ([`re/structs.md`](re/structs.md#entity-info)) |
 | Entity info | types[2] | `+0x56` | `[blue-verified]` | Defender types, read by the type chart lookup. Red's offset is `0x5C`. | `sub_806F370_Async`, `sub_806F4A4` ([`re/structs.md`](re/structs.md#entity-info)) |
 | Entity info | flashFireBoost | `+0x28` | `[red-hypothesis]` | *probable*: one access, consistent with its neighbours. | `CalcDamage` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | direction | `+0x44` | `[blue-verified]` | Direction, compared with the direction toward the target. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | waiting | `+0x119` | `[blue-verified]` | Tested and cleared by `DisplayActions_Async` when set. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | targetPos | `+0x138` | `[blue-verified]` | Target position: x at `+0x138`, y at `+0x13A`. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | numMoveTiles | `+0x1C0` | `[blue-verified]` | Number of move tiles; tested for 0 in `DisplayActions_Async`. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | aiAllySkip | `+0x116` | `[blue-verified]` | Set to `FALSE` or `TRUE` by the monster-turn loop. | `sub_8044574_Async` (`ov_0001::02140AC0`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | recalculateFollow | `+0x117` | `[blue-verified]` | Set to `FALSE` or `TRUE` by the monster-turn loop. | `sub_8044574_Async` (`ov_0001::02140AC0`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | aiNotNextToTarget | `+0x71` | `[blue-verified]` | Cleared by the candidate `RunMonsterAI` (`ov_0001::02188030`, name *red-hypothesis*). | [`re/structs.md`](re/structs.md#entity-info) |
+| Entity info | decoyAITracker | `+0xDD` | `[blue-verified]` | Set to `DECOY_AI_NONE` by the candidate `RunMonsterAI` (`ov_0001::02188030`). | [`re/structs.md`](re/structs.md#entity-info) |
+| Entity info | frozen counter | `+0xA8` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | reflect counter | `+0xB2` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | sure shot counter | `+0xC5` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Dungeon | stairs room index | `+0x34AC` | `[blue-verified]` | Stairs room index, written on floor type 2. | `SpawnNonEnemies` (`ov_0001::0214B650`) ([`re/structs.md`](re/structs.md#dungeon-struct)) |
 
 ## Globals
 
