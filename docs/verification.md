@@ -253,3 +253,41 @@ Copy this section for each check.
 - **Outcome:** **replaced.** REA does not support this workflow: on Windows its Ghidra provider rejects ARM targets, and on any OS it imports a binary itself instead of opening the overlay-mapped project. ghidra-cli on the V8 project supports all four capabilities, on ARM and Thumb code.
 - **Fallback adopted:** ghidra-cli plus Ghidra scripts ([`tools/ghidra`](../tools/ghidra)), as in [`ghidra-setup.md`](ghidra-setup.md#6-ghidra-cli). Evidence notes live in the repo as `docs/re/*.md` (addresses, xrefs, and emulator checks marked separately from guesses, as in [`re/rng.md`](re/rng.md)); Ghidra comments and tags mirror them in the project and can be exported with `comment list --json`.
 - **Notes:** Look at REA again if a release adds ARM raw images on Windows or opening an existing Ghidra project. Its Linux path was not run.
+
+---
+
+## #42 — Ghidra project acceptance
+
+Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42) against `origin/main` (`b14fa59`). Not a V-check, but it records what the shared project does and does not provide.
+
+- **Assumption:** the shared `rescue-arm9` project holds the ARM9 as `ARM:LE:32:v5t`, all 145 overlays at their real addresses, the labelled I/O registers and SDK functions, and only scripts are committed.
+- **Date:** 2026-10-19 (first attempt the same day; revision after the base project was found missing).
+- **Environment:** Windows 11, Ghidra 12.1.4 (`C:\Users\Troll\Downloads\ghidra_12.1.4_PUBLIC_20260921`), Eclipse Temurin JDK 25.0.4, ghidra-cli 0.2.2 (`C:\Users\Troll\tools\ghidra-cli\ghidra.exe`). The ghidra-cli config's `ghidra_project_dir` points at the main checkout, so every command passes `--projects-dir` instead of changing the config.
+- **Project checked:** `rescue-arm9-import-a.log` records project `rescue-arm9` (log lines 41–44 and 409). `rescue-arm9-a`, `-b` and `-c` are copies with identical logs (same MD5 and mtime). The checked copy is `rescue-arm9-a` in `C:\Users\Troll\Documents\github\rust-mm\rescue-re\ghidra` (`rescue-arm9-a.gpr`, 2026-10-14 14:43, `Save succeeded` and `Import succeeded`, `RESCUE: mapped arm9 + 145 overlays, 154 blocks`, ROM SHA-1 `6f01887356268de39085df01490347bbcc3aa330`).
+- **Base project `rescue-arm9` is missing.** `C:\Users\Troll\rescue-re\ghidra\rescue-arm9.gpr` is 0 bytes and `rescue-arm9.rep/idata/00/` is absent, so no program is saved there. It must be rebuilt with [`tools/ghidra/import.ps1`](../tools/ghidra/import.ps1) (`-CodeDir`, `-ProjectDir`, `-Check ov_0001+0x72688`; [`ghidra-setup.md`](ghidra-setup.md#2a-build-the-project-headless-recommended)). The 13:35 out-of-memory import was in `C:\Users\Troll\rescue-re\ghidra`. The 14:43 import that succeeded was in `rust-mm\rescue-re\ghidra` and is no longer there.
+- **Evidence (live, read only).** Each command was run through the bridge on `rescue-arm9-a`, program `arm9.bin`. Stored under the scratchpad, not in the repo:
+  - `ghidra --projects-dir 'C:\Users\Troll\Documents\github\rust-mm\rescue-re\ghidra' --project rescue-arm9-a --program arm9.bin start` → `Bridge is running` (after about 2 minutes).
+  - `... summary` → `"executable_format":"Raw Binary","function_count":5394,"image_base":"02000000","language":"ARM/little/32/v5t","max_address":"ov_0144::0215d89f","min_address":"01ff8000"`.
+  - `... memory map` → 6 RAM blocks (`autoload_0_01FF8000`, `arm9`, `arm9_bss`, `autoload_1_027E0000`, `io` at `04000000`, `io_ipc` at `04100000`) and 145 overlay blocks named `ov_NNNN` (the count of names matching `"name":"ov_NNNN"`, without `_bss`), each with its `_bss` block.
+  - `... symbol list --limit 0 --filter 'name~REG_'` → 78 labels, all `source: IMPORTED`, from `REG_DISPCNT` at `04000000` (matches the 78 entries in `RescueNdsImport.java`).
+  - `... x-ref to 'ov_0001::021aaee8'` (`ov_0001` base `02138860` + `0x72688`) → 4 `DATA` references, from `ov_0001::0217bb1c`, `0217bc9c`, `0217ce7c` and `0217d5c8`. Same as [V8](#v8--ghidra-loads-arm9-and-overlays-at-real-addresses).
+  - `... symbol get FS_LoadOverlayInfo` → `0207bed8`, `USER_DEFINED`; `FS_StartOverlay` → `0207bc9c`, `USER_DEFINED`.
+  - `symbols.md` against the project's full symbol list (`symbol list --limit 0`, 6.4 MB, read into the scratchpad): 218 data rows; 198 present by name. **20 are not applied:** still `FUN_*` in the project. They are `GetDefaultMonsterAnimId`, `SetDefaultMonsterAnim`, `SetMonsterAnim`, `GetMonsterSpriteHandle`, `SetMonsterAnimAndDir`, `SetMonsterAnimAndDirIfChanged`, `PlayMoveAttackerAnim`, `PlayMoveAnim`, `WaitForOneShotAnimEnd`, `UpdateMonsterSprite`, `SetAnimForced` (all in `ov_0001`), and `GetMoveAnimId` (`02023E9C`), `IsOneShotAnim` (`02002438`), `GetMoveEntry` (`02025674`), `GetMoveEntry2` (`02025688`), `MoveHasTypeFourAt` (`020241C0`), `MoveHasTypeFour` (`02024238`), `GetMoveSfxId` (`020242D4`), `InitSpriteState` (`02012848`), `GetPokemonOverworldPalette` (`020020A0`). Most come from [`symbols.md`](symbols.md) rows added after the project was imported (for example `ab93ba2`, #133). `RescueApplySymbols.java` was not run, because this check is read only.
+  - `git ls-files | grep -iE '\.(nds|gpr|gba)$|\.rep/'` → nothing. `git ls-files rescue-re` → 147 ROM-derived files (see task 4).
+- **Side effect on `rescue-arm9-a`.** Read-only queries still touched the project. The bridge rewrote `rescue-arm9-a.rep/idata/~index.{dat,bak}`, `versioned/~index.{dat,bak}` and `idata/00/~00000000.db/db.39.gbf` (15:30, when the bridge stopped; the earlier `db.38.gbf` is from 2026-10-18). No `save` was run. I did not restore the files, and I did not check their content before and after.
+- **Heap.** The 2026-10-14 13:35 import (`rescue-arm9-import.log`) hit `OutOfMemoryError` in analysis and saved nothing. The 14:43 import (project `rescue-arm9`, copied later to `rescue-arm9-a`) used the same script and finished with no out-of-memory error (`Post-analysis succeeded`, `Save succeeded`, zero `ERROR` lines). Neither log records the heap size, so the cause is not confirmed. Documented in [`ghidra-setup.md`](ghidra-setup.md#2a-build-the-project-headless-recommended) as a setting to try: `GHIDRA_MAXMEM`.
+- **Task outcomes** (live results on `rescue-arm9-a`; base project missing):
+
+  | # | Task | Outcome | Why |
+  |---|------|---------|-----|
+  | 1 | ARM9 loaded as ARMv5TE ARM/Thumb | **met** (on `rescue-arm9-a`) | `summary` gives `ARM/little/32/v5t`. Thumb coverage is in V9. The base project still has to be rebuilt. |
+  | 2 | 145 overlays mapped at real addresses | **met** (on `rescue-arm9-a`) | 145 overlay blocks, mapped at their `ov_0000::02138860`-style addresses. The import log records `RescueNdsImport.java` output, but not which wrapper ran. The base project is missing. |
+  | 3 | `REG_*` and SDK functions labelled | **partial** | 78 `REG_*` labels are present. `FS_LoadOverlayInfo` and `FS_StartOverlay` are labelled. 20 of 218 `symbols.md` names are not applied. |
+  | 4 | Only scripts committed | **gap** (kept) | No `.gpr`, `.rep`, `.nds` or `.gba` is tracked. `rescue-re/code/` tracks `arm9.bin`, `manifest.json` and `overlay_0000.bin` … `overlay_0144.bin`, all ROM-derived, added in `84e97e3`. They are not in `.gitignore`. They stay in place until the maintainer decides. |
+  | 5 | Symbol naming and sharing agreed | **partial** | `symbols.md` names `RescueApplySymbols.java`. The table is 20 rows ahead of the project. "Agreed" is a decision this check cannot verify. |
+
+  The type-chart xref check (`ov_0001::021aaee8`) is **met**: 4 references, as in V8.
+- **Fallback adopted:** none.
+- **Notes:**
+  - **To close #42:** rebuild `rescue-arm9` with `import.ps1` (heap set with `GHIDRA_MAXMEM` if it runs out of memory). Rerun `RescueNdsReport.java`, then `RescueApplySymbols.java`, and check the 20 missing names.
+  - **Gap for the maintainer:** `rescue-re/code/` (147 files) is tracked on `origin/main`. Per [`CONTRIBUTING.md`](../CONTRIBUTING.md), they are reported here and not removed. Confirm they are ROM-derived, then remove them from the index and add `rescue-re/code/` to `.gitignore`. They stay in history unless history is rewritten.
