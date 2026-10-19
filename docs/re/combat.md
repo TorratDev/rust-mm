@@ -12,7 +12,7 @@ Every function below matches its `pmd-red` counterpart in `src/dungeon_damage.c`
 | `sub_806E100` `ov_0001::0217CE88` | Type-effectiveness part of the damage calculation; called by `CalcDamage`. |
 | `sub_806F370_Async` `ov_0001::0217BB94` | Applies a fixed amount of damage (34 callers). Wonder Guard (`AbilityIsActive(target, 0x35)`) zeroes it unless the combined effectiveness is "super". Then `HandleDealingDamage_Async`. |
 | `HandleDealingDamage_Async` `ov_0001::0217E890` | Deals the damage. |
-| `sub_806F4A4` `ov_0001::0217BA94` | Returns whether a type is immune against both of the target's types. |
+| `sub_806F4A4` `ov_0001::0217BA94` | Returns 1 when the move type is not immune to either of the target's two types, and 0 when it is immune to one of them. It also returns 0 for the Ghost exception (target type 14, move type 1 or 7, target not exposed). |
 | `WeightWeakTypePicker` `ov_0001::0217CB3C` | Uses the chart to weigh move types against a target (AI). |
 | `AbilityIsActive` `ov_0001::0218067C` | Ability check. |
 

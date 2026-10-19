@@ -90,7 +90,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 
 | Name | Value | Overlay | Tag | Description | Evidence |
 |------|-------|---------|-----|-------------|----------|
-| EFFECTIVENESS_IMMUNE | not yet recorded in this glossary | `ov_0001` | `[red-hypothesis]` | Result value for an immune matchup. Its use in `sub_806F4A4` is in Blue, but the value is not checked. Promote it once the value is read from `sub_806F4A4` or traced. | [`symbols.md`](symbols.md) |
+| EFFECTIVENESS_IMMUNE | `0` | `ov_0001` | `[blue-verified]` | Result value for an immune matchup. `sub_806F4A4` (`ov_0001::0217BA94`) compares the chart entries to it. The name is from `pmd-red`'s `include/dungeon_config.h`. The raw chart bytes were not read; the value rests on the decompiled code. | the zero comparison and Ghost branch in `sub_806F4A4` (`ov_0001::0217BA94`) and `sub_806E100` (`ov_0001::0217CE88`), [`symbols.md`](symbols.md) |
 
 ## Open questions
 
