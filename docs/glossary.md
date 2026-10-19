@@ -28,6 +28,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Name | The name used in the repo. Names from Red keep Red's spelling. |
 | Address | RAM address in hex, or a file offset when noted. |
 | Overlay | `ARM9`, `ov_NNNN` (overlay number), or `heap`. |
+| Offset | Fields only: byte offset inside the parent struct. A field has no RAM address of its own; its overlay is the parent struct's (`heap`). |
 | Tag | One of the two tags above. |
 | Evidence | The topic page, symbol row or trace that supports the entry. |
 
@@ -44,16 +45,16 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 
 | Struct | Field | Offset | Tag | Description | Evidence |
 |--------|-------|--------|-----|-------------|----------|
-| Entity | type | `+0x00` | `[blue-verified]` | 0 means no entity. | `EntityIsValid` |
-| Entity | pos.x, pos.y | `+0x04`, `+0x06` | `[blue-verified]` | s16 position. | `021563CC` passes `entity+4` as a position |
+| Entity | type | `+0x00` | `[blue-verified]` | 0 means no entity. | `EntityIsValid` ([`re/structs.md`](re/structs.md#entity)) |
+| Entity | pos.x, pos.y | `+0x04`, `+0x06` | `[blue-verified]` | s16 position. | `021563CC` passes `entity+4` as a position ([`re/structs.md`](re/structs.md#entity)) |
 | Entity | isVisible | `+0x20` | `[blue-verified]` | Set by `SpawnItem`. | [`re/structs.md`](re/structs.md#entity) |
-| Entity | info | `+0x70` | `[blue-verified]` | Pointer to the entity info. For an item entity, its `Item`. | `GetLeader`, `AbilityIsActive` |
-| Entity info | id (species) | `+0x02` | `[blue-verified]` | | `CalcSpeedStage`, `TickStatusAndHealthRegen` |
-| Entity info | level | `+0x09` | `[blue-verified]` | | `CalcDamage` |
-| Entity info | HP | `+0x0E` | `[blue-verified]` | | `TickStatusAndHealthRegen` |
-| Entity info | maxHPStat | `+0x10` | `[blue-verified]` | | `TickStatusAndHealthRegen` |
-| Entity info | types[2] | `+0x56` | `[blue-verified]` | Defender types, read by the type chart lookup. Red's offset is `0x5C`. | `sub_806F370_Async`, `sub_806F4A4` |
-| Entity info | flashFireBoost | `+0x28` | `[red-hypothesis]` | *probable*: one access, consistent with its neighbours. | `CalcDamage` |
+| Entity | info | `+0x70` | `[blue-verified]` | Pointer to the entity info. For an item entity, its `Item`. | `GetLeader`, `AbilityIsActive` ([`re/structs.md`](re/structs.md#entity)) |
+| Entity info | id (species) | `+0x02` | `[blue-verified]` | Species ID. | `CalcSpeedStage`, `TickStatusAndHealthRegen` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | level | `+0x09` | `[blue-verified]` | Level. | `CalcDamage` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | HP | `+0x0E` | `[blue-verified]` | HP. | `TickStatusAndHealthRegen` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | maxHPStat | `+0x10` | `[blue-verified]` | Max HP stat. | `TickStatusAndHealthRegen` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | types[2] | `+0x56` | `[blue-verified]` | Defender types, read by the type chart lookup. Red's offset is `0x5C`. | `sub_806F370_Async`, `sub_806F4A4` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | flashFireBoost | `+0x28` | `[red-hypothesis]` | *probable*: one access, consistent with its neighbours. | `CalcDamage` ([`re/structs.md`](re/structs.md#entity-info)) |
 
 ## Globals
 
