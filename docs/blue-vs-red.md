@@ -42,7 +42,7 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Title menu | choices 2, 3, 4 as in Red, plus choice 5 (`RunOverlay7Mode`, overlay 7) | choices 2, 4, `MENU_NEW_GAME` | **one extra mode in Blue** | DS-only feature |
 | Ground and dungeon code | overlays 0 and 1, swapped by `NDS_LoadOverlay_GroundMain` and `LoadAndRunDungeon_Async` | always resident; the load points are empty stubs | NDS overlay swap | DS-only feature |
 | Quicksave dungeon entry | `LoadAndRunQuickSaveDungeon_Async` `0201E204` | same, `src/main_loops.c` | same steps | same |
-| Frame actions | 19 calls of `MainLoops_RunFrameActions`, not yet named | Red's list; Red notes 2–3 extra sprite calls in Blue for the second screen | **count not checked**; Red's note is unconfirmed | DS-only feature |
+| Frame actions | 19 calls of `MainLoops_RunFrameActions`, not yet named | Red's list; Red notes 2–3 extra sprite calls in Blue for the second screen | **count not checked**; Red's note is unconfirmed | unclassified |
 
 ## Combat ([`re/combat.md`](re/combat.md))
 
@@ -65,7 +65,7 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Dungeon struct offsets after `+0x17A` | Identical to Red up to `0x17A`; then fields move earlier, by 8 bytes at `0x5C0` and by up to `0x2268` from `traps` on ([`re/structs.md`](re/structs.md#dungeon-struct)) | same fields at Red's offsets | **offsets shift** | unclassified |
 | Tile array | `tiles[y][x]` at dungeon `+0x34B8` | `0x3A18` | **`0x560` earlier in Blue** | unclassified |
 | Tile size | `0x14` bytes | `0x18` bytes | **smaller in Blue** (checked by `ResetTile` and `GetTileMut`) | unclassified |
-| `stairsSpawn` | `+0xC0BC` (`.x`, `.y`), layout gives `0xE21C` | `pmd-red` comment says `0xEA1C` | **the Red comment disagrees with the layout**; Blue's value is the layout's | unclassified |
+| `stairsSpawn` | dungeon `+0xC0BC` (`.x`), `+0xC0BE` (`.y`) | `0xE21C` by the layout; `pmd-red`'s comment says `0xEA1C` | **`0x2160` earlier in Blue**; Red's comment disagrees with Red's own layout | unclassified |
 | Team roster `Pokemon` | Size `0x40`; fields match `pmd-red`'s Blue notes in `include/structs/str_pokemon.h` field for field | `0x58` bytes | **smaller in Blue**; fields same | unclassified |
 | Item packing | Blue's struct is `0x23C` bytes: `Item` in 3 bytes and `BulkItem` in 2 | Red `0x268` bytes; 4-byte stride for both arrays | **packing differs** ([`re/structs.md`](re/structs.md)) | unclassified |
 
@@ -91,7 +91,7 @@ Compared field by field against pmd-red's `data/monster/monster_data.json`,
 | Species | 424 entries of 0x48 bytes | `MonsterDataEntry`, 424 entries (`monspara`, `SIRO`) | **all numeric fields identical**, including types and abilities; all 424 names identical. Bytes `0x0A`–`0x0B` and `0x46`–`0x47` differ in every species, and Red's struct has no field there (padding in Red, unknown in Blue) | same |
 | Moves | 413 entries of 0x24 bytes; learnsets 8 bytes per species | `MoveDataEntry`, `MoveLearnset` | **all numeric fields identical** (power, PP, AI weight, accuracies, hits, upgrade, crit, flags, targeting) | same |
 | Items | 240 entries of 0x20 bytes | `ItemDataEntry`, 240 entries | **all numeric fields identical** (prices, sprite, AI flags, order, spawn range, palette) | same |
-| Item byte `0x1F` | Blue's use not stated in `data.md` | Padding | **Red pads a byte that Blue's table does not describe** | unclassified |
+| Item byte `0x1F` | No reader found [unverified] ([`re/data-tables.md`](re/data-tables.md)) | Padding | **Red pads the byte; Blue has no reader found** | unclassified |
 | Translations | `wazapar{f,g,i,s}`, `itempar{f,g,i,s}`: same tables with translated text | single language | **Blue only** | DS-only feature |
 | Level growth | `lvmpNNN`: 421 files, SIR0 + AT4PX, 100 x 12-byte `LevelData` | `LevelData`, `lvmpNNN` in the Red system archive (`SIRO` + AT4PX) | **all 421 files identical** (expected EXP, HP, attack and defence gains, all 100 levels) | same |
 | Dungeon floors | `mapparam`: 64 dungeons, 1831 floors, 1764 `FloorProperties`, 839 monster, 148 trap, 178 item lists | `DungeonMapParam2` (`SIRO`, five VA pointers) | **all identical** in every table (floors: properties, monster, trap and item indices; floor properties and lists: raw values). The parser had counted five header pointers as item lists (183); fixed to 178. | same |
