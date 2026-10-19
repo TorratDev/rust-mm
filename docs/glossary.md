@@ -68,7 +68,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Entity info | sure shot counter | `+0xC5` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
 | Dungeon | stairs room index | `+0x34AC` | `[blue-verified]` | Stairs room index, written on floor type 2. | `SpawnNonEnemies` (`ov_0001::0214B650`) ([`re/structs.md`](re/structs.md#dungeon-struct)) |
 | Dungeon | fractionalTurn | `+0x650` | `[blue-verified]` | Turn fraction, the name from `re/structs.md`. | `RunFractionalTurn_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
-| Dungeon | prngPreseed23Bit | `+0x66C` | `[blue-verified]` | Run preseed, 23 bits; the name is from `re/structs.md`. | `RunDungeon_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | prngPreseed23Bit | `+0x66C` | `[blue-verified]` | Run preseed, `Rand32Bit() & 0xFFFFFF` (24 bits); the name is Red's. | `RunDungeon_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
 | Dungeon | floor seed (`unk3C`) | `+0x670` | `[blue-verified]` | Floor seed. The name `unk3C` is Red's. | `RunDungeon_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
 | Dungeon | tiles[32][56] | `+0x34B8` | `[blue-verified]` | Tile grid, 0x14 bytes per tile. | `sub_80495E4` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
 | Dungeon | stairsSpawn | `+0xC0BC`, `+0xC0BE` | `[blue-verified]` | Stairs position, x and y. | `ResetFloor`, `SpawnNonEnemies` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
