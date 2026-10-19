@@ -121,9 +121,10 @@ Done:
 - RNG (#47): all three generators, seeding, dungeon seed chain; bit-exact Rust port in `rescue-sim` (`crates/sim/src/rng.rs`).
 - Execution model and overlays (#44), dungeon and entity structs (#46), turn loop and V7 trigger (#49), floor-generation entry and RNG order (#48), combat (#50), save format (#53).
 - Tooling: ghidra-cli workflow, `tools/ghidra/Rescue*.java`, `RescueApplySymbols.java` driven by `symbols.md`.
+- V9 done: REA replaced by ghidra-cli.
 
 Partly done:
-- #43 glossary written in [`glossary.md`](glossary.md) (structs, functions, globals, enums; V9 done: REA replaced by ghidra-cli.)
+- #43 glossary: [`glossary.md`](glossary.md) has structs, fields, functions, globals and an enum table; open: the `EFFECTIVENESS_IMMUNE` value.
 - RNG leftovers: what uses the Mersenne Twister (callers `0200D4DC`, `0206C6E4`); the 16-bit generator from `pmd-red`'s `other_random.c` (multiplier 109, increment 1021) not found yet.
 - Turn loop: name the three end-of-turn functions ([`re/turns.md`](re/turns.md)).
 - #53: locate the quicksave sector.

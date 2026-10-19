@@ -28,6 +28,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Name | The name used in the repo. Names from Red keep Red's spelling. |
 | Address | RAM address in hex, or a file offset when noted. |
 | Overlay | `ARM9`, `ov_NNNN` (overlay number), or `heap`. |
+| Offset | Fields only: byte offset inside the parent struct. A field has no RAM address of its own; its overlay is the parent struct's (`heap`). |
 | Tag | One of the two tags above. |
 | Evidence | The topic page, symbol row or trace that supports the entry. |
 
