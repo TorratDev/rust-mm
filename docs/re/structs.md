@@ -40,32 +40,32 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x56` | `types[2]` | `0x5C` | −6 | `sub_806F370_Async`, `sub_806F4A4` |
 | `+0x58` | `abilities[2]` | `0x5E` | −6 | `AbilityIsActive` |
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
-| `+0x70` | `aiTarget` (`aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8`, `aiTargetPos` `+0x10`; the other inner offsets follow the −8 shift and are not checked) | `0x78` | −8 | `0219082C` |
-| `+0x71` | `aiNotNextToTarget` (inside `aiTarget`) | `0x79` | −8 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
+| `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` and the other inner offsets follow the −8 shift and are not checked) | `0x78` | −8 | `0219082C` |
+| `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; *probable*: the writer is only a candidate) | `0x79` | −8 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
 | `+0x99`, `+0x9A` | `sleepClassStatus` status, turns | `0xA8` | −0xF | `TickStatusAndHealthRegen` |
 | `+0x9B`, `+0x9C` | `burnClassStatus` status, turns | `0xAC` | −0x11 | `CalcSpeedStage` (paralysis), `TickStatusAndHealthRegen` |
 | `+0xA0` | `frozenClassStatus.status` | `0xB0` | −0x10 | `TickStatusAndHealthRegen` |
 | `+0xA8` | `frozenClassStatus` counter | `0xB8` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`; decremented by `FUN_ov_0001__0219bf1c`) |
-| `+0xAC`, `+0xAD` | cringe status, counter (*probable*) | `0xBC`, `0xBD` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
+| `+0xAC`, `+0xAD` | cringe status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xBC`, `0xBD` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
 | `+0xAE` | `bideClassStatus.status` | `0xC0` | −0x12 | `CalcDamage` |
 | `+0xB1` | `reflectClassStatus.status` | `0xC4` | −0x13 | `CalcDamage`, `TickStatusAndHealthRegen` |
 | `+0xB2` | `reflectClassStatus` counter | `0xC5` | −0x13 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) |
-| `+0xB3`, `+0xB6` | curse status, counter (*probable*) | `0xC8`, `0xCB` | −0x15 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
-| `+0xB8`, `+0xC1` | leech seed status, counter (*probable*) | `0xD0`, `0xD9` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
+| `+0xB3`, `+0xB6` | curse status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xC8`, `0xCB` | −0x15 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
+| `+0xB8`, `+0xC1` | leech seed status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xD0`, `0xD9` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
 | `+0xC4` | `sureShotClassStatus.status` | `0xDC` | −0x18 | `CalcDamage` |
 | `+0xC5` | `sureShotClassStatus` counter | `0xDD` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) |
 | `+0xD5` | `speedStageChanged` | `0xF8` | −0x23 | `RunLeaderTurn_Async` |
-| `+0xDD` | `decoyAITracker` | `0x100` | −0x23 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
+| `+0xDD` | `decoyAITracker` (*probable*: the writer is only a candidate) | `0x100` | −0x23 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
 | `+0xE0` | `speedStage` | `0x104` | −0x24 | `CalcSpeedStage` |
 | `+0xE4` | `speedUpCounters[5]` | `0x108` | −0x24 | `CalcSpeedStage` |
 | `+0xE9` | `speedDownCounters[5]` | `0x10D` | −0x24 | `CalcSpeedStage` |
 | `+0xF4` | `moves` (4 × 6-byte `Move`, see below) | `0x118` | −0x24 | `0216E56C` (passes `info+0xF4` as the move list, sets `moveFlags2` bit 2 of entry *i* at `+0xF5 + 6i`) |
+| `+0x10E` | `belly` | `0x13C` | −0x2E | `CalcDamage` (*probable*) |
 | `+0x116` | `aiAllySkip` | `0x144` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
 | `+0x117` | `recalculateFollow` | `0x145` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
-| `+0x119` | `waiting` | `0x147` | −0x2E | `DisplayActions_Async` (`ov_0001::0218766C`) |
-| `+0x10E` | `belly` | `0x13C` | −0x2E | `CalcDamage` (*probable*) |
 | `+0x118` | `bellyEmpty` | `0x146` | −0x2E | `TickStatusAndHealthRegen` |
+| `+0x119` | `waiting` | `0x147` | −0x2E | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x11A` | `attacking` | `0x148` | −0x2E | `RunLeaderTurn_Async` |
 | `+0x120` | `visualFlags` | `0x14E` | −0x2E | `CalcDamage` |
 | `+0x122` | `previousVisualFlags` | `0x150` | −0x2E | `CalcDamage` |
@@ -207,9 +207,9 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 
 - **Entity info size.** Not found. The bound is 0x1C8 ≤ size ≤ 0x208 (blue-verified). Measure the infos' pointer stride in the emulator ([#17](https://github.com/TorratDev/rust-mm/issues/17)). Do not record 0x1D4 until then.
 - **`IQ` at info `+0x0C`** (Red `0x0C`). Red's readers are known (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`), but no Blue function that reads `+0x0C` is matched. Find Blue's `GetMovesLearnedAtLevel` caller and check the offset of its IQ argument.
-- **`aiTarget` inner layout** beyond `aiTargetPos`: `aiObjective` `+0x70`, `aiTargetingEnemy` `+0x72`, `aiTurningAround` `+0x73`, `aiTargetSpawnGenID` `+0x74`, `aiTarget` `+0x78` and `aiTargetPos` `+0x80` follow the −8 shift but are unchecked.
+- **`aiTarget` inner layout** beyond `aiTargetPos`: `aiObjective` `+0x70`, `aiTargetingEnemy` `+0x72`, `aiTurningAround` `+0x73`, `aiTargetSpawnGenID` `+0x74`, `aiTarget` `+0x78` follow the −8 shift but are unchecked.
 - **`RunMonsterAI` candidate** `ov_0001::02188030`: name it and check its remaining branches against Red's `dungeon_ai.c`.
-- **Status bytes not assigned:** `+0xC9`/`+0xCA` and `+0xCB`/`+0xCC` are either invisible (`0xE4`/`0xE5`) or blinker (`0xE8`/`0xE9`) in Red's layout; both are read in `TickStatusAndHealthRegen`. Cringe (`+0xAC`), curse (`+0xB3`) and leech seed (`+0xB8`) are *probable* and have no write sites yet. Status write sites were not examined.
+- **Status bytes not assigned:** `+0xC9`/`+0xCA` and `+0xCB`/`+0xCC` are either invisible (`0xE4`/`0xE5`) or blinker (`0xE8`/`0xE9`) in Red's layout; both are read in `TickStatusAndHealthRegen`. Cringe (`+0xAC`), curse (`+0xB3`) and leech seed (`+0xB8`) are *red-hypothesis* and have no write sites yet. Status write sites were not examined.
 - **Trap entities.** The writer of `traps[64]` (`+0x114B4`) is not found. Search the overlay 1 functions called from the floor-generation chain (`GenerateFloor`, `ov_0001::02151E7C`), or dump RAM after a floor load (#17).
 - **`DAT_02142064`**, the base of the floor-item slots (dungeon `+0x3·i`). Read its value to name the floor-item storage.
 - **Dungeon `+0xC0B8`/`+0xC0BA`** (checked for `-1` next to the stairs; meaning unknown), and the later use of `+0x34AC` (stairs room, floor type 2).
