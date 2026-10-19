@@ -32,7 +32,7 @@ Overlay loading uses the NitroSDK sequence `FS_LoadOverlayInfo`, `FS_InitFile`, 
 | `GroundStation_LoadBank` (`ov_0000::0214FD00`) | `gGroundBankTable[bank]` |
 | `FS_UnloadOverlay` (`0207BB28`) | its own `id` argument |
 
-`FS_LoadOverlayImageAsync` (`0207BE40`) and `FS_StartOverlay` (`0207BC9C`) each have one caller per site above. The program has no other overlay loader. Overlays 8 and 9 therefore have no load path here. A load driven by data that never reaches these sites is not excluded.
+`FS_LoadOverlayImageAsync` (`0207BE40`) and `FS_StartOverlay` (`0207BC9C`) each have five callers, the load sites above other than `FS_UnloadOverlay`. The program has no other overlay loader. Overlays 8 and 9 therefore have no load path here. A load driven by data that never reaches these sites is not excluded.
 
 ## Start-up and the title menu
 
@@ -84,7 +84,7 @@ Red's copies of the second-screen calls pair up as (#4, #5), (#10, #12), (#11, #
 
 ## RNG per frame
 
-Measured on the retail ROM (see [`verification.md`](../verification.md#p5--per-frame-rng-advance-44)): the global LCG (`sPRNGState`, `020DF704`) advances **4 steps per emulated frame** in the measured phase, with no button held. 117 of 122 frame intervals show exactly 4 steps. The others show 2, 8, 36 and 56. The state chain checks out with 0 mismatches. The frame routine `MainLoops_RunFrameActions` fires once per frame from emulated frame 2418 on.
+Measured on the retail ROM (see [`verification.md`](../verification.md#p5--per-frame-rng-advance-44)): the global LCG (`sPRNGState`, `020DF704`) advances **4 steps per emulated frame** in the measured phase, with no button held. One run, medium confidence; not yet repeated (see [`verification.md`](../verification.md#p5--per-frame-rng-advance-44)). 117 of 122 frame intervals show exactly 4 steps. The others show 2, 8, 36 and 56. The state chain checks out with 0 mismatches. The frame routine `MainLoops_RunFrameActions` fires once per frame from emulated frame 2418 on.
 
 - The sprite routine `FUN_02012648` made no calls in any interval, so it is not the source. It does call `Rand32Bit` at `020126F8`.
 - The caller of the 4 steps is not identified. The next candidates are the callers of `Rand32Bit` (`0201198C`) on the frame path.
@@ -92,7 +92,7 @@ Measured on the retail ROM (see [`verification.md`](../verification.md#p5--per-f
 - A and Select: 7 A-held intervals gave 2, 4, 8 and 56 steps, too few and too mixed to show an effect. No frame-routine hits after emulated frame 2508, so Select has no data.
 - Red's `WaitForNextFrameAndAdvanceRNG` advances the global RNG once per frame, and once more while A or Select is held.
 
-**History.** The static note that replaced this section said that no call path from `MainLoops_RunFrameActions` reaches the global RNG within four call levels, and therefore that Blue probably does not advance the RNG per frame. The emulator result above contradicts that. The static search did not follow calls through function pointers, so the path it missed may go through one (not checked).
+**History.** The earlier static note in this section said that no call path from `MainLoops_RunFrameActions` reaches the global RNG within four call levels, and therefore that Blue probably does not advance the RNG per frame. The emulator result above contradicts that. The static search did not follow calls through function pointers, so the path it missed may go through one (not checked).
 
 ## Scene graph
 

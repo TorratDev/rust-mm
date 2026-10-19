@@ -308,6 +308,7 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - A held: 7 intervals, with 2, 4, 8 and 56 steps. Too few and mixed, so no A effect is shown.
   - Select: no frame-routine hits after emulated frame 2508, so there is no Select data.
   - The mode during the run (title or ground) is not identified.
-- **Outcome:** **confirmed for the measured phase:** the global LCG advances 4 steps per emulated frame, with no button held. The earlier static note is superseded. Not established: the caller of the 4 steps, whether the 2-step intervals are hook artifacts of the double hit at frame 2419, and the A and Select effect.
+  - Repeatability: one run; no second run or hash comparison was made.
+- **Outcome:** **measured once (medium confidence; not repeated, script not committed):** the global LCG advances 4 steps per emulated frame, with no button held. The earlier static note is superseded. Not established: the caller of the 4 steps, whether the 2-step intervals are hook artifacts of the double hit at frame 2419, and the A and Select effect.
 - **Fallback adopted:** none.
 - **Notes:** Next: hook `Rand32Bit` (`0201198C`) and its callers on the frame path, rerun the same script, then run the A and Select check in a phase that keeps the frame loop running.
