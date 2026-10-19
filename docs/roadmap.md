@@ -123,7 +123,7 @@ Done:
 - Tooling: ghidra-cli workflow, `tools/ghidra/Rescue*.java`, `RescueApplySymbols.java` driven by `symbols.md`.
 
 Partly done:
-- #43 glossary still to write. (V9 done: REA replaced by ghidra-cli.)
+- #43 glossary written in [`glossary.md`](glossary.md) (structs, functions, globals, enums; V9 done: REA replaced by ghidra-cli.)
 - RNG leftovers: what uses the Mersenne Twister (callers `0200D4DC`, `0206C6E4`); the 16-bit generator from `pmd-red`'s `other_random.c` (multiplier 109, increment 1021) not found yet.
 - Turn loop: name the three end-of-turn functions ([`re/turns.md`](re/turns.md)).
 - #53: locate the quicksave sector.
