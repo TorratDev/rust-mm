@@ -67,6 +67,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | gTypeEffectivenessChart | `021AAEE8` | `ov_0001` | `short[18][18]` | `[blue-verified]` | Attack type (row) by defender type (column). Byte-identical to Red's table, 648 bytes. In the BLZ-decoded overlay 1 it sits at file offset `0x72688`. | [`symbols.md`](symbols.md), [`verification.md`](verification.md) (V6) |
 | gAtkStatStageMultipliers | `021AA660` | `ov_0001` | `int[21]` | `[blue-verified]` | Attack stat stage multipliers (s24.8). | [`symbols.md`](symbols.md) |
 | gDefStatStageMultipliers | `021AA6B4` | `ov_0001` | `int[21]` | `[blue-verified]` | Defense stat stage multipliers (s24.8). | [`symbols.md`](symbols.md) |
+| gOtherRngState | `020E03F4` | ARM9 | `short` | `[blue-verified]` | State of the 16-bit generator `OtherRandom16`. Static initial value `0x348C`. | [`re/rng.md`](re/rng.md#16-bit-generator), [`symbols.md`](symbols.md) |
 
 ## Functions
 
@@ -86,6 +87,11 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | WeightWeakTypePicker | `ov_0001::0217CB3C` | `ov_0001` | `[blue-verified]` | Reads `gTypeEffectivenessChart`; 3 arguments. | [`symbols.md`](symbols.md) |
 | sub_806E100 | `ov_0001::0217CE88` | `ov_0001` | `[blue-verified]` | Reads `gTypeEffectivenessChart`; the type is its 4th argument. | [`symbols.md`](symbols.md) |
 | CalcDamage | `ov_0001::0217BD94` | `ov_0001` | `[blue-verified]` | Damage formula. Same constants as Red (`999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`). | [`symbols.md`](symbols.md) |
+| OtherRandom16 | `02023B9C` | ARM9 | `[blue-verified]` | 16-bit generator: `state * 109 + 1021` in 16 bits, returns the new state. | [`re/rng.md`](re/rng.md#16-bit-generator), [`symbols.md`](symbols.md) |
+| OtherRandInt | `02023B84` | ARM9 | `[blue-verified]` | `(n * OtherRandom16()) >> 16`. | [`re/rng.md`](re/rng.md#16-bit-generator) |
+| OtherRandRange | `02023B6C` | ARM9 | `[blue-verified]` | `low + OtherRandInt(high - low)`; equal bounds still advance the generator. | [`re/rng.md`](re/rng.md#16-bit-generator) |
+| sub_809542C | `0200D4DC` | ARM9 | `[blue-verified]` | Mail-record builder: seeds the Mersenne Twister from the global LCG, stores one output as the mail's `unk10`. Called from `LoadAndRunQuickSaveDungeon_Async`. | [`re/rng.md`](re/rng.md#mersenne-twister), [`symbols.md`](symbols.md) |
+| HandleTestTrackerState | `0206C6E4` | ARM9 | `[blue-verified]` | Personality-test state machine. Its case 15 uses the Mersenne Twister, seeded from the global LCG. | [`re/rng.md`](re/rng.md#mersenne-twister), [`symbols.md`](symbols.md) |
 
 ## Enums and constants
 
