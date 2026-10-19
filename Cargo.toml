@@ -33,6 +33,10 @@ eframe = "=0.36.2"
 # Whole-ROM identification (rescue-nds). RustCrypto, pure Rust, no default features.
 sha1 = { version = "=0.11.0", default-features = false }
 
+# Golden-trace format (rescue-trace): JSON rows and header.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+
 # Test-only.
 insta = "=1.49.0"
 proptest = "=1.12.0"
