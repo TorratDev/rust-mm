@@ -14,6 +14,7 @@ Start here. This folder is an [Obsidian](https://obsidian.md) vault: open `docs/
 - [Blue vs Red](blue-vs-red.md): where the Red decomp is a hypothesis and where it is verified.
 
 ## File formats
+- [Golden-trace format](golden-traces.md): versioned JSON Lines spec for the per-turn retail trace (#54).
 - [Format index](formats/README.md): archive, compression, data, effects, graphics, maps, portraits, save, sprites, text, tilesets, NDS container.
 - [File survey](file-survey.md): every file in the dump, tagged known, hypothesis or unknown.
 
