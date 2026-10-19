@@ -188,22 +188,24 @@ impl GlobalRng {
 
 /// The 16-bit generator (`OtherRandom16` in `pmd-red`; `FUN_02023b9c` in Blue).
 ///
-/// The state is a signed 16-bit value (`short` in the game). Each step is
-/// `state * 109 + 1021` in 16 bits. The wrappers are `OtherRandInt` (`FUN_02023b84`)
-/// and `OtherRandRange` (`FUN_02023b6c`).
+/// The state is 16 bits, and each step is `state * 109 + 1021` in 16 bits. The
+/// wrappers are `OtherRandInt` (`FUN_02023b84`) and `OtherRandRange` (`FUN_02023b6c`).
+///
+/// The game's C type is `short`, but the code that returns the new state loads it
+/// with `ldrh` at `02023BB4`, which zero-extends. So the return value is unsigned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OtherRng {
-    state: i16,
+    state: u16,
 }
 
 impl OtherRng {
     /// Multiplier of the 16-bit step (`0x6D` in the game).
-    pub const MULTIPLIER: i16 = 109;
+    pub const MULTIPLIER: u16 = 109;
     /// Increment of the 16-bit step (`1021` in the game).
-    pub const INCREMENT: i16 = 1021;
+    pub const INCREMENT: u16 = 1021;
     /// Initial state, read from the static image at `0x020E03F4`
     /// (`gOtherRngState` in `pmd-red`, which has the same value).
-    pub const INITIAL_STATE: i16 = 0x348C;
+    pub const INITIAL_STATE: u16 = 0x348C;
 
     /// Starts from the static initial state. No runtime seed write was found.
     #[must_use]
@@ -215,17 +217,17 @@ impl OtherRng {
 
     /// Uses `state` as is (for resuming from a recorded state).
     #[must_use]
-    pub const fn from_state(state: i16) -> Self {
+    pub const fn from_state(state: u16) -> Self {
         Self { state }
     }
 
     #[must_use]
-    pub const fn state(&self) -> i16 {
+    pub const fn state(&self) -> u16 {
         self.state
     }
 
-    /// One step, returning the new state as the game's `short` return value.
-    pub fn next_i16(&mut self) -> i16 {
+    /// One step, returning the new state zero-extended (`ldrh` at `02023BB4`).
+    pub fn next_u16(&mut self) -> u16 {
         self.state = self
             .state
             .wrapping_mul(Self::MULTIPLIER)
@@ -233,17 +235,18 @@ impl OtherRng {
         self.state
     }
 
-    /// `OtherRandInt(n)`: `(n * state) >> 16`, with the state sign-extended and the
-    /// shift arithmetic, as in the game's `int` code.
+    /// `OtherRandInt(n)`: `(n * state) >> 16`. The product is a 32-bit `mul`
+    /// (wrapping) and the shift is arithmetic (`asr #16` at `02023B94`). The state
+    /// is unsigned, so for `0 < n < 0x8000` the result is in `[0, n)`.
     pub fn int(&mut self, n: i32) -> i32 {
-        n.wrapping_mul(i32::from(self.next_i16())) >> 16
+        n.wrapping_mul(i32::from(self.next_u16())) >> 16
     }
 
-    /// `OtherRandRange(low, high)`: `low + int(high - low)`. Unlike
-    /// [`DungeonRng::range`] there is no special case for equal bounds: the
-    /// generator still advances.
+    /// `OtherRandRange(low, high)`: `low + int(high - low)`, with `sub` and `add`
+    /// that wrap like the ARM instructions. Unlike [`DungeonRng::range`] there is no
+    /// special case for equal bounds: the generator still advances.
     pub fn range(&mut self, low: i32, high: i32) -> i32 {
-        low + self.int(high - low)
+        low.wrapping_add(self.int(high.wrapping_sub(low)))
     }
 }
 
@@ -331,7 +334,7 @@ mod tests {
     fn other_rng_initial_state_and_first_step() {
         let mut rng = OtherRng::new();
         assert_eq!(rng.state(), 0x348C);
-        assert_eq!(rng.next_i16(), 25497);
+        assert_eq!(rng.next_u16(), 25497);
         assert_eq!(rng.state(), 25497);
     }
 
@@ -343,12 +346,20 @@ mod tests {
     }
 
     #[test]
-    fn other_rng_negative_state_shifts_arithmetically() {
-        // 0x0200 steps to -8707 (signed); 100 * -8707 >> 16 floors to -14.
+    fn other_rng_high_state_is_zero_extended() {
+        // 0x0200 * 109 + 1021 = 56829 = 0xDDFD. The return is zero-extended (ldrh),
+        // so the state is not negative: 100 * 56829 >> 16 = 86.
         let mut rng = OtherRng::from_state(0x0200);
-        assert_eq!(rng.next_i16(), -8707);
+        assert_eq!(rng.next_u16(), 0xDDFD);
         let mut rng = OtherRng::from_state(0x0200);
-        assert_eq!(rng.int(100), -14);
+        assert_eq!(rng.int(100), 86);
+    }
+
+    #[test]
+    fn other_rng_range_wraps_without_panic() {
+        // The ARM sub and add wrap; a checked subtraction would overflow here.
+        let mut rng = OtherRng::from_state(0x4000);
+        let _ = rng.range(i32::MIN, i32::MAX);
     }
 
     #[test]

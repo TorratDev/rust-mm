@@ -14,7 +14,7 @@ Tags: **[blue-verified]** means read in Blue's code; **[red-hypothesis]** means 
 | Dungeon LCG | `gDungeonRngState` `ov_0001::021B3F58` (u32) | `s = s * 0x5D588B65 + 1` | `s >> 16` (16 bits) | `InitDungeonRNG` once per floor | `src/dungeon_random.c` |
 | Dungeon preseed LCG | `gDungeonRngPreseedState` `ov_0001::021B3F5C` (u32) | same step, two per call | odd 24-bit floor seed | `SetDungeonRNGPreseed23Bit` once per dungeon run | `src/dungeon_random.c` |
 | Mersenne Twister | `sStateArray` `020DED24` (624 × u32), `sStateIndex` `020DED18`, `sTwistMatrix` `020DED1C` | MT19937 (`0x6C078965`, `0x9908B0DF`) | 32 bits | `MersenneTwister_InitializeState` | `src/random_mersenne_twister.c` |
-| 16-bit generator | `gOtherRngState` `020E03F4` (s16) | `s = s * 109 + 1021` (16 bits) | `s` as `s16` | static initial value `0x348C` | `src/other_random.c` |
+| 16-bit generator | `gOtherRngState` `020E03F4` (u16 in use) | `s = s * 109 + 1021` (16 bits) | `s` zero-extended (u16) | static initial value `0x348C` | `src/other_random.c` |
 
 ## Global LCG [blue-verified]
 
@@ -79,8 +79,8 @@ Tag: **[blue-verified]**. Blue's copy of `pmd-red`'s `OtherRandom16` (`src/other
 
 | Address | Name | Behaviour |
 |---------|------|-----------|
-| `02023B9C` | `OtherRandom16` | `state = state * 109 + 1021` in 16 bits (the store is `short`); returns the new state |
-| `02023B84` | `OtherRandInt(n)` | `(n * OtherRandom16()) >> 16`, arithmetic shift |
+| `02023B9C` | `OtherRandom16` | `state = state * 109 + 1021` in 16 bits (the store is `short`); returns the new state, zero-extended (`ldrh` at `02023BB4`) |
+| `02023B84` | `OtherRandInt(n)` | `(n * OtherRandom16()) >> 16`: `mul` at `02023B90`, `asr #16` at `02023B94`; the state is unsigned, so for `0 < n < 0x8000` the result is in `[0, n)` |
 | `02023B6C` | `OtherRandRange(low, high)` | `low + OtherRandInt(high - low)`; no equal-bounds case, so the generator still advances |
 
 - **State:** `gOtherRngState` at `0x020E03F4` (`short`). The literal pool at `02023BBC` holds the address and at `02023BC0` the increment `1021`. The static initial value is `0x348C`, read from the image; `pmd-red`'s `gOtherRngState` is `0x348C` too.

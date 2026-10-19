@@ -87,7 +87,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | WeightWeakTypePicker | `ov_0001::0217CB3C` | `ov_0001` | `[blue-verified]` | Reads `gTypeEffectivenessChart`; 3 arguments. | [`symbols.md`](symbols.md) |
 | sub_806E100 | `ov_0001::0217CE88` | `ov_0001` | `[blue-verified]` | Reads `gTypeEffectivenessChart`; the type is its 4th argument. | [`symbols.md`](symbols.md) |
 | CalcDamage | `ov_0001::0217BD94` | `ov_0001` | `[blue-verified]` | Damage formula. Same constants as Red (`999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`). | [`symbols.md`](symbols.md) |
-| OtherRandom16 | `02023B9C` | ARM9 | `[blue-verified]` | 16-bit generator: `state * 109 + 1021` in 16 bits, returns the new state. | [`re/rng.md`](re/rng.md#16-bit-generator), [`symbols.md`](symbols.md) |
+| OtherRandom16 | `02023B9C` | ARM9 | `[blue-verified]` | 16-bit generator: `state * 109 + 1021` in 16 bits, returns the new state, zero-extended. | [`re/rng.md`](re/rng.md#16-bit-generator), [`symbols.md`](symbols.md) |
 | OtherRandInt | `02023B84` | ARM9 | `[blue-verified]` | `(n * OtherRandom16()) >> 16`. | [`re/rng.md`](re/rng.md#16-bit-generator) |
 | OtherRandRange | `02023B6C` | ARM9 | `[blue-verified]` | `low + OtherRandInt(high - low)`; equal bounds still advance the generator. | [`re/rng.md`](re/rng.md#16-bit-generator) |
 | sub_809542C | `0200D4DC` | ARM9 | `[blue-verified]` | Mail-record builder: seeds the Mersenne Twister from the global LCG, stores one output as the mail's `unk10`. Called from `LoadAndRunQuickSaveDungeon_Async`. | [`re/rng.md`](re/rng.md#mersenne-twister), [`symbols.md`](symbols.md) |
