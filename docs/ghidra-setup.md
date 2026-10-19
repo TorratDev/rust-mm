@@ -60,6 +60,8 @@ This runs Ghidra's `analyzeHeadless`, which:
 
 The project is `rescue-arm9.gpr` in the project folder, and the full log is `rescue-arm9-import.log` next to it. Full analysis of the real ARM9 and all overlays can take a long time (tens of minutes). `analyzeHeadless` exits 0 even when a script fails, so the wrappers also check the log and exit 1 on a script error.
 
+**Heap:** the wrappers do not set a heap size. On 2026-10-14 the retail import mapped all 145 overlays, then auto-analysis failed with `java.lang.OutOfMemoryError: Java heap space` and Ghidra saved no program (see [#42](https://github.com/TorratDev/rust-mm/issues/42) in [`verification.md`](verification.md#42--ghidra-project-acceptance)). The launcher default is 2G in `support/analyzeHeadless` and 8G in `support/analyzeHeadless.bat`; the run's heap was not recorded. Set `GHIDRA_MAXMEM` (for example `8G`) before you run the wrapper: `export GHIDRA_MAXMEM=8G` on Linux, `$env:GHIDRA_MAXMEM = "8G"` in PowerShell.
+
 Memory map created by the script:
 
 | Block | Space | Contents |

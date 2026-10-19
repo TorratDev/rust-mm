@@ -253,3 +253,41 @@ Copy this section for each check.
 - **Outcome:** **replaced.** REA does not support this workflow: on Windows its Ghidra provider rejects ARM targets, and on any OS it imports a binary itself instead of opening the overlay-mapped project. ghidra-cli on the V8 project supports all four capabilities, on ARM and Thumb code.
 - **Fallback adopted:** ghidra-cli plus Ghidra scripts ([`tools/ghidra`](../tools/ghidra)), as in [`ghidra-setup.md`](ghidra-setup.md#6-ghidra-cli). Evidence notes live in the repo as `docs/re/*.md` (addresses, xrefs, and emulator checks marked separately from guesses, as in [`re/rng.md`](re/rng.md)); Ghidra comments and tags mirror them in the project and can be exported with `comment list --json`.
 - **Notes:** Look at REA again if a release adds ARM raw images on Windows or opening an existing Ghidra project. Its Linux path was not run.
+
+---
+
+## #42 — Ghidra project acceptance
+
+Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42) against `origin/main` (`b14fa59`). Not a V-check, but it records what the shared project does and does not provide.
+
+- **Assumption:** the shared `rescue-arm9` project holds the ARM9 as `ARM:LE:32:v5t`, all 145 overlays at their real addresses, the labelled I/O registers and SDK functions, and only scripts are committed.
+- **Date:** 2026-10-19.
+- **Environment:** Windows 11, Ghidra 12.1.4 (`C:\Users\Troll\Downloads\ghidra_12.1.4_PUBLIC_20260921`), Eclipse Temurin JDK 25.0.4, ghidra-cli 0.2.2 (`C:\Users\Troll\tools\ghidra-cli\ghidra.exe`). Project on disk: `C:\Users\Troll\rescue-re\ghidra\rescue-arm9.gpr` with `rescue-arm9.rep/`. The project directory in ghidra-cli's config points at the main checkout, so the commands below pass `--projects-dir` instead of changing the config.
+- **Evidence:**
+  - **Live check failed.** `ghidra --projects-dir 'C:\Users\Troll\rescue-re\ghidra' --project rescue-arm9 --program arm9.bin start` →
+    `Error: Ghidra process exited before the bridge became ready: ERROR Abort due to Headless analyzer error: Requested project program file(s) not found: arm9.bin`.
+    The project has no saved program: `rescue-arm9.rep/idata/00/` is absent. `summary` failed with the same error. `project info` ignored `--project` and reported a project named `default` (`Exists: false`), so it says nothing about `rescue-arm9`. So no processor id, overlay block count, `REG_*` label, or type-chart xref can be read from the project. `decompile` and `x-ref` were not run.
+  - **Cause, from `rescue-arm9-import.log` (2026-10-14 13:35):** the mapping ran, then analysis failed with `java.lang.OutOfMemoryError: Java heap space` (ArmAnalyzer, DecompilerSwitchAnalyzer), followed by `Locked buffer: 690` errors and `ERROR REPORT: Import failed for file: .../rescue-re/code/arm9.bin`. The wrappers set no heap ([`ghidra-setup.md`](ghidra-setup.md#2a-build-the-project-headless-recommended)).
+  - **Side effect of my check.** The failed `start` (2026-10-19 15:20) rewrote the index files `rescue-arm9.rep/idata/~index.{dat,bak}`, `user/~index.dat` and `versioned/~index.{dat,bak}`. The project held no program before that, so no program data is known to be lost, but the files were not backed up first.
+  - **Processor id (from the import log, not a live query):** `Using Language/Compiler: ARM:LE:32:v5t:default` (log line 55). The same id is in [`import.sh`](../tools/ghidra/import.sh) (`-processor ARM:LE:32:v5t`), [`import.ps1`](../tools/ghidra/import.ps1) and [`RescueNdsImport.java`](../tools/ghidra/RescueNdsImport.java) (`LANGUAGE`).
+  - **Overlay blocks (from the import log):** `RESCUE: mapped arm9 + 145 overlays, 154 blocks; ROM SHA-1 6f01887356268de39085df01490347bbcc3aa330` (line 215). The block lines name 145 distinct `ov_NNNN` ids, and `io` and `io_ipc` are mapped.
+  - **Tracked files:** `git ls-files | grep -iE '\.(nds|gpr|gba)$|\.rep/'` prints nothing. Only scripts are under `tools/ghidra/` (`RescueApplySymbols`, `RescueCallers`, `RescueNdsImport`, `RescueNdsReport`, `RescueOverlayDiscover`, `RescueRngLabels`, `import.sh`, `import.ps1`).
+  - **Tracked ROM-derived binaries:** `git ls-files rescue-re` prints `rescue-re/code/arm9.bin`, `rescue-re/code/manifest.json` and `rescue-re/code/overlay_0000.bin` … `overlay_0144.bin` (147 files). They were added in `84e97e3` (2026-10-14, "Refactor code structure for improved readability and maintainability"). They are not in `.gitignore`.
+  - **Symbols:** [`symbols.md`](symbols.md) lists the names (9 rows tagged `sdk-hypothesis`, for example `FS_LoadOverlayInfo` at `0207BED8`). It names [`RescueApplySymbols.java`](../tools/ghidra/RescueApplySymbols.java) as its applier. The script was not run, because the project has no program.
+  - **V8 claim not reproduced.** [V8](#v8--ghidra-loads-arm9-and-overlays-at-real-addresses) reports a retail run with 5,236 functions and 4 type-chart references. That run's log is not the one on disk; the file on disk is the failed 2026-10-14 run above.
+- **Task outcomes:**
+
+  | # | Task | Outcome | Why |
+  |---|------|---------|-----|
+  | 1 | ARM9 loaded as ARMv5TE ARM/Thumb | **partial** | Language `ARM:LE:32:v5t` is in the import log and scripts. No saved program to check live. |
+  | 2 | 145 overlays mapped at real addresses via `RescueNdsImport.java` + `import.ps1`/`import.sh` | **gap** | The scripts map 145 overlays, but the import ended in an out-of-memory failure with no saved program. The project does not hold the mapping. |
+  | 3 | I/O registers (`REG_*`) and known SDK functions labelled | **gap** | `RescueNdsImport.java` labels the registers, and `symbols.md` has the SDK rows. Neither is in a saved project, and no `REG_*` label was checked. |
+  | 4 | Only scripts committed; no Ghidra DB or binaries tracked | **gap** | No `.gpr`, `.rep`, `.nds` or `.gba` is tracked. But 147 ROM-derived files are tracked under `rescue-re/code/` (see above). |
+  | 5 | Symbol naming and sharing agreed (`symbols.md` + `RescueApplySymbols.java`) | **partial** | Both files exist and link to each other. The script was not run on a project, and "agreed" is a decision this check cannot verify. |
+
+  The type-chart xref check (`--check ov_0001+0x72688`, or `x-ref to` on `ov_0001::021aaee8`) was not run; it needs the bridge.
+- **Fallback adopted:** none. The live checks are blocked until the project holds a program.
+- **Notes:**
+  - **Gap for maintainer:** `rescue-re/code/` (147 files) is tracked on `origin/main`. Per [`CONTRIBUTING.md`](../CONTRIBUTING.md) they are reported here, not removed in a follow-up commit. Confirm they are ROM-derived (`nds_extract_code.py` output from a supported dump), then remove them from the index and add `rescue-re/code/` to `.gitignore`. They stay in history unless history is rewritten.
+  - **To close #42:** re-import the dump into `rescue-arm9` with `GHIDRA_MAXMEM` set ([`ghidra-setup.md`](ghidra-setup.md#2a-build-the-project-headless-recommended)), then rerun this entry's commands: `start`, `summary`, `RescueNdsReport`, `RescueApplySymbols`, and the xref check.
+  - **Doc fix in this branch:** the heap note in [`ghidra-setup.md`](ghidra-setup.md#2a-build-the-project-headless-recommended) (section 2a).
