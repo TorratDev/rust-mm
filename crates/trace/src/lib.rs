@@ -258,7 +258,7 @@ fn validate(trace: &Trace) -> Result<(), TraceError> {
     if !is_hex(&header.initial_seed.source, 8) {
         return invalid("initialSeed.source must be an 8-digit hex address");
     }
-    if !is_hex(&header.initial_seed.bytes, 12) {
+    if !is_lower_hex(&header.initial_seed.bytes, 12) {
         return invalid("initialSeed.bytes must be 12 hex digits (6 bytes)");
     }
     for line in &header.inputs.boot {
@@ -270,6 +270,9 @@ fn validate(trace: &Trace) -> Result<(), TraceError> {
     for row in &trace.rows {
         if !is_lower_hex(&row.tiles_sha256, 16) {
             return invalid("tilesSha256 must be 16 lowercase hex digits");
+        }
+        if row.wild.len() > 16 {
+            return invalid("wild has more than 16 entries");
         }
     }
     Ok(())
@@ -302,7 +305,7 @@ mod tests {
             scenario: "synthetic-scenario".to_owned(),
             initial_seed: InitialSeed {
                 source: "027FFCF4".to_owned(),
-                bytes: "0011223344AA".to_owned(),
+                bytes: "0011223344aa".to_owned(),
             },
             inputs: Inputs {
                 boot: vec!["0 -".to_owned(), "10 A".to_owned()],
@@ -392,6 +395,14 @@ mod tests {
         let trace = Trace {
             header: header(),
             rows: vec![bad_row],
+        };
+        assert!(matches!(validate(&trace), Err(TraceError::Invalid(_))));
+
+        let mut too_many_wild = row(1, 1);
+        too_many_wild.wild = vec![entity(2); 17];
+        let trace = Trace {
+            header: header(),
+            rows: vec![too_many_wild],
         };
         assert!(matches!(validate(&trace), Err(TraceError::Invalid(_))));
 

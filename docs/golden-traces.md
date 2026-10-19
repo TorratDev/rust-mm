@@ -71,6 +71,7 @@ A reader for version 1 must reject the file if any of these hold:
 - the first non-blank line is not a header, or its `schemaVersion` is not `1`;
 - `rom.sha1`, `tilesSha256` or `initialSeed.bytes` has the wrong length or is not lower-case hex (for `initialSeed.bytes`, 12 digits);
 - `initialSeed.source` is not 8 hex digits;
+- `wild` has more than 16 entries;
 - an input line has a non-numeric frame, no keys, or an unknown key;
 - a row or header has an unknown key, or a field has the wrong type. Unknown keys are an error, not ignored, so a new field cannot slip past an old reader.
 
@@ -92,7 +93,7 @@ Byte-for-byte equality of two files needs one writer. The rows are equal as pars
 
 - The format is written and the reader is in `crates/trace`. The capture scripts do not write the header yet: `retail_trace.py` still writes rows only. Its output will not read as a complete trace until #55 adds the header. Its rows do read: `rescue_trace` accepts a row exactly as the script emits it (tested).
 - `inventory` is out of v1.
-- `initialSeed` is written by the capture script at boot. Its value is not captured yet in any existing trace.
+- `initialSeed` is not read by `retail_trace.py` yet; #55 adds it. No existing capture contains it.
 - The field widths for `type` and `speedStage` follow `retail_trace.py`; they are not confirmed against the struct layout.
 
 ## Links
