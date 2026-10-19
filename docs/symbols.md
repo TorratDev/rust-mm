@@ -21,7 +21,7 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 0206DC20 | RunDungeon_Async | void RunDungeon_Async(void * setup) | blue-verified | Dungeon RNG seeding matches `pmd-red` `RunDungeon_Async` (see `re/rng.md`) |
 | 0201DCEC | NDS_LoadOverlay_GroundMain | void NDS_LoadOverlay_GroundMain(void) | blue-verified | Loads and starts overlay 0; `pmd-red` keeps it as an empty stub at the same place in `GameLoop_Async` |
 | 0201DCB4 | NDS_UnloadOverlay_GroundMain | void NDS_UnloadOverlay_GroundMain(void) | tentative | Unloads overlay 0; NDS only |
-| 0201DAC4 | RunOverlay7Mode | void RunOverlay7Mode(void) | tentative | Title-menu choice 5 (not in Red): swaps overlay 0 for overlay 7 and calls its entry `ov_0007::02139F80` |
+| 0201DAC4 | RunOverlay7Mode | void RunOverlay7Mode(void) | blue-verified | Title-menu choice 5 (not in Red): loads overlay 7, calls its entry `ov_0007::02139F80`, then reloads overlay 0. Called from `GameLoop_Async` at `0201F7E8` |
 | 02029C88 | NDS_DebugInit | void NDS_DebugInit(void) | blue-verified | `GameLoop_Async` call order |
 | 02029C50 | ResetSoundEffectCounters | void ResetSoundEffectCounters(void) | blue-verified | `GameLoop_Async` call order |
 | 02029CF4 | NDS_DebugPrintf | - | tentative | Takes a format string and arguments, for example `"GroundStation_SetBank %d"` |
@@ -84,7 +84,7 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 0207B390 | FS_WaitAsync | int FS_WaitAsync(void * file) | sdk-hypothesis | Overlay load sequence |
 | 0207B460 | FS_CloseFile | int FS_CloseFile(void * file) | sdk-hypothesis | Overlay load sequence |
 | ov_0000::0214FC50 | GroundStation_SetBank | int GroundStation_SetBank(int bank) | blue-verified | Name from its own debug message; loads or unloads a ground bank overlay |
-| ov_0000::0214FD00 | GroundStation_LoadBank | void GroundStation_LoadBank(int bank) | tentative | Loads the overlay of `gGroundBankTable[bank]` |
+| ov_0000::0214FD00 | GroundStation_LoadBank | void GroundStation_LoadBank(int bank) | blue-verified | Loads the overlay of `gGroundBankTable[bank]` with `FS_LoadOverlayInfo`; called by `GroundStation_SetBank` |
 | ov_0000::0214FCA4 | GroundStation_UnloadBank | void GroundStation_UnloadBank(void) | tentative | Unloads the current bank overlay |
 | ov_0001::0217BD94 | CalcDamage | void CalcDamage(void * attacker, void * target, uchar moveType, int movePower, int critChance, void * dmgStruct, int arg8, ushort moveId, bool arg_10) | blue-verified | Calls `sub_806E100`; same constants as `pmd-red` (`999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`) and the same three `DungeonRandInt` calls in order |
 | ov_0001::0217CE88 | sub_806E100 | bool sub_806E100(void * param_1, void * pokemon, void * target, uchar type, void * dmgStruct) | blue-verified | Reads `gTypeEffectivenessChart`; type is the 4th of 5 arguments, like `pmd-red` |
@@ -231,3 +231,13 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 0200B944 | WriteBellyBits | void WriteBellyBits(void * seri, void * belly) | blue-verified | 16, 16 bits, like `pmd-red` |
 | 0200382C | WriteHiddenPowerBits | void WriteHiddenPowerBits(void * seri, void * hiddenPower) | blue-verified | 10, 5 bits, like `pmd-red` |
 | 0200CEEC | sub_8095824 | void sub_8095824(void * a, void * b) | blue-verified | Same 13-field mail record as `pmd-red` |
+| 0202E5A0 | DrawDialogueBoxString_Async | void DrawDialogueBoxString_Async(void) | red-hypothesis | Frame action #1 in `MainLoops_RunFrameActions`; a state machine, body not read. Order only |
+| 020163B8 | CopyWindowBgBuffer | void CopyWindowBgBuffer(void * window, int win) | red-hypothesis | Frame action #2, called with `(0, 0)`; argument pattern matches Red's `CopyWindowBgBuffer(NULL, WIN0)` |
+| 02012310 | nullsub_8 | void nullsub_8(uchar touchScreen) | red-hypothesis | Frame action #3; body is `return;` |
+| 02012BCC | sub_8005180 | void sub_8005180(void) | red-hypothesis | Frame action #4; linked-list compaction. Order only |
+| 02016320 | ToggleWindowBgBuffer | void ToggleWindowBgBuffer(void) | red-hypothesis | Frame action #6; toggles two flags, calls `FUN_02019220` and `FUN_02077098`. Order only |
+| 02029BBC | UpdateSoundEffectCounters | void UpdateSoundEffectCounters(void) | red-hypothesis | Frame action #7; decrements three counters while they are above 0 |
+| 02012B34 | CopySpritesToOam | void CopySpritesToOam(void) | red-hypothesis | Frame action #10; linked list to OAM |
+| 02012998 | sub_8005304 | void sub_8005304(void) | red-hypothesis | Frame action #11; loop calling `FUN_01ff9fb0` and `FUN_01ff9fc4` |
+| 0201A974 | DoScheduledMemCopies | void DoScheduledMemCopies(void) | red-hypothesis | Frame action #16; loops over 12-byte entries, calling `FUN_01ff9fc4(src, dst, size)` |
+| 02013078 | ResetSprites | void ResetSprites(int arg) | red-hypothesis | Frame action #18, called with 0; clears a count, sets OAM base `06400000`, loops over sprite entries |
