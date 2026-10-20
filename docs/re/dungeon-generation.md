@@ -32,7 +32,7 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 6. `DungeonRandInt(100) < itemlessMonsterHouseChance` decides an itemless monster house.
 7. `SpawnNonEnemies(props, itemless)` (4 / 7), `SpawnEnemies(props, itemless)` (2 / 2), `ResolveInvalidSpawns`.
 8. `GetFloorType` and `StairsAlwaysReachable(x, y, FALSE)`: if the stairs cannot be reached, `ResetFloor` and fall back to `GenerateOneRoomMonsterHouseFloor`, then finalise and spawn again (same as Red).
-9. Final calls, then `CloseFile`: Blue `0x02179060`, `0x02151D4C`, the shop pass `0x02149AF8` and `0x0214C13C`, in that order (see "End of `GenerateFloor`" below). Red: `sub_806C330`, `sub_804B534(0, 0, 56, 32)`, `sub_8051654` and `sub_804FC74`.
+9. Final calls, then `CloseFile`: Blue `0x02179060` (at `0x02152534`), the shop pass `0x02149AF8` (at `0x02152560`), `0x02151D4C` (at `0x02152588`) and `0x0214C13C` (at `0x0215259C`), in that order (see "End of `GenerateFloor`" below). Red: `sub_806C330`, `sub_8051654`, `sub_804B534(0, 0, 56, 32)`, `sub_804FC74`.
 
 ## ResetFloor (`ov_0001::0214BDBC`)
 
@@ -248,21 +248,21 @@ Direct calls: 2 `DungeonRandRange` (floor count, house count) and 2 `DungeonRand
 
 ### End of `GenerateFloor`
 
-Read from the disassembly; the names are ours unless marked. Only the shop pass draws from the RNG, and it runs only when a shop was made. `ResetFloor`, the P2 list update, `0x02151D4C` and `0x0214C13C` make no RNG calls (decompile check). The order below is the one the findings give (static Ghidra analysis; no emulator check was run for these calls).
+Read from the disassembly; the names are ours unless marked. Only the shop pass draws from the RNG, and it runs only when a shop was made. `ResetFloor`, the P2 list update, `0x02151D4C` and `0x0214C13C` make no RNG calls (decompile check). Static Ghidra analysis; no emulator check was run for these calls.
 
 - **`ResolveInvalidSpawns`** (`ov_0001::0214C1A8`, `[red-hypothesis]` name). For every tile: when the terrain type is not 1, the trap marker (spawn bit `0x4`) is cleared, and so is the item marker (`0x2`) when the tile has terrain bit `0x100` or `0x10` (a buried item in a plain wall stays). A tile with the stairs marker (`0x1`) gets terrain bit `0x200` and loses the trap marker; a tile with the item marker loses the trap marker.
 - **`GetFloorType`** (`0206DB90`, `[red-hypothesis]` name): 2 when dungeon byte `+0x668` is 1 and bytes `+0x641` and `+0x63D` are equal; else 1 when the fixed-room number `+0x34B4` is from 1 to 49; else 0.
 - **`StairsAlwaysReachable(x, y, markUnreachable)`** (`ov_0001::0214A760`, `[red-hypothesis]` name). It builds a 56 × 32 byte map: a tile without terrain bit `0x4` blocks when its terrain type is not 1, and is also "secondary" when its type is 2. With `markUnreachable`, terrain bit `0x8000` is cleared on every tile first. The stairs tile is the start; when `(x, y)` is not stairs pair B, the answer is no. The game then sweeps the map, x outer and y inner, until a sweep adds nothing: a tile marked to visit is visited and marks its four sides when they are not visited, blocking or secondary, and its diagonals when the diagonal tile is also free (mask `0x87`) and neither of the two tiles beside the step blocks. Last, every tile that is neither visited, blocking nor secondary is unreachable: with `markUnreachable` it gets terrain bit `0x8000`; without, the answer is no unless the tile has terrain bit `0x100`. The port uses a flood fill, which reaches the same set.
 - **After the stairs fallbacks.** Four calls run in this order:
-  1. `0x02179060(x, y, 0x17C, 0)` when the shop-centre pair (set by step 9) is set. It adds or updates an entry in an 8-entry list (below).
-  2. `0x02151D4C(0, 0, 56, 32)` at `0x02152588`: junction marking (below).
-  3. The shop pass `0x02149AF8(props)` when the shop area is set, which makes `+0x34AA` 1; otherwise `+0x34AA` is 0 (below).
+  1. `0x02179060(x, y, 0x17C, 0)` at `0x02152534`, when the shop-centre pair (set by step 9) is set. It adds or updates an entry in an 8-entry list (below).
+  2. The shop pass `0x02149AF8(props)` at `0x02152560`, when the shop area is set, which makes `+0x34AA` 1; otherwise `+0x34AA` is 0 (below).
+  3. `0x02151D4C(0, 0, 56, 32)` at `0x02152588`: junction marking (below).
   4. `0x0214C13C` at `0x0215259C`, when its flag is set (below).
 
-  The findings give P5 at `0x02152588` and P4 at `0x0215259C`, with the shop pass between them. That differs from the step 9 list and the control-flow note, which had the shop pass before `0x02151D4C`. The findings do not record the shop pass's own call site, and the place of the P2 call is from the earlier text, not the findings. Then `CloseFile`.
+  Then `CloseFile` at `0x021525B0`.
 - **Shop pass** (`0x02149AF8`, Red `sub_8051654`). The shop bounds are four ints at the pointer `DAT_02149E78`: minX, minY, maxX, maxY (see Still not done). The RNG draws, in order:
   1. Width: `DungeonRandRange(3, w - 2)`, retried up to 20 times; it stops on the first draw. Every draw in this range is at least 3, so it stops after one draw. Height: `DungeonRandRange(3, h - 2)`, the same.
-  2. Cut count: `DungeonRandRange(2, 4)`. The findings list one draw here, but their table row says the count applies per axis; see Still not done.
+  2. Cut count: one `DungeonRandRange(2, 4)`, drawn once and used as the limit for both the west/east loop and the north/south loop.
   3. West and east cuts: while the area is wider than the narrowest width, `DungeonRandInt(100) < 50` removes the west column, else the east one. Each removed tile loses terrain bit `0x20`. The cut stops early when the width is at or below the narrowest.
   4. North and south cuts: the same rule for the rows.
   5. No draws. Tiles of the area with both `0x20` and `0x8` lose `0x20`.
@@ -323,7 +323,7 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 - **Spawns**: `DungeonRandInt(100) < props+0x19` gives `itemless`; `SpawnNonEnemies(props, itemless)`, `SpawnEnemies(props, itemless)`, `ResolveInvalidSpawns`.
 - **Stairs check** (`0x0215244C`–`0x021524B0`, `stairs_check`): if pair A has a `-1` component, fail. If `GetFloorType() == 1` (`0x0206DB90`), accept. Otherwise, if pair B has a `-1` component, fail; else accept when `StairsAlwaysReachable(B.x, B.y, FALSE)` is non-zero.
 - **Outer fallback** (after try 10): pair `021B45C8` = `-1`, `ResetFloor`, `GenerateOneRoomMonsterHouseFloor`, `+0x34A8 = 1`, `FinalizeJunctions`, `SpawnNonEnemies(props, 0)`, `SpawnEnemies(props, 0)`, `ResolveInvalidSpawns`.
-- **End**: `0x2151D4C(0, 0, 56, 32)` first, then `+0x34AA` is set from the shop area (`< 0` → 0, else `0x2149AF8(props)` and 1), then `0x214C13C` when its flag is set, then `CloseFile`. This is the order the findings give. The step 9 list and the earlier version of this line had the shop pass first. The findings name the gate of `0x214C13C` as `DAT_ov_0001__021525D8`, not the optional-call flag that this line used to mention; which one is right is not checked.
+- **End**: `+0x34AA` is set from the shop area (`< 0` → 0, else `0x2149AF8(props)` and 1), then `0x2151D4C(0, 0, 56, 32)`, then `0x214C13C` when the byte at `021B45A8` is non-zero, then `CloseFile`.
 
 ### Still not done
 
@@ -335,8 +335,6 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
   - `DAT_02149E78`, the shop-bounds pointer. The bounds are four ints there, not in `gDungeon`. The table in the struct notes lists `+0xC0E0` to `+0xC0EC` for them; that matches only if the pointer targets those offsets. Unverified.
   - The item-chance table at `021AAA38`: 16 layouts of 0x12 bytes, data. Its Red name is `[red-hypothesis]`.
   - The terrain type of the out-of-bounds tile that the south test reads at `y = 31` (P5b). It needs the tileset data or a runtime read.
-  - The shop cut count: the draw order lists one `DungeonRandRange(2, 4)`, while the findings' table row says it applies per axis. Check with a trace.
-  - The gate of `0x0214C13C`: `DAT_ov_0001__021525D8` in the findings, and the optional-call flag named in the control-flow note. Check which one is right.
 
 ## Open questions
 
