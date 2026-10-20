@@ -291,3 +291,24 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Notes:**
   - **To close #42:** rebuild `rescue-arm9` with `import.ps1` (heap set with `GHIDRA_MAXMEM` if it runs out of memory). Rerun `RescueNdsReport.java`, then `RescueApplySymbols.java`, and check the 20 missing names.
   - **Gap for the maintainer:** `rescue-re/code/` (147 files) is tracked on `origin/main`. Per [`CONTRIBUTING.md`](../CONTRIBUTING.md), they are reported here and not removed. Confirm they are ROM-derived, then remove them from the index and add `rescue-re/code/` to `.gitignore`. They stay in history unless history is rewritten.
+
+---
+
+## P5 — Per-frame RNG advance (#44)
+
+- **Assumption:** the global LCG (`sPRNGState`, `020DF704`) advances once per frame, as Red's `WaitForNextFrameAndAdvanceRNG` does. This is the check that [`re/execution-model.md`](re/execution-model.md#rng-per-frame) cited as #17; the static note it replaces said the opposite.
+- **Date:** not recorded in the investigation findings.
+- **Environment:** py-desmume (DeSmuME). ROM `pmdb.nds` in the repository root, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (the supported dump), not committed. Addresses checked in Ghidra copy `rescue-arm9-b`.
+- **Command:** not recorded in the investigation. The script `rng_per_frame.py` is a scratch file in the scratchpad and is not committed. It hooks `MainLoops_RunFrameActions` (`0201F268`) and `Rand16Bit` (`020119A4`), and checks each interval of `sPRNGState` against the steps counted. Inputs: [`verification/v7-trace/boot_to_dungeon.txt`](../verification/v7-trace/boot_to_dungeon.txt), with extra A and Select windows appended after frame 2600 (scratch copy).
+- **Evidence:**
+  - The frame routine fires once per emulated frame from emulated frame 2418. Frame 2419 fires twice.
+  - 122 intervals: 117 show exactly 4 LCG steps. The others show 2, 8, 36 and 56.
+  - State chain: 0 mismatches across all intervals.
+  - Sprite routine `FUN_02012648`: 0 calls in every interval, so it does not explain the 4 steps.
+  - A held: 7 intervals, with 2, 4, 8 and 56 steps. Too few and mixed, so no A effect is shown.
+  - Select: no frame-routine hits after emulated frame 2508, so there is no Select data.
+  - The mode during the run (title or ground) is not identified.
+  - Repeatability: one run; no second run or hash comparison was made.
+- **Outcome:** **measured once (medium confidence; not repeated, script not committed):** the global LCG advances 4 steps per emulated frame, with no button held. The earlier static note is superseded. Not established: the caller of the 4 steps, whether the 2-step intervals are hook artifacts of the double hit at frame 2419, and the A and Select effect.
+- **Fallback adopted:** none.
+- **Notes:** Next: hook `Rand32Bit` (`0201198C`) and its callers on the frame path, rerun the same script, then run the A and Select check in a phase that keeps the frame loop running.

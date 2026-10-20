@@ -55,6 +55,30 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Entity info | maxHPStat | `+0x10` | `[blue-verified]` | Max HP stat. | `TickStatusAndHealthRegen` ([`re/structs.md`](re/structs.md#entity-info)) |
 | Entity info | types[2] | `+0x56` | `[blue-verified]` | Defender types, read by the type chart lookup. Red's offset is `0x5C`. | `sub_806F370_Async`, `sub_806F4A4` ([`re/structs.md`](re/structs.md#entity-info)) |
 | Entity info | flashFireBoost | `+0x28` | `[red-hypothesis]` | *probable*: one access, consistent with its neighbours. | `CalcDamage` ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | direction | `+0x44` | `[blue-verified]` | Direction, compared with the direction toward the target. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | waiting | `+0x119` | `[blue-verified]` | Tested and cleared by `DisplayActions_Async` when set. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | targetPos | `+0x138` | `[blue-verified]` | Target position: x at `+0x138`, y at `+0x13A`. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | numMoveTiles | `+0x1C0` | `[blue-verified]` | Number of move tiles; tested for 0 in `DisplayActions_Async`. | `DisplayActions_Async` (`ov_0001::0218766C`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | aiAllySkip | `+0x116` | `[blue-verified]` | Set to `FALSE` or `TRUE` by the monster-turn loop. | `sub_8044574_Async` (`ov_0001::02140AC0`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | recalculateFollow | `+0x117` | `[blue-verified]` | Set to `FALSE` or `TRUE` by the monster-turn loop. | `sub_8044574_Async` (`ov_0001::02140AC0`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | aiNotNextToTarget | `+0x71` | `[red-hypothesis]` | *probable*: the write is in Blue, the field identity rests on the candidate `RunMonsterAI` (`ov_0001::02188030`, name *red-hypothesis*). Cleared there. | [`re/structs.md`](re/structs.md#entity-info) |
+| Entity info | decoyAITracker | `+0xDD` | `[red-hypothesis]` | *probable*: the write is in Blue, the field identity rests on the candidate `RunMonsterAI` (`ov_0001::02188030`, name *red-hypothesis*). Set to `DECOY_AI_NONE` there. | [`re/structs.md`](re/structs.md#entity-info) |
+| Entity info | frozen counter | `+0xA8` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | reflect counter | `+0xB2` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Entity info | sure shot counter | `+0xC5` | `[blue-verified]` | Decremented by `TickStatusAndHealthRegen`. | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) ([`re/structs.md`](re/structs.md#entity-info)) |
+| Dungeon | stairs room index | `+0x34AC` | `[blue-verified]` | Stairs room index, written on floor type 2. | `SpawnNonEnemies` (`ov_0001::0214B650`) ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | fractionalTurn | `+0x650` | `[blue-verified]` | Turn fraction, the name from `re/structs.md`. | `RunFractionalTurn_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | prngPreseed23Bit | `+0x66C` | `[blue-verified]` | Run preseed, `Rand32Bit() & 0xFFFFFF` (24 bits); the name is Red's. | `RunDungeon_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | floor seed (`unk3C`) | `+0x670` | `[blue-verified]` | Floor seed. The name `unk3C` is Red's. | `RunDungeon_Async` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | tiles[32][56] | `+0x34B8` | `[blue-verified]` | Tile grid, 0x14 bytes per tile. | `sub_80495E4` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | stairsSpawn | `+0xC0BC`, `+0xC0BE` | `[blue-verified]` | Stairs position, x and y. | `ResetFloor`, `SpawnNonEnemies` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | teamPokemon[4] | `+0x11314` | `[blue-verified]` | Team slots: four entity pointers. | `GetLeader` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | wildPokemon[16] | `+0x11324` | `[blue-verified]` | Wild slots: 16 entity pointers. | `EntityIsValid` loops, from `0219F09C` ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | items[64] | `+0x113B4` | `[blue-verified]` | Floor item slots: 64 entity pointers. | `SpawnItemEntity` (`ov_0001::02141F58`) ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Dungeon | traps[64] | `+0x114B4` | `[blue-verified]` | Trap slots: 64 entity pointers, cleared by `ResetFloor`. No writer found. | `ResetFloor` (`ov_0001::0214BDBC`) ([`re/structs.md`](re/structs.md#dungeon-struct)) |
+| Tile | terrainFlags | `+0x00` | `[blue-verified]` | Terrain flags; `0x10` = impassable wall. | `ResetTile` (`ov_0001::0214C0A8`) ([`re/structs.md`](re/structs.md#tile)) |
+| Tile | room | `+0x05` | `[blue-verified]` | Room index: `0xFF` = none, `0xFE` = anchor. | `CreateRoomsAndAnchors` (`ov_0001::0214F7A8`) ([`re/structs.md`](re/structs.md#tile)) |
+| Tile | monster, object | `+0x0C`, `+0x10` | `[blue-verified]` | Entity pointers on the tile: the monster, and the item or trap. | `ResetTile` (`ov_0001::0214C0A8`) ([`re/structs.md`](re/structs.md#tile)) |
 
 ## Globals
 
@@ -92,6 +116,10 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | OtherRandRange | `02023B6C` | ARM9 | `[blue-verified]` | `low + OtherRandInt(high - low)`; equal bounds still advance the generator. | [`re/rng.md`](re/rng.md#16-bit-generator) |
 | sub_809542C | `0200D4DC` | ARM9 | `[blue-verified]` | Mail-record builder: seeds the Mersenne Twister from the global LCG, stores one output as the mail's `unk10`. Called from `LoadAndRunQuickSaveDungeon_Async`. | [`re/rng.md`](re/rng.md#mersenne-twister), [`symbols.md`](symbols.md) |
 | HandleTestTrackerState | `0206C6E4` | ARM9 | `[blue-verified]` | Personality-test state machine. Its case 15 uses the Mersenne Twister, seeded from the global LCG. | [`re/rng.md`](re/rng.md#mersenne-twister), [`symbols.md`](symbols.md) |
+| RunGameMode_Async | `0201E3C8` | ARM9 | `[blue-verified]` | Runs a game mode; the title menu calls it with modes 0–3. Only `GameLoop_Async` calls it. | [`re/execution-model.md`](re/execution-model.md#scene-graph) |
+| RunOverlay7Mode | `0201DAC4` | ARM9 | `[blue-verified]` | Title-menu choice 5: loads overlay 7, calls its entry, then reloads overlay 0. | [`re/execution-model.md`](re/execution-model.md#overlays), [`symbols.md`](symbols.md) |
+| GroundStation_SetBank | `ov_0000::0214FC50` | `ov_0000` | `[blue-verified]` | Loads or unloads the ground bank `gGroundBankTable[bank]`; its sole caller is `FUN_ov_0000__0214D510`. | [`symbols.md`](symbols.md) |
+| GroundStation_LoadBank | `ov_0000::0214FD00` | `ov_0000` | `[blue-verified]` | Loads the overlay of `gGroundBankTable[bank]` with `FS_LoadOverlayInfo`. | [`symbols.md`](symbols.md) |
 
 ## Enums and constants
 
