@@ -54,9 +54,14 @@ Each class has a status byte and a turns or counter byte. The offsets are in [`s
 | 13 | terrified | `+0xD7` (flag and timer share the byte) | inline | `terrifiedTurns` |
 | 14 | speed counters | `+0xE9 + i` (down), `+0xE4 + i` (up), `i` = 0 to 4 | inline | speed loop |
 
-- **Countdown helper** `0219BF1C` (`DecrementStatusTurns` in [`symbols.md`](../symbols.md)) decrements a byte unless it is `0x7F`, and then the class end runs when it reaches 0. Investigator A reports only `0x7F` as the exception. Investigator B also reports `0` as left alone. Not resolved (see open items). Red's `sub_80838EC` is the same routine (red-hypothesis).
+- **Countdown helper** `0219BF1C` (`DecrementStatusTurns` in [`symbols.md`](../symbols.md)) decrements a byte unless it is `0x7F`, and then the class end runs when it reaches 0. One finding reports only `0x7F` as the exception. Another also reports `0` as left alone. Not resolved (see open items). Red's `sub_80838EC` is the same routine (red-hypothesis).
 - **Speed message:** if a counter in step 14 reaches 0 and `CalcSpeedStage` (`0x02181E58`, no RNG) changes the speed stage, the speed-stage message is logged.
-- **RNG reached from the chain** (x-ref walk to depth 2; indirect calls not followed): see the RNG notes in each class. `TickStatusAndHealthRegen` calls no RNG directly.
+- **RNG reached from the chain.** Depth-limited x-ref walk (depth 2; indirect calls not followed); confidence medium-high. `TickStatusAndHealthRegen` calls no RNG directly. The walk reaches these RNG calls:
+  - step 2, case 4 (yawn): `0219CF28` → `DungeonRandRange` `0219D014` → `DungeonRandInt` `0219D058`;
+  - step 2, case 3 (nightmare, fourth argument nonzero): `0217BCA4` → `0217E890` (`HandleDealingDamage_Async`) → `DungeonRandInt`;
+  - step 7, curse case 2 (decoy end): `0217AF58` → **global** `Rand32Bit` `0201198C` (`& 3` = facing);
+  - step 10, `+0xC7` case 2: the same `0217AF58` → `Rand32Bit` path;
+  - all other steps: none; step 0: none visible (indirect).
 
 **Per-turn blocks in `021861E8`** (`DoEndOfTurnEffects_Async`, red-hypothesis name). This function runs once per monster at the end of the turn and holds the burn, poison and bad-poison damage, the yawning branch and Shed Skin. Its callers are `02140DD8` (in `sub_8044574_Async`), `02140A84` (in `sub_8044820_Async`), `02187B68` (`DisplayActions_Async`) and `02184DF8` (in `FUN_0218453C`). The per-class sections give the detail.
 
@@ -104,7 +109,6 @@ Sleep, nightmare, napping and yawning share one byte. A status can be set only w
 | 5 napping | Message, heal 999 (`021AA1D0`) through `0218DF38`, clear `0x99`, then the cure-all `02190100`. |
 
 - The switch is blue-verified (high). The targets are medium: the napping heal's argument order was not checked. `02190100` is treated as the cure-all, inferred from its body (it runs `FUN_02181904` first and calls `0218FE64`, `0218FD80` and other class enders).
-- **Nightmare damage** sits in this expiry switch. As read, the damage runs when the expiry is called from the chain with the fourth argument set. Whether Red's nightmare damage also runs every turn is not checked here (open).
 
 ### Sleep: wake on hit
 
@@ -123,6 +127,7 @@ Two checks, and they disagree:
 - Sleep, nightmare, yawning and napping each consume one `DungeonRandRange` call at application, in the wrapper and before the immunity check (high).
 - The yawn-end roll is one more call (high).
 - Shed Skin consumes one `DungeonRandInt(100)` per monster per end of turn (high).
+- The nightmare damage in the expiry switch reaches `DungeonRandInt` through `0217BCA4` → `0217E890` (`HandleDealingDamage_Async`) (medium-high; see the RNG list under the per-turn order).
 
 ## Burn class (`+0x9B`, `+0x9C`, `+0x9D`, `+0x9E`)
 
@@ -148,7 +153,7 @@ The burn and poison blocks sit in `021861E8`:
 |--------|----------------------|
 | 1 burn | If `0x9D != 0`, decrement it. If `0x9D == 0`: reset `0x9D` to 20 (`021AA224`), call the wake-check `0218F21C`, then deal 5 damage (`021AA1BC`) through `0217BCA4(…, 1, 0x208)`. |
 | 2 poison | Same pattern: reset 10 (`021AA220`), damage 4 (`021AA1CC`) through `0217BCA4(…, 3, …)`. |
-| 3 bad poison | Reset 2 (`021AA21C`). Damage from the 30-entry table `021AA54C` at index `min(0x9E, 0x1D)` (all six values equal 6 in this table, see the pool values below). Then `0x9E` goes up to `0x1D`. |
+| 3 bad poison | Reset 2 (`021AA21C`). Damage from the 30-entry table `021AA54C` at index `min(0x9E, 0x1D)` (all 30 entries equal 6). Then `0x9E` goes up to `0x1D`. |
 
 - The countdown starts at 0 at application, so the first end of turn deals damage at once. Red `dungeon_turn_effects.c:208` to `210` does the same (red-hypothesis). **blue-verified, high.**
 - The residual-damage reason tags (`0x208`, and the `…A0` tag for the others) are not mapped to Red's `RESIDUAL_DAMAGE_BURN` and `RESIDUAL_DAMAGE_POISON`.
@@ -180,7 +185,7 @@ Cures through `02175850` are blue-verified (medium). The three callers of the cu
 ### Paralysis (`0x9B == 4`): partial
 
 - **Write.** `021885A0` writes `0x9B = 4` and the `0x9C` turns. Overlay dispatcher `0215BAF8` calls it when bit 8 of the entity's flags at `+0x144` is set. **blue-verified, medium** (C's finding).
-- **Conflict.** Investigator A reports that no paralysis setter was located, and that Red's setter (`move_orb_effects_1.c:1311`, `gParalysisTurnRange`) has no Blue match yet. Investigator C reports the write at `021885A0`. C's write finding is used here; Red's match to `021885A0` is not checked (open).
+- **Conflict.** One finding reports that no paralysis setter was located, and that Red's setter (`move_orb_effects_1.c:1311`, `gParalysisTurnRange`) has no Blue match yet. Another reports the write at `021885A0`. The write finding is used here; Red's match to `021885A0` is not checked (open).
 - Expiry is by countdown and by Limber. The speed effect (`CalcSpeedStage` reads `0x9B == 4`) is outside this page.
 - The meaning of bits 1, 2, 4 and 8 in `+0x144` is not verified.
 
@@ -273,18 +278,17 @@ Each value was read from the overlay 1 file at `addr − 0x02138860` and compare
 | `021AA54C` | bad-poison damage table (30 entries) | 6 in every entry read | `gBadPoisonDmgValuesByTurn` | yes |
 | `021AA090` | Shed Skin chance (per 100) | 50 | `gShedSkinActivateChance` 50 | yes |
 
-Red's `gParalysisTurnRange` ({1, 2}) and `gSleeplessTurnRange` ({10, 12}) have no located overlay address. The table is from investigator A (overlay bytes) and investigator C (`021AA2F4`, `021AA2C0`, `021AA11C`, `021AA1D0`). Message-table pointers `021B0A58`, `021B0A80`, `021B0C4C` and `021B0C38` point to language-indexed tables. Their strings were not read.
+Red's `gParalysisTurnRange` ({1, 2}) and `gSleeplessTurnRange` ({10, 12}) have no located overlay address. The table comes from one finding (overlay bytes) and another (`021AA2F4`, `021AA2C0`, `021AA11C`, `021AA1D0`). Message-table pointers `021B0A58`, `021B0A80`, `021B0C4C` and `021B0C38` point to language-indexed tables. Their strings were not read.
 
 ## Open questions
 
-- **Paralysis setter.** A reports none; C reports the write at `021885A0`. Confirm which function writes `0x9B = 4` and match it to Red's setter.
-- **Yawning write.** A tags `0218ADA8` as writing `0x99 = 4` (blue-verified). C lists yawning value 4 only as a red-hypothesis wake path. Confirm the write.
+- **Paralysis setter.** One finding reports none; another reports the write at `021885A0`. Confirm which function writes `0x9B = 4` and match it to Red's setter.
+- **Yawning write.** One finding tags `0218ADA8` as writing `0x99 = 4` (blue-verified). Another lists yawning value 4 only as a red-hypothesis wake path. Confirm the write.
 - **Sleepless (2).** No writer found. No caller of `0218B140` or `0218AEF0` writes 2. Red's `SleeplessStatusTarget` uses {10, 12}. Low confidence.
 - **Yawn-end range.** `0218FE64` case 4 uses `021AA2C0` (4, 8). Its source is unconfirmed. Check Red's `sub_804151C` path.
 - **Yawning per-turn function.** `0213F6B0` is not identified.
 - **Wake on hit.** `0217D5FC` and `0218F21C` disagree for nightmare and napping (P1.6). A trace at 127 turns is needed.
-- **Countdown helper.** A says `0x7F` only; B says `0` and `0x7F`. Read `0219BF1C` again.
-- **Nightmare damage timing.** Whether it runs only at expiry (as the Blue switch shows) or also every turn, as Red's rules may imply. Not checked.
+- **Countdown helper.** One finding says `0x7F` only; another says `0` and `0x7F`. Read `0219BF1C` again.
 - **Ability and item IDs.** `FUN_021818D0`, `FUN_021805B0` (IQ and flag checks `0x11`, `0x12`, `0x14`), `FUN_02181904` (negative-status check): not named. Held item `0x14`, `0x15` and the IQ bit are matched by value only.
 - **Calls with unknown arguments.** `0218DF38` (heal) argument order, `0217BCA4` (`…, 1, 0x208`) argument list, and `02190100` behaviour (inferred from its body).
 - **Burn-end and burn-apply conditions** in `021760B4`: `0x2A & 3 == 2` and the dungeon flag `0x34AE`, unnamed. Callers of `0215C774` and `0214650C` are unknown.
@@ -301,6 +305,12 @@ Red's `gParalysisTurnRange` ({1, 2}) and `gSleeplessTurnRange` ({10, 12}) have n
 - **Identity of** `0213EA14` (indirect call with `(e, 0x18, 1)`) and `0213FF34` (sprite or flag refresh, not read).
 - **Global RNG.** `0217AF58` (`SetMonsterAnim`) consumes one global `Rand32Bit` step on every call, and has 13 call sites in overlay 1. The curse decoy end and the `+0xC7` case 2 use it through that path. This matters for the golden-trace hashing in #49 (see [`rng.md`](rng.md)).
 - **Runtime check.** No py-desmume trace was run. Every per-turn claim, the wake-rule mismatch and the counter semantics need one before they are blue-verified at runtime.
+- **Wrap link offset.** Blue `+0x90` vs Red `unk9C`, not reconciled.
+- **Confusion behaviour** (value 2) and its readers, not checked (P3c).
+- **Cringe values 1 and 3 to 6** are message cases only (F5.7).
+- **Move-effect dispatch table** behind `02156824` was not traced (P1.1).
+- **Pool words** `021AA3EC` (`0x80`) and `021AA3F0` (`0x100`) are not mapped (F5.10).
+- **Overlay addresses** of `gParalysisTurnRange` and `gSleeplessTurnRange` are not located.
 
 ## Links
 

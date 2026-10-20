@@ -42,7 +42,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Tile | see topic page | heap | `[blue-verified]` (`ResetTile`, `GetTileMut`, stride `0x14`) | One cell of the dungeon grid. | [`re/structs.md`](re/structs.md#tile) |
 | Key state | 0x10 each (current at `0x020F2790`, previous at `0x020F2780`) | ARM9 | `[blue-verified]` | Per-frame button state: held keys, pressed edge, D-pad repeat output, B and R tap flags, D-pad group and hold counter. | [`re/io.md`](re/io.md#key-state) |
 | Touch state | see topic page | ARM9 | `[blue-verified]` (layout read in `UpdateInputSnapshot`) | Touch position, tap, drag and hold output, and the gesture state at `+0x20`. At `0x020F27B0`. | [`re/io.md`](re/io.md#touch-state) |
-| Status class | — | heap | `[blue-verified]` for the byte offsets; the class names are Red's and only partly confirmed | A group of status bytes in the entity info: sleep `+0x99`, burn `+0x9B`, frozen `+0xA0`, cringe `+0xAC`, reflect `+0xB1`. Each class has a status byte and a turns or counter byte. Partial catalogue. | [`re/status.md`](re/status.md#status-classes) |
+| Status class | — | heap | `[blue-verified]` for the byte offsets (`+0xAC` inferred); the class names are Red's and only partly confirmed | A group of status bytes in the entity info: sleep `+0x99`, burn `+0x9B`, frozen `+0xA0`, cringe `+0xAC`, reflect `+0xB1`. Each class has a status byte and a turns or counter byte. Partial catalogue. | [`re/status.md`](re/status.md#status-classes) |
 
 ### Fields
 
