@@ -71,6 +71,12 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Team roster `Pokemon` | Size `0x40`; fields match `pmd-red`'s Blue notes in `include/structs/str_pokemon.h` field for field | `0x58` bytes | **smaller in Blue**; fields same | unclassified |
 | Item packing | Blue's struct is `0x23C` bytes: `Item` in 3 bytes and `BulkItem` in 2 | Red `0x268` bytes; 4-byte stride for both arrays | **packing differs** ([`re/structs.md`](re/structs.md)) | unclassified |
 
+## Dungeon generation ([`re/dungeon-generation.md`](re/dungeon-generation.md))
+
+| Item | Blue | Red (`pmd-red`) | Verdict | Category |
+|------|------|-----------------|---------|----------|
+| ResetFloor wall test | `ResetFloor` `0214BDBC` tests `(x+1, y)` and not `(x+1, y-1)` for the perimeter wall flag | `ResetFloor`, `src/dungeon_generation.c:4000`, tests `(x+1, y-1)` twice and not `(x+1, y)` | same result: both lie outside the map exactly when x = 55, so the walls match | same |
+
 ## Save ([`formats/save.md`](formats/save.md))
 
 | Item | Blue | Red (`pmd-red`) | Verdict | Category |

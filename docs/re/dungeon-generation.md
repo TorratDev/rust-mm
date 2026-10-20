@@ -32,7 +32,29 @@ How Blue builds a floor, and the order of its RNG calls. Issue: [#48](https://gi
 6. `DungeonRandInt(100) < itemlessMonsterHouseChance` decides an itemless monster house.
 7. `SpawnNonEnemies(props, itemless)` (4 / 7), `SpawnEnemies(props, itemless)` (2 / 2), `ResolveInvalidSpawns`.
 8. `GetFloorType` and `StairsAlwaysReachable(x, y, FALSE)`: if the stairs cannot be reached, `ResetFloor` and fall back to `GenerateOneRoomMonsterHouseFloor`, then finalise and spawn again (same as Red).
-9. Final calls (`sub_806C330`, `sub_8051654`, `sub_804B534(0, 0, 56, 32)`, `sub_804FC74` in Red; Blue `0x02179060`, `0x02149AF8`, `0x02151D4C`, `0x0214C13C`), then `CloseFile`. See "End of `GenerateFloor`" below.
+9. Final calls, then `CloseFile`: Blue `0x02179060`, `0x02151D4C`, the shop pass `0x02149AF8` and `0x0214C13C`, in that order (see "End of `GenerateFloor`" below). Red: `sub_806C330`, `sub_804B534(0, 0, 56, 32)`, `sub_8051654` and `sub_804FC74`.
+
+## ResetFloor (`ov_0001::0214BDBC`)
+
+Read from the decompile of `rescue-arm9-a` and compared with `pmd-red`'s `ResetFloor` (static analysis; no emulator check was run for this section). The body calls only `GetTileMut` and `ResetTile`, and makes no RNG calls.
+
+Order of operations:
+
+1. Map tiles, x = 0 to 55 (outer loop) and y = 0 to 31 (inner loop), 1792 tiles. Each tile gets `ResetTile(GetTileMut(x, y))`. Then `terrainFlags |= 0x10` (impassable wall) when any of its 8 neighbours is outside the 56 × 32 map. That marks the map's own perimeter ring: the tiles with x = 0 or 55, or y = 0 or 31. Tiles next to the edge are not marked.
+2. Stairs pair B: `+0xC0BC` and `+0xC0BE` are set to `0xFFFF` (−1).
+3. The 8 × 8 fixed-room cell records (`unkE27C` in Red): `ResetTile` on each. The cell base is `DAT_0214C0A4`, which is not read (see Still not done). The stride is `0x14` per x and `0xA0` per y, so each cell is one 0x14-byte tile record.
+4. Item count: `+0x3424` (u16) = 0.
+5. Traps: for `i` = 0 to 63, the first 4 bytes of the entity that `traps[i]` points to (the pointer table at `+0x114B4`) are set to 0. There is no NULL check, so a NULL entry writes to address 0.
+
+`ResetTile` (`ov_0001::0214C0A8`) writes the whole 0x14-byte record: `u16 +0` = 0, `u16 +2` = 0, `u8 +4` = 0, `u8 +5` = 0xFF, `u8 +6` to `+0xA` = 0, `u32 +0xC` = 0 and `u32 +0x10` = 0. The names of `+2` and `+6` to `+9` come from Red's `map.h`, not from Blue, so they are not verified.
+
+**Red match.** `pmd-red`'s `ResetFloor` (`src/dungeon_generation.c:4000`) has the same steps in the same order, with the same results. The differences are in source shape only:
+
+- Red tests `(x+1, y-1)` twice and not `(x+1, y)`; Blue tests `(x+1, y)` and not `(x+1, y-1)`. Both lie outside the map exactly when x = 55, so the set of walls is the same.
+- Red's trap reset writes `type = 0` on an `Entity`, where `type` is a u32 at `+0` (`include/structs/dungeon_entity.h:336`). Blue's 4-byte zero is the same write.
+- Red indexes the 8 × 8 cells as `[x][y]`; Blue's index is in the other order. Every cell is reset, so the order does not change the result.
+
+The Rust `PortedSteps` (see the Prologue section) resets the map and stairs pair B only. The rest of this body is for the port in [#111](https://github.com/TorratDev/rust-mm/issues/111).
 
 ## Emulator check
 
@@ -226,15 +248,29 @@ Direct calls: 2 `DungeonRandRange` (floor count, house count) and 2 `DungeonRand
 
 ### End of `GenerateFloor`
 
-Read from the disassembly; the names are ours unless marked. Only the shop pass draws from the RNG, and it runs only when a shop was made.
+Read from the disassembly; the names are ours unless marked. Only the shop pass draws from the RNG, and it runs only when a shop was made. `ResetFloor`, the P2 list update, `0x02151D4C` and `0x0214C13C` make no RNG calls (decompile check). The order below is the one the findings give (static Ghidra analysis; no emulator check was run for these calls).
 
 - **`ResolveInvalidSpawns`** (`ov_0001::0214C1A8`, `[red-hypothesis]` name). For every tile: when the terrain type is not 1, the trap marker (spawn bit `0x4`) is cleared, and so is the item marker (`0x2`) when the tile has terrain bit `0x100` or `0x10` (a buried item in a plain wall stays). A tile with the stairs marker (`0x1`) gets terrain bit `0x200` and loses the trap marker; a tile with the item marker loses the trap marker.
 - **`GetFloorType`** (`0206DB90`, `[red-hypothesis]` name): 2 when dungeon byte `+0x668` is 1 and bytes `+0x641` and `+0x63D` are equal; else 1 when the fixed-room number `+0x34B4` is from 1 to 49; else 0.
 - **`StairsAlwaysReachable(x, y, markUnreachable)`** (`ov_0001::0214A760`, `[red-hypothesis]` name). It builds a 56 × 32 byte map: a tile without terrain bit `0x4` blocks when its terrain type is not 1, and is also "secondary" when its type is 2. With `markUnreachable`, terrain bit `0x8000` is cleared on every tile first. The stairs tile is the start; when `(x, y)` is not stairs pair B, the answer is no. The game then sweeps the map, x outer and y inner, until a sweep adds nothing: a tile marked to visit is visited and marks its four sides when they are not visited, blocking or secondary, and its diagonals when the diagonal tile is also free (mask `0x87`) and neither of the two tiles beside the step blocks. Last, every tile that is neither visited, blocking nor secondary is unreachable: with `markUnreachable` it gets terrain bit `0x8000`; without, the answer is no unless the tile has terrain bit `0x100`. The port uses a flood fill, which reaches the same set.
-- **After the stairs fallbacks.** When the pair at `021B45C8` (the shop's centre, set by step 9) is set, `0x02179060(x, y, 0x17C, 0)` adds or updates an entry in an 8-entry list of the dungeon (no tiles, no RNG; not ported). When the shop area at `021B45CC` is set, `0x02149AF8(props)` (below) runs and `+0x34AA` becomes 1; otherwise `+0x34AA` becomes 0. Then `0x02151D4C(0, 0, 56, 32)`, then `0x0214C13C` when the dungeon's byte in the table at `02091EFC` is 2, then `CloseFile`.
-- **Shop pass** (`0x02149AF8`). Narrowest width and height: `DungeonRandRange(3, w - 2)` and `DungeonRandRange(3, h - 2)`, each at least 3 (the game loops up to 20 times but always stops after one draw). `DungeonRandRange(2, 4)` is the number of cuts per axis: while the area is wider than the narrowest, `DungeonRandInt(100) < 50` removes the west column, else the east one, and its tiles lose terrain bit `0x20`; then the same for the north and south rows. Tiles of the area with both `0x20` and `0x8` lose `0x20`. Last, over the 3 × 3 block around the centre (`(x0 + x1) / 2`, `(y0 + y1) / 2`), each tile with `0x20` and without `0x40` and `0x8` gets the item marker when `DungeonRandInt(100)` is below its entry in a 3 × 3 table of 16-bit chances (rows by y). Floor-properties byte `+0x18` picks the table from the tables at `021AAA38`.
-- **`0x02151D4C(x0, y0, x1, y1)`**, run on the whole map: every tile loses terrain bit `0x4`; an open tile (type 1) with room `0xFF` gets the junction bit `0x8` when more than two of its sides are open. The game tests the east side only for `x < 54` and the south side only for `x < 30` (it compares `x` there, not `y`).
-- **`0x0214C13C`**: every tile of terrain type 2 becomes type 3.
+- **After the stairs fallbacks.** Four calls run in this order:
+  1. `0x02179060(x, y, 0x17C, 0)` when the shop-centre pair (set by step 9) is set. It adds or updates an entry in an 8-entry list (below).
+  2. `0x02151D4C(0, 0, 56, 32)` at `0x02152588`: junction marking (below).
+  3. The shop pass `0x02149AF8(props)` when the shop area is set, which makes `+0x34AA` 1; otherwise `+0x34AA` is 0 (below).
+  4. `0x0214C13C` at `0x0215259C`, when its flag is set (below).
+
+  The findings give P5 at `0x02152588` and P4 at `0x0215259C`, with the shop pass between them. That differs from the step 9 list and the control-flow note, which had the shop pass before `0x02151D4C`. The findings do not record the shop pass's own call site, and the place of the P2 call is from the earlier text, not the findings. Then `CloseFile`.
+- **Shop pass** (`0x02149AF8`, Red `sub_8051654`). The shop bounds are four ints at the pointer `DAT_02149E78`: minX, minY, maxX, maxY (see Still not done). The RNG draws, in order:
+  1. Width: `DungeonRandRange(3, w - 2)`, retried up to 20 times; it stops on the first draw. Every draw in this range is at least 3, so it stops after one draw. Height: `DungeonRandRange(3, h - 2)`, the same.
+  2. Cut count: `DungeonRandRange(2, 4)`. The findings list one draw here, but their table row says the count applies per axis; see Still not done.
+  3. West and east cuts: while the area is wider than the narrowest width, `DungeonRandInt(100) < 50` removes the west column, else the east one. Each removed tile loses terrain bit `0x20`. The cut stops early when the width is at or below the narrowest.
+  4. North and south cuts: the same rule for the rows.
+  5. No draws. Tiles of the area with both `0x20` and `0x8` lose `0x20`.
+  6. Item markers: over the 3 × 3 block from `(x0 + x1) / 2 − 1` to `+ 1` (and the same for y), each tile with `0x20`, without `0x40` and without `0x8`, gets the item marker (`spawn |= 0x2`) when `DungeonRandInt(100)` is below its entry in the chance table. The draw happens only for tiles that pass this filter. The chances are 16-bit values, rows by y. Floor-properties byte `+0x18` picks the layout, and each layout is 0x12 bytes (3 × 3 shorts) in the tables at `021AAA38` (data, not read).
+
+  Blue's `/ 2` is a signed divide, as in Red's C. Blue's loop guards match Red's `break` checks, which run before each draw. Red's comment says its first two loops run once; Blue has the same loops, and the port keeps them for RNG parity. The Red name of the chance table, `sKecleonShopItemSpawnChances`, is `[red-hypothesis]`.
+- **`0x02151D4C(x0, y0, x1, y1)`** (`MarkNaturalJunctions`, Red `sub_804B534`, `src/dungeon_generation.c:422`), called with `(0, 0, 56, 32)`. Every tile loses terrain bit `0x4` (Red's `CORNER_CUTTABLE`). An open tile (type 1) with room `0xFF` gets the junction bit `0x8` (`NATURAL_JUNCTION`) when more than two of its sides are open. The east side is tested only for `x < 54`, and the south side only for `x < 30`. The south test compares `x`, not `y`, so at `y = 31` with `x < 30` it reads `GetTile(x, 32)`, the out-of-bounds tile (`gCurTilesetOobTile`). Red has the same bug, commented at `dungeon_generation.c:432`. The terrain type of that tile is not verified, so the effect on the output is unknown. No RNG calls.
+- **`0x0214C13C`** (`ConvertSecondaryToNormalAndSecondary`, Red `sub_804FC74`, `src/dungeon_generation.c:3942`). Every tile of terrain type 2 becomes type 3: the low two bits of `terrainFlags` (`+0x00`, 16-bit) are cleared and then set to 3, in the walk over x 0 to 55 and y 0 to 31. No RNG calls. It runs only when the flag `DAT_ov_0001__021525D8` is non-zero. That flag is set at the start of `GenerateFloor`, from `PTR_DAT_021525D4[dungeon + 0x34AE] == 2`: `+0x34AE` is `tileset`, and the table is at `0x02091EFC`. Red's equivalent is `gDungeonWaterType[tileset] == DUNGEON_WATER_TYPE_WATER` (`dungeon_generation.c:170`); Blue's table value 2 is the same `WATER`. The table's contents beyond index 9 are not checked (#37).
 - **`GenerateOneRoomMonsterHouseFloor`** (`ov_0001::021506B0`, `[red-hypothesis]` name), layout case 2 and both fallbacks: a 1 × 1 grid whose cell holds a room and has the hallway mark (`+0x0A`, `+0x0B`), with bounds `(2, 2)` to `(54, 30)`. Every tile in it becomes open floor of room 0, then step 10 runs with chance 999. Its RNG draws are step 10's (129 steps in the fallback run below). The stairs fallback leaves pair A as the last attempt left it, because `ResetFloor` clears only pair B.
 
 `floor_stages.py` records checkpoints `StairsAlwaysReachable`, `FinishShop` (`0x02149AF8`) and `GenerateFloorEnd` (`0x021525B4`, right after `CloseFile`), with `placed` (spawn and tile hashes) at each and the pairs and shop area at the last. `--force-unreachable` makes every stairs check fail, to reach the fallback; `--force-shop-chances` replaces the shop's 3 × 3 chances with the test's own values, so the tests do not need the game's table.
@@ -287,14 +323,20 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 - **Spawns**: `DungeonRandInt(100) < props+0x19` gives `itemless`; `SpawnNonEnemies(props, itemless)`, `SpawnEnemies(props, itemless)`, `ResolveInvalidSpawns`.
 - **Stairs check** (`0x0215244C`–`0x021524B0`, `stairs_check`): if pair A has a `-1` component, fail. If `GetFloorType() == 1` (`0x0206DB90`), accept. Otherwise, if pair B has a `-1` component, fail; else accept when `StairsAlwaysReachable(B.x, B.y, FALSE)` is non-zero.
 - **Outer fallback** (after try 10): pair `021B45C8` = `-1`, `ResetFloor`, `GenerateOneRoomMonsterHouseFloor`, `+0x34A8 = 1`, `FinalizeJunctions`, `SpawnNonEnemies(props, 0)`, `SpawnEnemies(props, 0)`, `ResolveInvalidSpawns`.
-- **End**: `+0x34AA` is set from `021B45CC` (`< 0` → 0, else `0x2149AF8(props)` and 1), then `0x2151D4C(0, 0, 56, 32)`, an optional call on `021B45A8`, and `CloseFile`.
+- **End**: `0x2151D4C(0, 0, 56, 32)` first, then `+0x34AA` is set from the shop area (`< 0` → 0, else `0x2149AF8(props)` and 1), then `0x214C13C` when its flag is set, then `CloseFile`. This is the order the findings give. The step 9 list and the earlier version of this line had the shop pass first. The findings name the gate of `0x214C13C` as `DAT_ov_0001__021525D8`, not the optional-call flag that this line used to mention; which one is right is not checked.
 
 ### Still not done
 
-- ResetFloor's body (`0x0214BDBC`): `PortedSteps` resets the map and stairs pair B, which the checked floors need. The body also clears the 8 × 8 cell records, a 64-entry pointer table and stairs pair B, and marks the walls next to the map edge. Not decoded in full yet.
 - The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
-- Unnamed callees: `0x02179060` (called with the pair C position and `0x17C`), `0x02149AF8` (called with the props pointer), `0x0214C13C`, `0x02151D4C` (called with `0, 0, 56, 32`).
-- The layout generators, the enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up: their own issues. The driver calls them through `FloorSteps`.
+- The fixed rooms and the layout generators (cases 3 to 7, 9 and 10) are tracked in [#148](https://github.com/TorratDev/rust-mm/issues/148). The enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up are their own issues. The driver calls them through `FloorSteps`.
+- Unresolved in the #48 findings:
+  - `DAT_0214C0A4`, the base of ResetFloor's 8 × 8 cell records. It is an overlay pool word and could not be read: `memory read` fails on it, and overlay-form addresses are not accepted. The `+0xC11C` offset in `structs.md` is Red's and is not confirmed in Blue.
+  - `DAT_02179124`, the base of the P2 list (`*PTR_gDungeon + DAT_02179124`). Not read. If it is Red's `unk57C` (0x57C), the list is at dungeon `+0x57C`; that is an assumption. Blue's consumer of the list (Red `sub_806C3C0`, which spawns each active entry with `SpawnWildMon`) is not located.
+  - `DAT_02149E78`, the shop-bounds pointer. The bounds are four ints there, not in `gDungeon`. The table in the struct notes lists `+0xC0E0` to `+0xC0EC` for them; that matches only if the pointer targets those offsets. Unverified.
+  - The item-chance table at `021AAA38`: 16 layouts of 0x12 bytes, data. Its Red name is `[red-hypothesis]`.
+  - The terrain type of the out-of-bounds tile that the south test reads at `y = 31` (P5b). It needs the tileset data or a runtime read.
+  - The shop cut count: the draw order lists one `DungeonRandRange(2, 4)`, while the findings' table row says it applies per axis. Check with a trace.
+  - The gate of `0x0214C13C`: `DAT_ov_0001__021525D8` in the findings, and the optional-call flag named in the control-flow note. Check which one is right.
 
 ## Open questions
 

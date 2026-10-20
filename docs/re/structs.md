@@ -94,11 +94,12 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x638` | start of `unk644` | `0x644` | see below |
 | `+0x3360` | `deoxysForm` | `0x3800` | `RunDungeon_Async` |
 | `+0x3424` | `numItems` | `0x3904` | `ResetFloor` |
+| `+0x34AA` | shop flag (1 when the Kecleon shop pass ran, else 0) | `unk3A0A` | `0x3A0A` | `GenerateFloor` end; the shop pass `0x02149AF8`. Blue `+0x34AA` to Red `0x3A0A`: gap `0x560` |
 | `+0x34AC` | stairs room index (floor type 2 only) | not matched | `SpawnNonEnemies` (`ov_0001::0214B650`) writes it |
 | `+0x34AE`, `+0x34B0`, `+0x34B4` | `tileset`, `unk3A10`, `fixedRoomNumber` | `0x3A0E`, `0x3A10`, `0x3A14` | `RunDungeon_Async` |
 | `+0x34B8` | `tiles[32][56]` (0x14 bytes each, see below) | `0x3A18` (0x18 bytes each) | `sub_80495E4` |
 | `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`); written by `SpawnNonEnemies` |
-| `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor` |
+| `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor`. Blue's base, `DAT_0214C0A4`, is not read (unverified); the offset is Red's and is not confirmed in Blue |
 | `+0xC660` | `tilePointers[32][56]` | `0xE8C0` | `GetTile`, `GetTileMut`, `sub_80495E4` |
 | `+0x113B4` | `items[64]` (entity pointers) | `0x1361C` | `SpawnItemEntity` (searches the 64 entries for a free slot) and `0219B700` |
 | `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` clears all 64. No function that writes trap entities is found |
