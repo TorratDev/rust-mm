@@ -12,7 +12,7 @@ Tags are as in [`symbols.md`](../symbols.md): **blue-verified** (role read in Bl
 
 `RunMonsterAI` is `ov_0001::02188030`. It reads the monster struct through the entity's info pointer (`entity+0x70`); offsets below are from that struct. It returns nothing. The decision is the non-zero action in `+0x42` together with the early returns. The steps run in this order:
 
-1. **Petrified-ally gate.** If the `u16` at `+0x00` has `0x8000` set (the petrified-ally swap flag) and the frozen status at `+0xA0` is 6 (petrified), call `0218FC18(self, self)` and return. Nothing else runs on this path. [blue-verified for the flag and the status; red-hypothesis for the name, which matches Red's `EndFrozenClassStatus`; medium]
+1. **Petrified-ally gate.** If the `u16` at `+0x00` has `0x8000` set (the petrified-ally swap flag), return. Before returning, if the frozen status at `+0xA0` is 6 (petrified), call `0218FC18(self, self)`. Nothing else runs while the flag is set. [blue-verified for the flag and the status; red-hypothesis for the name, which matches Red's `EndFrozenClassStatus`; medium]
 2. **Clear the decoy tracker.** Set `+0xDD` to 0. [blue-verified write; red-hypothesis name `decoyAITracker`, `DECOY_AI_NONE`]
 3. **Behaviour gate.** If `monsterBehavior` (`+0x98`) is not 0 and `0219EFCC` returns 0, return. `0219EFCC` is a switch on `+0x98` that returns 0 for behaviours 2, 4, 10, 11, 12 and above 36, and 1 otherwise. Behaviour 0 (FIXED_ENEMY) skips the check, as Red's `FIXED_ENEMY ||` does. The switch agrees with Red's `ShouldRunMonsterAI` (`src/dungeon_cutscene.c:1093`) for all IDs 0-36. [blue-verified; high]
 4. **Held item.** If `+0x98` is not 1 (RESCUE_TARGET) and `+0xD9` (`useHeldItem` in Red) is set: call `0218163C` (`CheckVariousConditions`). If it returns true, clear `+0xD9`, post the "couldn't be used" message (`02141930`, then `02154BF0`; the string comes from a per-language table) and return. Otherwise call `0218579C` (item AI, see [Item AI](#item-ai)). If the action in `+0x42` is then non-zero, return. [blue-verified structure; red-hypothesis names]
@@ -82,7 +82,7 @@ Entry point: `ov_0001::0218579C` (`AIDecideUseItem`). Red's counterpart is `AIDe
 - **Avoid enemies (P3-d). Not verified.** `ov_0001::02190B80` (red-hypothesis name `AvoidEnemies`, medium). It picks the enemy with the largest distance and steps away from it, or falls back to the wander routine `02190854`. Red's source says its own `AvoidEnemies` does not match Blue (the note cites decomp.me `QNmaT`). This shape agrees with that note. The function is not named in [`symbols.md`](../symbols.md) yet.
 - **Decide movement (P3-e).** `ov_0001::02190FEC` (`DecideMovement`) takes the target from `+0x80`/`+0x82`, and the direction from `0201187C` (`GetDirectionTowardsPosition` in [`symbols.md`](../symbols.md)). If `+0x73` is set, it adds 4 to the direction. Tactic 3 (AVOID_THE_FIRST_HIT), through `02180C6C`, keeps a distance of 2 and turns 4.
   - It tries the direction, then ±45°, ±90° and ±135°, using `02180DF8` (`CanAIMonsterMoveInDirection`). That function tests, in order: walls; the monster house (terrain `0x40` with `gDungeon+0x661`); traps (IQ 14, TRAP_AVOIDER); lava (IQ 20, LAVA_EVADER); all-terrain (IQ 12); super mobile (IQ 13). Red's order is the same.
-  - **Blocked in front.** If the entity is not a team member (`+6 == 0`) and `recalculateFollow` (`+0x117`) is 0, it sets `+0x71` = 1, the `aiAllySkip` candidate `+0x116` = 1, and waiting `+0x119` = 1, with a pass action. Red's `DecideMovement` does this at lines 358-361.
+  - **Blocked in front.** If `+6 == 0` (the team-member test used in P3-c and P4-a) and `recalculateFollow` (`+0x117`) is 0, it sets `+0x71` = 1, the `aiAllySkip` candidate `+0x116` = 1, and waiting `+0x119` = 1, with a pass action. Red's `DecideMovement` does this at lines 358-361.
   - **Trailing branch (no move found).** A leader (`+7 != 0`) clears `+0x71` and `+0x116`. A non-leader with `+0x71` set sets `+0x116` = 1. Red's lines 436-443 match.
   [blue-verified flow; high; field names medium]
 - **`aiAllySkip` writers (P3-f).** The offset is `+0x116`, which is Red's `0x144` shifted by −0x2E. The writers are the two sites in P3-e. It is also cleared in `RunMonsterAI` after the action branch (with `+0x71` and `+0x119`). The readers were not located; they should be in the turn loop, which is [#49](https://github.com/TorratDev/rust-mm/issues/49)'s scope. [red-hypothesis for the field identity; medium-high; no trace]
@@ -115,7 +115,7 @@ Entry point: `ov_0001::0218579C` (`AIDecideUseItem`). Red's counterpart is `AIDe
 
 ## RNG calls
 
-Every `DungeonRand*` call reached from `RunMonsterAI`, in the order the code runs, with its gate. The walk was static: a closure from `02188030` over direct and pool-resolved calls. It reached 684 functions, and 26 of them call an RNG directly. Only the first parent chain found for each node is recorded, so a site may have other paths. Depths are given only where the walk stated them. The walk left nine indirect call sites unresolved (see P6-g). The walk output is not in the repo.
+Every `DungeonRand*` call reached from `RunMonsterAI`, in the order the code runs, with its gate. The walk was static: a closure from `02188030` over direct and pool-resolved calls. It reached 684 functions, and 26 of them call an RNG directly. Only the first parent chain found for each node is recorded, so a site may have other paths. Depths are given only where the walk stated them. The walk left seven indirect call sites unresolved (see P6-g). The walk output is not in the repo.
 
 | # | Site (routine) | RNG call | Gate | Red comparison |
 |---|----------------|----------|------|----------------|
@@ -132,9 +132,9 @@ Every `DungeonRand*` call reached from `RunMonsterAI`, in the order the code run
 | 11 | `02192D24` (`ChooseAIMove`) | `DungeonRandOutcome_2(70)` | `+0xAC == 2` (confused); the 70 is at `0x021AA184` | `dungeon_ai_attack.c:72`, exact flow |
 | 12 | `02192D24` | `DungeonRandInt(total)` | weighted move pick | `dungeon_ai_attack.c:275`, `:519`, `:815` |
 | 13 | `021918D4` (`AIMovement`) | `DungeonRandInt(8)` | `+0x98 == 1` | `dungeon_ai_movement.c:74` |
-| 14 | nested under `02192D24`: `02192728`, `02191F84`, `02192274` | `DungeonRandInt` (2 sites) | as the caller | red attack and move helpers |
-| 15 | nested under `021918D4`: `02190B80`, `02190854` (6 sites), `02180C98` | `DungeonRandInt` | as the caller | red movement helpers, `dungeon_ai_movement.c:523-722` |
-| 16 | nested under `0218579C`: `02185568` (1 site) and `0219CFF0` | `DungeonRandOutcome_2` | as the caller | the AI callers of `DungeonRandOutcome_2` in [`rng.md`](rng.md) |
+| 14 | nested under `02192D24`: `02192728`, `02191F84`, `02192274` | `DungeonRandInt` (2 sites) | not stated | red attack and move helpers |
+| 15 | nested under `021918D4`: `02190B80`, `02190854` (6 sites), `02180C98` | `DungeonRandInt` | not stated | red movement helpers, `dungeon_ai_movement.c:523-722` |
+| 16 | nested under `0218579C`: `02185568` (1 site) and `0219CFF0` | `DungeonRandOutcome_2` | not stated | the AI callers of `DungeonRandOutcome_2` in [`rng.md`](rng.md) |
 | 17 | global LCG, through message display | `Rand32Bit` in `0217B120` (2), `02155760` (1), `0217AF58` (2) and `02012648` (1); `RandInt` in `0219DCF0` (2) | reached from `02154BF0` → `02154910` → `0213AFA8` → `0213AD54` → `02142504` or `0219E89C` | none: Red has no AI message RNG; see P6-f |
 
 Notes:
@@ -143,11 +143,11 @@ Notes:
 - **P6-d.** The confusion roll (row 11) uses `DungeonRandOutcome_2(70)`, with 70 read from overlay bytes. Red's value of `gAIConfusedAttackChance` is not checked in A's notes. [blue-verified value; high]
 - **P6-e.** `DungeonRandOutcome_2` has these AI callers: `0218579C` (3 sites), `02185568` (1 site, depth 2) and `02192D24` (1 site). This confirms the list in [`rng.md`](rng.md). [blue-verified; high]
 - **P6-f. Global LCG through messages (static, low confidence).** `Rand32Bit` is reached from the message display `02154BF0`, through `02154910`, `0213AFA8`, `0213AD54` and `02142504` to `0217B120`. So dungeon messages advance the global LCG (`sPRNGState`), not only `gDungeonRngState`. This adds global-LCG draws to AI turns. It is static only; Red has no such path. A runtime check is needed before anyone relies on it (see [Open questions](#open-questions)). The chain includes `0213AFA8` (`DungeonRunFrameActions` in [`symbols.md`](../symbols.md)) and `0217B120` (`UpdateMonsterSprite`); those names may not fit a message path, and they were not checked. The same note is in [`rng.md`](rng.md).
-- **P6-g. Gaps.** The walk left nine indirect call sites unresolved. They can hide RNG calls. The findings name seven functions for them; see [Open questions](#open-questions).
+- **P6-g. Gaps.** The walk left seven indirect call sites unresolved. They can hide RNG calls. See [Open questions](#open-questions).
 
 ## Open questions
 
-- **P6-g, unresolved call sites (not verified).** A reports nine sites but names seven functions, listed here. The walk could not resolve them: `020731AC` (depth 11, a stored function pointer), `02076280` and `02076AEC` (depths 8 and 9, a dispatch through a DAT slot), `0207D500` (depth 7), `02086468` and `02086470` (depths 12 and 13), and `0213A348` (depth 7, a stub that jumps through `0213A374` to `0202D240`, which was not followed). `0208625C` (depth 2, a signed-division helper) and `021644B8` (depth 3, a switch predicate) were read by hand; neither calls the RNG. The two sites not named in the findings are unknown. Resolve the pointers to finish the list.
+- **P6-g, unresolved call sites (not verified).** A counts nine functions with indirect calls. Seven are unresolved, listed here:  `020731AC` (depth 11, a stored function pointer), `02076280` and `02076AEC` (depths 8 and 9, a dispatch through a DAT slot), `0207D500` (depth 7), `02086468` and `02086470` (depths 12 and 13), and `0213A348` (depth 7, a stub that jumps through `0213A374` to `0202D240`, which was not followed). `0208625C` (depth 2, a signed-division helper) and `021644B8` (depth 3, a switch predicate) were read by hand and do not call the RNG. Resolve the pointers to finish the list.
 - **P6 walk limits.** Only the first parent chain is recorded per node. The closure is static, so calls made through pointers that were not resolved are missing.
 - **P5.6 tables (not verified).** The thrown-probability table at `0x021B485C` and the count at `0x021B3F44` are set at runtime. A trace of the write, or the initialiser, is needed. Red's `gAIThrownItemProbabilities` and `gAIThrowItemActionChoiceCount` are the candidates.
 - **P5 and P6-b count.** Blue's `0218579C` has 5 direct RNG sites; Red's `AIDecideUseItem` has 6 across both item categories. P5 must reconcile this.
@@ -159,6 +159,7 @@ Notes:
 - **P1-c offsets.** `+0xB3` and `+0xB4` are not checked against [`structs.md`](structs.md).
 - **P1-h caller.** How the turn loop reads the action in `+0x42` after `RunMonsterAI` returns. [#49](https://github.com/TorratDev/rust-mm/issues/49)
 - **P3-d `AvoidEnemies`.** The mismatch with Red's source is noted but not checked. The name is not in [`symbols.md`](../symbols.md).
+- **P3-e gate wording.** Investigator C calls the `+6 == 0` gate "non-team-member", which disagrees with its own P3-c and P4-a, where `+6 == 0` is the team-member test. The code test is `+6 == 0`.
 - **P3-f readers of `aiAllySkip`.** In the turn loop, [#49](https://github.com/TorratDev/rust-mm/issues/49).
 - **P4-d identity of the `0x8000` writer and the menu writer `02175178`.** The name of `02165C80` rests on Red's `sub_805EC4C`. The purpose of `02175178` is not identified. ARM9 hits not checked.
 - **P4-e swap flag `1 << 5`.** No writer found. A trace of the swap action would settle it.
