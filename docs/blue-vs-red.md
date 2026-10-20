@@ -135,3 +135,9 @@ Moves and items were compared with `pmd-red`'s JSON data (the first table above)
 |------|------|-----------------|---------|----------|
 | Sprite follow-up table | `021AE1D0` ([`formats/sprites.md`](formats/sprites.md)) | `gUnknown_8106EC8` in `src/dungeon_mon_sprite_render.c` | same rows and same sources (`sub_806CE94`, `sub_806CDD4`, `sub_806CEBC`) | same |
 | Effect and animation file layout | Follows `dump_effect_sbin.py`'s layout; the pose table length is confirmed by the animation blocks ([`formats/effects.md`](formats/effects.md)) | `dump_effect_sbin.py` in `pmd-red` (`EfoFileData`, `EfbFileData`, `ax_pose`, `ax_anim`) | same layout | same |
+
+## Turns ([`re/turns.md`](re/turns.md))
+
+| Item | Blue | Red (`pmd-red`) | Verdict | Category |
+|------|------|-----------------|---------|----------|
+| `DoEndOfTurnEffects` return type | `bool DoEndOfTurnEffects` (`021861E8`) | `void DoEndOfTurnEffects_Async` (`src/dungeon_turn_effects.c:47`) | **different return type**; the behaviour matches on the paths checked. Whether the Blue callers use the return value was not checked | unclassified |
