@@ -62,9 +62,9 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Move range byte `+0x19` | Read only by the message builder `FUN_0200B188` | Used only to build the displayed name | same: display only | same |
 | Move dispatch | `ov_0001::02156824`, switch on move ID at `move+2` | `UseMoveAgainstTargets`, `src/dungeon_move.c` | same index; the handler names are hypotheses ([`re/move-effects.md`](re/move-effects.md)) | same |
 | EXP formula | `CalculateEXPGain` `020020F8` | `CalculateEXPGain`, `src/pokemon.c` | same formula | same |
-| EXP multiplier | info `+0xD8` | info `+0xFB` | **different offset** (shift −0x23), same values (`0` halved, `1` regular, `2` boosted) | unclassified |
+| EXP multiplier | info `+0xD8` | — | **to check** (Red offset not sourced); same values (`0` halved, `1` regular, `2` boosted) | unclassified |
 | Plus and Minus flags | `gDungeon` `+0x3358`, `+0x335A` | `gDungeon` `+0x37F8`, `+0x37FA` | **different offsets**, same logic; the pairing is inferred, not confirmed (`re/combat.md`) | unclassified |
-| IQ skills | Bit test at info `+0x87` (`ov_0001::021805B0`) | An array of IQ skill values in the info | **different layout** | unclassified |
+| IQ skills | Bit test at info `+0x87` (`ov_0001::021805B0`) | — | **to check** (Red layout not sourced) | unclassified |
 
 ## Structs ([`re/structs.md`](re/structs.md))
 

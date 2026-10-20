@@ -12,7 +12,7 @@ Every function below matches its `pmd-red` counterpart in `src/dungeon_damage.c`
 |----------|------|
 | `CalcDamage` `ov_0001::0217BD94` | Damage formula. Same constants as Red: damage cap `999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`. Reads `gAtkStatStageMultipliers` and `gDefStatStageMultipliers`. |
 | `sub_806E100` `ov_0001::0217CE88` | Type-effectiveness part of the damage calculation; called by `CalcDamage`. |
-| `CalcStatBoosts` `ov_0001::0217C7F8` | Ability and held-item modifiers to attack and defense, called from `CalcDamage`. Its sixth argument is the roll from the first `DungeonRandInt(100)` ([RNG calls](#rng-calls-in-calcdamage)). Own name; the Red name is not confirmed. |
+| `CalcStatBoosts` `ov_0001::0217C7F8` | Ability modifiers to attack and defense, called from `CalcDamage`. Its sixth argument is the roll from the first `DungeonRandInt(100)` ([RNG calls](#rng-calls-in-calcdamage)). Own name; the Red name is not confirmed. |
 | `sub_806F370_Async` `ov_0001::0217BB94` | Applies a fixed amount of damage (34 callers). Wonder Guard (`AbilityIsActive(target, 0x35)`) zeroes it unless the combined effectiveness is "super". Then `HandleDealingDamage_Async`. |
 | `HandleDealingDamage_Async` `ov_0001::0217E890` | Deals the damage. |
 | `sub_806F4A4` `ov_0001::0217BA94` | Returns 1 when the move type is not immune to either of the target's two types, and 0 when it is immune to one of them. It also returns 0 for the Ghost exception (target type 14, move type 1 or 7, target not exposed). |
@@ -44,25 +44,26 @@ The accuracy and evasion stage tables (`ov_0001::021AA8C4`, `ov_0001::021AA918`)
 1. A belly check that sets the damage to 1 (Red's `SetDamageOne`).
 2. Wonder Guard, as in Red.
 3. Clamp the attacker's and the defender's stat stages to 0 to 20.
-4. Deoxys: a ±2 adjustment, as in Red. The Deoxys move IDs are `0x1A1` to `0x1A3`.
+4. Deoxys: a ±2 adjustment, as in Red. The Deoxys species (form) IDs are `0x1A1` to `0x1A3`.
 5. Base power: the move's power plus the attacker's attack stat. Multiply by the attack stage multiplier, then by the attacker's offensive multiplier, in 24.8 fixed point. Convert to an integer by truncation.
-6. Defense side: Skull Bash (`0x15C`) adds one stage. Multiply the defense by its stage multiplier and then by the defender's defensive multiplier, and truncate.
-7. Held-item boosts and ability modifiers, through `CalcStatBoosts` (see the next two sections).
-8. Clamp the attack to 999. Only the attack is clamped; the defense is not.
-9. Add a level or attack term, which is either level × 2/3 or attack / 3. The findings do not say which branch applies in each case.
-10. Base damage = (attack − defense) / 8 + that term.
-11. Base damage `x` becomes `x² × 0xCCC + (2x − defense + 10)`, where `0xCCC` is the 0.05 constant. Clamp the result to [1.0, 999].
-12. Multiply by the type multiplier from `sub_806E100` (see [type effectiveness](#type-effectiveness)).
-13. Critical hit: ×1.5 when the crit roll passes (see [critical hits](#critical-hits)).
-14. The extra argument `arg8` (not described further in the findings).
-15. Variance: a factor of `(0xE000 + roll) / 0x10000`, from `DungeonRandInt(0x4000)`. That is 0.875 to about 1.125.
-16. Convert the 48.16 result to an integer with `FP48_16_ToS32` (see [rounding](#rounding)).
+6. Defense side (Skull Bash: +1 defense stage). Multiply the defense by its stage multiplier and then by the defender's defensive multiplier, and truncate.
+7. Held-item boosts, in `CalcDamage` (see the held-item table below).
+8. Clamp the attack to 0 to 999. Only the attack is clamped; the defense is not.
+9. Ability modifiers, through `CalcStatBoosts` (see the ability table below).
+10. Add a level or attack term, which is either level × 2/3 or attack / 3. The findings do not say which branch applies in each case.
+11. Base damage = (attack − defense) / 8 + that term.
+12. Base damage `x` becomes `x² × 0xCCC + (2x − defense + 10)`, where `0xCCC` is the 0.05 constant. Clamp the result to [1.0, 999].
+13. Multiply by the type multiplier from `sub_806E100` (see [type effectiveness](#type-effectiveness)).
+14. Critical hit: ×1.5 when the crit roll passes (see [critical hits](#critical-hits)).
+15. The extra argument `arg8` (not described further in the findings).
+16. Variance: a factor of `(0xE000 + roll) / 0x10000`, from `DungeonRandInt(0x4000)`. That is 0.875 to about 1.125.
+17. Convert the 48.16 result to an integer with `FP48_16_ToS32` (see [rounding](#rounding)).
 
 ### Type effectiveness
 
 `sub_806E100` looks up the move type's row in `gTypeEffectivenessChart`, uses the defender's two types (at info `+0x56` and `+0x57`) as columns, and combines the two results through `gEffectivenessChart`. Then it applies the following rules, in this order. Everything here matches Red line by line (static comparison, P1.2).
 
-- **Ghost exception:** a Ghost defender (type 14) takes no damage from Normal (type 1) or Fighting (type 7) moves, unless the defender is exposed (flag at info `+0xD2`, not confirmed in Blue).
+- **Ghost exception:** a Ghost defender (type 14) is treated as immune (the immune multiplier, 0.5) to Normal (type 1) or Fighting (type 7) moves, unless the defender is exposed (flag at info `+0xD2`, not confirmed in Blue).
 - **Immunity abilities:** Flash Fire (against Fire moves with a status) and Levitate (against Ground moves) return "immune". Thick Fat halves Fire and Ice damage.
 - **Low-HP abilities:** Torrent, Overgrow, Blaze and Swarm double the move's power when the attacker is at or below 1/4 HP.
 - **STAB:** ×1.5 (the pool value shared with the critical multiplier).
@@ -72,7 +73,7 @@ The accuracy and evasion stage tables (`ov_0001::021AA8C4`, `ov_0001::021AA918`)
 
 The four effectiveness multipliers in the pool are 0.5, 0.9, 1.0 and 1.5. Which index maps to which label has not been checked in Blue.
 
-### Abilities and held items in `CalcStatBoosts`
+### Abilities in `CalcStatBoosts`
 
 These modifiers are applied in the stat-boost function (`ov_0001::0217C7F8`). Ability IDs are as in Red's `ability.h`. Integer division truncates toward zero.
 
@@ -122,7 +123,7 @@ Red's `u24_8` round-up is compared by structure only (medium).
 
 ### Clamps
 
-The base damage is clamped to [1.0, 999]. The attack is clamped to 0 to 999 before the boosts. The defense is not clamped. These match Red (static, P2.6).
+The base damage is clamped to [1.0, 999]. The attack is clamped to 0 to 999 after the item boosts, before the ability modifiers. The defense is not clamped. These match Red (static, P2.6).
 
 ## RNG calls in `CalcDamage`
 
@@ -229,6 +230,7 @@ Unresolved items from the three investigation files for this issue. Each item is
 **Damage formula**
 
 - The disassembly-level store of the sixth argument (the roll) to `CalcStatBoosts` has not been seen.
+- The offsets of `belly` (info `+0x10E`), `isTeamLeader` (`+7`), `isNotTeamMember` (`+6`) and `level` (`+9`) are inferred from use, not checked against a Blue struct ([#46](https://github.com/TorratDev/rust-mm/issues/46)).
 - The weather enum values (1, 3, 4, 6) and the IQ skill ID 1 (Type Advantage Master) are taken from Red, not checked in Blue.
 - Red's `u24_8` round-up is compared by structure only.
 - The `gDungeon` `+0x3358` and `+0x335A` Plus and Minus flags need a struct check (the pairing is inferred).

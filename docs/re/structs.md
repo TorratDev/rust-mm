@@ -33,10 +33,10 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x0E` | `HP` | `0x0E` | 0 | `TickStatusAndHealthRegen` |
 | `+0x10` | `maxHPStat` | `0x10` | 0 | `TickStatusAndHealthRegen` |
 | `+0x16` | `def[2]` | `0x16` | 0 | `CalcDamage` |
-| `+0x18` | `exp` | `0x18` | 0 | `AddExpPoints` (`ov_0001::02183F78`) adds to it (blue-verified structure) |
+| `+0x18` | `exp` | — | — | `AddExpPoints` (`ov_0001::02183F78`) adds to it (blue-verified structure) |
 | `+0x28` | `flashFireBoost` | `0x28` | 0 | `CalcDamage` (*probable*) |
 | `+0x3C`, `+0x3E` | `hiddenPower` base power, type | `0x3C` | 0 | `GetMovePower`, `GetMoveTypeForMonster` |
-| `+0x40` | `joinedAt` (dungeon location of the join) | `0x40` | 0 | `AddExpPoints` compares it with `'J'` and `'G'` for the EXP lock, in place of Red's `IsExperienceLocked` (lock not confirmed) |
+| `+0x40` | dungeon location of the join | — | — | `AddExpPoints` compares it with `'J'` and `'G'` for the EXP lock, in place of Red's `IsExperienceLocked` (lock not confirmed) |
 | `+0x42` | `action` block (*probable*: its `direction` is at `+0x44`) | `0x44` | −2 | `ov_0001::02188030` (candidate `RunMonsterAI`): byte compared with 0, then written |
 | `+0x44` | `direction` (u8) | `0x46` | −2 | `DisplayActions_Async` (`ov_0001::0218766C`) compares it with the direction from `FUN_0201187C` (the helper's name `GetDirectionTowardsPosition` is *red-hypothesis*) |
 | `+0x56` | `types[2]` | `0x5C` | −6 | `sub_806F370_Async`, `sub_806F4A4` |
@@ -44,7 +44,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
 | `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` and the other inner offsets follow the −8 shift and are not checked) | `0x78` | −8 | `0219082C` |
 | `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; *probable*: the writer is only a candidate) | `0x79` | −8 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
-| `+0x87` | IQ skills, one bit per skill (bit *n* is tested with mask `1 << n`); Red keeps them in an array, so the layouts differ | — | — | `ov_0001::021805B0` (`IqSkillIsEnabled`). Bits 4, 5 and 8 are used in the hit and AI paths |
+| `+0x87` | IQ skills, one bit per skill (bit *n* is tested with mask `1 << n`) | — | — | `ov_0001::021805B0` (`IqSkillIsEnabled`). Bits 4, 5 and 8 are used in the hit and AI paths |
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
 | `+0x99`, `+0x9A` | `sleepClassStatus` status, turns | `0xA8` | −0xF | `TickStatusAndHealthRegen` |
 | `+0x9B`, `+0x9C` | `burnClassStatus` status, turns | `0xAC` | −0x11 | `CalcSpeedStage` (paralysis), `TickStatusAndHealthRegen` |
@@ -59,7 +59,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0xC4` | `sureShotClassStatus.status` | `0xDC` | −0x18 | `CalcDamage` |
 | `+0xC5` | `sureShotClassStatus` counter | `0xDD` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) |
 | `+0xD5` | `speedStageChanged` | `0xF8` | −0x23 | `RunLeaderTurn_Async` |
-| `+0xD8` | `expMultiplier` (`0` halved, `1` regular, `2` boosted) | `0xFB` | −0x23 | `AddExpPoints` (`ov_0001::02183F78`); `0` and `1` seen at runtime, `2` not |
+| `+0xD8` | `expMultiplier` (`0` halved, `1` regular, `2` boosted) | — | — | `AddExpPoints` (`ov_0001::02183F78`); `0` and `1` seen at runtime, `2` not |
 | `+0xDD` | `decoyAITracker` (*probable*: the writer is only a candidate) | `0x100` | −0x23 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
 | `+0xE0` | `speedStage` | `0x104` | −0x24 | `CalcSpeedStage` |
 | `+0xE4` | `speedUpCounters[5]` | `0x108` | −0x24 | `CalcSpeedStage` |
@@ -77,7 +77,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x138`, `+0x13A` | `targetPos.x`, `.y` (u16; Red's block starts at `0x16C`) | `0x16C` | −0x34 | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x1C0` | `numMoveTiles` | `0x1F4` | −0x34 | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x1C4` | `unk1F8` (HP regeneration counter) | `0x1F8` | −0x34 | `TickStatusAndHealthRegen` |
-| `+0x1C8` | `expGainedInTurn` (may lie past the end of the struct: the size bound is 0x1C8 to 0x208) | `0x1FC` | −0x34 | `AddExpPoints` (`ov_0001::02183F78`) records the EXP gained here |
+| `+0x1C8` | `expGainedInTurn` (may lie past the end of the struct: the size bound is 0x1C8 to 0x208) | — | — | `AddExpPoints` (`ov_0001::02183F78`) records the EXP gained here |
 
 Not listed: the `IQ` field at Red `0x0C`. Blue's IQ bits are at `+0x87` (above). No Blue function reading `+0x0C` is matched yet. See the open questions.
 
