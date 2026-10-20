@@ -4,11 +4,11 @@ Layout of the dungeon struct, the entity struct and the entity info struct in Bl
 
 **Method:** a field is listed only when a Blue function already matched to its `pmd-red` counterpart (same calls, constants and arguments) reads or writes it at that offset. The Evidence column names that function. Fields not listed are unknown in Blue: do not assume Red's offset, because Blue's structs drop bytes at several points. The fields read by the V7 trace (`gDungeon`, `fractionalTurn`, the seeds, `teamPokemon`/`wildPokemon`, entity `type` and position, info `id`, `level`, `HP`, `maxHPStat`, `speedStage`) decode to consistent values on the retail ROM by emulator (V7 in [`verification.md`](../verification.md#v7--scriptable-ds-emulator-for-ram-and-rng-dumps)); the rest is checked in code only.
 
-Tags: **[blue-verified]** unless marked *probable* (one access, consistent with its neighbours) or *red-hypothesis*.
+Tags: **[blue-verified]** unless marked *probable* (one access, consistent with its neighbours) or *red-hypothesis*. A Blue function name taken from `pmd-red` is *red-hypothesis* on its own; the offsets the function reads or writes can still be blue-verified.
 
 ## Entity
 
-Same size as Red, 0x74 bytes (the team entities are allocated 0x74 apart by `021428F8`), and the same offsets wherever checked; Red's `Entity` is the working hypothesis for the rest.
+Same size as Red, 0x74 bytes, and the same offsets wherever checked; Red's `Entity` is the working hypothesis for the rest. The routine `021428F8` sets the team, wild, item and trap entity pointers 0x74 apart. It does not allocate the infos.
 
 | Blue | Red field | Red | Evidence |
 |------|-----------|-----|----------|
@@ -20,6 +20,8 @@ Same size as Red, 0x74 bytes (the team entities are allocated 0x74 apart by `021
 ## Entity info
 
 Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes are missing before the types, in the status block, around the speed counters and before the belly. The **Shift** column is Blue offset minus Red offset.
+
+**Size: not found.** The array or allocation that holds the infos is not located. The shift table bounds Blue's size to 0x1C8 ≤ size ≤ 0x208 (blue-verified). A value of 0x1D4 is a *red-hypothesis* candidate and is not recorded here. Measure the infos' pointer stride in the emulator ([#17](https://github.com/TorratDev/rust-mm/issues/17)).
 
 | Blue | Red field | Red | Shift | Evidence |
 |------|-----------|-----|-------|----------|
@@ -33,29 +35,46 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x16` | `def[2]` | `0x16` | 0 | `CalcDamage` |
 | `+0x28` | `flashFireBoost` | `0x28` | 0 | `CalcDamage` (*probable*) |
 | `+0x3C`, `+0x3E` | `hiddenPower` base power, type | `0x3C` | 0 | `GetMovePower`, `GetMoveTypeForMonster` |
+| `+0x42` | `action` block (*probable*: its `direction` is at `+0x44`) | `0x44` | −2 | `ov_0001::02188030` (candidate `RunMonsterAI`): byte compared with 0, then written |
+| `+0x44` | `direction` (u8) | `0x46` | −2 | `DisplayActions_Async` (`ov_0001::0218766C`) compares it with the direction from `FUN_0201187C` (the helper's name `GetDirectionTowardsPosition` is *red-hypothesis*) |
 | `+0x56` | `types[2]` | `0x5C` | −6 | `sub_806F370_Async`, `sub_806F4A4` |
 | `+0x58` | `abilities[2]` | `0x5E` | −6 | `AbilityIsActive` |
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
-| `+0x70` | `aiTarget` (`aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8`, `aiTargetPos` `+0x10`, same inner layout as Red) | `0x78` | −8 | `0219082C` |
+| `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` and the other inner offsets follow the −8 shift and are not checked) | `0x78` | −8 | `0219082C` |
+| `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; *probable*: the writer is only a candidate) | `0x79` | −8 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
 | `+0x99`, `+0x9A` | `sleepClassStatus` status, turns | `0xA8` | −0xF | `TickStatusAndHealthRegen` |
 | `+0x9B`, `+0x9C` | `burnClassStatus` status, turns | `0xAC` | −0x11 | `CalcSpeedStage` (paralysis), `TickStatusAndHealthRegen` |
 | `+0xA0` | `frozenClassStatus.status` | `0xB0` | −0x10 | `TickStatusAndHealthRegen` |
+| `+0xA8` | `frozenClassStatus` counter | `0xB8` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`; decremented by `FUN_ov_0001__0219bf1c`) |
+| `+0xAC`, `+0xAD` | cringe status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xBC`, `0xBD` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
 | `+0xAE` | `bideClassStatus.status` | `0xC0` | −0x12 | `CalcDamage` |
 | `+0xB1` | `reflectClassStatus.status` | `0xC4` | −0x13 | `CalcDamage`, `TickStatusAndHealthRegen` |
+| `+0xB2` | `reflectClassStatus` counter | `0xC5` | −0x13 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) |
+| `+0xB3`, `+0xB6` | curse status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xC8`, `0xCB` | −0x15 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
+| `+0xB8`, `+0xC1` | leech seed status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xD0`, `0xD9` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
 | `+0xC4` | `sureShotClassStatus.status` | `0xDC` | −0x18 | `CalcDamage` |
+| `+0xC5` | `sureShotClassStatus` counter | `0xDD` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) |
 | `+0xD5` | `speedStageChanged` | `0xF8` | −0x23 | `RunLeaderTurn_Async` |
+| `+0xDD` | `decoyAITracker` (*probable*: the writer is only a candidate) | `0x100` | −0x23 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
 | `+0xE0` | `speedStage` | `0x104` | −0x24 | `CalcSpeedStage` |
 | `+0xE4` | `speedUpCounters[5]` | `0x108` | −0x24 | `CalcSpeedStage` |
 | `+0xE9` | `speedDownCounters[5]` | `0x10D` | −0x24 | `CalcSpeedStage` |
 | `+0xF4` | `moves` (4 × 6-byte `Move`, see below) | `0x118` | −0x24 | `0216E56C` (passes `info+0xF4` as the move list, sets `moveFlags2` bit 2 of entry *i* at `+0xF5 + 6i`) |
 | `+0x10E` | `belly` | `0x13C` | −0x2E | `CalcDamage` (*probable*) |
+| `+0x116` | `aiAllySkip` | `0x144` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
+| `+0x117` | `recalculateFollow` | `0x145` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
 | `+0x118` | `bellyEmpty` | `0x146` | −0x2E | `TickStatusAndHealthRegen` |
+| `+0x119` | `waiting` | `0x147` | −0x2E | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x11A` | `attacking` | `0x148` | −0x2E | `RunLeaderTurn_Async` |
 | `+0x120` | `visualFlags` | `0x14E` | −0x2E | `CalcDamage` |
 | `+0x122` | `previousVisualFlags` | `0x150` | −0x2E | `CalcDamage` |
 | `+0x124` | `unk152` | `0x152` | −0x2E | `CalcDamage` |
+| `+0x138`, `+0x13A` | `targetPos.x`, `.y` (u16; Red's block starts at `0x16C`) | `0x16C` | −0x34 | `DisplayActions_Async` (`ov_0001::0218766C`) |
+| `+0x1C0` | `numMoveTiles` | `0x1F4` | −0x34 | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x1C4` | `unk1F8` (HP regeneration counter) | `0x1F8` | −0x34 | `TickStatusAndHealthRegen` |
+
+Not listed: `IQ` (Red `0x0C`). Its Red readers are known, but no Blue function reading `+0x0C` is matched yet. See the open questions.
 
 The status records are smaller in Blue: the distance between consecutive ones shrinks (for example, reflect to sure shot is 0x13 bytes in Blue and 0x18 in Red), so each status record needs its own check.
 
@@ -75,13 +94,14 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x638` | start of `unk644` | `0x644` | see below |
 | `+0x3360` | `deoxysForm` | `0x3800` | `RunDungeon_Async` |
 | `+0x3424` | `numItems` | `0x3904` | `ResetFloor` |
+| `+0x34AC` | stairs room index (floor type 2 only) | not matched | `SpawnNonEnemies` (`ov_0001::0214B650`) writes it |
 | `+0x34AE`, `+0x34B0`, `+0x34B4` | `tileset`, `unk3A10`, `fixedRoomNumber` | `0x3A0E`, `0x3A10`, `0x3A14` | `RunDungeon_Async` |
 | `+0x34B8` | `tiles[32][56]` (0x14 bytes each, see below) | `0x3A18` (0x18 bytes each) | `sub_80495E4` |
-| `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`) |
+| `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`); written by `SpawnNonEnemies` |
 | `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor` |
 | `+0xC660` | `tilePointers[32][56]` | `0xE8C0` | `GetTile`, `GetTileMut`, `sub_80495E4` |
 | `+0x113B4` | `items[64]` (entity pointers) | `0x1361C` | `SpawnItemEntity` (searches the 64 entries for a free slot) and `0219B700` |
-| `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` |
+| `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` clears all 64. No function that writes trap entities is found |
 | `+0x11314` | `teamPokemon[4]` (entity pointers) | `0x1357C` | `GetLeader` |
 | `+0x11324` | `wildPokemon[16]` (entity pointers) | `0x1358C` | five loops over 16 entries with `EntityIsValid` (`0219F09C`, ...) |
 | `+0x15FB0`, `+0x15FB1` | `unk181e8.unk18218`, `unk18219` | `0x18218`, `0x18219` | `RunDungeon_Async` |
@@ -111,14 +131,16 @@ In Blue it starts at `0x638`. Its first field checked, `unk10`, is at Red's rela
 
 | Blue | Red field | Red | Notes |
 |------|-----------|-----|-------|
-| `+0x00` | `terrainFlags` (u16) | `0x00` | `0x10` = impassable wall (set on the map border by `ResetFloor`) |
-| `+0x02` | `spawnOrVisibilityFlags` (u16) | `0x04` | |
+| `+0x00` | `terrainFlags` (u16) | `0x00` | `0x10` = impassable wall (set on the map border by `ResetFloor`); `0x200` is set by `ResolveInvalidSpawns` (`ov_0001::0214C1A8`) |
+| `+0x02` | `spawnOrVisibilityFlags` (u16) | `0x04` | bits used by `SpawnNonEnemies` (`0x2` item candidate, `0x4` trap or other candidate), `SpawnEnemies` and `SpawnNonEnemies` (gate on `0x8`, `0x20`, `0x40`, `0x100`), and `ResolveInvalidSpawns` (clears `0x4` when `0x1` or `0x2` is set). The bit names are guessed; the uses are blue-verified |
 | `+0x04` | `unk8`: graphics variant, picked with the global RNG; cosmetic ([`dungeon-generation.md`](dungeon-generation.md#emulator-check)) | `0x08` | |
-| `+0x05` | `room` (`0xFF` = none) | `0x09` | |
+| `+0x05` | `room` (`0xFF` = none) | `0x09` | written by `CreateRoomsAndAnchors` (`ov_0001::0214F7A8`) as a counter from 0; anchor tiles get `0xFE`; `ResetTile` sets `0xFF` |
 | `+0x06` | `walkableNeighborFlags[4]` | `0x0A` | one byte per crossable-terrain kind |
 | `+0x0A` | `unkE` | `0x0E` | |
 | `+0x0C` | `monster` (entity pointer) | `0x10` | |
 | `+0x10` | `object` (item or trap entity pointer) | `0x14` | |
+
+**Rooms.** The room data is per tile: the room index is in `+0x05`. A persistent room array in the dungeon struct was not found (medium confidence). The 30-byte cell grid (`x0`/`y0`/`x1`/`y1` at `+0`/`+2`/`+4`/`+6`, room flag at `+0x1C`) is generation scratch passed in by the caller, `GenerateStandardFloor` and its siblings. The meaning of `gNumRoomsAssigned` (`ov_0001::021B45BC`) is taken from older notes and was not rechecked.
 
 Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row stride `0x460`; `GetTile(x, y)` returns `tilePointers[y][x]` (dungeon `+0xC660`, row stride `0xE0`) or, outside 56 × 32, the out-of-bounds tile `gCurTilesetOobTile`.
 
@@ -141,7 +163,7 @@ Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row st
 
 Blue's struct is 0x23C bytes (Red 0x268). The difference is packing: Blue stores `Item` in 3 bytes and `BulkItem` in 2, where Red's arrays use a 4-byte stride for both.
 
-**Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` takes a free slot, then `SpawnItem` copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field. An item entity has `type` 3 (`ENTITY_ITEM`).
+**Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` (`ov_0001::02141F58`) takes a free slot. It sets the entity type to 3 (`ENTITY_ITEM`), copies the position to `+0x4`/`+0x6`, and sets `entity+0x70` to the 3-byte `Item` slot `gDungeon + 3·i + DAT_02142064`. The base `DAT_02142064` is not read. `SpawnItem` then copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field.
 
 ## Recruited Pokémon
 
@@ -183,6 +205,14 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 
 ## Open questions
 
-- The size of Blue's entity info struct (Red 0x208): look for the array or allocation that holds the infos.
-- Item and inventory structs.
+- **Entity info size.** Not found. The bound is 0x1C8 ≤ size ≤ 0x208 (blue-verified). Measure the infos' pointer stride in the emulator ([#17](https://github.com/TorratDev/rust-mm/issues/17)). Do not record 0x1D4 until then.
+- **`IQ` at info `+0x0C`** (Red `0x0C`). Red's readers are known (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`), but no Blue function that reads `+0x0C` is matched. Find Blue's `GetMovesLearnedAtLevel` caller and check the offset of its IQ argument.
+- **`aiTarget` inner layout** beyond `aiTargetPos`: `aiObjective` `+0x70`, `aiTargetingEnemy` `+0x72`, `aiTurningAround` `+0x73`, `aiTargetSpawnGenID` `+0x74`, `aiTarget` `+0x78` follow the −8 shift but are unchecked.
+- **`RunMonsterAI` candidate** `ov_0001::02188030`: name it and check its remaining branches against Red's `dungeon_ai.c`.
+- **Status bytes not assigned:** `+0xC9`/`+0xCA` and `+0xCB`/`+0xCC` are either invisible (`0xE4`/`0xE5`) or blinker (`0xE8`/`0xE9`) in Red's layout; both are read in `TickStatusAndHealthRegen`. Cringe (`+0xAC`), curse (`+0xB3`) and leech seed (`+0xB8`) are *red-hypothesis* and have no write sites yet. Status write sites were not examined.
+- **Trap entities.** The writer of `traps[64]` (`+0x114B4`) is not found. Search the overlay 1 functions called from the floor-generation chain (`GenerateFloor`, `ov_0001::02151E7C`), or dump RAM after a floor load (#17).
+- **`DAT_02142064`**, the base of the floor-item slots (dungeon `+0x3·i`). Read its value to name the floor-item storage.
+- **Dungeon `+0xC0B8`/`+0xC0BA`** (checked for `-1` next to the stairs; meaning unknown), and the later use of `+0x34AC` (stairs room, floor type 2).
+- **Tile spawn bits.** Names for `0x2`, `0x4`, `0x8`, `0x20`, `0x40`, `0x100` and `0x200`. Name them after the trap writer is found.
+- **Rooms.** Confirm that no persistent room array exists (medium confidence now), and recheck `gNumRoomsAssigned`.
 - Add the remaining trace fields (statuses, moves, held items, floor items, inventory) to `verification/v7-trace/retail_trace.py` and check them by emulator.

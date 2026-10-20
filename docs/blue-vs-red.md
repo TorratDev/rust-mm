@@ -61,7 +61,8 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Item | Blue | Red (`pmd-red`) | Verdict | Category |
 |------|------|-----------------|---------|----------|
 | Entity size and offsets | `0x74` bytes, the same offsets wherever checked ([`re/structs.md`](re/structs.md#entity)) | `Entity`, `0x74` bytes | same, where checked; Red's struct is the working hypothesis for the rest | same |
-| Entity info size | Shorter than Red's `0x208`: bytes missing before the types, in the status block, around the speed counters and before the belly ([`re/structs.md`](re/structs.md#entity-info)) | `0x208` bytes | **shorter in Blue** | unclassified |
+| Entity info size | Shorter than Red's `0x208`: bytes missing before the types, in the status block, around the speed counters and before the belly. Exact size not found; the bound is 0x1C8 ≤ size ≤ 0x208 ([`re/structs.md`](re/structs.md#entity-info)) | `0x208` bytes | **shorter in Blue** | unclassified |
+| Entity info, AI and action blocks | Offsets shift by block: `action` and `direction` −2, `aiTarget` −8, `decoyAITracker` −0x23 (probable), `aiAllySkip`, `recalculateFollow` and `waiting` −0x2E, `targetPos` and `numMoveTiles` −0x34 ([`re/structs.md`](re/structs.md#entity-info)) | `action` block `0x44`, `direction` `0x46`, `aiTarget` `0x78`, `decoyAITracker` `0x100`, `aiAllySkip` `0x144`, `targetPos` `0x16C`, `numMoveTiles` `0x1F4` | **shift differs by block** | unclassified |
 | Dungeon struct offsets after `+0x17A` | Identical to Red up to `0x17A`; then fields move earlier, by 8 bytes at `0x5C0` and by up to `0x2268` from `traps` on ([`re/structs.md`](re/structs.md#dungeon-struct)) | same fields at Red's offsets | **offsets shift** | unclassified |
 | Tile array | `tiles[y][x]` at dungeon `+0x34B8` | `0x3A18` | **`0x560` earlier in Blue** | unclassified |
 | Tile size | `0x14` bytes | `0x18` bytes | **smaller in Blue** (checked by `ResetTile` and `GetTileMut`) | unclassified |
