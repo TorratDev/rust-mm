@@ -73,7 +73,7 @@ Counters are not stat changes in themselves. Snow, Deoxys Speed, Kecleon and par
 
 **Actions per turn.**
 
-- Leader: after its action, `RunLeaderTurn_Async` clears `speedStageChanged` (`+0xD5`). The loop repeats while `unkBC` (dungeon `+0xBC`) is nonzero or the speed stage changed. Each repeat sets `fractionalTurn` to 0. Tag blue-verified (the loop tail and its checks), confidence medium-high. Red: `dungeon_engine.c:142-144`.
+- Leader: after its action, `RunLeaderTurn_Async` clears `speedStageChanged` (`+0xD5`). The loop repeats while `unkBC` (offset not checked) is nonzero or the speed stage changed. Each repeat sets `fractionalTurn` to 0. Tag blue-verified (the loop tail and its checks), confidence medium-high. Red: `dungeon_engine.c:142-144`.
 - Team non-leader: one `ExecuteEntityDungeonAction` cycle per gated turn. The cycle repeats, up to 3 cycles in total, only while Execute returns TRUE, which Red sets only after an interrupted action. Blue `0218453C` returns 1 on the same path. Tag blue-verified, confidence high.
 - Wild: exactly one cycle per gated turn. Tag blue-verified, confidence high.
 
@@ -95,12 +95,12 @@ Team loop, `sub_8044574_Async` (`02140AC0`). The team array is at `dungeon+0x113
 
 Wild loop, `sub_8044820_Async` (`021408F8`). It has 16 slots at `dungeon+0x11324`. Per monster:
 
-- Skip if `flags & 0x8000`. The `0x4000` bit is cleared on this path; the outcome is in the open questions.
+- Skip if `flags & 0x8000`. If `flags & 0x4000` is set, it is cleared and the monster is skipped. Evidence: Ghidra decompile of `ov_0001::021408F8` (the `else` branch runs `flags &= 0xBFFF`), reviewer spot check 2 in `rescue-arm9-c`; this confirms investigator A's notes.
 - Clear `aiAllySkip`, then the gate: the speed gate and `!attacking`.
-- If the gate passes: `recalculateFollow` = 0, `TickStatusAndHealthRegen`, `EnemyEvolution`, one cycle of `RunMonsterAI(0)`, Execute, `FlushTempCutsceneFlags` and `TryForcedLoss`. `IsFloorOver` is checked between steps, and the loop breaks when it is true.
+- If the gate passes: clear `flags & 0xC000`, then `recalculateFollow` = 0, `TickStatusAndHealthRegen`, `EnemyEvolution`, one cycle of `RunMonsterAI(0)`, Execute, `FlushTempCutsceneFlags` and `TryForcedLoss`. `IsFloorOver` is checked between steps, and the loop breaks when it is true.
 - End: if the floor is not over, each wild monster still flagged `aiAllySkip` gets `DoEndOfTurnEffects` and `EnemyEvolution` (if still valid), then the flag is cleared.
 
-**Who sets `aiAllySkip`** (red-hypothesis, from `pmd-red`'s `dungeon_ai_movement.c`, lines 310–448): `DecideMovement` sets it on allies at line 361 (not team members, not recalculating follow, a monster in front), and on any non-leader with `aiNotNextToTarget` at line 443, which includes wild monsters. Lines 436–441 clear it for the leader. The Blue writers were not located; they belong to the AI (#52).
+**Who sets `aiAllySkip`** (red-hypothesis, from `pmd-red`'s `dungeon_ai_movement.c`, lines 310–448): `DecideMovement` sets it on allies at line 361 (team members only: `!isNotTeamMember`, not recalculating follow, a monster in front), and on any non-leader with `aiNotNextToTarget` at line 443, which includes wild monsters. Lines 436–441 clear it for the leader. The Blue writers were not located; they belong to the AI (#52).
 
 **Execute runs end-of-turn effects too.** Red's `ExecuteEntityDungeonAction_Async` runs `DoEndOfTurnEffects` and `EnemyEvolution` inside the action when `aiAllySkip` is clear (`dungeon_action_execution.c:312-313`). Blue `0218453C` has the same check on `+0x116` at its tail; the call is at `02184DF8`. So the phase-2 end-of-turn pass reaches only the monsters that stayed skipped. Tag blue-verified (call and gate, from the decompile), confidence high.
 
@@ -152,7 +152,7 @@ The belly test is not yet settled; see the open questions.
 
 ## Per-turn effects
 
-`DoEndOfTurnEffects` (`021861E8`) returns `bool` in Blue, where Red's `DoEndOfTurnEffects_Async` returns `void`. The behaviour matches on the paths checked; see [`blue-vs-red.md`](../blue-vs-red.md). Tag blue-verified (callers), confidence high. It is called per monster from `ExecuteEntityDungeonAction` (`0218453C`, call at `02184DF8`) when the entity is valid, `aiAllySkip` is clear and it is not the special case (Red `dungeon_action_execution.c:308-312`), and from the end-of-turn passes above.
+`DoEndOfTurnEffects` (`021861E8`) returns `bool` in Blue, where Red's `DoEndOfTurnEffects_Async` returns `void`. The behaviour matches on the paths checked; see [`blue-vs-red.md`](../blue-vs-red.md). Tag blue-verified (callers), confidence medium. It is called per monster from `ExecuteEntityDungeonAction` (`0218453C`, call at `02184DF8`) when the entity is valid, `aiAllySkip` is clear and it is not the special case (Red `dungeon_action_execution.c:308-312`), and from the end-of-turn passes above.
 
 **Belly** (P6.1). Only the team leader (info `+0x7`) has its belly decreased, in the belly block of `DoEndOfTurnEffects`. The decrement is read from a table by index. The base index is 10, and held items adjust it: Tight Belt, Stamina Band, Energy Saver, Diet Ribbon, Heal Ribbon and Munch Belt. The index is clamped to the table length. Tag blue-verified for the gate (leader only); red-hypothesis for the arithmetic, which matches Red by inspection. Confidence medium. The decrement constant, `gBellyGoDownValues` and the linked-moves term are not checked.
 
@@ -175,7 +175,7 @@ The status countdowns after HP regen belong to status countdowns (#51). Tag blue
 
 Tag blue-verified for the tick and the reset (step 3); red-hypothesis for the rest of the mapping. `DoEndOfTurnEffects` applies hail and sandstorm damage only when the counter is 0. The damage is skipped for ice types (hail) and for ground, rock and steel types (sandstorm). Tag red-hypothesis.
 
-Cadence: the per-turn caller is inside `sub_8044AB4` (`0214076C`), which runs only when `gSpeedTurns[1][fractionalTurn + 1] != 0`. So the counter moves 6 times per 24 fractional turns. Tag blue-verified, confidence high. Eleven other callers are not classified: `0215DDE8`, `0215DE5C`, `0215EF50`, `021615A8`, `02195C38`, `021A2BC0`, `021A28E0`, `021A279C`, `021A5758`, `021A5678` and `021A55BC`. Red's `weather.c:56` is the floor-setup call.
+Cadence: the per-turn caller is inside `sub_8044AB4` (`0214076C`), which runs only when `gSpeedTurns[1][fractionalTurn + 1] != 0`. So the counter moves 6 times per 24 fractional turns. Tag blue-verified, confidence medium. Eleven other callers are not classified: `0215DDE8`, `0215DE5C`, `0215EF50`, `021615A8`, `02195C38`, `021A2BC0`, `021A28E0`, `021A279C`, `021A5758`, `021A5678` and `021A55BC`. Red's `weather.c:56` is the floor-setup call.
 
 **Wind** (P6.5), in `UpdateWindTurns` (`02195104`). It is called at `02141200` only when `RunLeaderTurn_Async` returns TRUE, and returns early when there is no leader. It decrements `windTurns` (`+0x656`) while it is above 0. Phase 0 starts below 250 turns, phase 1 below 150, and phase 2 below 50. The phase is stored in `windPhase` (`+0x66A`). Each phase logs a message, repositions the camera and sets the next phase. Tag blue-verified for phases 0 to 2; red-hypothesis otherwise. Confidence medium. Phase 3 is open.
 
@@ -222,7 +222,6 @@ The full map is in [`structs.md`](structs.md).
 
 - **P2-4, `aiAllySkip` writers.** The Blue writers of `+0x116` were not located. Red's are in `DecideMovement` (`dungeon_ai_movement.c` lines 361, 443 and 436–441). This depends on the AI (#52).
 - **P2-6, phase-2 bucket overrun.** The decompile of `sub_8044574_Async` ends a bucket list past its 6-slot array (`local_68+6`). It works only if the next stack slot is zero; Ghidra shows `local_50` zeroed there. Check the disassembly before porting. Confidence low.
-- **Wild loop, `0x4000` bit.** One set of notes says the bit clears and the monster is skipped; the other says it clears and the gate still runs. Settle it in the disassembly of `021408F8`.
 - **Speed counters.** Whether Blue applies the same stage-specific counter limit as Red was not verified. The Blue addresses of `BoostSpeed` and `LowerSpeed` were not located; `GetMovementSpeed` is `FUN_020023A8`.
 - **P4.5, water and lava mobility.** `GetCrossableTerrain` (`0218267C`) maps movement types 4 and 5 to regular or liquid by the dungeon's liquid. The table at `DAT_0218269C` and the dungeon liquid test were not decoded. The species movement values are not checked.
 - **Edge masks.** The `x < 2` wall byte `0x1F` is written as a value, while the other three edge cases clear bits. Check the disassembly of `02148F50`.
