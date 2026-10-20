@@ -231,6 +231,12 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 0200B944 | WriteBellyBits | void WriteBellyBits(void * seri, void * belly) | blue-verified | 16, 16 bits, like `pmd-red` |
 | 0200382C | WriteHiddenPowerBits | void WriteHiddenPowerBits(void * seri, void * hiddenPower) | blue-verified | 10, 5 bits, like `pmd-red` |
 | 0200CEEC | sub_8095824 | void sub_8095824(void * a, void * b) | blue-verified | Same 13-field mail record as `pmd-red` |
+| 0200D4DC | sub_809542C | void sub_809542C(void * seed) | blue-verified | Mail-record builder; body matches `pmd-red` `src/code_8094F88.c:270–283`. Called from `LoadAndRunQuickSaveDungeon_Async` (`0201E304`); seeds the Mersenne Twister from `Rand32Bit` |
+| 0206C6E4 | HandleTestTrackerState | int HandleTestTrackerState(void) | blue-verified | Personality-test state machine; case 15 (`PERSONALITY_TEST_END`) matches `pmd-red` `src/personality_test1.c:96`. Reached through a dispatch table at `ov_0000::02159D00` |
+| 02023B9C | OtherRandom16 | ushort OtherRandom16(void) | blue-verified | 16-bit generator: `state = state * 109 + 1021` in 16 bits, state at `020E03F4`; return loaded with `ldrh` (zero-extended). Matches `pmd-red`'s `OtherRandom16` in constants and initial value; Red's return signedness not compared |
+| 02023B84 | OtherRandInt | int OtherRandInt(int n) | blue-verified | `(n * OtherRandom16()) >> 16`. Matches `pmd-red`'s `OtherRandInt` |
+| 02023B6C | OtherRandRange | int OtherRandRange(int low, int high) | blue-verified | `low + OtherRandInt(high - low)`; no equal-bounds case. Matches `pmd-red`'s `OtherRandRange` |
+| 020E03F4 | gOtherRngState | short | blue-verified | State of `OtherRandom16`. Static initial value `0x348C` (same as `pmd-red`'s `gOtherRngState`). The three accesses found by x-ref are all in `OtherRandom16`; aliasing not checked |
 | 0201187C | GetDirectionTowardsPosition | uchar GetDirectionTowardsPosition(void * pos, void * targetPos) | red-hypothesis | Signs of the x and y deltas index a table; called by `DisplayActions_Async` (`ov_0001::0218766C`) |
 | ov_0001::02188030 | RunMonsterAI | void RunMonsterAI(void * pokemon, uint unused) | red-hypothesis | Candidate. Called as `(x, 0)` and `(x, 1)` from `sub_8044574_Async`; writes `decoyAITracker` (`+0xDD`) and `aiNotNextToTarget` (`+0x71`) |
 | 0202E5A0 | DrawDialogueBoxString_Async | void DrawDialogueBoxString_Async(void) | red-hypothesis | Frame action #1 in `MainLoops_RunFrameActions`; a state machine, body not read. Order only |

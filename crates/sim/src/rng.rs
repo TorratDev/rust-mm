@@ -9,6 +9,9 @@
 //!   per floor from [`DungeonPreseed`], which is seeded once per dungeon run.
 //! - [`GlobalRng`] is used everywhere else, and also advances during dungeons
 //!   (for example for cosmetic choices such as tile graphics variants).
+//!
+//! Blue also has a third, separate generator with its own 16-bit state,
+//! [`OtherRng`] (`OtherRandom16` in `pmd-red`).
 
 /// Multiplier of the shared LCG step.
 pub const LCG_MULTIPLIER: u32 = 0x5D58_8B65;
@@ -183,6 +186,77 @@ impl GlobalRng {
     }
 }
 
+/// The 16-bit generator (`OtherRandom16` in `pmd-red`; `FUN_02023b9c` in Blue).
+///
+/// The state is 16 bits, and each step is `state * 109 + 1021` in 16 bits. The
+/// wrappers are `OtherRandInt` (`FUN_02023b84`) and `OtherRandRange` (`FUN_02023b6c`).
+///
+/// The game's C type is `short`, but the code that returns the new state loads it
+/// with `ldrh` at `02023BB4`, which zero-extends. So the return value is unsigned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OtherRng {
+    state: u16,
+}
+
+impl OtherRng {
+    /// Multiplier of the 16-bit step (`0x6D` in the game).
+    pub const MULTIPLIER: u16 = 109;
+    /// Increment of the 16-bit step (`1021` in the game).
+    pub const INCREMENT: u16 = 1021;
+    /// Initial state, read from the static image at `0x020E03F4`
+    /// (`gOtherRngState` in `pmd-red`, which has the same value).
+    pub const INITIAL_STATE: u16 = 0x348C;
+
+    /// Starts from the static initial state. No runtime seed write was found.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            state: Self::INITIAL_STATE,
+        }
+    }
+
+    /// Uses `state` as is (for resuming from a recorded state).
+    #[must_use]
+    pub const fn from_state(state: u16) -> Self {
+        Self { state }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> u16 {
+        self.state
+    }
+
+    /// One step, returning the new state zero-extended (`ldrh` at `02023BB4`).
+    pub fn next_u16(&mut self) -> u16 {
+        self.state = self
+            .state
+            .wrapping_mul(Self::MULTIPLIER)
+            .wrapping_add(Self::INCREMENT);
+        self.state
+    }
+
+    /// `OtherRandInt(n)`: `(n * state) >> 16`. The product is a 32-bit `mul`
+    /// (wrapping) and the shift is arithmetic (`asr #16` at `02023B94`). The state
+    /// is unsigned, so for `0 < n < 0x8000` the result is in `[0, n)`.
+    pub fn int(&mut self, n: i32) -> i32 {
+        n.wrapping_mul(i32::from(self.next_u16())) >> 16
+    }
+
+    /// `OtherRandRange(low, high)`: `low + int(high - low)`, with `sub` and `add`
+    /// that wrap like the ARM instructions. Unlike [`DungeonRng::range`] there is no
+    /// special case for equal bounds: the generator still advances.
+    pub fn range(&mut self, low: i32, high: i32) -> i32 {
+        low.wrapping_add(self.int(high.wrapping_sub(low)))
+    }
+}
+
+impl Default for OtherRng {
+    /// The static initial state, not zero.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +324,55 @@ mod tests {
     fn global_seed_from_bytes() {
         let rng = GlobalRng::from_seed_bytes([0x00, 0x09, 0xBF, 0x12, 0x34, 0x56]);
         assert_eq!(rng.state(), 54021 + 0xBF * 0x12 + 0x34 * 0x56);
+    }
+
+    // No emulator-captured vectors exist for the 16-bit generator yet. These
+    // tests check the formula only: the expected values were computed
+    // separately (Python, `state * 109 + 1021` in 16 bits).
+
+    #[test]
+    fn other_rng_initial_state_and_first_step() {
+        let mut rng = OtherRng::new();
+        assert_eq!(rng.state(), 0x348C);
+        assert_eq!(rng.next_u16(), 25497);
+        assert_eq!(rng.state(), 25497);
+    }
+
+    #[test]
+    fn other_rng_int_uses_the_new_state() {
+        let mut rng = OtherRng::from_state(0x4000);
+        assert_eq!(rng.int(100), 26);
+        assert_eq!(rng.state(), 17405);
+    }
+
+    #[test]
+    fn other_rng_high_state_is_zero_extended() {
+        // 0x0200 * 109 + 1021 = 56829 = 0xDDFD. The return is zero-extended (ldrh),
+        // so the state is not negative: 100 * 56829 >> 16 = 86.
+        let mut rng = OtherRng::from_state(0x0200);
+        assert_eq!(rng.next_u16(), 0xDDFD);
+        let mut rng = OtherRng::from_state(0x0200);
+        assert_eq!(rng.int(100), 86);
+    }
+
+    #[test]
+    fn other_rng_range_wraps_without_panic() {
+        // The ARM sub and add wrap; a checked subtraction would overflow here.
+        let mut rng = OtherRng::from_state(0x4000);
+        let _ = rng.range(i32::MIN, i32::MAX);
+    }
+
+    #[test]
+    fn other_rng_range_advances_even_for_equal_bounds() {
+        let mut rng = OtherRng::from_state(0x4000);
+        assert_eq!(rng.range(5, 5), 5);
+        assert_eq!(
+            rng.state(),
+            17405,
+            "equal bounds still advance the generator"
+        );
+        let mut rng = OtherRng::from_state(0x4000);
+        // range(10, 20) = 10 + int(10), and int(10) = (10 * 17405) >> 16 = 2.
+        assert_eq!(rng.range(10, 20), 12);
     }
 }
