@@ -38,6 +38,8 @@ Code: `crates/formats/src/px.rs`. Tests: unit tests (literal round trip, pattern
 | `0x10` | 2 / 4 | decoded size (`u16` AT4PX, `u32` PKDPX) |
 | `0x12` / `0x14` | | stream |
 
+**Entry and dispatcher** (blue-verified, [`re/io.md`](../re/io.md#decompression)). The decoder is `FUN_02013388` (`PxDecompress`). A dispatcher, `FUN_02013858`, jumps through the slot at `0x02013864`, which holds `0x02013388`. The decoder accepts the `AT3P` magic (header 0x10) as well as `AT4P` (header 0x12). The caller list is medium confidence; only the halt-screen caller is known to decode a particular file.
+
 A command byte covers 8 items, MSB first. Bit set: copy one literal byte. Bit clear: read byte `b`, `h = b >> 4`, `l = b & 0xF`:
 
 - `h == f[i]` (first match): write 4 nibbles as 2 bytes `n0<<4|n1`, `n2<<4|n3`. `i == 0`: all four are `l`. `i` in 1–4: all `l` except `n[i-1] = l - 1`. `i` in 5–8: all `l` except `n[i-5] = l + 1` (mod 16).
