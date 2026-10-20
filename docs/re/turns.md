@@ -25,6 +25,8 @@ Before the loop it clears `dungeon+0x648` (Red: `unk644.unk10`, the floor-end re
 3. `sub_8044574_Async`, `sub_8044820_Async`, `sub_8044AB4` (in Red: the other monsters' turns and end-of-turn effects; names not checked in Blue yet)
 4. `fractionalTurn` (`dungeon+0x650`, Red: `unk644.fractionalTurn`) goes up by one and wraps at 24.
 
+Status countdowns, and the per-turn burn and poison damage, are covered in [`status.md`](status.md).
+
 The 24 fractional turns let monsters with different speeds act different numbers of times: `RunLeaderTurn_Async` looks up `gSpeedTurns[CalcSpeedStage(leader)][fractionalTurn]` (`ov_0001::021ABC84`, `s16[5][25]`, same values as Red) to decide whether the leader acts in this fractional turn.
 
 ## For golden traces (V7)

@@ -45,6 +45,8 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
 | `+0x99`, `+0x9A` | `sleepClassStatus` status, turns | `0xA8` | −0xF | `TickStatusAndHealthRegen` |
 | `+0x9B`, `+0x9C` | `burnClassStatus` status, turns | `0xAC` | −0x11 | `CalcSpeedStage` (paralysis), `TickStatusAndHealthRegen` |
+| `+0x9D` | burn damage countdown (*red-hypothesis* name `damageCountdown`) | — | `BurnedStatusTarget` (`ov_0001::0218A710`) sets it to 0; `DoEndOfTurnEffects_Async` (`ov_0001::021861E8`) decrements it and resets it to 20 |
+| `+0x9E` | bad-poison damage index | — | `BadlyPoisonedStatusTarget` (`ov_0001::0218A140`) sets it to 0; `DoEndOfTurnEffects_Async` (`ov_0001::021861E8`) increments it up to `0x1D` |
 | `+0xA0` | `frozenClassStatus.status` | `0xB0` | −0x10 | `TickStatusAndHealthRegen` |
 | `+0xA8` | `frozenClassStatus` counter | `0xB8` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`; decremented by `FUN_ov_0001__0219bf1c`) |
 | `+0xAC`, `+0xAD` | cringe status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xBC`, `0xBD` | −0x10 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
