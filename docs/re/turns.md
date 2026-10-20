@@ -27,6 +27,8 @@ Before the loop it clears `dungeon+0x648` (Red: `unk644.unk10`, the floor-end re
 
 The 24 fractional turns let monsters with different speeds act different numbers of times: `RunLeaderTurn_Async` looks up `gSpeedTurns[CalcSpeedStage(leader)][fractionalTurn]` (`ov_0001::021ABC84`, `s16[5][25]`, same values as Red) to decide whether the leader acts in this fractional turn.
 
+The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). How step 3 reaches it has not been traced.
+
 ## For golden traces (V7)
 
 - **Trigger:** the entry of `RunFractionalTurn_Async`, RAM `0x021411BC`, while overlay 1 is loaded. Overlays 0 and 7 use the same RAM range when no dungeon runs, so the hook must only count hits after the dungeon has started (for example after `LoadAndRunDungeon_Async` has loaded overlay 1).
