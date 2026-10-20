@@ -12,7 +12,7 @@ Each class has a status byte and a turns or counter byte. The offsets are in [`s
 
 | Blue field | Class | Value → Red name | Tag |
 |------------|-------|------------------|-----|
-| `+0x99` status, `+0x9A` turns | sleep | 1 `STATUS_SLEEP`; 3 `STATUS_NIGHTMARE`; 5 `STATUS_NAPPING`; 4 `STATUS_YAWNING` | 1, 3, 5: blue-verified writes. 4: blue-verified write in `0218ADA8` (medium, see open items), red-hypothesis as a wake path in C's catalogue |
+| `+0x99` status, `+0x9A` turns | sleep | 1 `STATUS_SLEEP`; 3 `STATUS_NIGHTMARE`; 5 `STATUS_NAPPING`; 4 `STATUS_YAWNING` | 1, 3, 5: blue-verified writes. 4: blue-verified write in `0218ADA8` (medium, see open items), red-hypothesis as a wake path in another finding's catalogue |
 | `+0x99` | sleep | 2 `STATUS_SLEEPLESS` | red-hypothesis: a message case only; no writer found |
 | `+0x9B` status, `+0x9C` turns | burn | 1 `STATUS_BURN`; 2 `STATUS_POISONED`; 3 `STATUS_BADLY_POISONED`; 4 `STATUS_PARALYSIS` | blue-verified writes for 1 to 4 (4: partial, see below) |
 | `+0x9D` | burn | burn damage countdown | blue-verified (read and reset per turn) |
@@ -184,7 +184,7 @@ Cures through `02175850` are blue-verified (medium). The three callers of the cu
 
 ### Paralysis (`0x9B == 4`): partial
 
-- **Write.** `021885A0` writes `0x9B = 4` and the `0x9C` turns. Overlay dispatcher `0215BAF8` calls it when bit 8 of the entity's flags at `+0x144` is set. **blue-verified, medium** (C's finding).
+- **Write.** `021885A0` writes `0x9B = 4` and the `0x9C` turns. Overlay dispatcher `0215BAF8` calls it when bit 8 of the entity's flags at `+0x144` is set. **blue-verified, medium**.
 - **Conflict.** One finding reports that no paralysis setter was located, and that Red's setter (`move_orb_effects_1.c:1311`, `gParalysisTurnRange`) has no Blue match yet. Another reports the write at `021885A0`. The write finding is used here; Red's match to `021885A0` is not checked (open).
 - Expiry is by countdown and by Limber. The speed effect (`CalcSpeedStage` reads `0x9B == 4`) is outside this page.
 - The meaning of bits 1, 2, 4 and 8 in `+0x144` is not verified.
