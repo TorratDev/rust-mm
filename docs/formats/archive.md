@@ -18,6 +18,24 @@ The table ends at an entry whose name starts with NUL, or where the first sub-fi
 
 Resource IDs are the names: see the format specs for the per-archive naming ([`portraits.md`](portraits.md), [`sprites.md`](sprites.md), [`tilesets.md`](tilesets.md), [`maps.md`](maps.md), [`text.md`](text.md), [`data.md`](data.md)).
 
+## Archive index
+
+Blue reads the TOC of every pack archive at boot, into one global table (`LoadArchiveTocs`, called from `0x02000CE8`; [`re/io.md`](../re/io.md#archive-index-and-toc)). Each archive has an index:
+
+| Index | Archive |
+|-------|---------|
+| 1 | `sample` |
+| 2 | `system` |
+| 3 | `titlemenu` |
+| 4 | `dungeon` |
+| 5 | `monster` |
+| 6 | `effect` |
+| 7 | `ground` |
+| 8 | `ornament` |
+| 9 | `sound` |
+
+Index 0 is unused. `sound.sbin` (index 9) is loaded by this same boot reader, so it is not only a survey entry. This page does not describe its contents. The use of the `/sound.sbin` string is unresolved ([`re/io.md`](../re/io.md#open-questions)).
+
 ## SIR0
 
 | Offset | Size | Field |

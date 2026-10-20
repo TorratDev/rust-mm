@@ -56,7 +56,7 @@ Overlay loading uses the NitroSDK sequence `FS_LoadOverlayInfo`, `FS_InitFile`, 
 
 ## A frame
 
-Every wait loop calls `MainLoops_RunFrameActions(0)` (`0201F268`) once per frame. It makes 19 calls, in this order. The Blue addresses are verified; the names are `red-hypothesis`, from `pmd-red`'s `src/main_loops.c` (lines 273–297, where Red lists 15 calls and marks 4 extras in Blue).
+Every wait loop calls `MainLoops_RunFrameActions(0)` (`0201F268`) once per frame. It makes 19 calls, in this order. The Blue addresses are verified; the names are `red-hypothesis`, from `pmd-red`'s `src/main_loops.c` (lines 273–297, where Red lists 15 calls and marks 4 extras in Blue). Input, touch, screen and sprite steps of this frame are in [`io.md`](io.md).
 
 | # | Blue call | Red name | Notes |
 |---|-----------|----------|-------|

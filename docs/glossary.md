@@ -40,6 +40,8 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Entity info | Blue: shorter than Red's 0x208 | heap | `[blue-verified]` for the fields listed; `[red-hypothesis]` for the rest | Pointed to by `entity+0x70`. | [`re/structs.md`](re/structs.md#entity-info) |
 | Dungeon | see topic page | heap | `[blue-verified]` up to `0x17A`, then `[red-hypothesis]` where fields move | Floor and run state. Reached through the global `gDungeon`. | [`re/structs.md`](re/structs.md#dungeon-struct) |
 | Tile | see topic page | heap | `[blue-verified]` (`ResetTile`, `GetTileMut`, stride `0x14`) | One cell of the dungeon grid. | [`re/structs.md`](re/structs.md#tile) |
+| Key state | 0x10 each (current at `0x020F2790`, previous at `0x020F2780`) | ARM9 | `[blue-verified]` | Per-frame button state: held keys, pressed edge, D-pad repeat output, B and R tap flags, D-pad group and hold counter. | [`re/io.md`](re/io.md#key-state) |
+| Touch state | see topic page | ARM9 | `[blue-verified]` (layout read in `UpdateInputSnapshot`) | Touch position, tap, drag and hold output, and the gesture state at `+0x20`. At `0x020F27B0`. | [`re/io.md`](re/io.md#touch-state) |
 
 ### Fields
 
@@ -120,12 +122,14 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | RunOverlay7Mode | `0201DAC4` | ARM9 | `[blue-verified]` | Title-menu choice 5: loads overlay 7, calls its entry, then reloads overlay 0. | [`re/execution-model.md`](re/execution-model.md#overlays), [`symbols.md`](symbols.md) |
 | GroundStation_SetBank | `ov_0000::0214FC50` | `ov_0000` | `[blue-verified]` | Loads or unloads the ground bank `gGroundBankTable[bank]`; its sole caller is `FUN_ov_0000__0214D510`. | [`symbols.md`](symbols.md) |
 | GroundStation_LoadBank | `ov_0000::0214FD00` | `ov_0000` | `[blue-verified]` | Loads the overlay of `gGroundBankTable[bank]` with `FS_LoadOverlayInfo`. | [`symbols.md`](symbols.md) |
+| PxDecompress | `02013388` | ARM9 | `[blue-verified]` | PX decoder for `AT4P` and `AT3P` headers. Reached through the dispatcher slot `0x02013864`. | [`re/io.md`](re/io.md#px-decoder), [`formats/compression.md`](formats/compression.md) |
 
 ## Enums and constants
 
 | Name | Value | Overlay | Tag | Description | Evidence |
 |------|-------|---------|-----|-------------|----------|
 | EFFECTIVENESS_IMMUNE | `0` | `ov_0001` | `[blue-verified]` | Result value for an immune matchup. `sub_806F4A4` (`ov_0001::0217BA94`) compares the chart entries to it. The name is from `pmd-red`'s `include/dungeon_config.h`. The raw chart bytes were not read; the value rests on the decompiled code. | the zero comparison and Ghost branch in `sub_806F4A4` (`ov_0001::0217BA94`) and `sub_806E100` (`ov_0001::0217CE88`), [`symbols.md`](symbols.md) |
+| Archive index | 1–9 (0 unused) | ARM9 | `[blue-verified]` | Pack archive a TOC record belongs to: 1 `sample`, 2 `system`, 3 `titlemenu`, 4 `dungeon`, 5 `monster`, 6 `effect`, 7 `ground`, 8 `ornament`, 9 `sound`. Name table at `0x02096EE4`. | [`re/io.md`](re/io.md#archive-index-and-toc), [`formats/archive.md`](formats/archive.md#archive-index) |
 
 ## Open questions
 
