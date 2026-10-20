@@ -110,6 +110,10 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | WeightWeakTypePicker | `ov_0001::0217CB3C` | `ov_0001` | `[blue-verified]` | Reads `gTypeEffectivenessChart`; 3 arguments. | [`symbols.md`](symbols.md) |
 | sub_806E100 | `ov_0001::0217CE88` | `ov_0001` | `[blue-verified]` | Reads `gTypeEffectivenessChart`; the type is its 4th argument. | [`symbols.md`](symbols.md) |
 | CalcDamage | `ov_0001::0217BD94` | `ov_0001` | `[blue-verified]` | Damage formula. Same constants as Red (`999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`). | [`symbols.md`](symbols.md) |
+| RunGameMode_Async | `0201E3C8` | ARM9 | `[blue-verified]` | Runs a game mode; the title menu calls it with modes 0–3. Only `GameLoop_Async` calls it. | [`re/execution-model.md`](re/execution-model.md#scene-graph) |
+| RunOverlay7Mode | `0201DAC4` | ARM9 | `[blue-verified]` | Title-menu choice 5: loads overlay 7, calls its entry, then reloads overlay 0. | [`re/execution-model.md`](re/execution-model.md#overlays), [`symbols.md`](symbols.md) |
+| GroundStation_SetBank | `ov_0000::0214FC50` | `ov_0000` | `[blue-verified]` | Loads or unloads the ground bank `gGroundBankTable[bank]`; its sole caller is `FUN_ov_0000__0214D510`. | [`symbols.md`](symbols.md) |
+| GroundStation_LoadBank | `ov_0000::0214FD00` | `ov_0000` | `[blue-verified]` | Loads the overlay of `gGroundBankTable[bank]` with `FS_LoadOverlayInfo`. | [`symbols.md`](symbols.md) |
 
 ## Enums and constants
 
