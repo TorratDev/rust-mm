@@ -60,6 +60,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0xB8`, `+0xC1` | leech seed status, counter (*red-hypothesis*: class guessed from the shift; read only by Tick) | `0xD0`, `0xD9` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) only |
 | `+0xC4` | `sureShotClassStatus.status` | `0xDC` | −0x18 | `CalcDamage` |
 | `+0xC5` | `sureShotClassStatus` counter | `0xDD` | −0x18 | `TickStatusAndHealthRegen` (`ov_0001::02185C70`) |
+| `+0xC7` | mobility status checked against 3 (STATUS_MOBILE); Red `invisibleClassStatus.status` is inferred from the value, not checked | not matched | — | `CanMoveInDirection` (`ov_0001::0218141C`) |
 | `+0xD5` | `speedStageChanged` | `0xF8` | −0x23 | `RunLeaderTurn_Async` |
 | `+0xD8` | `expMultiplier` (`0` halved, `1` regular, `2` boosted) | — | — | `AddExpPoints` (`ov_0001::02183F78`); `0` and `1` seen at runtime, `2` not |
 | `+0xDD` | `decoyAITracker` (*probable*: the writer is only a candidate) | `0x100` | −0x23 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
@@ -76,6 +77,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x120` | `visualFlags` | `0x14E` | −0x2E | `CalcDamage` |
 | `+0x122` | `previousVisualFlags` | `0x150` | −0x2E | `CalcDamage` |
 | `+0x124` | `unk152` | `0x152` | −0x2E | `CalcDamage` |
+| `+0x137` | Warp Scarf turns-since counter (no Red field matched) | not matched | — | `DoEndOfTurnEffects` (`ov_0001::021861E8`): the Warp Scarf roll happens only when it is nonzero |
 | `+0x138`, `+0x13A` | `targetPos.x`, `.y` (u16; Red's block starts at `0x16C`) | `0x16C` | −0x34 | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x1C0` | `numMoveTiles` | `0x1F4` | −0x34 | `DisplayActions_Async` (`ov_0001::0218766C`) |
 | `+0x1C4` | `unk1F8` (HP regeneration counter) | `0x1F8` | −0x34 | `TickStatusAndHealthRegen` |
@@ -108,11 +110,15 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x34B8` | `tiles[32][56]` (0x14 bytes each, see below) | `0x3A18` (0x18 bytes each) | `sub_80495E4` |
 | `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`); written by `SpawnNonEnemies` |
 | `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor`. Blue's base, `DAT_0214C0A4`, is not read (unverified); the offset is Red's and is not confirmed in Blue |
+| `+0xC106` | not matched (`weatherDamageCounter` in the notes) | not matched | weather resolver `021953B4`: decremented, set to 9 when it is 0 |
+| `+0xC107` | 8 weather sources, one byte each | not matched | `021953B4`: each moves toward its natural value (`+0xC10F`), the highest is taken |
+| `+0xC10F` | 8 natural weather values, one byte each | not matched | `021953B4` |
 | `+0xC660` | `tilePointers[32][56]` | `0xE8C0` | `GetTile`, `GetTileMut`, `sub_80495E4` |
 | `+0x113B4` | `items[64]` (entity pointers) | `0x1361C` | `SpawnItemEntity` (searches the 64 entries for a free slot) and `0219B700` |
 | `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` clears all 64. No function that writes trap entities is found |
 | `+0x11314` | `teamPokemon[4]` (entity pointers) | `0x1357C` | `GetLeader` |
 | `+0x11324` | `wildPokemon[16]` (entity pointers) | `0x1358C` | five loops over 16 entries with `EntityIsValid` (`0219F09C`, ...) |
+| `+0x11364` | active team list, 20 slots, each checked for a valid entity | not matched | `EnemyEvolution` (`ov_0001::02183BB4`), `sub_8044AB4` (`ov_0001::021406F8`) |
 | `+0x15FB0`, `+0x15FB1` | `unk181e8.unk18218`, `unk18219` | `0x18218`, `0x18219` | `RunDungeon_Async` |
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
 | `+0x1A2F8`–`+0x1A308` | `floorProperties` fields | `0x1C576`–`0x1C588` | `RunDungeon_Async` ([`dungeon-generation.md`](dungeon-generation.md)) |
@@ -127,10 +133,13 @@ In Blue it starts at `0x638`. Its first field checked, `unk10`, is at Red's rela
 |------|-----------|-----|----------|
 | `+0x648` | `unk10` (floor-end reason) | `0x654` | `IsFloorOver` |
 | `+0x650` | `fractionalTurn` | `0x660` | `RunFractionalTurn_Async` |
+| `+0x656` | not matched (`windTurns` in the notes) | not matched | `UpdateWindTurns` (`ov_0001::02195104`) |
 | `+0x65C` | `unk28` | `0x66C` | `RunLeaderTurn_Async` |
 | `+0x65E` | `stoleFromKecleon` | `0x66E` | `CalcSpeedStage` |
 | `+0x663` | `unk2F` | `0x673` | `RunLeaderTurn_Async` |
 | `+0x668` | `missionKind` | `0x678` | `RunDungeon_Async` ([`rng.md`](rng.md)) |
+| `+0x669` | not matched | not matched | `DoEndOfTurnEffects` (empty-belly alert counter, capped at 10) |
+| `+0x66A` | not matched (`windPhase` in the notes) | not matched | `UpdateWindTurns` (wind phases 0 to 2) |
 | `+0x66C` | `prngPreseed23Bit` | `0x67C` | `RunDungeon_Async` |
 | `+0x670` | `unk3C` (floor seed) | `0x680` | `RunDungeon_Async` |
 
