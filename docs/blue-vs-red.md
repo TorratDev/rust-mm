@@ -65,6 +65,7 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | EXP multiplier | info `+0xD8` | — | **to check** (Red offset not sourced); same values (`0` halved, `1` regular, `2` boosted) | unclassified |
 | Plus and Minus flags | `gDungeon` `+0x3358`, `+0x335A` | `gDungeon` `+0x37F8`, `+0x37FA` | **different offsets**, same logic; the pairing is inferred, not confirmed (`re/combat.md`) | unclassified |
 | IQ skills | Bit test at info `+0x87` (`ov_0001::021805B0`) | — | **to check** (Red layout not sourced) | unclassified |
+| AI weighted move pick (`ChooseAIMove`) | `ov_0001::02192D24`: draws `r = DungeonRandInt(total)` and takes the first `i` with `r < cumsum[i]`, so each bucket is its weight | `ChooseAIMove`, `src/dungeon_ai_attack.c` (lines 275, 286–296): draws the same roll and takes the first `i` with `cumsum[i] >= roll`, so the first non-zero move gets one extra outcome | **to check**: static reading only; runtime check open ([`re/ai.md`](re/ai.md)) | unclassified |
 
 ## Structs ([`re/structs.md`](re/structs.md))
 
