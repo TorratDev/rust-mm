@@ -54,8 +54,17 @@ Correction to V5: Red has an LCG (global and dungeon) as well as the Mersenne Tw
 | Wonder Guard | ability `0x35` in `sub_806F370_Async` | `ABILITY_WONDER_GUARD` | same | same |
 | `EntityInfo.types` | `+0x56` | `+0x5C` | **6 bytes earlier in Blue** | unclassified |
 | Entity info pointer | `entity+0x70` | `axObj.info` at `0x28 + 0x48` | same offset | same |
-| First `DungeonRandInt(100)` result | Appears unused in Blue's decompiled output | Used in the stat-boost step | **to check in the disassembly before porting** (`re/combat.md`) | unclassified |
+| First `DungeonRandInt(100)` result | Passed to the stat-boost step (`ov_0001::0217C7F8`) as its sixth argument, on the stack. Huge Power and Pure Power read it | Used in the stat-boost step | same use; **the stack store was not seen in the disassembly** (`re/combat.md`) | unclassified |
 | `TargetNotImmuneTo` | No matching reference in Blue | A fifth reader of the type chart, marked unused | **Blue has no reference** to the unused Red function | unclassified |
+| Damage formula steps, modifiers, rounding | `CalcDamage` `ov_0001::0217BD94` and the helpers in `re/combat.md` | `src/dungeon_damage.c`, `src/math.c` | same order, constants and rounding (static) | same |
+| Hit check | `AccuracyCalc` `ov_0001::0215A928` | `AccuracyCalc`, `src/dungeon_move_util.c` | same order and constants; first RNG draw is before every early return | same |
+| Accuracy and evasion stage tables | `ov_0001::021AA8C4`, `ov_0001::021AA918` | `src/dungeon_config.c` | same values entry by entry; Red's s24.8 values are stored truncated | same |
+| Move range byte `+0x19` | Read only by the message builder `FUN_0200B188` | Used only to build the displayed name | same: display only | same |
+| Move dispatch | `ov_0001::02156824`, switch on move ID at `move+2` | `UseMoveAgainstTargets`, `src/dungeon_move.c` | same index; the handler names are hypotheses ([`re/move-effects.md`](re/move-effects.md)) | same |
+| EXP formula | `CalculateEXPGain` `020020F8` | `CalculateEXPGain`, `src/pokemon.c` | same formula | same |
+| EXP multiplier | info `+0xD8` | — | **to check** (Red offset not sourced); same values (`0` halved, `1` regular, `2` boosted) | unclassified |
+| Plus and Minus flags | `gDungeon` `+0x3358`, `+0x335A` | `gDungeon` `+0x37F8`, `+0x37FA` | **different offsets**, same logic; the pairing is inferred, not confirmed (`re/combat.md`) | unclassified |
+| IQ skills | Bit test at info `+0x87` (`ov_0001::021805B0`) | — | **to check** (Red layout not sourced) | unclassified |
 | AI weighted move pick (`ChooseAIMove`) | `ov_0001::02192D24`: draws `r = DungeonRandInt(total)` and takes the first `i` with `r < cumsum[i]`, so each bucket is its weight | `ChooseAIMove`, `src/dungeon_ai_attack.c` (lines 275, 286–296): draws the same roll and takes the first `i` with `cumsum[i] >= roll`, so the first non-zero move gets one extra outcome | **to check**: static reading only; runtime check open ([`re/ai.md`](re/ai.md)) | unclassified |
 
 ## Structs ([`re/structs.md`](re/structs.md))
