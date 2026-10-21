@@ -46,7 +46,7 @@ Level gate: `FUN_02001844` skips move IDs 0xEE (238), 0xEF (239), 0x110 (272) an
 ## Species fields
 
 - Regen byte `+0x1B`: speed `(b & 0x7F) << 1` (`FUN_02002368`); bit 7 is a flag [hypothesis: meaning unknown].
-- Byte `+0x12`, read by `FUN_02002288` from `ov_0001::FUN_0217f7ec`; byte `+0x33`, read by `FUN_020022a4` from `ov_0001::FUN_021803b8`. Both are flags [hypothesis: meaning unknown].
+- Byte `+0x12`, read by `FUN_02002288` from `ov_0001::0217F7EC`; byte `+0x33`, read by `FUN_020022a4` from `ov_0001::021803B8`. Both are flags [hypothesis: meaning unknown].
 - Bytes `+0x0A`–`+0x0B`, `+0x30`–`+0x32`, `+0x46`–`+0x47` are not read by any of the 29 getters checked [unverified].
 - `recruit_rate` (`i16` at `+0x40`) is per mille (`FUN_ov_0001__0217f9b8`).
 
