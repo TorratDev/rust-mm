@@ -9,6 +9,12 @@ Dump: `BlueRescueTeamEur`. Rules for each column:
 - **Tag:** `blue-verified` (role read in Blue's code), `red-hypothesis` (role taken from `pmd-red`, not yet checked in Blue), `sdk-hypothesis` (NitroSDK function recognised by its behaviour), `tentative` (our own name, role only partly known).
 - **Evidence:** why the name fits. Names that come from `pmd-red` keep its spelling.
 
+Naming rules:
+
+- **Canonical address:** the uppercase table form, for example `ov_0001::0217BA94`. Prose uses the same form. Ghidra accepts the lowercase form too, but the repo does not use it.
+- **`sub_` names:** the suffix is the address in `pmd-red`, not in Blue. The name is unverified until Blue's function is checked, and the 14 `sub_` rows keep their names until then.
+- **`FUN_` names:** Ghidra's unnamed defaults. They are not rows here; a function gets a row only when its role is known.
+
 Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`re/execution-model.md`](re/execution-model.md), [`re/combat.md`](re/combat.md), [`re/turns.md`](re/turns.md), [`re/structs.md`](re/structs.md), [`re/dungeon-generation.md`](re/dungeon-generation.md).
 
 | Address | Name | Type | Tag | Evidence |
