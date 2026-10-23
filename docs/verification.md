@@ -163,9 +163,14 @@ Copy this section for each check.
   - **Routine constant 1, RNG step (2026-10-14, Ghidra):** Blue's global LCG (`Rand16Bit`, `020119A4`) and dungeon LCG (`DungeonRand16Bit`, `ov_0001::0219D07C`) both step `s * 0x5D588B65 + 1` and return `s >> 16`, like Red's `src/random.c` and `src/dungeon_random.c`. The seeding constant `0xD305` (54021) in `SeedRng` and the floor-seed mask `& 0xFFFFFF | 1` also match. The multiplier is in the Red dump too (file offsets `0x6994`, `0x890D0`, `0x89100`, `0x9AF08`). Differences: Blue seeds the global LCG from the console MAC address. Details: [`re/rng.md`](re/rng.md), [`blue-vs-red.md`](blue-vs-red.md).
   - **Routine constant 2, damage calc (2026-10-14, Ghidra):** Blue's `CalcDamage` (`ov_0001::0217BD94`, found from the type chart's readers) has the constants of Red's `CalcDamage` (`src/dungeon_damage.c`): damage cap `999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`, and the same three dungeon RNG calls in the same order (`DungeonRandInt(100)`, `DungeonRandInt(100)`, `DungeonRandInt(0x4000)`). Its 9 arguments match too. Details: [`re/combat.md`](re/combat.md).
   - **More shared tables (2026-10-14, Ghidra):** the pointers in `CalcDamage` and `sub_806F370_Async` lead to three more tables in overlay 1 with the same values as Red's `src/dungeon_config.c`, compared entry by entry: `gEffectivenessChart` (4 × 4 `s32`, `ov_0001::021AA588`), `gAtkStatStageMultipliers` and `gDefStatStageMultipliers` (21 × s24.8 each, `ov_0001::021AA660` and `021AA6B4`).
-  - **Damage hits against the formula (2026-10-23, #185 P2, runtime capture from #185 P1):** 14 `CalcDamage` hits, from `hits_9k.jsonl` (SHA-256 starts `ce446f5d`). **0 of 14 computed, so 0 matches and 0 mismatches.** The formula in [`re/combat.md`](re/combat.md#damage-formula) cannot be run yet: step 5 needs the attacker's attack stat, and no offset for it is in [`structs.md`](re/structs.md) (only `def[2]` at `+0x16` is listed); step 10 leaves open whether the term is `level × 2/3` or `attack / 3`; and `arg8` is not described. No value was guessed.
+  - **Damage hits against the formula (2026-10-23, #185 P2, runtime capture from #185 P1):** 14 `CalcDamage` hits, from `hits_9k.jsonl`. **0 of 14 computed, so 0 matches and 0 mismatches.**
+    - SHA-256 of `hits_9k.jsonl`: `ce446f5d31cd0ae7bad350cfbb5537b8dfcf83394a4e4e9a183d77eeb19fbfb9`.
+    - Capture command: not recorded. The capture script (`hits.py`) is in the #185 scratch folder, not in the repo; it imports `verification/v7-trace/pydesmume_dump.py`.
+    - The formula is in `re/combat.md` on `claude/issue-50-combat`, not on `main`. It cannot be run yet. The base-power step needs the attacker's attack stat (in `CalcDamage`, `ov_0001::0217BD94`), and no offset for it is in [`structs.md`](re/structs.md) (only `def[2]` at `+0x16` is listed). The level-or-attack term in `CalcDamage` (`ov_0001::0217BD94`) is undecided between `level × 2/3` and `attack / 3`. `arg8` is not described. No value was guessed.
 
-    | # | Frame | Move ID | Move type (`r2`) | Power (`r3`) | Crit odds | First `dmg_struct` word (presumed damage) | Recompute |
+    Columns: `Move type` (`r2`) and `Power` (`r3`) are the entry registers. `Move ID` is the stack word `sp+0xC`. `Crit odds` is the stack word `sp+0` at entry. `First dmg_struct word` is the first 4 bytes at the pointer in stack word `sp+4`, read when the call returns. The damage is presumed, not confirmed.
+
+    | # | Frame | Move ID | Move type (`r2`) | Power (`r3`) | Crit odds (`sp+0`) | First `dmg_struct` word (presumed damage; pointer `sp+4`) | Recompute |
     |---|-------|---------|------------------|--------------|-----------|-------------------------------------------|-----------|
     | 1 | 437 | 154 | 1 | 7 | 12 | 4 | not computed |
     | 2 | 498 | 355 | 0 | 1 | 0 | 7 | not computed |
@@ -182,7 +187,7 @@ Copy this section for each check.
     | 13 | 5808 | 355 | 0 | 1 | 0 | 8 | not computed |
     | 14 | 5876 | 355 | 0 | 1 | 0 | 8 | not computed |
 
-    Unblocking: a checked attack-stat offset in the info struct (#46), a resolved step-10 branch, and the meaning of `arg8`. Then recompute each row and record match or mismatch here.
+    Unblocking: a checked attack-stat offset in the info struct ([#46](https://github.com/TorratDev/rust-mm/issues/46)); the step-10 branch (no tracking issue yet); the meaning of `arg8` (no tracking issue yet). Then recompute each row and record match or mismatch here.
 - **Outcome:** **confirmed.** 4 tables are shared by value (type chart, effectiveness combination, attack and defense stat-stage multipliers), meeting the "3+ shared tables" criterion, and both routine constants match (RNG step, damage calc). `gTypeGummiIQBoost` and `gUnknown_810A808` are still not found by value.
 - **Fallback adopted:** none. Red stays the map for Phase 3.
 - **Notes:** Still open: where the two Gummi tables went in Blue (moved, re-laid out, or replaced). The Red dump is not the decomp's base ROM (see above).
