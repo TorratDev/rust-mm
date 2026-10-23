@@ -50,12 +50,16 @@ The accuracy and evasion stage tables (`ov_0001::021AA8C4`, `ov_0001::021AA918`)
 7. Held-item boosts, in `CalcDamage` (see the held-item table below).
 8. Clamp the attack to 0 to 999. Only the attack is clamped; the defense is not.
 9. Ability modifiers, through `CalcStatBoosts` (see the ability table below).
-10. Add a level or attack term, which is either level × 2/3 or attack / 3. The findings do not say which branch applies in each case.
+10. Add the level-or-attack term, `r6`. The branch is on the attacker's `isNotTeamMember` (info `+0x06`) (blue-verified, P6):
+    - `isNotTeamMember == 0`: `level * 2 / 3`, with `level` at info `+0x09`. Test `ldrb r0,[r5,#6]` at `0x0217c270`; body `0x0217c27c`–`0x0217c2bc`; divide at `0x0217c2b4`.
+    - `isNotTeamMember != 0`: `attack / 3`. The attack is the value after `CalcStatBoosts` (call at `0x0217c2f4`) and is read from info `+0x14 + splitIndex` ([structs](structs.md)). Body `0x0217c2c0`–`0x0217c32c`; divide at `0x0217c328`.
+    - Both divide with `FUN_0208625c(x, 3)`, a signed divide that truncates toward zero. The branches join at `0x0217c330`, and `r6` is stored at dungeon `+0x14A` (`rawDamageFormulaValues[5]`). Red has the same branch at `dungeon_damage.c:1243-1249`.
+    - Static only. The runtime check is still open (P1/P2).
 11. Base damage = (attack − defense) / 8 + that term.
 12. Base damage `x` becomes `x² × 0xCCC + (2x − defense + 10)`, where `0xCCC` is the 0.05 constant. Clamp the result to [1.0, 999].
 13. Multiply by the type multiplier from `sub_806E100` (see [type effectiveness](#type-effectiveness)).
 14. Critical hit: ×1.5 when the crit roll passes (see [critical hits](#critical-hits)).
-15. The extra argument `arg8` (not described further in the findings).
+15. Scale by `arg8`, an s24.8 damage scale (1.0 = `0x100`). See [argument 8](#argument-8-arg8). The flow is blue-verified; the meaning is medium confidence.
 16. Variance: a factor of `(0xE000 + roll) / 0x10000`, from `DungeonRandInt(0x4000)`. That is 0.875 to about 1.125.
 17. Convert the 48.16 result to an integer with `FP48_16_ToS32` (see [rounding](#rounding)).
 
@@ -124,6 +128,30 @@ Red's `u24_8` round-up is compared by structure only (medium).
 ### Clamps
 
 The base damage is clamped to [1.0, 999]. The attack is clamped to 0 to 999 after the item boosts, before the ability modifiers. The defense is not clamped. These match Red (static, P2.6).
+
+### Argument 8 (`arg8`)
+
+`arg8` is the seventh parameter of `CalcDamage`, at stack `S+8`. It is loaded at `0x0217c6e0` (`ldr r1,[r11,#0xb8]`) and stored at dungeon `+0x15C` (`0x0217c6ec`). Red names the field `damageCalcWorkingValues.unk15C` and types it s24.8 (**red-hypothesis**, from `pmd-red`, read-only).
+
+The flow is **blue-verified** (P7):
+
+- The accumulator `V` (48.16, at `r11+0x24`) is multiplied by the type factor `local_94` (`0x0217c6d8`; written by `sub_806E100` at `0x0217c47c`).
+- `V` is then multiplied by `arg8`, converted to 48.16 by `FUN_020175f0` (`0x0217c6f0`, `0x0217c6f8`). The conversion moves the s24.8 value's high byte into the high word and shifts the rest into the low word.
+- Snapshots: dungeon `+0x154` is `round(V)` before the `arg8` scale (`0x0217c6bc`–`0x0217c6cc`); dungeon `+0x150` is `round(V)` after it (`0x0217c708`–`0x0217c714`).
+- The variance from step 16 multiplies `V` next (`0x0217c718`). The final value is written to `dmgStruct`.
+
+Callers, **blue-verified**. All four are unconditional calls:
+
+| Caller | `arg8` passed | `arg_10` | Notes |
+|--------|---------------|----------|-------|
+| `FUN_0215675c` (`ov_0001::0215675c`) | its own `param_4` | `true` | Hub with about 90 callers. The dispatcher `FUN_02156824` passes `0` (case 0), `0x80` (case `0x163`) and `0x100` (cases `0x150` and `0x16e`) |
+| `FUN_021566cc` (`ov_0001::021566cc`) | its own `param_5` | `true` | One caller, `FUN_0215d7a8` |
+| `FUN_02161ab4` (`ov_0001::02161ab4`) | `0x200` | `false` | Reached from dispatcher case `0xce` |
+| `FUN_02161cc0` (`ov_0001::02161cc0`) | `0x100` | `false` | Reached from dispatcher case `0xcc` |
+
+**Meaning** (medium confidence): a damage scale with 1.0 = `0x100`, inferred from the constants and Red's s24.8 type. The per-move values (`0` would zero the damage, `0x80` would halve it) are not checked against move data (low confidence).
+
+**Not verified:** a runtime trace of dungeon `+0x15C`, `+0x150` and `+0x154` (the P1 hit capture could confirm the scale); the source of the dispatcher's `param_4`; whether anything reads `+0x150`, `+0x154` or `+0x158` (no search done).
 
 ## RNG calls in `CalcDamage`
 
@@ -230,12 +258,12 @@ Unresolved items from the three investigation files for this issue. Each item is
 **Damage formula**
 
 - The disassembly-level store of the sixth argument (the roll) to `CalcStatBoosts` has not been seen.
-- The offsets of `belly` (info `+0x10E`), `isTeamLeader` (`+7`), `isNotTeamMember` (`+6`) and `level` (`+9`) are inferred from use, not checked against a Blue struct ([#46](https://github.com/TorratDev/rust-mm/issues/46)).
+- The offsets of `isTeamLeader` (`+7`), `isNotTeamMember` (`+6`) and `level` (`+9`) are checked statically against Red (P3, see [`structs.md`](structs.md)). `belly` (`+0x10E`) stays *probable*, because `FUN_0200b9a4` is inferred ([#46](https://github.com/TorratDev/rust-mm/issues/46)).
 - The weather enum values (1, 3, 4, 6) and the IQ skill ID 1 (Type Advantage Master) are taken from Red, not checked in Blue.
 - Red's `u24_8` round-up is compared by structure only.
 - The `gDungeon` `+0x3358` and `+0x335A` Plus and Minus flags need a struct check (the pairing is inferred).
-- `arg8` is not described.
-- The branch that chooses between `level × 2/3` and `attack / 3` is not described.
+- `arg8`: the flow and callers are static (see [argument 8](#argument-8-arg8)). Its meaning as a scale is medium confidence.
+- The step-10 branch is resolved statically (see step 10). Runtime confirmation is still open (P1/P2).
 
 **Accuracy and evasion**
 
