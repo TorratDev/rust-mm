@@ -164,6 +164,31 @@ Copy this section for each check.
   - **Routine constant 2, damage calc (2026-10-14, Ghidra):** Blue's `CalcDamage` (`ov_0001::0217BD94`, found from the type chart's readers) has the constants of Red's `CalcDamage` (`src/dungeon_damage.c`): damage cap `999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`, and the same three dungeon RNG calls in the same order (`DungeonRandInt(100)`, `DungeonRandInt(100)`, `DungeonRandInt(0x4000)`). Its 9 arguments match too. Details: [`re/combat.md`](re/combat.md).
   - **Damage constants against Red (2026-10-20, static):** P1 and P2 of #50 compared the damage formula's constants and the 24.8 and 48.16 rounding helpers with Red's `src/dungeon_damage.c` and `src/math.c`: no change found. The comparison with observed hits is still open. Details: [`re/combat.md`](re/combat.md#damage-formula).
   - **More shared tables (2026-10-14, Ghidra):** the pointers in `CalcDamage` and `sub_806F370_Async` lead to three more tables in overlay 1 with the same values as Red's `src/dungeon_config.c`, compared entry by entry: `gEffectivenessChart` (4 × 4 `s32`, `ov_0001::021AA588`), `gAtkStatStageMultipliers` and `gDefStatStageMultipliers` (21 × s24.8 each, `ov_0001::021AA660` and `021AA6B4`).
+  - **Damage hits against the formula (2026-10-23, #185 P2, runtime capture from #185 P1):** 14 `CalcDamage` hits, from `hits_9k.jsonl`. **0 of 14 computed, so 0 matches and 0 mismatches.**
+    - SHA-256 of `hits_9k.jsonl`: `ce446f5d31cd0ae7bad350cfbb5537b8dfcf83394a4e4e9a183d77eeb19fbfb9`.
+    - Capture command: not recorded. The capture script (`hits.py`) is in the #185 scratch folder, not in the repo; it imports `verification/v7-trace/pydesmume_dump.py`.
+    - The formula is in `re/combat.md` on `claude/issue-50-combat`, not on `main`. It cannot be run yet. The base-power step needs the attacker's attack stat (in `CalcDamage`, `ov_0001::0217BD94`), and no offset for it is in [`structs.md`](re/structs.md) (only `def[2]` at `+0x16` is listed). The level-or-attack term in `CalcDamage` (`ov_0001::0217BD94`) is undecided between `level × 2/3` and `attack / 3`. `arg8` is not described. No value was guessed.
+
+    Columns: `Move type` (`r2`) and `Power` (`r3`) are the entry registers. `Move ID` is the stack word `sp+0xC`. `Crit odds` is the stack word `sp+0` at entry. `First dmg_struct word` is the first 4 bytes at the pointer in stack word `sp+4`, read when the call returns. The damage is presumed, not confirmed.
+
+    | # | Frame | Move ID | Move type (`r2`) | Power (`r3`) | Crit odds (`sp+0`) | First `dmg_struct` word (presumed damage; pointer `sp+4`) | Recompute |
+    |---|-------|---------|------------------|--------------|-----------|-------------------------------------------|-----------|
+    | 1 | 437 | 154 | 1 | 7 | 12 | 4 | not computed |
+    | 2 | 498 | 355 | 0 | 1 | 0 | 7 | not computed |
+    | 3 | 562 | 355 | 0 | 1 | 0 | 1 | not computed |
+    | 4 | 621 | 355 | 0 | 1 | 0 | 8 | not computed |
+    | 5 | 2040 | 260 | 1 | 8 | 12 | 18 | not computed |
+    | 6 | 3025 | 355 | 0 | 1 | 0 | 2 | not computed |
+    | 7 | 3079 | 355 | 0 | 1 | 0 | 8 | not computed |
+    | 8 | 3145 | 355 | 0 | 1 | 0 | 9 | not computed |
+    | 9 | 3768 | 355 | 0 | 1 | 0 | 6 | not computed |
+    | 10 | 3837 | 355 | 0 | 1 | 0 | 8 | not computed |
+    | 11 | 5118 | 355 | 0 | 1 | 0 | 8 | not computed |
+    | 12 | 5186 | 355 | 0 | 1 | 0 | 7 | not computed |
+    | 13 | 5808 | 355 | 0 | 1 | 0 | 8 | not computed |
+    | 14 | 5876 | 355 | 0 | 1 | 0 | 8 | not computed |
+
+    Unblocking: a checked attack-stat offset in the info struct ([#46](https://github.com/TorratDev/rust-mm/issues/46)); the step-10 branch (no tracking issue yet); the meaning of `arg8` (no tracking issue yet). Then recompute each row and record match or mismatch here.
 - **Outcome:** **confirmed.** 4 tables are shared by value (type chart, effectiveness combination, attack and defense stat-stage multipliers), meeting the "3+ shared tables" criterion, and both routine constants match (RNG step, damage calc). `gTypeGummiIQBoost` and `gUnknown_810A808` are still not found by value.
 - **Fallback adopted:** none. Red stays the map for Phase 3.
 - **Notes:** Still open: where the two Gummi tables went in Blue (moved, re-laid out, or replaced). The Red dump is not the decomp's base ROM (see above).
