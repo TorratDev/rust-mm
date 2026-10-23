@@ -11,7 +11,7 @@ Each claim below carries one status: **blue-verified**, **red-hypothesis** or **
 
 | Claim | Evidence | Status |
 |-------|----------|--------|
-| {{what is stated}} | {{Blue address, e.g. `ov_0001::021B3F58`, or `FUNCTION` at `ADDRESS`; decompiled snippet reference; or trace reference: script, output hash, command}} | {{blue-verified / red-hypothesis / lead}} |
+| {{what is stated}} | {{Blue address, e.g. `ov_0001::021B3F58`; routine reference: function name, address and paraphrase; or trace reference: script, output hash, command}} | {{blue-verified / red-hypothesis / lead}} |
 |       |          |        |
 
 ## Addresses
@@ -20,13 +20,13 @@ Each claim below carries one status: **blue-verified**, **red-hypothesis** or **
 |---------|------|--------|
 |         |      |        |
 
-## Decompiled routines
+## Routines
 
-Quote only the lines a claim depends on. Give the function name and address above each snippet.
+Name each routine the claims depend on, with its address and a one-line paraphrase. Do not paste decompiler output.
 
-```text
-{{ghidra-cli output}}
-```
+| Function | Address | What it does (paraphrase) |
+|----------|---------|---------------------------|
+|          |         |                           |
 
 ## Trace checks
 
