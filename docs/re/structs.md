@@ -27,14 +27,18 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 |------|-----------|-----|-------|----------|
 | `+0x02` | `id` (species) | `0x02` | 0 | `CalcSpeedStage`, `TickStatusAndHealthRegen` |
 | `+0x04` | `apparentID` | `0x04` | 0 | `CalcSpeedStage`, `CalcDamage` |
-| `+0x06` | `isNotTeamMember` | `0x06` | 0 | `CalcSpeedStage`, `CalcDamage` |
-| `+0x07` | `isTeamLeader` | `0x07` | 0 | `GetLeader`, `CalcDamage` |
-| `+0x09` | `level` | `0x09` | 0 | `CalcDamage` |
+| `+0x06` | `isNotTeamMember` | `0x06` | 0 | `CalcSpeedStage`, `CalcDamage`: selects the level path, `ldrb r0,[r5,#6]` at `0x0217c270` in `ov_0001::0217BD94` (#185, P3, P6) |
+| `+0x07` | `isTeamLeader` | `0x07` | 0 | `GetLeader`, `CalcDamage`: first condition of the damage-1 test, `byte[info+7] == 0` (#185, P3) |
+| `+0x09` | `level` | `0x09` | 0 | `CalcDamage`: `level << 1` divided by 3 on the non-team-member path (`0x0217c2a8`, `0x0217c2b0`) (#185, P3, P6) |
 | `+0x0E` | `HP` | `0x0E` | 0 | `TickStatusAndHealthRegen` |
 | `+0x10` | `maxHPStat` | `0x10` | 0 | `TickStatusAndHealthRegen` |
-| `+0x16` | `def[2]` | `0x16` | 0 | `CalcDamage` |
+| `+0x14` | `atk[2]` (u8, read at `+0x14 + splitIndex`) | `0x14` (*red-hypothesis* layout) | 0 | `CalcDamage` (`ov_0001::0217BD94`): base power, `gDungeon+0x140 = movePower + byte[+0x14 + splitIndex]`. Blue offset measured on 14 captured hits (#185, P5) |
+| `+0x16` | `def[2]` | `0x16` | 0 | `CalcDamage` (`ov_0001::0217BD94`): target defence, `gDungeon+0x142` (#185, P5) |
 | `+0x18` | `exp` | — | — | `AddExpPoints` (`ov_0001::02183F78`) adds to it (blue-verified structure) |
+| `+0x1C` | `offensiveStages` (s16 at `+0x1C + 2 × splitIndex`, clamped to 0 to 20) | `0x1C` (*red-hypothesis* layout) | 0 | `CalcDamage` (`ov_0001::0217BD94`), stored at `gDungeon+0x13E`. Blue offset measured on 14 captured hits (#185, P5) |
 | `+0x28` | `flashFireBoost` | `0x28` | 0 | `CalcDamage` (*probable*) |
+| `+0x2C` | `offensiveMultipliers` (s24.8 at `+0x2C + 4 × splitIndex`) | `0x2C` (*red-hypothesis* layout) | 0 | `CalcDamage` (`ov_0001::0217BD94`). All 14 captured hits had `0x100` (1.0) (#185, P5) |
+| `+0x34` | `defensiveMultipliers` (s24.8 at `+0x34 + 4 × splitIndex`) | `0x34` (*red-hypothesis* layout) | 0 | `CalcDamage` (`ov_0001::0217BD94`). All 14 captured hits had `0x100` (1.0) (#185, P5) |
 | `+0x3C`, `+0x3E` | `hiddenPower` base power, type | `0x3C` | 0 | `GetMovePower`, `GetMoveTypeForMonster` |
 | `+0x40` | dungeon location of the join | — | — | `AddExpPoints` compares it with `'J'` and `'G'` for the EXP lock, in place of Red's `IsExperienceLocked` (lock not confirmed) |
 | `+0x42` | `action` block (*probable*: its `direction` is at `+0x44`) | `0x44` | −2 | `ov_0001::02188030` (candidate `RunMonsterAI`): byte compared with 0, then written |
@@ -68,7 +72,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0xE4` | `speedUpCounters[5]` | `0x108` | −0x24 | `CalcSpeedStage` |
 | `+0xE9` | `speedDownCounters[5]` | `0x10D` | −0x24 | `CalcSpeedStage` |
 | `+0xF4` | `moves` (4 × 6-byte `Move`, see below) | `0x118` | −0x24 | `0216E56C` (passes `info+0xF4` as the move list, sets `moveFlags2` bit 2 of entry *i* at `+0xF5 + 6i`) |
-| `+0x10E` | `belly` | `0x13C` | −0x2E | `CalcDamage` (*probable*) |
+| `+0x10E` | `belly` | `0x13C` | −0x2E | `CalcDamage` (*probable*): the 4-byte value passed to `FUN_0200b9a4` (call at `ov_0001::0217be0c`). Its zero test matches Red's `FixedPointToInt(belly) == 0` for ordinary values. `FUN_0200b9a4`'s identity is inferred, so the row stays *probable* (#185, P3) |
 | `+0x116` | `aiAllySkip` | `0x144` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
 | `+0x117` | `recalculateFollow` | `0x145` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
 | `+0x118` | `bellyEmpty` | `0x146` | −0x2E | `TickStatusAndHealthRegen` |
