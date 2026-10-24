@@ -91,10 +91,24 @@ Byte-for-byte equality of two files needs one writer. The rows are equal as pars
 
 ## Status
 
-- The format is written and the reader is in `crates/trace`. The capture scripts do not write the header yet: `retail_trace.py` still writes rows only. Its output will not read as a complete trace until #55 adds the header. Its rows do read: `rescue_trace` accepts a row exactly as the script emits it (tested).
+- The format is written and the reader is in `crates/trace`. `scripts/capture_golden.py` writes the complete trace: header, rows, and a read-back check with the crate (see [`scripts/README.md`](../scripts/README.md)). `retail_trace.py` still writes rows only, as it did in V7; its rows are the ones the capture script reuses.
 - `inventory` is out of v1.
-- `initialSeed` is not read by `retail_trace.py` yet; #55 adds it. No existing capture contains it.
+- `initialSeed` is read by `capture_golden.py`, from `027FFCF4` in the power-on run, at the first frame where it is set (frame 15 in the retail run), before any input. `retail_trace.py` does not read it.
 - The field widths for `type` and `speedStage` follow `retail_trace.py`; they are not confirmed against the struct layout.
+
+## Not dumped
+
+These fields are not in v1 rows. Each is either out of the schema or not documented in `re/` yet, and a capture does not read it:
+
+- Team inventory, and the floor items, traps and stairs (floor state is `tilesSha256` only).
+- Entity info fields other than `species`, `level`, `hp`, `maxHp` and `speedStage`, including the statuses, moves and types. Their offsets are documented in [`re/structs.md`](re/structs.md#entity-info), but the schema has no key for them yet.
+- The Mersenne Twister state (`sStateArray`, `sStateIndex`) and the 16-bit generator in `other_random.c`, whose use is not known yet ([`re/rng.md`](re/rng.md)).
+- Save data, sound and graphics. Not part of the game state a trace records.
+
+## Capture scripts
+
+- Windows setup, the save state and the self-test: [`scripts/README.md`](../scripts/README.md).
+- The capture script is `scripts/capture_golden.py`. It uses the emulator and the row reader in [`verification/v7-trace`](../verification/v7-trace).
 
 ## Links
 

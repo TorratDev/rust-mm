@@ -1,0 +1,14 @@
+[package]
+name = "trace_check"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+description = "Reads a golden trace with rescue-trace and prints a summary. Used by scripts/capture_golden.py."
+
+# Own workspace root, so the root workspace does not claim this package.
+[workspace]
+
+[dependencies]
+rescue-trace = { path = "../../crates/trace" }
+serde_json = "1"
