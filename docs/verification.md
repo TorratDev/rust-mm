@@ -164,39 +164,37 @@ Copy this section for each check.
   - **Routine constant 2, damage calc (2026-10-14, Ghidra):** Blue's `CalcDamage` (`ov_0001::0217BD94`, found from the type chart's readers) has the constants of Red's `CalcDamage` (`src/dungeon_damage.c`): damage cap `999`, `0xAAAA`, `0xCCC`, `0xE000`, `0x4000`, and the same three dungeon RNG calls in the same order (`DungeonRandInt(100)`, `DungeonRandInt(100)`, `DungeonRandInt(0x4000)`). Its 9 arguments match too. Details: [`re/combat.md`](re/combat.md).
   - **Damage constants against Red (2026-10-20, static):** P1 and P2 of #50 compared the damage formula's constants and the 24.8 and 48.16 rounding helpers with Red's `src/dungeon_damage.c` and `src/math.c`: no change found. The comparison with observed hits is still open. Details: [`re/combat.md`](re/combat.md#damage-formula).
   - **More shared tables (2026-10-14, Ghidra):** the pointers in `CalcDamage` and `sub_806F370_Async` lead to three more tables in overlay 1 with the same values as Red's `src/dungeon_config.c`, compared entry by entry: `gEffectivenessChart` (4 × 4 `s32`, `ov_0001::021AA588`), `gAtkStatStageMultipliers` and `gDefStatStageMultipliers` (21 × s24.8 each, `ov_0001::021AA660` and `021AA6B4`).
-  - **Damage hits against the formula (2026-10-23, #185 P2, runtime capture from #185 P1):** 14 `CalcDamage` hits, from `hits_9k.jsonl`. **0 of 14 computed, so 0 matches and 0 mismatches.** Every hit is blocked on at least one term (key below).
-    - SHA-256 of `hits_9k.jsonl`: `ce446f5d31cd0ae7bad350cfbb5537b8dfcf83394a4e4e9a183d77eeb19fbfb9`.
-    - Capture command: not recorded. The capture script (`hits.py`) is in the #185 scratch folder, not in the repo; it imports `verification/v7-trace/pydesmume_dump.py`.
-    - The formula is in [`re/combat.md`](re/combat.md) (Damage formula, steps 1 to 17). Step 5 reads the attacker's attack byte at `+0x14 + splitIndex` ([`structs.md`](re/structs.md), P5). Step 10 is resolved: the branch is on `isNotTeamMember` (P6). The `arg8` flow is blue-verified, but its value is not (term A below). No value was guessed.
-    - RNG check: in all 14 hits `gDungeonRngState` advances exactly three LCG steps from `rng_before` to `rng_after`. That matches the three draws in `CalcDamage` (move-selection roll, crit roll, variance). The draw values are not used here.
+  - **Damage hits against the formula (2026-10-24, #185, runtime capture):** 14 `CalcDamage` hits from one scripted run. **14 of 14 match: 0 mismatches.** The formula is in [`re/combat.md`](re/combat.md#damage-formula).
+    - Capture: [`combat_hits.py`](../verification/v7-trace/combat_hits.py) with [`combat_inputs.txt`](../verification/v7-trace/combat_inputs.txt), 9,000 turn frames from the first dungeon frame (24,960), retail `BlueRescueTeamEur` dump. Command: `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy python verification/v7-trace/combat_hits.py <ROM> <OUT> --frames 9000`. Output goes to an ignored scratch folder, outside the repo.
+    - Recompute: [`combat_recompute.py`](../verification/v7-trace/combat_recompute.py) `<OUT>`. It replays each hit from the captured arguments, the attacker and target info structs, and the RNG state. It checks the three RNG draws, `gDungeon` `+0x140` (power + attack), `+0x142` (defence), `+0x14A` (`r6`), `+0x154` (pre), `+0x150` (post), the `dmg_struct` damage and the crit flag.
+    - SHA-256 of `hits.jsonl`: `c2af877c1464d7b15d774966f550ffb7e7a47bdae483e96dd5262cad47bc53e2`. Of `tables.json` (the RAM tables read at the first hit): `fcd5b09f6cdb022743afd3f7bf8d0a8b3dc62320ad486d612a5f3ff6073149e4`. Of `combat_inputs.txt`: `0b7d2c30a2b55763432da3b2ddb27a9ecd43182bdf402b57e48071ba8ea375e6`.
+    - Output of the recompute (Atk and Def are the stats after the stage and multiplier step; `r6` is the level-or-attack term as an integer; the other columns are observed/recomputed):
 
-    Blocked terms, per row:
+    | # | Frame | Move | Type | Split | Atk | Def | r6 | Pre obs/calc | Post obs/calc | Dmg obs/calc | Checks |
+    |---|---|---|---|---|---|---|---|---|---|---|---|
+    | 1 | 1437 | 154 | 1 | 0 | 11 | 9 | 1 | 4/4 | 4/4 | 4/4 | match |
+    | 2 | 1528 | 355 | 0 | 0 | 11 | 5 | 3 | 14/14 | 7/7 | 7/7 | match |
+    | 3 | 1591 | 355 | 0 | 0 | 5 | 9 | 1 | 3/3 | 1/1 | 1/1 | match |
+    | 4 | 1650 | 355 | 0 | 0 | 11 | 5 | 3 | 14/14 | 7/7 | 8/8 | match |
+    | 5 | 3051 | 260 | 1 | 0 | 19 | 5 | 3 | 16/16 | 16/16 | 18/18 | match |
+    | 6 | 4035 | 355 | 0 | 0 | 4 | 9 | 1 | 3/3 | 2/2 | 2/2 | match |
+    | 7 | 4088 | 355 | 0 | 0 | 11 | 4 | 3 | 15/15 | 8/8 | 8/8 | match |
+    | 8 | 4157 | 355 | 0 | 0 | 12 | 4 | 3 | 16/16 | 8/8 | 9/9 | match |
+    | 9 | 4798 | 355 | 0 | 0 | 11 | 5 | 3 | 14/14 | 7/7 | 6/6 | match |
+    | 10 | 4887 | 355 | 0 | 0 | 12 | 5 | 3 | 14/14 | 7/7 | 8/8 | match |
+    | 11 | 6558 | 355 | 0 | 0 | 11 | 4 | 3 | 15/15 | 8/8 | 8/8 | match |
+    | 12 | 6645 | 355 | 0 | 0 | 12 | 4 | 3 | 16/16 | 8/8 | 7/7 | match |
+    | 13 | 7438 | 355 | 0 | 0 | 11 | 4 | 3 | 15/15 | 8/8 | 8/8 | match |
+    | 14 | 7527 | 355 | 0 | 0 | 12 | 4 | 3 | 16/16 | 8/8 | 8/8 | match |
 
-    - **T**, type multiplier (step 13): the chart values are not in the docs ([`legal.md`](legal.md)), so no hit can be finished.
-    - **D**, target defence stage (steps 3 and 6): its offset is not documented. Only the attacker's stage (`+0x1C`) is.
-    - **A**, `arg8` scale value (step 15): P7 gives the meaning as medium confidence, and the value for each captured `arg8` (`0x80` or `0x100`) is not confirmed.
-    - **C**, crit comparison (step 14): the docs say "compared with the odds" without the direction. Only rows with odds above 0 need it.
-
-    Columns: `Move type` (`r2`) and `Power` (`r3`) are the entry registers. `Move ID` is the stack word `sp+0xC`. `Crit odds` is the stack word `sp+0` at entry. `First dmg_struct word` is the first 4 bytes at the pointer in stack word `sp+4`, read when the call returns. The damage is presumed, not confirmed.
-
-    | # | Frame | Move ID | Move type (`r2`) | Power (`r3`) | Crit odds (`sp+0`) | First `dmg_struct` word (presumed damage; pointer `sp+4`) | Recompute |
-    |---|-------|---------|------------------|--------------|-----------|-------------------------------------------|-----------|
-    | 1 | 437 | 154 | 1 | 7 | 12 | 4 | blocked: T, D, A, C |
-    | 2 | 498 | 355 | 0 | 1 | 0 | 7 | blocked: T, D, A |
-    | 3 | 562 | 355 | 0 | 1 | 0 | 1 | blocked: T, D, A |
-    | 4 | 621 | 355 | 0 | 1 | 0 | 8 | blocked: T, D, A |
-    | 5 | 2040 | 260 | 1 | 8 | 12 | 18 | blocked: T, D, A, C |
-    | 6 | 3025 | 355 | 0 | 1 | 0 | 2 | blocked: T, D, A |
-    | 7 | 3079 | 355 | 0 | 1 | 0 | 8 | blocked: T, D, A |
-    | 8 | 3145 | 355 | 0 | 1 | 0 | 9 | blocked: T, D, A |
-    | 9 | 3768 | 355 | 0 | 1 | 0 | 6 | blocked: T, D, A |
-    | 10 | 3837 | 355 | 0 | 1 | 0 | 8 | blocked: T, D, A |
-    | 11 | 5118 | 355 | 0 | 1 | 0 | 8 | blocked: T, D, A |
-    | 12 | 5186 | 355 | 0 | 1 | 0 | 7 | blocked: T, D, A |
-    | 13 | 5808 | 355 | 0 | 1 | 0 | 8 | blocked: T, D, A |
-    | 14 | 5876 | 355 | 0 | 1 | 0 | 8 | blocked: T, D, A |
-
-    Unblocking, by term: **T**, the `gTypeEffectivenessChart` values (no tracking issue yet); **D**, the target's defence-stage offset (no tracking issue yet); **A**, the `arg8` scale value (no tracking issue yet); **C**, the crit comparison direction (no tracking issue yet). The attack-stat offset is no longer a blocker: it is in [`structs.md`](re/structs.md) (P5, [#46](https://github.com/TorratDev/rust-mm/issues/46)). Then recompute each row and record match or mismatch here.
+    - **Type multiplier.** The type-effectiveness step (`sub_806E100`) is not modelled. It is fixed at 1.0. The 14 hits allow only the range [0.9868, 1.0025), which contains 1.0, so the hits show no type effect. The chart is not read by the script; its values are not written here ([`legal.md`](legal.md)).
+    - **Correction to step 10.** The level-or-attack term must be fixed point, as in the code's 48.16 arithmetic (`level × 0xAAAA`, and `attack / 3` as a 48.16 divide). The truncated integer `r6` (`level × 2 / 3`, `attack / 3`) gives 14 of 14 mismatches with the same inputs.
+    - **Checked in the captured structs, not modelled:** no held item in any of the 14 hits. Abilities present (IDs `0x10`, `0x1E`, `0x46`, `0x4A`, `0x4C`) are not in the ability table above, and none is Battle Armor or Shell Armor. Defence stage is 10 (neutral) in all 14 at the assumed offset (`+0x20`, see [`re/structs.md`](re/structs.md)). Status effects and weather were not checked.
+    - **Not exercised by these hits:** a critical hit (no roll passed its odds, and the crit flag is 0 in all 14). The stage table is used with an attacker at stage 9 (frame 4035), which matches. `arg8` takes two values, `0x100` (moves 154 and 260) and `0x80` (move 355), so its 1.0 = `0x100` scale is checked at both.
+    - **Ordering not distinguished.** `pre` (`+0x154`) is written as the base before the type and crit multipliers. With type 1.0 and no crit the hits cannot tell this apart from the other order.
+- **Outcome:** **confirmed for these 14 hits.** The fixed-point formula in [`re/combat.md`](re/combat.md#damage-formula) reproduces each captured hit: its working values, the damage the call wrote, and the crit flag. The issue's condition, that the formula matches observed hits, holds for this set. Crit, held items, abilities, status and type effects are still unchecked (see the list above).
+- **Fallback adopted:** none.
+- **Notes:** A first capture (2026-10-23, 14 hits from a scratch script not in the repo) could not be recomputed because the formula was blocked by missing values; those values are now read from the dump or derived from the captured fields. The earlier record is replaced by this entry.
 - **Outcome:** **confirmed.** 4 tables are shared by value (type chart, effectiveness combination, attack and defense stat-stage multipliers), meeting the "3+ shared tables" criterion, and both routine constants match (RNG step, damage calc). `gTypeGummiIQBoost` and `gUnknown_810A808` are still not found by value.
 - **Fallback adopted:** none. Red stays the map for Phase 3.
 - **Notes:** Still open: where the two Gummi tables went in Blue (moved, re-laid out, or replaced). The Red dump is not the decomp's base ROM (see above).

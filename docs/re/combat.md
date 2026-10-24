@@ -4,7 +4,7 @@ First entry points into Blue's combat code, found from the code that reads the t
 
 Every function below matches its `pmd-red` counterpart in `src/dungeon_damage.c` by argument count, constants and calls, so it keeps that name, including `pmd-red`'s placeholder names (`sub_806E100`, ...). Confirmed by reading Blue's code, not by emulator trace.
 
-**Status.** Everything in this page was read statically, from Blue's decompiled code, its overlay and ARM9 data, and `pmd-red` at the pinned commit. The only runtime evidence is the move-dispatch and EXP checks in the sections on [move effects](#move-effects) and [defeat and experience](#defeat-and-experience). **No observed damage number has been compared with the damage formula yet**, so the issue's condition "matches observed emulator hits" is **not met**.
+**Status.** Most of this page was read statically, from Blue's decompiled code, its overlay and ARM9 data, and `pmd-red` at the pinned commit. The runtime evidence is the damage formula check for 14 observed `CalcDamage` hits (#185, [verification](../verification.md#v6--blue-reuses-reds-logic)), the move-dispatch and EXP checks in the sections on [move effects](#move-effects) and [defeat and experience](#defeat-and-experience). The formula matches the hits, except the parts listed in [the damage formula](#damage-formula). The issue's condition, "matches observed emulator hits", holds for the cases those 14 hits cover.
 
 ## Functions
 
@@ -39,7 +39,7 @@ The accuracy and evasion stage tables (`ov_0001::021AA8C4`, `ov_0001::021AA918`)
 
 ## Damage formula
 
-`CalcDamage` runs these steps in this order. The constants and step order match Red's `CalcDamage` (static comparison, P1.1). The formula has **not** been checked against observed hits.
+`CalcDamage` runs these steps in this order. The constants and step order match Red's `CalcDamage` (static comparison, P1.1). The formula reproduces 14 captured hits, with the fixed-point corrections of steps 10 and 11 (#185, [verification](../verification.md#v6--blue-reuses-reds-logic)). Not checked by those hits: critical hits, items, abilities, status effects, weather and type effects (step 13).
 
 1. A belly check that sets the damage to 1 (Red's `SetDamageOne`).
 2. Wonder Guard, as in Red.
@@ -53,13 +53,12 @@ The accuracy and evasion stage tables (`ov_0001::021AA8C4`, `ov_0001::021AA918`)
 10. Add the level-or-attack term, `r6`. The branch is on the attacker's `isNotTeamMember` (info `+0x06`) (blue-verified, P6):
     - `isNotTeamMember == 0`: `level * 2 / 3`, with `level` at info `+0x09`. Test `ldrb r0,[r5,#6]` at `0x0217c270`; body `0x0217c27c`–`0x0217c2bc`; divide at `0x0217c2b4`.
     - `isNotTeamMember != 0`: `attack / 3`. The attack is the value after `CalcStatBoosts` (call at `0x0217c2f4`) and is read from info `+0x14 + splitIndex` ([structs](structs.md)). Body `0x0217c2c0`–`0x0217c32c`; divide at `0x0217c328`.
-    - Both divide with `FUN_0208625c(x, 3)`, a signed divide that truncates toward zero. The branches join at `0x0217c330`, and `r6` is stored at dungeon `+0x14A` (`rawDamageFormulaValues[5]`). Red has the same branch at `dungeon_damage.c:1243-1249`.
-    - Static only. The runtime check is still open (P1/P2).
-11. Base damage = (attack − defense) / 8 + that term.
-12. Base damage `x` becomes `x² × 0xCCC + (2x − defense + 10)`, where `0xCCC` is the 0.05 constant. Clamp the result to [1.0, 999].
-13. Multiply by the type multiplier from `sub_806E100` (see [type effectiveness](#type-effectiveness)).
-14. Critical hit: ×1.5 when the crit roll passes (see [critical hits](#critical-hits)).
-15. Scale by `arg8`, an s24.8 damage scale (1.0 = `0x100`). See [argument 8](#argument-8-arg8). The flow is blue-verified; the meaning is medium confidence.
+    - The value used in the formula is the 48.16 fixed-point one: `level × 0xAAAA` for the first case, and `attack / 3` as a 48.16 divide for the second. Runtime-checked on 14 hits (#185). The integer `r6` (truncated `level * 2 / 3` or `attack / 3`, with `FUN_0208625c(x, 3)`) is stored at dungeon `+0x14A` (`rawDamageFormulaValues[5]`) and matches the hits too, but the truncated value does not feed step 11. Using it instead gives 14 of 14 mismatches. Red has the same branch at `dungeon_damage.c:1243-1249`.
+11. Base damage = (attack − defense) / 8 + that term, in 48.16 fixed point (the division is not truncated).
+12. Base damage `x` becomes `x² × 0xCCC + (2x − defense + 10)`, where `0xCCC` is the 0.05 constant. Clamp the result to [1.0, 999]. Runtime-checked on 14 hits (#185).
+13. Multiply by the type multiplier from `sub_806E100` (see [type effectiveness](#type-effectiveness)). Not modelled in the #185 check (fixed at 1.0; the 14 hits allow [0.9868, 1.0025)).
+14. Critical hit: ×1.5 when the crit roll passes (see [critical hits](#critical-hits)). The odds are 0 for a non-team attacker, as in Red. The crit path is not exercised by the #185 hits.
+15. Scale by `arg8`, an s24.8 damage scale (1.0 = `0x100`). See [argument 8](#argument-8-arg8). Runtime-checked for `0x80` and `0x100` (#185).
 16. Variance: a factor of `(0xE000 + roll) / 0x10000`, from `DungeonRandInt(0x4000)`. That is 0.875 to about 1.125.
 17. Convert the 48.16 result to an integer with `FP48_16_ToS32` (see [rounding](#rounding)).
 
@@ -149,9 +148,9 @@ Callers, **blue-verified**. All four are unconditional calls:
 | `FUN_02161ab4` (`ov_0001::02161ab4`) | `0x200` | `false` | Reached from dispatcher case `0xce` |
 | `FUN_02161cc0` (`ov_0001::02161cc0`) | `0x100` | `false` | Reached from dispatcher case `0xcc` |
 
-**Meaning** (medium confidence): a damage scale with 1.0 = `0x100`, inferred from the constants and Red's s24.8 type. The per-move values (`0` would zero the damage, `0x80` would halve it) are not checked against move data (low confidence).
+**Meaning**: a damage scale with 1.0 = `0x100`. Runtime-checked on 14 hits (#185): `0x100` leaves the damage unchanged and `0x80` halves it (moves 154 and 260 pass `0x100`; move 355 passes `0x80`). Other values, and the per-move choice, are not checked against move data.
 
-**Not verified:** a runtime trace of dungeon `+0x15C`, `+0x150` and `+0x154` (the P1 hit capture could confirm the scale); the source of the dispatcher's `param_4`; whether anything reads `+0x150`, `+0x154` or `+0x158` (no search done).
+**Not verified:** the source of the dispatcher's `param_4`; whether anything reads `+0x150`, `+0x154` or `+0x158` (no search done).
 
 ## RNG calls in `CalcDamage`
 
@@ -251,7 +250,7 @@ Unresolved items from the three investigation files for this issue. Each item is
 
 **Not yet done**
 
-- Compare observed damage numbers with the formula. This is the issue's condition, and it is **not met**. It needs a runtime check (#17, py-desmume, `verification/v7-trace`).
+- Critical hits, held items, abilities, status effects, weather and type effects against observed hits. The #185 check does not cover them (see [the damage formula](#damage-formula)).
 - A runtime check of a Huge Power roll and of a critical hit, as a separate task under #17.
 - A runtime check of the hit check (no hit has been observed).
 
@@ -263,7 +262,7 @@ Unresolved items from the three investigation files for this issue. Each item is
 - Red's `u24_8` round-up is compared by structure only.
 - The `gDungeon` `+0x3358` and `+0x335A` Plus and Minus flags need a struct check (the pairing is inferred).
 - `arg8`: the flow and callers are static (see [argument 8](#argument-8-arg8)). Its meaning as a scale is medium confidence.
-- The step-10 branch is resolved statically (see step 10). Runtime confirmation is still open (P1/P2).
+- The step-10 branch is confirmed on 14 hits (#185): the fixed-point value matches, the truncated one does not (see step 10).
 
 **Accuracy and evasion**
 
