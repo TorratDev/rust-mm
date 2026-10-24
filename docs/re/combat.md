@@ -203,13 +203,13 @@ Targeting is read from the move in three parts. Static, P4a to P4f.
 | `0x10` | 8 neighbours; all accepted | `FRONTAL_CONE` |
 | `0x20` | 8 neighbours; all accepted | `AROUND` |
 | `0x30` | 20 entity slots (`+0x11364`), with the relation from `FUN_02141C08` | `ROOM` |
-| `0x40` | 8 directions at distance 2 | `2_TILES_AHEAD` |
+| `0x40` | 8 offsets at twice the distance, with the direction gate (`FUN_02180FFC`) | `2_TILES_AHEAD` |
 | `0x50` | A line, distance 10 (`FUN_02192618`) | `LINE` |
-| `0x60` | All 20 slots | `FLOOR` |
+| `0x60` | All 20 valid slots | `FLOOR` |
 | `0x70` | The user only | `SELF` |
-| `0x80` | Cut corners, distance 1 | `CUT_CORNERS` |
+| `0x80` | Cut corners, distance 1 (`FUN_02192618`, limit 1) | `CUT_CORNERS` |
 
-The difference between `0x10` and `0x20` is not known, since both accept every neighbour. The helpers `FUN_02180FFC`, `FUN_02192618`, `FUN_02191E70` and `FUN_02141C08` were not decompiled, so the area rules are not ported yet.
+The difference between `0x10` and `0x20` is not known: both take the same path in the helpers (no direction gate). The candidate rule and the helpers are in [candidate selection](#candidate-selection-p1-186).
 
 - **AI condition** (`0xF00` bits, read in `FUN_02192274`). They match Red's `AI_CONDITION_*` values:
   - `0x100`: random. The chance is accuracy byte 2 (`FUN_0200B3C4(move, 2)`) against `DungeonRandInt(100)`. The field name in Red is not confirmed.
@@ -220,9 +220,50 @@ The difference between `0x10` and `0x20` is not known, since both accept every n
   - `0x600`: ghost target (type `0x0E`) with `+0xD2 == 0`.
   - The condition is checked only when the attacker has the Status Checker IQ skill (IQ bit 8, through `IqSkillIsEnabled`). Without it, only `0x100` applies.
 
+### Candidate selection (P1, #186)
+
+Investigator A's findings for the area classes. Tag: **blue-verified** (decompile of `ov_0001::02192728`, `ov_0001::02192508` and the helpers below, Ghidra copy `rescue-arm9-a`).
+
+- **Class.** `uVar10 = FUN_02191A30(user, move, 1)` (that is `FUN_0200B4EC(move, 1)`, or `0x73` for move `0xED` when the user is not type `0x0E`). The class is `uVar10 & 0xF0`. `FUN_0200B4EC` was not decompiled, so where the class bits come from is not verified.
+- **Eight adjacent tiles.** Classes `0x00`, `0x10` and `0x20` use the 8 adjacent tiles, each needing a type-1 entity. The condition is `uVar18 == 0x10 || uVar18 == 0x20 || gate`, so `0x10` and `0x20` need no direction gate. `0x00` uses the gate `FUN_02180FFC(user, dir)`.
+- **Other classes.** `0x30`: 20 slots at `gDungeon + 0x11364`, kept when `FUN_02141C08(user, e) != 0`. `0x40`: 8 offsets at twice the distance, with the direction gate. `0x50` and `0x80`: all 20 slots; `FUN_02192618(user, target, limit)` keeps targets within Chebyshev distance `limit` (10 for `0x50`, 1 for `0x80`) and a direction; then `FUN_02191E70` checks the path. `0x60`: all 20 valid slots. `0x70`: the user only.
+- **Single candidate.** If `user.info + 0xC9 == 1`, there is one candidate: the tile in the user's facing direction (`info + 0x44`), with no entity (pointer 0) and weight 99. This applies only for classes `0x00`, `0x10` and `0x20`, because the `info+0xC9 == 1` check sits inside that branch of `ov_0001::02192728`.
+- **Choice.** Candidates are picked by a weighted `DungeonRandInt(sum of weights)`. The weights come from `FUN_021921B0`.
+- **Target filter.** `FUN_02192274(flags, user, target, ...)`: the low nibble of `flags` is a relation filter (`0`: `FUN_02180994 == 1`; `1`: `== 0`; `2` and `5`: refuse when the target's `info+8` or `info+0x98` is set; `6`: not self and `== 0`; `3` and `4`: always pass). The `0xF00` nibble adds the AI checks listed above (`0x100` through `0x600`, using `FUN_0200B3C4`, `FUN_021818A4`, `FUN_02181904`, `FUN_021818D0` and a type check on `info +0x56`/`+0x57` against `0x0E`).
+- **Direction.** `FUN_02192508(count, flags, user, target, ...)`: the direction is `info+0x44` when user and target share a tile, or when the class is `0x30`, `0x60` or `0x70`. Otherwise it is `FUN_0201187C(user, target)`. It adds a candidate when `FUN_02192274` passes and the slot is empty.
+
+**Confidence:** high for the branch table. Medium for the names given to `info+0xC9` (player control, from its use as a gate in `FUN_02141C08`), to the `0x30` slot list, and to the `0x0E` type check.
+
+**Not verified**
+
+- `FUN_0200B4EC` (the class bits source).
+- Whether the classes `0x10` and `0x20` differ anywhere outside these two helpers (callers were not checked).
+- The meaning of `info+0xC9`.
+- Runtime behaviour: no trace.
+
 ## Move effects
 
 The move-effect dispatch is `ov_0001::02156824`. It switches on the move ID at `move+2` and calls one handler per case. The full catalogue of 413 IDs and 262 handler addresses is in [`move-effects.md`](move-effects.md). Handler names there are Red names, mapped by move ID, and are hypotheses until each handler is read.
+
+### Dispatch shape and hit/miss branch (P2, #186)
+
+Investigator A's findings. Tag: **blue-verified** (decompile of `ov_0001::02156824`, Ghidra copy `rescue-arm9-a`). Confidence: **medium**. The structure is high confidence; the meanings of the fields named below are not.
+
+- `FUN_02156824(param_1 = entity list, param_2 = user, param_3 = move, param_4, param_5)` loops over up to `0x40` target slots. Its only `switch` is `switch(uVar17)`, where `uVar17` is the move ID (the `u16` at `move + 2`). It has 413 case labels and the default label `switchD_ov_0001__02157544_default`. Several cases are `goto switchD_..._default`. Those gotos are the only other occurrences of the switch label, so the "8 other switches" may be those.
+- Each case sets `local_114`, the per-target result. The case callees take `(user, target, move, param_4)`. Most return a bool. The case for `CalcDamage` (`FUN_0215675C`) calls `CalcDamage` directly.
+- There is no accuracy roll in the dispatch. Rolls are inside the case callees, through the wrappers in [`move-effects.md`](move-effects.md#roll-wrapper-per-move-id-p3-186).
+- Earlier in the loop, `info + 0x12A` is set to 1 for the target, and `info + 0xD8` is set to 1 or 2 depending on `param_5`.
+- After the switch:
+  - **Miss** (`local_114 == 0`): if the user and target are both valid and `target.info + 6 != 0` (not a team member), the saved value `cVar1` is written back to `target.info + 0xD8`.
+  - **Hit**: if `FUN_0215A344(move) != 0` and `FUN_02159F10(user, 0) != 0`, it sets `*DAT_02159AE4 = 1`. `FUN_02159F10(user, 0)` returns true whenever the user is valid, so it is a validity check.
+
+**Not verified**
+
+- The meaning of `DAT_02159AE4`, `info+0xD8`, `info+0x12A`.
+- What `FUN_0215A344` checks.
+- Whether the "8 other switches" in the issue are the `goto switchD_..._default` jumps or something else.
+- Which case callees return a miss (only the flag shape was read, not each callee).
+- Runtime behaviour: no trace.
 
 ## Defeat and experience
 
