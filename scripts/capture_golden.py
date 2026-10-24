@@ -184,7 +184,7 @@ def record(args, sha1):
             out.write(dumps(row) + "\n")
 
     check_with_crate(args.out, sha1, len(rows))
-    print(f"{len(rows)} rows, sha256 {file_sha1(args.out)}", file=sys.stderr)
+    print(f"{len(rows)} rows, sha1 {file_sha1(args.out)}", file=sys.stderr)
     emu.destroy()  # libdesmume ends the process here, so it comes last
 
 
