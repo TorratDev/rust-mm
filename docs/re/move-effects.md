@@ -8,7 +8,36 @@ Issue: [#50](https://github.com/TorratDev/rust-mm/issues/50). Part of the combat
 - Callers: `ov_0001::0215B384` (move executor) and `ov_0001::0215AB34`.
 - The switch has 413 case IDs. The other 406 IDs go to one of 262 handler addresses, and seven IDs have no handler. Handler bodies are not catalogued here.
 - Runtime (py-desmume, run by investigator C on the dump with SHA-1 `6f01887356268de39085df01490347bbcc3aa330`; 3,000 frames after the dungeon starts): the entry fired 68 times, with move IDs `0x09A`, `0x0D9`, `0x104` and `0x163`. That is the only runtime evidence here. The other IDs are static.
-- Not verified: the miss path (Red's `dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick), the other 8 `switch` statements inside `02156824`, and the handler bodies. `HandleDamagingMove` (`ov_0001::0215675C`) is the handler for 60 IDs in the catalogue below.
+- Not verified: the miss path (Red's `dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick), whether the "8 other switches" in the issue are the `goto switchD_..._default` jumps or something else, and the handler bodies. The hit/miss shape is in [`combat.md`](combat.md#dispatch-shape-and-hitmiss-branch-p2-186). `HandleDamagingMove` (`ov_0001::0215675C`) is the handler for 60 IDs in the catalogue below.
+
+## Roll wrapper per move ID (P3, #186)
+
+Investigator A's findings. Tag: **blue-verified** (decompile and x-ref). Confidence: **high** for the wrapper semantics, **medium-high** for the move mapping (direct callers and one call level only).
+
+- `DungeonRandOutcome` (`ov_0001::0219CFCC`) returns `DungeonRandInt(100) < percentChance`. `DungeonRandOutcome_2` (`ov_0001::0219CFF0`) is the same code.
+- `FUN_02159F10(entity, chance)`: returns false if the entity is invalid. `chance == 0` returns true (guaranteed). Otherwise it rolls `chance`, or `chance << 1` when the entity has ability `&` (the findings name it only as `&`).
+- `FUN_02159F6C(user, target, chance)`: returns false if the floor is over, if either entity is invalid, if the target's `info + 0x12A` is 0, or if the target's HP (`info + 0xE`) is 0. `chance == 0` returns true; otherwise it rolls as `FUN_02159F10` does. If the roll succeeds, the target is not the user and the target has ability `L` (named only as `L` in the findings), it calls `FUN_0213EB00(target)` and returns false.
+- **Callers.** `FUN_02159F10` has 15 call sites and `FUN_02159F6C` has 35. Together they have 62 distinct caller functions, including the dispatch `FUN_02156824` (see [P2](combat.md#dispatch-shape-and-hitmiss-branch-p2-186)).
+- **Callers of `DungeonRandOutcome_2`.** `FUN_02192D24` (1 site) is AI code: it reads `info+0xAC` and `IsTacticSet`. The other callers are `FUN_0218579C` (2 sites), `FUN_02185568` (2), and two more via `FUN_02188030` and `FUN_02180048`. They were not decompiled, so their code is not recorded.
+- **Move mapping.** 63 move IDs (case values in `ov_0001::02156824`) reach a roll wrapper through one call level. The move ID is the case value, since the repo has no move-name table. Examples:
+
+  | Move ID | Callee | Wrapper |
+  |---------|--------|---------|
+  | `0x10` | `FUN_0215DD2C` | `FUN_02159F6C` |
+  | `0x19` | `FUN_0215D8A8` | `FUN_02159F6C` |
+  | `0x2C` | `FUN_0215D3CC` | not recorded |
+  | `0x67` | `FUN_0215FC90` | not recorded |
+  | `0x1` | `FUN_0215E160` | not recorded |
+
+  The full map is in the #186 scratch folder (not in the repo). It has one false match, the case `0x19C` entry, caused by a trailing name in the decompile's JSON output. That entry is excluded from the count of 63.
+
+**Not verified**
+
+- Calls two or more levels below a case callee are not counted.
+- The move names for the IDs (no table in the repo).
+- Whether each case's callee uses the roll for accuracy, for the secondary effect, or for something else.
+- `FUN_0218579C`, `FUN_02185568` and `FUN_02188030` were not decompiled.
+- Runtime values of the chances: no trace. A `register_exec` hook on `FUN_02159F10` and `FUN_02159F6C` could confirm them.
 
 ## Catalogue
 
