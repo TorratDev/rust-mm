@@ -93,7 +93,7 @@ Byte-for-byte equality of two files needs one writer. The rows are equal as pars
 
 - The format is written and the reader is in `crates/trace`. `scripts/capture_golden.py` writes the complete trace: header, rows, and a read-back check with the crate (see [`scripts/README.md`](../scripts/README.md)). `retail_trace.py` still writes rows only, as it did in V7; its rows are the ones the capture script reuses.
 - `inventory` is out of v1.
-- `initialSeed` is read by `capture_golden.py`, from `027FFCF4` at frame 16 of the power-on run, before any input. `retail_trace.py` does not read it.
+- `initialSeed` is read by `capture_golden.py`, from `027FFCF4` in the power-on run, at the first frame where it is set (frame 15 in the retail run), before any input. `retail_trace.py` does not read it.
 - The field widths for `type` and `speedStage` follow `retail_trace.py`; they are not confirmed against the struct layout.
 
 ## Not dumped

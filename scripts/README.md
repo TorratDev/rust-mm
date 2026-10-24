@@ -6,7 +6,7 @@ Records a golden trace from your own retail dump, in the format of [`docs/golden
 
 ### Windows setup
 
-1. Python 3.12 (3.11 and later should also work; the scripts were run on 3.12).
+1. Python 3.12 (the version the scripts were run on).
 2. Install the emulator bindings: `py -m pip install py-desmume==0.0.9`.
 3. Rust, with the toolchain in [`rust-toolchain.toml`](../rust-toolchain.toml). The read-back builds `trace_check` the first time it runs.
 4. Your dump, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (see [`docs/supported-dumps.md`](../docs/supported-dumps.md)). Keep it outside the repository, or in the git-ignored `roms/` folder.
