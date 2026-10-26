@@ -86,12 +86,12 @@ Red's copies of the second-screen calls pair up as (#4, #5), (#10, #12), (#11, #
 
 ## RNG per frame
 
-Measured on the retail ROM (see [`verification.md`](../verification.md#p5--per-frame-rng-advance-44)): the global LCG (`sPRNGState`, `020DF704`) advances **4 steps per emulated frame** in the measured phase, with no button held. One run, medium confidence; not yet repeated (see [`verification.md`](../verification.md#p5--per-frame-rng-advance-44)). 117 of 122 frame intervals show exactly 4 steps. The others show 2, 8, 36 and 56. The state chain checks out with 0 mismatches. The frame routine `MainLoops_RunFrameActions` fires once per frame from emulated frame 2418 on.
+Measured on the retail ROM (see [#159 in `rng.md`](rng.md#per-frame-steps-159)): the global LCG advances **4 steps per emulated frame** in the measured phase, with no button held. The boot-only probe and the dungeon-windows probe each ran twice with identical output. Of the 121 intervals between consecutive frame-routine hits (frames 2418 to 2561, boot run), 116 are one frame apart with 4 steps. The others are 2 steps (frames 2531 to 2533), 8 steps (2472 to 2474), 40 steps (2448 to 2458) and 52 steps (2459 to 2472). The frame routine `MainLoops_RunFrameActions` fires once per frame in that range.
 
-- The sprite routine `FUN_02012648` made no calls in any interval, so it is not the source. It does call `Rand32Bit` at `020126F8`.
-- The caller of the 4 steps is not identified. The next candidates are the callers of `Rand32Bit` (`0201198C`) on the frame path.
-- The 2-step intervals may be hook artifacts from a double hit at frame 2419. Not resolved.
-- A and Select: 7 A-held intervals gave 2, 4, 8 and 56 steps, too few and too mixed to show an effect. No frame-routine hits after emulated frame 2508, so Select has no data.
+- The sprite routine `FUN_02012648` calls `Rand32Bit` at `020126F8`. It is one of the other callers in the 42 four-step frames with the flag clear (see [#159](rng.md#per-frame-steps-159)).
+- `FUN_02018ACC` runs once per frame and makes 4 steps when its flag test passes, and 2 when it fails (#159 P2). The callback slot that calls it is not identified.
+- The 2-step intervals are real frames where the flag test fails, not a hook artifact of the double hit at frame 2419 (#159 P3). Frames 2532 and 2533 advanced 2 steps, with only the unconditional call.
+- A and Select: the A-held and Select-held windows were run in the dungeon, where the frame routine does not run. A held changes the step count through the flag test, and its 2-step frames appear only in that window. Select gave no 2-step frames in one run, and its effect on the step count is not established. A and Select on the frame routine need a boot-phase run (frames 2418 to 2561).
 - Red's `WaitForNextFrameAndAdvanceRNG` advances the global RNG once per frame, and once more while A or Select is held.
 
 **History.** The earlier static note in this section said that no call path from `MainLoops_RunFrameActions` reaches the global RNG within four call levels, and therefore that Blue probably does not advance the RNG per frame. The emulator result above contradicts that. The static search did not follow calls through function pointers, so the path it missed may go through one (not checked).
@@ -121,7 +121,7 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 - The IRQ handler and its vector: not located (see [Frame wait and interrupts](#frame-wait-and-interrupts)).
 - The entry of the boot routine, before `02000C84`.
 - The caller of the 4 RNG steps per frame, and the A and Select effect (Select has no data after emulated frame 2508).
-- Whether the 2-step frame intervals are real or a hook artifact of the double hit at frame 2419.
+- The caller slot of `FUN_02018ACC` and the writer of its flag word (see [#159](rng.md#per-frame-steps-159)).
 - What overlay 7's screen is. Its team-name strings suggest a team screen, but nothing links them to the title menu.
 - The meaning of scene-runner phases 0–8 and of the variable `0x19` values.
 - Which bank each ground scene uses.
