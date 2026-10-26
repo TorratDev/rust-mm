@@ -21,7 +21,7 @@ Same size as Red, 0x74 bytes, and the same offsets wherever checked; Red's `Enti
 
 Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes are missing before the types, in the status block, around the speed counters and before the belly. The **Shift** column is Blue offset minus Red offset.
 
-**Size: not found.** The array or allocation that holds the infos is not located. The shift table bounds Blue's size to 0x1C8 ≤ size ≤ 0x208 (blue-verified). A value of 0x1D4 is a *red-hypothesis* candidate and is not recorded here. Measure the infos' pointer stride in the emulator ([#17](https://github.com/TorratDev/rust-mm/issues/17)).
+**Size: 0x1D4 (468 bytes), measured in the emulator (#163 P1; blue-verified, runtime).** In a dungeon at its start, the team and wild info pointers (`entity+0x70`) are all multiples of `0x1D4` from base `0x02113FB0`: the five occupied sampled slots are at offsets 0, `0x1D4`, `0x750`, `0x924` and `0x0AF0`, and team members 2 and 3 are empty. Ten slots (k = 0 to 9) were checked as `base + k*0x1D4`: each holds a plausible record (species at `+0x2`, level at `+0x9`, HP at `+0xE`, max HP at `+0x10`), and empty slots are zero. Two runs gave byte-identical output. The stride is the only value in the shift table's bound (`0x1C8` to `0x208`, blue-verified) that divides the measured offsets. Red's size is `0x208`, which was not re-measured. **Not verified:** the allocator or array base (which code allocates the array, and whether `0x02113FB0` is its start); whether every record fills all `0x1D4` bytes (only the fields above were checked); other floors and species, and the slot count (slots 0 to 39 were read, only 0 to 6 were occupied); the rule that a record size equals the array stride in general (it rests on the array being a plain array).
 
 | Blue | Red field | Red | Shift | Evidence |
 |------|-----------|-----|-------|----------|
@@ -231,7 +231,7 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 
 ## Open questions
 
-- **Entity info size.** Not found. The bound is 0x1C8 ≤ size ≤ 0x208 (blue-verified). Measure the infos' pointer stride in the emulator ([#17](https://github.com/TorratDev/rust-mm/issues/17)). Do not record 0x1D4 until then.
+- **Entity info size.** `0x1D4` (468), measured in the emulator (#163 P1, runtime). Method: `info = base + k*0x1D4` for the team and wild entries of a dungeon at its start. The allocator and the per-record field check are not verified (see the size note above).
 - **IQ bits at info `+0x87`.** `IqSkillIsEnabled` tests them. Check whether this field is part of the info struct and how it relates to the Red `IQ` field at `0x0C`.
 - **`IQ` at info `+0x0C`** (Red `0x0C`). Red's readers are known (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`), but no Blue function that reads `+0x0C` is matched. Find Blue's `GetMovesLearnedAtLevel` caller and check the offset of its IQ argument.
 - **`aiTarget` inner layout** beyond `aiTargetPos`: `aiObjective` `+0x70`, `aiTargetingEnemy` `+0x72`, `aiTurningAround` `+0x73`, `aiTargetSpawnGenID` `+0x74`, `aiTarget` `+0x78` follow the −8 shift but are unchecked.

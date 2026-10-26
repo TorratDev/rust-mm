@@ -70,19 +70,19 @@ Every wait loop calls `MainLoops_RunFrameActions(0)` (`0201F268`) once per frame
 | 6 | `FUN_02016320` | `ToggleWindowBgBuffer` | toggles flags; order only |
 | 7 | `FUN_02029bbc` | `UpdateSoundEffectCounters` | decrements three counters while above 0 |
 | 8 | `FUN_02019794` | frame wait | calls `FUN_02075954(1, 1)` (above); no RNG call |
-| 9 | `FUN_02017e60` | `LoadBufferedInputs` | order only; low confidence |
+| 9 | `FUN_02017e60` | `LoadBufferedInputs` (recorded name, red-hypothesis) | copies the buffered input and clears four fields (Red's steps); the touch decode is Blue-only |
 | 10 | `FUN_02012b34` | `CopySpritesToOam` | linked list to OAM |
 | 11 | `FUN_02012998` | `sub_8005304` | loop calling `FUN_01ff9fb0` / `FUN_01ff9fc4` |
 | 12 | `FUN_02019adc` | Blue extra | copy of #10 (verified duplicate) |
 | 13 | `FUN_02019a08` | Blue extra | copy of #11, identical body (verified duplicate) |
 | 14 | `TransferBGPaletteBuffer` | `TransferBGPaletteBuffer` | already named; copies changed 16-colour palette rows to palette RAM |
-| 15 | `FUN_01ff86b8` | `xxx_call_update_bg_vram` | order only; low confidence |
+| 15 | `FUN_01ff86b8` | `xxx_call_update_bg_vram` (recorded name, medium) | flushes scheduled copies to VRAM-side buffers, gated by the flag at `+0x45` |
 | 16 | `FUN_0201a974` | `DoScheduledMemCopies` | loops over 12-byte entries calling `FUN_01ff9fc4` |
-| 17 | `FUN_02019268` | `xxx_call_update_bg_sound_input` | writes registers with masks; low confidence |
+| 17 | `FUN_02019268` | `FlushDisplayState` (recorded name; Red's `xxx_call_update_bg_sound_input` is not supported) | writes the display registers (see [`io.md`](io.md#per-frame-flush)) |
 | 18 | `FUN_02013078(0)` | `ResetSprites` | clears a count, OAM base `06400000`, loops over sprite entries |
 | 19 | `FUN_02019f40(0)` | Blue extra | same shape as #18 with OAM base `06600000` (second screen); verified duplicate |
 
-Red's copies of the second-screen calls pair up as (#4, #5), (#10, #12), (#11, #13) and (#18, #19). The names of #1, #2, #3, #4, #6, #7, #10, #11, #16 and #18 are in [`symbols.md`](../symbols.md). The low-confidence ones (#9, #15, #17) stay as their `FUN_` names.
+Red's copies of the second-screen calls pair up as (#4, #5), (#10, #12), (#11, #13) and (#18, #19). The names of #1, #2, #3, #4, #6, #7, #10, #11, #16 and #18 are in [`symbols.md`](../symbols.md). #9, #15 and #17 are named in [#161 P4](#frame-action-names-161-p4); the names are recorded there, and the table above keeps the `FUN_` names.
 
 ## RNG per frame
 
@@ -101,9 +101,81 @@ Measured on the retail ROM (see [#159 in `rng.md`](rng.md#per-frame-steps-159)):
 `RunGameMode_Async` (`0201E3C8`) is called by `GameLoop_Async` (callers at `0201F7A4`, `0201F7B4`, `0201F7C4` and `0201F7DC`) with four modes. Blue's `GameLoop_Async` `switch` (per decompile) reads them as follows. Mode 0 is a new game, mode 1 a continue, mode 2 a continue after deleting the first type-7 mail, mode 3 title choice 4. Case 5 calls `RunOverlay7Mode`.
 
 - **How the mode is used.** The mode is read only when variable `0x19` (read with `FUN_02020F74(0, 0x19)`) equals 7. Mode 2 then sets state 8. Mode 3 sets state `0xB`, writes `0xB` back to variable `0x19`, and calls `FUN_0200E3FC` and `FUN_0201ED4C(3)`. Otherwise a variable value of 0 or `0xB` is kept, and any other value becomes state 1. Modes 0 and 1 are equivalent on this path. The meaning of the variable's values is inferred.
-- **Scene runner `FUN_0206F7EC`** (ARM9-resident, `0206F7EC`) takes a scene id and stores it at `DAT_02070334`. Its phase (`DAT_0207035C`) takes values 0–8 and returns codes 5–10 (habitat, dungeon, rescue scenario, random, user, training) or `0xE`, `0xF` and `0x10` (exit, demo end). The phase names come from debug strings. The runner calls overlay-0 functions, so overlay 0 must be resident while it runs. It is reached by a computed jump through `thunk_FUN_0201DCAC`; the callers are `GameLoop_Async` and `RunGameMode_Async` (per decompile; the x-ref tool did not list them). Check that overlay 0 is loaded for scene ids 0–C.
-- **Scene transition.** State `0xC` of `RunGameMode_Async` calls `FUN_0201DE24`, which calls `RandInt(100)` 20 times. So the transition consumes global RNG (decompile; the RNG source is inferred from the name `RandInt`).
-- **Ground banks.** `GroundStation_SetBank` (`ov_0000::0214FC50`) loads or unloads `gGroundBankTable[bank]` through `GroundStation_LoadBank` (`ov_0000::0214FD00`). Its sole caller is `FUN_ov_0000__0214D510` (`ov_0000::0214D510`), which is called from `ov_0000::0214D420`, `ov_0000::021421CC` and a computed jump at `ov_0000::0214D4FC`. The table was read in Ghidra: 246 entries, overlay ids 10–144. No dump is committed. Which bank each ground scene uses is not mapped.
+- **Scene runner `FUN_0206F7EC`** (ARM9-resident, `0206F7EC`) takes a scene id and stores it at `DAT_02070334`. Its phase (`DAT_0207035C`) takes values 0–8 and returns codes 5–10 (habitat, dungeon, rescue scenario, random, user, training) or `0xE`, `0xF` and `0x10` (exit, demo end). The phase names and the variable values are in [Scene runner states](#scene-runner-states-161-p1). The runner calls overlay-0 functions, so overlay 0 must be resident while it runs. It is reached by a computed jump through `thunk_FUN_0201DCAC`; the callers are `GameLoop_Async` and `RunGameMode_Async` (per decompile; the x-ref tool did not list them). Check that overlay 0 is loaded for scene ids 0–C.
+- **Item and money loss (renamed; not a transition, #161 P2).** State `0xC` of `RunGameMode_Async` (`0201E6F4`) calls `FUN_0201DE24`, which does three things. (1) For each of the 20 team inventory slots, if `RandInt(100) < 50`, it zeroes the 3-byte item (`gTeamInventoryRef`, `0x020DECF8`). (2) `FUN_02007B68` moves the non-empty items to the front and zeroes the rest. (3) For each roster record (`0x40` bytes, `0x020DF484`, count 413): if `flags & 1` and `flags & 2`, it clears the byte at `+0x1C` (the held item's id); then `teamMoney` (`+0x234`) is set to 0. Proposed name: `RemoveMoneyAndRandomItems` (Red's name, applied to Blue; red-hypothesis). `FUN_02007B68` is `FillInventoryGaps` by behaviour. The three steps and their order match Red's `RemoveMoneyAndRandomItems` (`src/main_loops.c` 1041–1059). **Tag:** blue-verified (structure, offsets, call site); red-hypothesis for the name and the mode mapping. **Not verified:** which game event reaches state `0xC` in Blue (the mode mapping; Red's `STARTMODE_DUNGEON_LOST` value was not found); whether roster flag bits 1 and 2 are "exists" and "on team" in Blue; the roster `+0x1C` width (only the low byte, the id, is cleared, while Red clears the whole `heldItem.id`).
+- **Ground banks.** `GroundStation_SetBank` (`ov_0000::0214FC50`) loads or unloads `gGroundBankTable[bank]` through `GroundStation_LoadBank` (`ov_0000::0214FD00`). Its sole caller is `FUN_ov_0000__0214D510` (`ov_0000::0214D510`), which is called from `ov_0000::0214D420`, `ov_0000::021421CC` and a computed jump at `ov_0000::0214D4FC`. The table was read in Ghidra: 246 entries, overlay ids 10–144. No dump is committed. The chain from a scene to a bank is in [Ground chain](#ground-chain-and-overlay-0-160). Which bank each ground scene uses is not mapped; the scene table stays out until the maintainer approves it.
+
+### Scene runner states (#161 P1)
+
+Investigator B's findings. Tag: **blue-verified** (code and debug strings read from the Ghidra copy). Confidence: high for the state to string to return mapping and for the variable `0x19` writes; medium for the meaning of the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (their readers are not traced).
+
+The scene runner is `FUN_0206F7EC`. Its state is `DAT_0207035C` (`0x02133CE0`). Its final `switch` has cases 0 to 8, and each case prints a debug string and returns a code.
+
+| State | Debug string | Return code | Scene variables written |
+|-------|--------------|-------------|-------------------------|
+| 0 (also 1, 2 and default) | `GAME END` | `0xE` | `0x19 = 1`, then `FUN_02029B60(0x10)` |
+| 3 | `select HABITAT` | 5 | `0x14 = -1`, `0x15 = -1`, `0x19 = 4`, `0x17 = 4`, `0x10 = var 0xE` |
+| 4 | `select DUNGEON` | 6 | `0x14 = 0` then `-1`, `0x19 = 5`, `0x17 = 5` |
+| 5 | `enter RESCUE SCENARIO %d %d` (plus `name %s` and `%s`) | 7 | `0x14 = id`, `0x15 = FUN_02070854(id)`, `FUN_020208E8(0, 0x32, id, 1)`, `0x19 = 7`, `0x17 = 7` |
+| 6 | `enter RESCUE RANDOM %d` | 8 | `0x14 = 0x51`, `0x15 = id`, `0x19 = 7`, `0x17 = 7`, `0x12` reset to 0 when it is 10 |
+| 7 | `enter RESCUE USER %d` | 9 | `0x14 = 0x50`, `0x15 = *PTR_DAT_020703A8`, `0x19 = 7`, `0x17 = 7` |
+| 8 | `enter TRAINING %d` | 10 | `0x14 = 0x52`, `0x15 = id`, `0x19 = 7`, `0x17 = 7` |
+
+- The demo flag `DAT_02070338` (`0x02133CD0`) changes the exit: state 9 or 10 with the flag set returns `0x10` (`DEMO CANCEL`), and otherwise `0xF` (`DEMO END`).
+- The scene id is stored at `*DAT_02070334` (`0x02133CEC`).
+- **Variable `0x19`.** `1` is the exit (`GAME END`), with inner phase `0xD`. `4` is habitat, `5` dungeon, and `7` the rescue scenario, random, user and training, which is the value `GameLoop_Async` reads and compares with 7 in `RunGameMode_Async`. During states 1 and 2, `0x19` is set to the inner phase value (`FUN_02020B48(0, 0x19, *piVar2)`), so it takes more values there than 1, 4, 5 and 7. `RunGameMode_Async` writes `0xB` (mode 3, above).
+
+**Not verified**
+
+- The inner phases `0x0` to `0x11` of states 1 and 2 (the second `switch` on `DAT_02070358`, `0x02133CF0`). They load the scene and are not named here.
+- Scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` are not traced.
+- Whether ground mode reads variable `0x19` beyond `RunGameMode_Async`.
+
+### Ground chain and overlay 0 (#160)
+
+Investigator A's findings. The scene table is not in this file: the maintainer decides whether a derived bank table may be committed. Tag: **blue-verified** (decompile and xrefs, in overlay 0 unless stated).
+
+| Routine | Role |
+|---------|------|
+| `FUN_0214D510(out, bank, group, sector)` | Loads a ground bank, then reads group, sector and script from the bank data. It calls `GroundStation_SetBank(bank)` first. |
+| `GroundStation_SetBank(bank)` `0214FC50` | If `bank` differs from the current bank, calls `GroundStation_LoadBank` (or `UnloadBank` for a negative bank). Returns 1 if the bank changed. |
+| `GroundStation_LoadBank(bank)` `0214FD00` | Unloads, then reads `gGroundBankTable[bank * 8]` (`PTR_gGroundBankTable`), `FS_LoadOverlayInfo`, `FS_LoadOverlayImageAsync` and `FS_StartOverlay`. |
+| `FUN_0214D420(bank, group, sector, flag)` | Calls `FUN_0214D510` with `bank` as the first argument, then `FUN_02147C48`. Its one caller is `FUN_021421CC` at `0x02143268`. |
+| `FUN_0214D3A0(param)` | Calls the thunk `FUN_0214D4FC`, then `FUN_02147C48`. Called from `FUN_021421CC` case `0xEC`. |
+| `FUN_0214D4FC` | Thunk: calls through the pointer at `PTR_FUN_0214D510` (`0x0214D50C`). Ghidra did not recover the jump table. |
+| `FUN_0214D1F0(v)` | Returns `3` for `v` 3 or 4, and `v` otherwise. |
+| `FUN_021421CC(param)` | The script and command processor. It holds the calls to `FUN_0214D420` (`0x02143268`) and `FUN_0214D510` (`0x02146064`). |
+
+**Bank argument at each call site.**
+
+1. Map command `case 0xEC`: the map value from `FUN_02020F74` goes through `FUN_0214D1F0`, is stored at `*psVar1`, and is passed to `FUN_0214D3A0`.
+2. Ground command path (around lines 642 to 657): `local_2d4 = FUN_0214D1F0(...)` of the map value (or of the default at `DAT_02143158` when `local_b4 == 0xFFFFFFFF`). It is passed to `FUN_0214D420`, and `*psVar1` is set to it if it changed.
+3. Group-sector command (line 2185): `FUN_0214D510(local_58, *psVar1, group, sector)`, which uses the current bank set by cases 1 and 2.
+
+`psVar1` is `DAT_02143130`, a pointer to the current bank short.
+
+**Mapping rule (from the code, not a table).** The bank index is the map value, except that map values 3 and 4 both give bank 3. The index then selects `gGroundBankTable[bank * 8]` in `GroundStation_LoadBank`.
+
+**Overlay 0 and the bank overlays (#160 P2, blue-verified for the address ranges).** Overlay 0 is at `0x02138860` with size 150016 (`0x24A00`). Its BSS is at `0x0215D260` with size 1216, so overlay 0 with its BSS ends at `0x0215D720`. The ground banks (overlays 10 to 144) load at `0x0215D720`, where overlay 0 ends. So a bank does not overwrite overlay 0's code or BSS. The ground code (`FUN_021421CC`, `FUN_0214D510`, `FUN_0214D420`, `FUN_0214D3A0`, `FUN_0214D4FC`, `FUN_0214D1F0`, `GroundStation_SetBank` and `GroundStation_LoadBank`) is in overlay 0 and keeps running while a bank is loaded. Overlays 1 and 7 share the address `0x02138860` with overlay 0, so loading either one replaces it.
+
+**Not verified**
+
+- The meaning of `FUN_02020F74` and of the default at `DAT_02143158` (a read of these gives the map value for each command).
+- The list of ground scenes 0 to C and the bank for each. This needs `gGroundBankTable` as a derived table, which the maintainer must approve before it is written down.
+- The jump table behind `FUN_0214D4FC` (not recovered at `0x0214D508`). It may also map scenes to banks.
+- Whether the `case 0xEC` and command paths are the only ways `*psVar1` changes (`FUN_02147B48` and other writers were not checked).
+- Which code starts overlay 0 for scene ids 0 to C. Its callers were not searched, so the residency of overlay 0 for those scenes is not verified.
+- Whether any path loads overlay 1 or 7 during the ground scenes.
+- The bank overlays' own BSS and static initialisers, against the overlay 0 BSS range.
+
+### Frame action names (#161 P4)
+
+Investigator B's findings. Tags: **blue-verified** (structure and register addresses); names are **red-hypothesis**, and the names here are recorded, not applied to `symbols.md`.
+
+- **#9 `FUN_02017E60`: `LoadBufferedInputs`** (Red's name; the first half matches Red's). It copies the 16-byte buffered input at `DAT_02018194` to the real input struct at `DAT_020181A0`, clears four `u16` fields (`+0`, `+2`, `+4`, `+6`, the same four Red clears), and resets an unused struct. Blue adds a touch decode (`FUN_0207CE64` or `FUN_0207CDE4`, chosen by `DAT_0201819C`) and a state machine on its result (a `switch` on `DAT_02018198+0x10`). Red's source notes that this place is different in Blue. Confidence: medium-high for the copy and clear; medium for the touch part (not traced).
+- **#15 `FUN_01FF86B8`: `xxx_call_update_bg_vram`** (name supported, medium). It is flag-gated. It copies two blocks of 32 × 2 of `0x40` bytes (`FUN_0201A8FC`, `FUN_0201A884`), then calls `FUN_01FF8574` on two lists of `0x48`-byte records (count at `+4`, source and size at `+0x30`, `+0x34` and `+0x38`). If the flag at `+0x45` is set, it copies `0xD00` bytes through `FUN_01FF9FC4`. This is a flush of scheduled copies, which fits "update BG VRAM". **Not verified:** `FUN_01FF8574`'s destination memory.
+- **#17 `FUN_02019268`: `FlushDisplayState`** (the name in [`io.md`](io.md#per-frame-flush)). The register writes are in `io.md`. Red's name `xxx_call_update_bg_sound_input` is not supported: nothing in the function touches sound. Confidence: high for the register writes; the name is recorded.
+- **Not verified (#161 P4):** `FUN_02075938` (the second-screen window or sprite call), not traced; `FUN_01FF8574`'s destination memory (#15); the touch-decode function behind `FUN_0207CE64` and `FUN_0207CDE4` (#9).
 
 ## Into a dungeon and back
 
@@ -122,9 +194,9 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 - The entry of the boot routine, before `02000C84`.
 - The caller of the 4 RNG steps per frame, and the A and Select effect (Select has no data after emulated frame 2508).
 - The caller slot of `FUN_02018ACC` and the writer of its flag word (see [#159](rng.md#per-frame-steps-159)).
-- What overlay 7's screen is. Its team-name strings suggest a team screen, but nothing links them to the title menu.
+- What overlay 7's screen is. Not obtained (#161 P3): the fresh-boot title menu shows New Game and Adventure Log only, and choice 5 is not offered in that boot. It is probably offered only with a save, which was not tested. Its team-name strings suggest a team screen, but nothing links them to the title menu.
 - The meaning of scene-runner phases 0–8 and of the variable `0x19` values.
 - Which bank each ground scene uses.
 - Whether modes 2 and 3 are reached in play.
-- Names for the IME helpers and for `FUN_0201DE24`.
+- Names for the IME helpers (proposed in #157 P2, awaiting confirmation) and the rename of `FUN_0201DE24` to `RemoveMoneyAndRandomItems` (proposed in [Scene graph](#scene-graph), awaiting confirmation).
 - Where the main loop of `RunDungeon_Async` advances a turn (the V7 trigger, #49).

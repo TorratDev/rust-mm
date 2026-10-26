@@ -47,7 +47,7 @@ Hardware keys are active-low; the XOR makes them active-high. The OR with the wo
 
 ### Snapshot and consumers
 
-**[blue-verified]**, high. `FUN_02017E60` (`UpdateInputSnapshot`, frame action #9 in [`execution-model.md`](execution-model.md), named `LoadBufferedInputs` there with low confidence) copies the accumulator to `0x020F27A0` and clears it. About 40 functions read `0x020F27A0`, in the ARM9 and in overlays 0, 1 and 7. Its touch work is in [Touch](#touch).
+**[blue-verified]**, high. `FUN_02017E60` (`UpdateInputSnapshot`, frame action #9 in [`execution-model.md`](execution-model.md), named `LoadBufferedInputs` there, a recorded name; see [Frame action names](execution-model.md#frame-action-names-161-p4)) copies the accumulator to `0x020F27A0` and clears it. About 40 functions read `0x020F27A0`, in the ARM9 and in overlays 0, 1 and 7. Its touch work is in [Touch](#touch).
 
 - **Title loop.** `GameLoop_Async` uses the L button (`0x200`) as a pressed edge and as held state, to call `FUN_02019634(0x13)` and `FUN_02019634(0)`. This is the title loop's L gate.
 - **Dungeon directions.** `ResolveDungeonDirection` (`FUN_020271E0`, **[blue-verified]**, high) maps the D-pad to a direction code. Down `0x80` → 1, Right `0x10` → 2, Up `0x40` → 4, Left `0x20` → 8. That code indexes a 16-byte table at `0x020B219C`, which gives 8 directions without R: 0 Down, 1 DownRight, 2 Right, 3 UpRight, 4 Up, 5 UpLeft, 6 Left, 7 DownLeft.
@@ -106,6 +106,18 @@ Thresholds in the findings: a move under 7 px, and frame counts of 11 and 12. Th
 ### Per-frame flush
 
 **[blue-verified]** for the mechanism, high; the flag meanings are **medium**. `FlushDisplayState` (`FUN_02019268`, frame action #17) runs in `MainLoops_RunFrameActions`. It writes the DISPCNT layer enables from a flag byte at `DAT_02019610`, sets BG priorities, and writes `BLDCNT` (`0x04000050`). The layer-enable bits (8 to 12 of DISPCNT) start from `0x1F` and flag bits clear them: bit 0 BG0, bit 1 BG1, bit 2 BG2, bit 3 BG3, bit 4 OBJ.
+
+**Register writes (#161 P4, blue-verified; the register addresses are read from literals).**
+
+| Register | Write |
+|----------|-------|
+| BG scroll (`0x04000010` `BG0HOFS` and the following scroll registers) | eight words, written through pointers that resolve to these registers |
+| `BG0CNT` `0x0400000C` and `BG1CNT` `0x0400000E` | priority bits 0 to 1 |
+| `DISPCNT` `0x04000000` | bits 8 to 12 (layer mask), from a value built from the flags at `DAT_02019610` and `DAT_02019614` |
+| `BLDCNT` `0x04000050` | masked with `0x43`, ORed with `0x4200` (or a variable) |
+| `BLDALPHA` `0x04000052` | `EVA | EVB << 8` |
+
+`FUN_02075938` is called for the second screen (a `0x10 × 0x10` window at `(0, 0)` or `(4, 8)`) and for a size-dependent window (`(2, 0x1C)`, `(4, 0x18)`, `(6, 0x18)`). **Not verified:** the details of `FUN_02075938`, which was not traced. The Red name `xxx_call_update_bg_sound_input` is not used: nothing in the function touches sound.
 
 `FUN_02019794` (frame action #8) calls `FUN_0207D704` with `0x0C` or `0x1C` when a condition holds. The condition is not described.
 
@@ -235,7 +247,7 @@ Input:
 - Whether the `0x054A1C41` multiply in the accumulator is an RNG step. Cross-check with [`rng.md`](rng.md).
 - The repeat timing (48, then 43) is assumed from one call per VBlank. An emulator check would settle it.
 - The IRQ handler: this page names `FUN_02018ACC`. [`execution-model.md`](execution-model.md) still says the handler is not located, and needs updating.
-- `FUN_02017E60` is `LoadBufferedInputs` in [`execution-model.md`](execution-model.md) (low confidence) and `UpdateInputSnapshot` here. One of the names should change.
+- `FUN_02017E60` is `LoadBufferedInputs` in [`execution-model.md`](execution-model.md) (recorded name, #161 P4) and `UpdateInputSnapshot` here. The name here is the one to change.
 
 Touch:
 
