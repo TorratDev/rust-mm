@@ -190,12 +190,12 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 
 ## Open questions
 
-- The IRQ handler and its vector: not located (see [Frame wait and interrupts](#frame-wait-and-interrupts)).
+- The IRQ vector slot is `0x027E3FFC`, the dispatcher is `FUN_01FFA21C`, and the handler table is at `0x027E0008`; IRQ 0 is VBlank (see [Frame wait and interrupts](#frame-wait-and-interrupts), #157). Not verified: which bit each of the other seven `FUN_02075C5C` callers registers.
 - The entry of the boot routine, before `02000C84`.
 - The caller of the 4 RNG steps per frame, and the A and Select effect (Select has no data after emulated frame 2508).
 - The caller slot of `FUN_02018ACC` and the writer of its flag word (see [#159](rng.md#per-frame-steps-159)).
 - What overlay 7's screen is. Not obtained (#161 P3): the fresh-boot title menu shows New Game and Adventure Log only, and choice 5 is not offered in that boot. It is probably offered only with a save, which was not tested. Its team-name strings suggest a team screen, but nothing links them to the title menu.
-- The meaning of scene-runner phases 0–8 and of the variable `0x19` values.
+- Scene-runner inner phases `0x0` to `0x11` of states 1 and 2 (the switch on `DAT_02070358`, not named), and the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (their readers are not traced). The phase names and the variable `0x19` values are in [Scene runner states](#scene-runner-states-161-p1).
 - Which bank each ground scene uses.
 - Whether modes 2 and 3 are reached in play.
 - Names for the IME helpers (proposed in #157 P2, awaiting confirmation) and the rename of `FUN_0201DE24` to `RemoveMoneyAndRandomItems` (proposed in [Scene graph](#scene-graph), awaiting confirmation).
