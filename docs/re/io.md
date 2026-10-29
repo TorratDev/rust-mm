@@ -2,7 +2,7 @@
 
 How Blue reads the buttons and the touch screen, sets up the two screens, fills OAM and runs fades, and loads files from the pack archives and from loose NitroFS files. Issue: [#45](https://github.com/TorratDev/rust-mm/issues/45). Names and addresses are in [`symbols.md`](../symbols.md); the structs are in [`glossary.md`](../glossary.md).
 
-Dump: `BlueRescueTeamEur`. Addresses are RAM addresses. Plain addresses are in the ARM9 binary (`arm9.bin`); `ov_NNNN::` marks code in an overlay. Tags: **[blue-verified]** means read in Blue's code, and where a finding is only about control flow it says so; **[red-hypothesis]** and **[tentative]** are as in [`rng.md`](rng.md). "Not verified" and "unknown" mark what the investigators did not check.
+Dump: `BlueRescueTeamEur`. Addresses are RAM addresses. Plain addresses are in the ARM9 binary (`arm9.bin`); `ov_NNNN::` marks code in an overlay. Tags: **[blue-verified]** means read in Blue's code, and where a finding is only about control flow it says so; **[red-hypothesis]** and **[tentative]** are as in [`rng.md`](rng.md). **[hypothesis]** marks a meaning the investigators did not confirm, and **[open]** marks a gap; both are as the #177 investigators tagged them. "Not verified" and "unknown" mark what the investigators did not check.
 
 **Evidence basis.** Every finding on this page is static: decompile, cross-reference and memory-read results from three Ghidra copies of the ARM9 project. No emulator check was run for input, screens, sprites, fades or file loading. So the button-repeat timing and the frame cadence below are assumed, not measured. Nothing here is compared against `pmd-red` except where a name is marked.
 
@@ -140,31 +140,66 @@ Callers of `FUN_0201A110`: `LoadAndRunDungeon_Async`, `NDS_LoadOverlay_GroundMai
 
 `ResetScreens` clears VRAM at `0x06800000` and three more 0x8000-word blocks, then calls `FUN_02074E90(2, 0, 0)` and `FUN_02074F04`. It also calls the PX decoder directly for the halt screen, at `0x02018C20` (see [Halt screens](#halt-screens)).
 
+### DISPCNT writers and engine use (#177 P1)
+
+**[blue-verified]**, high for the list of writers. The scene-to-layer mapping is not traced. Every `DISPCNT` (`0x04000000`) write found in the program is on engine A: `FlushDisplayState` (`FUN_02019268`), `FUN_0207D704` (fade), `FUN_02074E90`, `FUN_02074F04`, `FUN_02074F50` (display-mode helpers), `FUN_02074FC8` (reset) and `FUN_02018578` (boot). No write to engine B's `DISPCNT` (`0x04001000`) was found. Engine B appears only as a `MASTER_BRIGHT` argument (`0x0400106C`).
+
+- `FUN_02074E90(p1, p2, p3)` sets DISPCNT bits 16–17 from `p1`, bit 3 from `p3`, and `p2`. Callers: `FUN_02018B44` and `FUN_02018578`.
+- `FUN_02074F04` sets bits 16–17 from a stored value, or bit 16 when that value is zero. Callers: `FUN_02018B44` and `FUN_02018578`.
+- `FUN_02074F50` reads bits 16–17 into a stored value and clears them. Callers: `FUN_02018B44` and the boot path (`0x02000BE4`).
+- **[open]** Which BG (BG0 to BG3) each scene shows. The per-scene layer enables come from `FlushDisplayState` through the mask at `DAT_02019610`, and the scene-to-mask mapping is not traced.
+
+### Fade IPC and brightness (#177 P2)
+
+**[blue-verified]** for the mapping; **[hypothesis]** for the ARM7 meaning. The fade's brightness effect goes through IPC. The ARM9 side writes only DISPCNT.
+
+- Call chain: `FUN_0207D704` (fade) → `FUN_0207DCD8` → `FUN_0207D944` → `FUN_02079BEC`.
+- `FUN_02079BEC` checks the FIFO error bit (`0x4000`) and the send-full bit (`0x2`) in `*DAT_02079C98` (`0x04000184`, `REG_IPCFIFOCNT`). It then writes `(p1 & 0x1F) | ((p3 & 1) << 5) | (p2 << 6)` to `*DAT_02079C9C` (`0x04000188`, `REG_IPCFIFOSEND`).
+- `FUN_0207D944(v)` sends command `8` with payload `v`, polling until the send succeeds.
+- `FUN_0207DCD8` sends two command-8 messages per call: `(p1 & 0xFF) | DAT_0207DD84`, then `(p2 & DAT_0207DD88) | DAT_0207DD8C`. `FUN_0207D614(0, 2, 0, 0)` runs between them.
+- `FUN_0207D704` calls `FUN_0207DCD8` with `(p1 | local_34 << 5 | local_30 << 6) & 0xFFFF` and `p2 | p3`. Its DISPCNT writes (bits 16–17 cleared, then restored) are on the ARM9 side.
+- **[hypothesis]** ARM7 side of command 8: most likely the screen brightness or backlight. The ARM7 code was not checked.
+- **[open]** The payload values in `DAT_0207DD84`, `DAT_0207DD88` and `DAT_0207DD8C` were not read.
+- **[blue-verified]** `REG_MASTER_BRIGHT` (`0x0400006C`, engine A) is written only in `FUN_02074FC8` (`0207507C` and `020750B4`), which the boot path calls from `02000BE0`. That function also clears DISPCNT. No per-frame ARM9 brightness write was found.
+- **Correction:** `FUN_02018578` is the boot display setup (VRAM clears and DISPCNT writes), not a per-frame brightness writer. It passes `0x0400006C` (at `02018724`) and `0x0400106C` (engine B, at `020188F4`) as arguments. **[open]** The helper that receives them is not identified.
+
 ### What is not known
 
-- Which engine and BG show the title, ground and dungeon content. Only the setup mechanism is known (**[blue-verified]**, low for the rest). Needs the DISPCNT writes of each scene loader; see [Open questions](#open-questions).
+- Which engine and BG show the title, ground and dungeon content. Engine A is the only engine with a DISPCNT write (#177 P1, [above](#dispcnt-writers-and-engine-use-177-p1)). Which BG each scene shows is open; see [Open questions](#open-questions).
 - The meaning of the POWCNT1 bits. The findings give bit 15 as display swap, with the hardware documentation as the only source. This is not verified in Blue.
 
 ## Sprites (OAM) and fades
 
 ### OAM writers
 
-**[blue-verified]** for the writers, high; the missing upload path is **low** confidence.
+**[blue-verified]** for the writers. **High** for "no shadow OAM and no DMA3" (#177 P4, as investigator C gave it); **medium** for the rest. OAM is written by direct CPU writes to `0x07000000`, and `BlinkSpriteZero` is the only per-frame upload.
 
-- `ResetSceneGraphics` (`FUN_0201AFF0`, scene load) clears BG and OBJ VRAM and the palette, fills OAM A and OAM B (`0x07000400`) with `DAT_0201B214`, and loads palette data.
-- `ClearOamA` (`FUN_0201ADA0`) fills OAM A. Its only caller is a computed jump from a thunk at `0x0206DC18`, which is not identified.
-- `BlinkSpriteZero` (`FUN_02012A6C`) writes OAM entry 0 each frame. It toggles attribute 0 between `0xC0` (hidden) and a value from `DAT_02012AE4`, by bit 4 of a frame counter, so the sprite blinks every 16 frames. Its caller is not identified.
-- **No shadow OAM and no DMA3 upload was found.** `0x040000B0` is referenced only from the generic DMA helpers `FUN_020782C0`, `FUN_02078248` and `FUN_01FFA3D0`. The upload may sit behind an unnamed helper; this is not checked.
+- `ResetSceneGraphics` (`FUN_0201AFF0`, scene load) clears BG and OBJ VRAM and the palette, fills OAM A and OAM B (`0x07000400`) with `DAT_0201B214`, and loads palette data. **[blue-verified]** #177 P4 finds its only caller at `0x02000CF4`, the boot path, which conflicts with the "scene load" label here. **[open]** Reconcile the two (see Open questions).
+- `ClearOamA` (`FUN_0201ADA0`) clears VRAM at `0x06000000` (`0x13C0` words), the two buffers at `DAT_0201AE84` and `DAT_0201AE88`, `0x06400000` and `0x05000000`, and writes `0x07000000`. It looks like a scene reset. Its only caller is a computed jump (through a jump table) from a thunk at `0x0206DC18`; the table is not identified.
+- `BlinkSpriteZero` (`FUN_02012A6C`) writes OAM entry 0 (`0x07000000`–`0x07000006`) on every call. It toggles attribute 0 between `0xC0` (hidden) and `DAT_02012AE4[1]`, by bit `0x10` of the counter `DAT_02012ADC`, so the sprite blinks every 16 frames. The only caller is `FUN_02018ACC` (`02018B04`), the frame callback, so this one entry is the per-frame OAM upload. **[open]** The OAM entry format (attr1 and attr2) and the sources of `DAT_02012AE4` and `DAT_02012AE0`.
+- **[blue-verified]** No shadow OAM and no DMA3 upload. `0x040000B0` is referenced only from the generic DMA helpers `FUN_020782C0`, `FUN_02078248` and `FUN_01FFA3D0`. OAM is written by direct CPU writes, not DMA. The per-frame OAM write is `BlinkSpriteZero` alone.
+- **[blue-verified]** `0x040000D4`–`0x040000DF` (DMA3) has no references in the program. `FUN_02078424` is a plain CPU fill loop, not DMA. `FUN_02018578` (boot display init) uses it to fill `0x400` bytes at `0x07000000` with `0xC0`.
+- **[blue-verified]** The DMA0 transfer on the frame path is not an OAM upload. `FUN_0201966C`, called from the frame callback `FUN_02018ACC`, resets DMA0 (`FUN_02078154(0)`), then starts a 4-byte transfer (`FUN_02078350(0, src, dst, 4)`, source at `DAT_02019760`). Its destinations are `DAT_02019764`, `DAT_0201976C`, `DAT_02019768` and `DAT_02019770`, which hold `0x04000040`, `0x04000042`, `0x04000044` and `0x04000046` (WIN0H, WIN1H, WIN0V, WIN1V). The fixed value is `0xC0`. The timing bits are `0x10000000` (`FUN_020780A0`). **[hypothesis]** The HBlank meaning of that timing. **[open]** What the window DMA shows on screen.
 
 ### Fades
 
 **[blue-verified]** for the control flow of `FUN_0207D704`; **medium** for the register it drives.
 
 - `FUN_0207D704` saves DISPCNT, waits on a VBlank counter (`DAT_0207D934`), calls `FUN_0207DCD8` once per step, and restores the state.
-- `FUN_0207DCD8` writes two parameters through `FUN_0207D944`. The register that `FUN_0207D944` writes is unconfirmed.
-- The brightness register `0x0400006C` is written to 0 at reset in `FUN_02074FC8`. It is passed as a parameter from `FUN_02018578` (at `0x02018724`). `FUN_02018578` also passes `0x0400106C` (at `0x020188F4`). **[blue-verified]**, **medium** for who writes it per frame, which is not identified.
+- `FUN_0207DCD8` sends two parameters through `FUN_0207D944` as IPC command 8. See [Fade IPC and brightness](#fade-ipc-and-brightness-177-p2).
+- The brightness register `0x0400006C` is written to 0 at reset in `FUN_02074FC8`. It is passed as a parameter from `FUN_02018578` (at `0x02018724`). `FUN_02018578` also passes `0x0400106C` (at `0x020188F4`). **[blue-verified]**. No per-frame ARM9 writer was found (#177 P2).
 - `BLDCNT` (`0x04000050`) is written per frame in `FlushDisplayState`.
-- The title fade is **not found**. [`execution-model.md`](execution-model.md) describes a 32-frame title fade; this page has not located it. No `0x04000054` (BLDY) reference exists in the program.
+- The title fade is located (#177 P3, see [Title fade](#title-fade-177-p3)). [`execution-model.md`](execution-model.md) describes a 32-frame title fade. No `0x04000054` (BLDY) reference exists in the program.
+
+### Title fade (#177 P3)
+
+**[blue-verified]** for the loop and the helpers, high on the structure. **[hypothesis]** for the buffer identities.
+
+- `GameLoop_Async` (`0x0201F2E4`) runs `while (*DAT_0201F808 < 0x20)`, a 32-frame counter at `0x0201F808`. Each iteration increments the counter, then for `i = 0..0xEF` (240 entries) calls `FUN_02011D24(i, src1 + i*4, counter, 0)` and `FUN_02011B4C(i, src2 + i*4, counter, 0)`, then `MainLoops_RunFrameActions(0)`.
+- `FUN_02011D24` (`0x02011D24`) and `FUN_02011B4C` (`0x02011B4C`) clamp the brightness to 0..31. Each writes its source colour, scaled as `c * brightness / 256` (the divide is `FUN_0208625C`), as a 15-bit RGB word. `FUN_02011D24` writes into `DAT_02011E44 + i*2` and `FUN_02011B4C` into `DAT_02011C6C + i*2`. Each also sets a dirty flag for entry `i`.
+- So the fade is software. It scales palette values per frame, and the result reaches palette RAM through the per-frame palette transfer (`TransferBGPaletteBuffer`, frame action #14 in `MainLoops_RunFrameActions`). This matches the absence of BLDY and brightness register writes.
+- **[hypothesis]** Which buffer is the BG palette and which is the OBJ palette.
+- **[open]** The fade-out is not decoded. The 0x20 count is the fade-in.
 
 ## File loading
 
@@ -271,10 +306,15 @@ Screens and fades:
 
 - P3d: which engine and BG each scene uses. This needs the DISPCNT writes from each scene loader, and the scene map from [#44](https://github.com/TorratDev/rust-mm/issues/44).
 - P3e: the meanings of the POWCNT1 bits. Only the hardware documentation covers them. The investigator tagged this `[red-hypothesis]`, but the source is not Red.
-- The register that `FUN_0207D944` writes (the fade target).
-- P4c: the title 32-frame fade and BLDY are not found, and there is no `0x04000054` reference.
+- **[hypothesis]** The ARM7 meaning of IPC command 8, most likely brightness or backlight (#177 P2). The ARM7 code was not checked. **[open]** The payloads in `DAT_0207DD84`, `DAT_0207DD88` and `DAT_0207DD8C` were not read.
+- **[open]** The helper that receives the two `MASTER_BRIGHT` addresses (`0x0400006C`, `0x0400106C`) from `FUN_02018578` (#177 P2).
+- **[open]** The caller chain of `FUN_02018B44` (the scene reset path); the #177 P2 pass did not verify it.
+- **[open]** P3: the title fade-out is not decoded. The 32-frame fade-in is located in `GameLoop_Async`. Which palette buffer is BG and which is OBJ is **[hypothesis]**.
+- **[open]** Which BG each scene shows (P1, mapping not traced); see [DISPCNT writers](#dispcnt-writers-and-engine-use-177-p1).
 - An inconsistency in the cross-reference: the tool attributes the POWCNT1 (`0x04000304`) accesses at `0x0207D68C` to `0x0207D6B4` to `FUN_0207D614`, but the decompile of `FUN_0207D614` has no POWCNT access. Treat the attribution as suspect until it is checked.
-- P4a: the missing OAM upload path. It may sit behind an unnamed helper. The caller of `ClearOamA` (the thunk at `0x0206DC18`) is not identified either.
+- **[open]** P4a: the OAM entry format (attr1 and attr2) and the sources of `DAT_02012AE4` and `DAT_02012AE0`. The jump table that holds `0x0206DC18`, and so the scene that calls `ClearOamA` (`FUN_0201ADA0`), is not identified.
+- **[open]** The window DMA through DMA0 (`FUN_0201966C`): what the WIN0H, WIN1H, WIN0V and WIN1V values show on screen. The HBlank timing is **[hypothesis]**, a guess.
+- **[open]** `FUN_0201AFF0`: the boot caller `0x02000CF4` (#177 P4) and the "scene load" label in the OAM writers conflict. Reconcile which is right.
 - `FUN_0201A404` and `FUN_0201A6F0` are file-loading routines, yet the cross-references list them as callers of the scene reset `FUN_0201A110`. Either the reset is reached from file loading, or the cross-reference is wrong. Not checked.
 
 Files:
