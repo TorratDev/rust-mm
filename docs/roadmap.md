@@ -125,7 +125,7 @@ Done:
 - #43 glossary: [`glossary.md`](glossary.md) has structs, fields, functions, globals and an enum table.
 
 Partly done:
-- RNG leftovers: what uses the Mersenne Twister (callers `0200D4DC`, `0206C6E4`); the 16-bit generator from `pmd-red`'s `other_random.c` (multiplier 109, increment 1021) not found yet.
+- RNG leftovers ([`re/rng.md`](re/rng.md)): the Mersenne Twister has two callers, `0200D4DC` (mail-record builder) and `0206C6E4` (personality test). The 16-bit generator is `OtherRandom16` at `02023B9C` (`state * 109 + 1021`, state `gOtherRngState` `020E03F4`); its 20 `OtherRandInt` call sites are not yet classified, and there is no emulator check.
 - Turn loop: name the three end-of-turn functions ([`re/turns.md`](re/turns.md)).
 - #53: locate the quicksave sector.
 
