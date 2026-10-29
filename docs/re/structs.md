@@ -41,13 +41,13 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x34` | `defensiveMultipliers` (s24.8 at `+0x34 + 4 × splitIndex`) | `0x34` (*red-hypothesis* layout) | 0 | `CalcDamage` (`ov_0001::0217BD94`). All 14 captured hits had `0x100` (1.0) (#185, P5) |
 | `+0x3C`, `+0x3E` | `hiddenPower` base power, type | `0x3C` | 0 | `GetMovePower`, `GetMoveTypeForMonster` |
 | `+0x40` | dungeon location of the join | — | — | `AddExpPoints` compares it with `'J'` and `'G'` for the EXP lock, in place of Red's `IsExperienceLocked` (lock not confirmed) |
-| `+0x42` | `action` block (*probable*: its `direction` is at `+0x44`) | `0x44` | −2 | `ov_0001::02188030` (candidate `RunMonsterAI`): byte compared with 0, then written |
+| `+0x42` | `action` block (*probable*: its `direction` is at `+0x44`) | `0x44` | −2 | `ov_0001::02188030` (`RunMonsterAI`): byte compared with 0, then written |
 | `+0x44` | `direction` (u8) | `0x46` | −2 | `DisplayActions_Async` (`ov_0001::0218766C`) compares it with the direction from `FUN_0201187C` (the helper's name `GetDirectionTowardsPosition` is *red-hypothesis*) |
 | `+0x56` | `types[2]` | `0x5C` | −6 | `sub_806F370_Async`, `sub_806F4A4` |
 | `+0x58` | `abilities[2]` | `0x5E` | −6 | `AbilityIsActive` |
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
-| `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` and the other inner offsets follow the −8 shift and are not checked) | `0x78` | −8 | `0219082C` |
-| `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; *probable*: the writer is only a candidate) | `0x79` | −8 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
+| `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` are written by the same unnamed writer; readers open; blue-verified (writer), offsets medium) | `0x78` | −8 | `0219082C` (blue-verified writer; unnamed in Blue) |
+| `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; probable-high; the name is red-hypothesis, the offset medium) | `0x79` | −8 | `ov_0001::02188030` (`RunMonsterAI`) clears it when the action is above PASS_TURN (blue-verified write); `ov_0001::02190FEC` (`DecideMovement`) sets it |
 | `+0x87` | IQ skills, one bit per skill (bit *n* is tested with mask `1 << n`) | — | — | `ov_0001::021805B0` (`IqSkillIsEnabled`). Bits 4, 5 and 8 are used in the hit and AI paths |
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
 | `+0x99`, `+0x9A` | `sleepClassStatus` status, turns | `0xA8` | −0xF | `TickStatusAndHealthRegen` |
@@ -67,16 +67,16 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0xC7` | mobility status checked against 3 (STATUS_MOBILE); Red `invisibleClassStatus.status` is inferred from the value, not checked | not matched | — | `CanMoveInDirection` (`ov_0001::0218141C`) |
 | `+0xD5` | `speedStageChanged` | `0xF8` | −0x23 | `RunLeaderTurn_Async` |
 | `+0xD8` | `expMultiplier` (`0` halved, `1` regular, `2` boosted) | — | — | `AddExpPoints` (`ov_0001::02183F78`); `0` and `1` seen at runtime, `2` not |
-| `+0xDD` | `decoyAITracker` (*probable*: the writer is only a candidate) | `0x100` | −0x23 | `ov_0001::02188030` (candidate `RunMonsterAI`) writes it |
+| `+0xDD` | `decoyAITracker` (probable-high; the name is red-hypothesis, the offset medium; TEAM = 1, WILD = 2) | `0x100` | −0x23 | `ov_0001::02188030` (`RunMonsterAI`) clears it, then sets it to 1 or 2 for a decoy (blue-verified writes) |
 | `+0xE0` | `speedStage` | `0x104` | −0x24 | `CalcSpeedStage` |
 | `+0xE4` | `speedUpCounters[5]` | `0x108` | −0x24 | `CalcSpeedStage` |
 | `+0xE9` | `speedDownCounters[5]` | `0x10D` | −0x24 | `CalcSpeedStage` |
 | `+0xF4` | `moves` (4 × 6-byte `Move`, see below) | `0x118` | −0x24 | `0216E56C` (passes `info+0xF4` as the move list, sets `moveFlags2` bit 2 of entry *i* at `+0xF5 + 6i`) |
 | `+0x10E` | `belly` | `0x13C` | −0x2E | `CalcDamage` (*probable*): the 4-byte value passed to `FUN_0200b9a4` (call at `ov_0001::0217be0c`). Its zero test matches Red's `FixedPointToInt(belly) == 0` for ordinary values. `FUN_0200b9a4`'s identity is inferred, so the row stays *probable* (#185, P3) |
-| `+0x116` | `aiAllySkip` | `0x144` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
+| `+0x116` | `aiAllySkip` | `0x144` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it; `RunMonsterAI` (`ov_0001::02188030`) clears it (blue-verified write) |
 | `+0x117` | `recalculateFollow` | `0x145` | −0x2E | `sub_8044574_Async` (`ov_0001::02140AC0`) writes it |
 | `+0x118` | `bellyEmpty` | `0x146` | −0x2E | `TickStatusAndHealthRegen` |
-| `+0x119` | `waiting` | `0x147` | −0x2E | `DisplayActions_Async` (`ov_0001::0218766C`) |
+| `+0x119` | `waiting` | `0x147` | −0x2E | `DisplayActions_Async` (`ov_0001::0218766C`); `RunMonsterAI` (`ov_0001::02188030`) clears it (blue-verified write) |
 | `+0x11A` | `attacking` | `0x148` | −0x2E | `RunLeaderTurn_Async` |
 | `+0x120` | `visualFlags` | `0x14E` | −0x2E | `CalcDamage` |
 | `+0x122` | `previousVisualFlags` | `0x150` | −0x2E | `CalcDamage` |
@@ -234,8 +234,8 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 - **Entity info size.** `0x1D4` (468), measured in the emulator (#163 P1, runtime). Method: `info = base + k*0x1D4` for the team and wild entries of a dungeon at its start. The allocator and the per-record field check are not verified (see the size note above).
 - **IQ bits at info `+0x87`.** `IqSkillIsEnabled` tests them. Check whether this field is part of the info struct and how it relates to the Red `IQ` field at `0x0C`.
 - **`IQ` at info `+0x0C`** (Red `0x0C`). Red's readers are known (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`), but no Blue function that reads `+0x0C` is matched. Find Blue's `GetMovesLearnedAtLevel` caller and check the offset of its IQ argument.
-- **`aiTarget` inner layout** beyond `aiTargetPos`: `aiObjective` `+0x70`, `aiTargetingEnemy` `+0x72`, `aiTurningAround` `+0x73`, `aiTargetSpawnGenID` `+0x74`, `aiTarget` `+0x78` follow the −8 shift but are unchecked.
-- **`RunMonsterAI` candidate** `ov_0001::02188030`: name it and check its remaining branches against Red's `dungeon_ai.c`.
+- **`aiTarget` inner layout (#164 P2).** The four offsets `aiTargetPos` `+0x80`, `aiObjective` `+0x70`, `aiTargetSpawnGenID` `+0x74` and `aiTarget` `+0x78` are written by the same writer, `0219082C`, which is unnamed in Blue (blue-verified, writer). Their readers are open: Red compares `aiObjective` with 1 or 2 and checks `aiTarget->spawnGenID` against `aiTargetSpawnGenID` (`dungeon_ai_movement.c` 277-281), but no reader is found in Blue. `aiTargetingEnemy` `+0x72` and `unkC` `+0x7C` are not written by that writer. The Blue value 0 for `aiObjective` comes from the writer alone. The offsets follow the −8 shift (medium).
+- **`RunMonsterAI`** `ov_0001::02188030`: check its remaining branches against Red's `dungeon_ai.c`.
 - **Status bytes not assigned:** `+0xC9`/`+0xCA` and `+0xCB`/`+0xCC` are either invisible (`0xE4`/`0xE5`) or blinker (`0xE8`/`0xE9`) in Red's layout; both are read in `TickStatusAndHealthRegen`. Cringe (`+0xAC`), curse (`+0xB3`) and leech seed (`+0xB8`) are *red-hypothesis* and have no write sites yet. Status write sites were not examined.
 - **Trap entities.** The writer of `traps[64]` (`+0x114B4`) is not found. Search the overlay 1 functions called from the floor-generation chain (`GenerateFloor`, `ov_0001::02151E7C`), or dump RAM after a floor load (#17).
 - **`DAT_02142064`**, the base of the floor-item slots (dungeon `+0x3·i`). Read its value to name the floor-item storage.
