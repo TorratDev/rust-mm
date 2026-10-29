@@ -76,7 +76,7 @@ Scope: the dungeon main-loop reader `FUN_02166B10` (`ov_0001::02166B10`, 727 lin
 
 | Button | Test in the reader | Action (structure) | Tag |
 |--------|--------------------|--------------------|-----|
-| **A + B** (held `0x3`) | mode byte at `PTR_DAT_ov_0001__02167AAC + 4`, and `FUN_0200B9A4` | sets the leader action to pass turn (`FUN_021418D4(1)`) and the flag at `0x663`. Matches `dungeon_main.c` 176 to 180 | blue-verified; high |
+| **A + B** (held `0x3`) | held `0x3` and the `FUN_0200B9A4` check (belly above 0) | sets the leader action to pass turn (`FUN_021418D4(1)`) and the flag at `0x663`. Matches `dungeon_main.c` 176 to 180 | blue-verified; high |
 | **Select** (pressed `0x4`) | gated by `+0x15FA2 == 0` and mode byte not 6 | opens the floor map: a loop `FUN_0213AC4C(10, 0x2F)`. A toggles the byte at `0x021B4210`; B or Select leaves. Matches `dungeon_main.c` 371 to 383 | blue-verified; high |
 | **B** (pressed `0x2`, mode 0, `iVar21+0x32 != 0`) | lines 258 to 264 | calls `FUN_021480E4()`, clears `0x021B4768`, calls `FUN_02017DBC` and `FUN_02017D34`. A cancel, by behaviour | blue-verified (structure); [hypothesis] for the name |
 | **B tap** (`flags & 0x2`) | lines 218 to 223 | leaves the loop with action 0 | blue-verified; Red's `shortPress & B` (`dungeon_main.c` 252) not compared for the action |
