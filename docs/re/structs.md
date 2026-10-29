@@ -87,7 +87,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x1C4` | `unk1F8` (HP regeneration counter) | `0x1F8` | −0x34 | `TickStatusAndHealthRegen` |
 | `+0x1C8` | `expGainedInTurn` (may lie past the end of the struct: the size bound is 0x1C8 to 0x208) | — | — | `AddExpPoints` (`ov_0001::02183F78`) records the EXP gained here |
 
-Not listed: the `IQ` field at Red `0x0C`. Blue's IQ bits are at `+0x87` (above). No Blue function reading `+0x0C` is matched yet. See the open questions.
+Not listed: the `IQ` field at Red `0x0C`. Blue's IQ bits are at `+0x87` (above). Entity info `+0x0C` is the learn gate (#164 P3, [hypothesis]): `FUN_02001AF4` (`GetMovesLearnedAtLevel`) is called through `FUN_ov_0001__02182E5C`, which passes an entity-info field as the gate (call at `ov_0001::02182E98`). The IQ meaning is not confirmed, and the threshold 333 is not a level. See the open questions.
 
 The status records are smaller in Blue: the distance between consecutive ones shrinks (for example, reflect to sure shot is 0x13 bytes in Blue and 0x18 in Red), so each status record needs its own check.
 
@@ -201,7 +201,7 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x04` | `dungeonLocation` | `0x04` |
 | `+0x06` | `speciesNum` | `0x08` |
 | `+0x08`, `+0x09` | `unkC[2]` (levels) | `0x0C` |
-| `+0x0A` | `IQ` | `0x14` |
+| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]) | `0x14` |
 | `+0x0C` | `pokeHP` | `0x16` |
 | `+0x0E`–`+0x11` | `offense` (attack, sp. attack, defense, sp. defense) | `0x18` |
 | `+0x14` | `currExp` | `0x1C` |
@@ -233,7 +233,7 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 
 - **Entity info size.** `0x1D4` (468), measured in the emulator (#163 P1, runtime). Method: `info = base + k*0x1D4` for the team and wild entries of a dungeon at its start. The allocator and the per-record field check are not verified (see the size note above).
 - **IQ bits at info `+0x87`.** `IqSkillIsEnabled` tests them. Check whether this field is part of the info struct and how it relates to the Red `IQ` field at `0x0C`.
-- **`IQ` at info `+0x0C`** (Red `0x0C`). Red's readers are known (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`), but no Blue function that reads `+0x0C` is matched. Find Blue's `GetMovesLearnedAtLevel` caller and check the offset of its IQ argument.
+- **Learn gate at info `+0x0C` (#164 P3, [hypothesis]).** Blue's `GetMovesLearnedAtLevel` is `FUN_02001AF4`. Its caller `FUN_ov_0001__02182E5C` (call at `ov_0001::02182E98`) is the only caller that passes an entity-info field as the gate, and that field is info `+0x0C`. `FUN_02001844` reads the same gate from the Pokemon struct at `+0x0A`, which the Recruited Pokémon table lists as `IQ`. The IQ meaning is not confirmed, and the threshold 333 is not a level. Red's `IQ` readers (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`) are not matched in Blue. **Open:** the readers and the writer of info `+0x0C`.
 - **`aiTarget` inner layout (#164 P2).** The four offsets `aiTargetPos` `+0x80`, `aiObjective` `+0x70`, `aiTargetSpawnGenID` `+0x74` and `aiTarget` `+0x78` are written by the same writer, `0219082C`, which is unnamed in Blue (blue-verified, writer). Their readers are open: Red compares `aiObjective` with 1 or 2 and checks `aiTarget->spawnGenID` against `aiTargetSpawnGenID` (`dungeon_ai_movement.c` 277-281), but no reader is found in Blue. `aiTargetingEnemy` `+0x72` and `unkC` `+0x7C` are not written by that writer. The Blue value 0 for `aiObjective` comes from the writer alone. The offsets follow the −8 shift (medium).
 - **`RunMonsterAI`** `ov_0001::02188030`: check its remaining branches against Red's `dungeon_ai.c`.
 - **Status bytes not assigned:** `+0xC9`/`+0xCA` and `+0xCB`/`+0xCC` are either invisible (`0xE4`/`0xE5`) or blinker (`0xE8`/`0xE9`) in Red's layout; both are read in `TickStatusAndHealthRegen`. Cringe (`+0xAC`), curse (`+0xB3`) and leech seed (`+0xB8`) are *red-hypothesis* and have no write sites yet. Status write sites were not examined.
