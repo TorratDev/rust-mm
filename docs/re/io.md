@@ -178,7 +178,7 @@ Thresholds in the findings: a move under 7 px, and frame counts of 11 and 12. Th
 
 - `FUN_0200C354` returns a valid touch. It is gated by the byte at `0x020DED14+7`. It is called from overlay 0.
 - `FUN_0200C4F4` is the position getter, with the same gate. It has about 10 callers, including overlay 1.
-- The gate byte is a serialised options bit. Its name is not confirmed.
+- The gate byte is the `touchScreen` option, a byte in the options struct (#176 P3, below).
 - In the dungeon, a touch within ±10 px of an active slot (flag `0x8000`, stride `0x3C`, 8 slots) returns that slot index (`ResolveDungeonDirection`, above). The meaning of the actor fields `+0x4DD4` to `+0x4DDA` is not verified.
 
 ### Touch-only and touch-optional consumers (#176 P2)
@@ -197,8 +197,7 @@ Touch consumers, from x-refs and the decompile of each caller. `FUN_0200C4F4` is
 | `ov_0000::0213F7D8` | overlay 0 (ground) | Touch read, 3 calls | A, B, X bits (`0x1`, `0x2`, `0x400`) | touch-optional |
 | `ov_0001::02165320` | overlay 1 (dungeon) | Touch read, direction resolve (`ResolveDungeonDirection`) | A bit (`0x1`) | touch-optional |
 
-- **The ground gate.** `FUN_0200C354` has one caller, `ov_0000::0213F7D8`. Its gate is the byte at `0x020DED14+7`. That byte gates all touch input in ground mode, so ground touch input is switched off by the options byte. This ties to the options bit, which is not yet named (**[open]**, see the next bullet).
-- **The options bit.** Not named. The byte at `0x020DED14+7` is the gate for ground touch (above). **[open]**
+- **The ground gate.** `FUN_0200C354` has one caller, `ov_0000::0213F7D8`. Its gate is the byte at `0x020DED14+7`. That byte gates all touch input in ground mode, so ground touch input is switched off by the options byte. The byte is named `touchScreen` (#176 P3, below).
 - **Dungeon.** `ResolveDungeonDirection` gives a touch direction, and the dungeon reader (`ov_0001::02166B10`, see [#175](https://github.com/TorratDev/rust-mm/issues/175)) also reads the button bits. Touch is an alternative to the buttons, not the only input. **[blue-verified]** for the call sites; medium for the classification.
 
 **[open]** (not verified):
@@ -206,6 +205,35 @@ Touch consumers, from x-refs and the decompile of each caller. `FUN_0200C4F4` is
 - Whether `FUN_0202B474` and `FUN_0202CB20` have a button path in their callers.
 - Whether bit `0x8` in the three ARM9 consumers is Start or another flag.
 - Runtime: none. No Blue dump is configured in this session.
+
+### Options gate: touchScreen (#176 P3)
+
+The gate byte is `touchScreen`, the DS touch-screen option. **[blue-verified]** for the gate, the pointer, the struct and the field order. The name is high confidence: it rests on the field-order match with pmd-red's `ReadGameOptionsBits`.
+
+- **The gate.** `FUN_0200C354` returns 1 only when the byte at `options + 7` is nonzero and the touch position is not `0xFFFF`. **[blue-verified]**
+- **The pointer.** `0x020DED14` is a global slot that holds the options struct pointer. `DAT_0200C394` = `0x020DED14`. It is zero in the static image, so it is set at run time. **[blue-verified]**
+- **The struct.** `LoadGameOptions` (`0x0200CB30`) stores `0x020E7BA8` into the slot, so the struct base is `0x020E7BA8` (zero-initialised memory). `FUN_0202A778` also writes the slot. **[blue-verified]**
+- **The name.** The save reader `FUN_0200C6B8` (called from `RestoreAdventureData`, `0x02010F1C`) reads the options bit stream in this order: `+5` (2 bits), `+6` (1 bit), `+7` (1 bit), `+8` (1 bit), `+0`, `+1`, `+2`, `+3` (1 bit each), `+4` (3 bits), `+9` (2 bits). Pmd-red's `ReadGameOptionsBits` (`src/game_options.c`) reads `windowColor` (2), `controls` (1), `touchScreen` (1), `playerGender` (1), `dungeonSpeed`, `FarOffPals`, `damageTurn`, `gridEnable`, `mapOption` (3) and `unkC` (2). The order matches field for field, so `+7` is `touchScreen`. **[blue-verified]** for the order; high for the name.
+- **Other writers.** `InitializeGameOptions` (`0x0200CB14` path) sets `+7 = 1`, and the restore `FUN_0200C6B8` writes it from the stream. Of 89 functions that read the slot, 60 were decompiled and searched for stores to `+7`. **[blue-verified]** for these two. **[open]:** the options menu's writers; 29 readers were not decompiled.
+- **Default mismatch.** Blue's default for `+7` is 1. Pmd-red's `InitializeGameOptions` sets `touchScreen = 0`. Blue's `+6` (`controls`) is also 1, where Red's default `CONTROLS_GBA` is 0. **[open]:** either Blue's defaults differ or the enum values differ.
+
+### ARM9 sample decode and the ARM7 side (#176 P4)
+
+**ARM7 side of channel 6: [open], blocked.** The ARM7 binary is not in the copy-A project (only `arm9.bin` is imported), and no dump is configured to extract it. This needs an ARM7 import into a Ghidra project.
+
+The ARM9 sample is decoded from `FUN_0207D1E0` (command `0x10` path). **[blue-verified]** for the packing and the ring. The packed 32-bit sample is `CONCAT22(*0x0207D49C, *0x0207D498)`. It is written to an 8-byte ring entry at `ring + index*8`. The ring base is `DAT_0207D494+4`, the index is the `u16` at `+3`, and the wrap limit is the `u16` at `+5`.
+
+| Entry offset | Sample bits | Width | Decode | Use | Tag |
+|--------------|-------------|-------|--------|-----|-----|
+| `+0` (u16) | 0 to 11 | 12 bits | raw X | raw X (agrees with the Sample pipeline above) | **[blue-verified]** |
+| `+2` (u16) | 12 to 23 | 12 bits | second 12-bit value | likely raw Y | [hypothesis] (medium) |
+| `+4` (u16) | 24 | 1 bit | flag | likely the pen-down test (`CalibrateTouch` tests its third input word before it calibrates) | [hypothesis] (low) |
+| `+6` (u16) | 25 to 26 | 2 bits | value | not identified | [open] |
+
+- Bits 27 to 31 are not read by this decode. **[blue-verified]**
+- The command `0x10` path increments the index (`+3`), wraps it when it reaches the limit (`+5`), and calls the callback `*DAT_0207D494` with `(0x10, 0, index)`. **[blue-verified]**
+- The other command (`param_3 != 0`) sets bit `(1 << channel)` in `+0xD` and calls the callback with `(channel, 4, 0)`. **[blue-verified]**
+- **[open]:** the second 12-bit field as Y, the bit-24 flag, and the 2-bit field at bits 25 to 26.
 
 ## Screens
 
@@ -420,7 +448,7 @@ Touch:
 - The source of the calibration parameters at `0x0207CB70`.
 - The ARM7 side of channel 6 (not checked).
 - Which features are touch-only and which are touch-optional.
-- The name of the options bit at `0x020DED14+7`. The name is not confirmed.
+- The options menu's writers of the `touchScreen` byte (`0x020DED14`, `+7`) are not confirmed (#176 P3); see [Options gate](#options-gate-touchscreen-176-p3).
 
 Screens and fades:
 
