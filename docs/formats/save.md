@@ -53,12 +53,25 @@ These are research notes. Nothing here has been checked against a real save file
 | `0x004` | `0x400` | global script variables | [blue-verified] | `SaveGlobalScriptVars` `0201F884` / `RestoreGlobalScriptVars` `0201F81C`; raw copy in Red |
 | `0x404` | `0x10` | game internal name | [blue-verified] | `GetGameInternalName` `0202A000`, copied by `WriteSavetoPak` (`0202A53C`) |
 | `0x414` | 4 | magic | [lead] | Blue `0x06061320` (Red `0x05071412`); mismatch fails the load |
-| `0x418` | 4 | `unk418` | [blue-verified] | Accessors `sub_8011C34` `0202A060` (written by `WriteSavetoPak`) and `sub_8011C40` `0202A050` (read by `ReadSaveFromPak`). Meaning unknown |
-| `0x41C` | 4 | `unk41C` | [blue-verified] | Accessor `sub_8011C28` `0202A070` (read by `ReadSaveFromPak`). Meaning unknown |
-| `0x420` | 4 | global RNG state | [lead] | `GetRNGState` / `SetRNGSeed`; see [`re/rng.md`](../re/rng.md) |
-| `0x424` | 4 | language | [blue-verified] | Written by `WriteSavetoPak` (`0202A53C`). Reader side `SetLanguage` `0202A010` is tentative. `-1` when `unk41C` is 0 is [lead] |
+| `0x418` | 4 | `unk418` | [blue-verified] | Getter `sub_8011C34` `0202A060` (called by `WriteSavetoPak`); setter `sub_8011C40` `0202A050` (called by `ReadSaveFromPak`). Global `0x02132D98`. Struct `+0x48`. Reset to `-1`. Meaning unknown |
+| `0x41C` | 4 | `unk41C` | [blue-verified] | Setter `sub_8011C28` `0202A070` (called by `ReadSaveFromPak`). Global `0x020E048C`. Struct `+0x4C`. Reset to `0`. Meaning unknown |
+| `0x420` | 4 | global RNG state | [lead] | `GetRNGState` / `SetRNGSeed`; see [`re/rng.md`](../re/rng.md). Struct `+0x50` |
+| `0x424` | 4 | language | [blue-verified] | Written by `WriteSavetoPak` (`0202A53C`). Reader side `SetLanguage` `0202A010` is tentative. `ReadSaveFromPak` (`0202A240`) sets `-1` when `unk41C` is 0. Struct `+0x54` |
 | `0x428`–`0x448` | 4 each | section results | [lead] | One value per section; compared on load |
 | `0x44C` | | section data | [lead] | Starts here |
+
+**`unk418` and `unk41C` accessors** (investigator C on [#171](https://github.com/TorratDev/rust-mm/issues/171); static Ghidra decompiles only, no runtime run)
+
+- **[blue-verified]** `unk418` uses one global, `0x02132D98`. `sub_8011C40` (`0202A050`) writes it through `DAT_0202A05C`. Its only writer is `0202A054`. `sub_8011C34` (`0202A060`) returns it through `DAT_0202A06C`. Its only reader is `0202A064`.
+- **[blue-verified]** `unk41C` has its own global, `0x020E048C`. `sub_8011C28` (`0202A070`) writes it through `DAT_0202A07C`. Its only writer is `0202A074`. `FUN_0202A080` reads it, at `0202A090`.
+- **[blue-verified]** Callers of `sub_8011C40`: `FUN_0202A954` (`0202A968`), `ReadSaveFromPak` (`0202A248`), three others in overlay 0, and `FUN_0206C6E4`. Callers of `sub_8011C34`: `WriteSavetoPak` (`0202A578`) and seven others, including `FUN_0200D4DC`. Callers of `sub_8011C28`: `FUN_0202A954`, `ReadSaveFromPak` (`0202A240`), and about a dozen others.
+- **[blue-verified]** Load: `ReadSaveFromPak` calls `sub_8011C28(+0x41C)` and `sub_8011C40(+0x418)`, then `SetRNGSeed(+0x420)`. If `+0x41C` is `0`, it sets language (`+0x424`) to `-1`.
+- **[blue-verified]** Save: `WriteSavetoPak` first sets `+0x41C` from its argument, `+0x418` from `sub_8011C34()`, and `+0x420` from `GetRNGState()`. It then overwrites `+0x41C`, `+0x418`, `+0x420` and `+0x424` from the game struct, so those three values are not the final saved values.
+- **[blue-verified]** Reset: `FUN_0202A954` calls `sub_8011C28(0)` and `sub_8011C40(-1)`, so `unk41C` becomes `0` and `unk418` becomes `-1`.
+- **[blue-verified]** Both routines read the struct pointer at `0x020E0490`, which they dereference. Save fields map to struct offsets: `+0x418` ↔ `+0x48`, `+0x41C` ↔ `+0x4C`, `+0x420` ↔ `+0x50`, `+0x424` ↔ `+0x54`.
+- **[lead]** `symbols.md` names `0x020E0490` `gUnknown_203B184`, a pointer that both routines test as a debug save-state pointer. Whether that is debug-only in retail code is **[open]**.
+- **[lead]** The names `unk418` and `unk41C` are kept. Struct `+0x48` and `+0x4C` have no meaning the code supports yet.
+- **[open]** The meaning of `unk418` and `unk41C`, and of struct `+0x48` and `+0x4C`. The effect of the zero check on `+0x41C` beyond the language reset. Readers of `0x02132D98` and `0x020E048C` outside the x-ref lists above (the lists cover only the imported program, not runtime paths).
 
 **Sections** (offsets from `0x44C`; order and sizes from the save/restore pairs in `symbols.md`, except where marked [lead])
 
