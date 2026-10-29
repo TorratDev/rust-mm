@@ -104,10 +104,39 @@ Tag: **[blue-verified]**. Blue's copy of `pmd-red`'s `OtherRandom16` (`src/other
 | `02023B6C` | `OtherRandRange(low, high)` | `low + OtherRandInt(high - low)`; no equal-bounds case, so the generator still advances |
 
 - **State:** `gOtherRngState` at `0x020E03F4` (`short`). The literal pool at `02023BBC` holds the address and at `02023BC0` the increment `1021`. The static initial value is `0x348C`, read from the image; `pmd-red`'s `gOtherRngState` is `0x348C` too.
-- **Accesses:** x-ref to `020E03F4` lists three accesses, all in `OtherRandom16` (a read at `02023BA4`, a write at `02023BB0`, a read at `02023BB4`). Searching all literal pools for the address was not done, so aliasing through another pointer is not ruled out.
+- **Accesses:** x-ref to `020E03F4` lists three accesses, all in `OtherRandom16` (a read at `02023BA4`, a write at `02023BB0`, a read at `02023BB4`). A literal-pool search (#169 P3, below) finds no other static word that holds the address. Aliasing through a run-time pointer is not ruled out.
 - **Seeding:** no runtime seed write was found. The state starts from the static value.
-- **Callers:** x-ref to `OtherRandInt` (`02023B84`) lists 20 call sites: `OtherRandRange` (`02023B78`, 1), `FUN_02021d9c` (5, at `02021E88`, `02021EB0`, `02021ED8`, `02021EFC`, `02021F14`), `FUN_0201ff48` (1, at `0201FFFC`), and overlay 0 (13: `FUN_ov_0000__02140860` at `ov_0000::02141998`, `FUN_ov_0000__02154220` at `ov_0000::02154618`, and 11 call sites in `FUN_ov_0000__021421cc`). Investigator C's text says 18 direct sites; the list has 19 outside `OtherRandRange`. The list is taken as given. What these callers use the generator for (gameplay or presentation) is not checked.
+- **Callers:** x-ref to `OtherRandInt` (`02023B84`) lists 20 call sites: `OtherRandRange` (`02023B78`, 1), `FUN_02021d9c` (5, at `02021E88`, `02021EB0`, `02021ED8`, `02021EFC`, `02021F14`), `FUN_0201ff48` (1, at `0201FFFC`), and overlay 0 (13: `FUN_ov_0000__02140860` at `ov_0000::02141998`, `FUN_ov_0000__02154220` at `ov_0000::02154618`, and 11 call sites in `FUN_ov_0000__021421cc`). Investigator C's text says 18 direct sites; the list has 19 outside `OtherRandRange`. The list is taken as given. What these callers use the generator for is classified in [Caller classes (#169 P2)](#caller-classes-169-p2) below.
 - **Emulator check:** none yet. The unit tests in `crates/sim/src/rng.rs` check the formula only, from values computed separately.
+
+### Caller classes (#169 P2)
+
+Source: the #169 comment by investigator B. The 20 sites are in the ARM9 and in overlay 0 (ground mode). **None is in overlay 1 (dungeon).** A dungeon trace does not need this generator; a ground-mode trace does. Caller lists and call-site code: **[blue-verified]**. Subsystem labels: **[hypothesis]**, from the context lines and the functions named in the decompile.
+
+| Caller | Sites | Use (from decompile) | Class | Confidence |
+|--------|-------|----------------------|-------|------------|
+| `OtherRandRange` (`02023B78`) | 1 | wrapper; its own callers are the uses | wrapper | high |
+| `FUN_02021D9C` (`02021E88` and four more) | 5 | a random offset of 2 to 3 or 8 units, then `FUN_0208625C(value, 8)`, a wrap to 8 steps, in a switch on an actor state; looks like facing or direction | presentation (likely) | low |
+| `FUN_0201FF48` (`0201FFFC`) | 1 | script opcode `0xB`: the parameter is replaced by a random value in `[0, n)` | script-defined (unknown) | low |
+| `FUN_ov_0000__02140860` (`ov_0000::02141998`) | 1 | "S10 event check": if the event state is 0 (`FUN_02020D90`), a 1-in-256 roll sets event flag `0x44` | gameplay (ground event trigger) | medium |
+| `FUN_ov_0000__02154220` (`ov_0000::02154618`) | 1 | for states `0xE` to `0x1D`, a random value `0` to `17` goes to an actor field at `+0xA0` | presentation (likely) | low |
+| `FUN_ov_0000__021421CC` (`ov_0000::021440B0` and ten more) | 11 | 8 sites place or jitter an actor position (8.8 fixed point: `<< 8`, `+0x18`/`+0x19`); 2 sites write a random value to a script field (`+0x4E`); 1 site (`case 0xC3`) discards the result | 8 presentation, 2 unknown, 1 RNG-advance only | medium |
+
+Totals: presentation (likely) 14 sites (5, 1 and 8 in the three rows above); gameplay 1 (`FUN_02140860`); script-defined or unknown 3 (`FUN_0201FF48` and the two `+0x4E` sites); RNG advance only 1 (`case 0xC3`); wrapper 1. That is 20.
+
+Only the `FUN_02140860` event trigger is a clear gameplay use. **Not verified:** no emulator run for any caller; `FUN_0208625C` is taken as a wrap and its body was not read; the meaning of script field `+0x4E` and of script opcode `0xB`; whether `FUN_02021D9C` is facing or an animation. The emulator check of the state and the zero-extended return is still open (see [Open questions](#open-questions)).
+
+### Literal-pool search for the state address (#169 P3)
+
+Tags: **[blue-verified]** (static search). High confidence for the exact search; medium for "no alias", since run-time pointers are not covered.
+
+- `0x020E03F4` (bytes `f4 03 0e 02`, all of memory): one hit, at `02023BBC`. That is the literal pool entry that `OtherRandom16` already uses.
+- `0x020E03F8` (bytes `f8 03 0e 02`): 19 hits, all in ARM9 code between `02023DD8` and `020255FC`. Each is a pointer to a global table base. Two were checked (`FUN_02023CF0` and `FUN_02024048`): both walk 0xD0-byte task or effect entries, and neither uses the state address or a −4 offset. The other 17 were not read.
+- `0x020E03F0`: no hits.
+
+**Result:** no static literal or data word holds `0x020E03F4` except the one already known, so the state has no static alias. Aliasing through a run-time computed pointer is not ruled out. The 17 unread hits for `0x020E03F8` are an open item.
+
+**Dungeon callers:** none. The generator has no callers in overlay 1.
 
 ## Save round trip
 
@@ -283,8 +312,8 @@ Totals: 9 sites (4 ability-trigger, 3 items, 1 AI, 1 unidentified). Not verified
 
 - The unnamed global-LCG callers are classified above with [hypothesis] labels. Still open: the `FUN_0200F768` cluster and the overlay-0 and overlay-1 entity routines (callee names only), and, of the dungeon callers, the 19 functions with no named callee, which need a body read (#168 P1). This feeds #48, #50 and #52.
 - Correct the subsystem labels above once the bodies are read.
-- Which of the 20 `OtherRandInt` callers use the 16-bit generator for gameplay, and which for presentation. Needs the bodies and an emulator check.
-- Whether any other code writes `gOtherRngState` through a pointer alias (literal-pool search).
+- The 20 `OtherRandInt` callers are classed in [Caller classes (#169 P2)](#caller-classes-169-p2) with [hypothesis] labels. Open: the meaning of script field `+0x4E` and opcode `0xB`, whether `FUN_02021D9C` is facing or an animation, and the body of `FUN_0208625C`.
+- Whether any run-time pointer writes `gOtherRngState` through an alias. The static literal-pool search found none (#169 P3); 17 `0x020E03F8` neighbour hits are unread.
 - An emulator vector for the 16-bit generator: a state dump before and after a call that uses it.
 - Whether the quick-save branch in the save routines leaves the global RNG state from the dungeon (not checked).
 - The caller slot of `FUN_02018ACC` and the writer of its flag word (see [Per-frame steps](#per-frame-steps-159)). The A and Select check on the frame routine needs a boot-phase run (frames 2418 to 2561).
