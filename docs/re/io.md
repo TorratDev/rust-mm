@@ -18,7 +18,16 @@ The handler calls `FUN_02017B20` (`UpdateKeyState`) each frame. That calls `FUN_
 - masks with `0x2FFF` (literal at `0x02019198`) and computes `((KEYINPUT | *0x027FFFA8) ^ 0x2FFF) & 0x2FFF`, then adds bit `0x8000` copied from `*0x027FFFA8`;
 - adds the result into a running sum at `0x020DF89C`.
 
-Hardware keys are active-low; the XOR makes them active-high. The OR with the word at `0x027FFFA8` clears bits rather than setting them. What that word holds is unknown (see [Open questions](#open-questions)).
+Hardware keys are active-low; the XOR makes them active-high. The OR with the word at `0x027FFFA8` clears bits rather than setting them. Keys are active-low, so a 1 bit in the word (bits 0 to 11 or 13) forces that key to "released". Bits 10, 11 and 13 are not key bits, and `ReadKeyInput` masks them out.
+
+**Shadow word at `0x027FFFA8` (#175 P2).** The formula above is **[blue-verified]**, from the literal pool at `0x02019190`: `REG_KEYINPUT` `0x04000130`, the shadow word `0x027FFFA8`, mask `0x2FFF`, and the accumulator `0x020DF89C`. Bit 15 is copied from the shadow word. Its readers are **[blue-verified]**, and all test `0x8000`:
+- `FUN_02019794` (literal read at `0x020197BC`): plays a sound (`FUN_0207d704`) when bit 15 is set and `DAT_02019820` is nonzero.
+- `FUN_0207F418` (literal read at `0x0207F420`): calls `FUN_0207d9ec` when bit 15 is set.
+- Overlay 7 wait loop `FUN_ov_0007__02139A98` (literal at `ov_0007::02139F4C`): exits early when bit 15 is set.
+
+**[runtime-observed]** (boot probe, py-desmume, scratch and not committed): the word is `0x0` at frame 0, then `0x2C00` from frame 15 to the end of the run, and it did not change across 547 or more `KEYINPUT` changes. The `KEYINPUT` values seen were `0x3FE`, `0x3F7` (Start at frame 900), `0x37F`, `0x3BF`, `0x3EF` and `0x3DF`. Because bits 10, 11 and 13 are masked, this word changed no key in that run. Bit 15 was never set, so the three bit-15 branches were not exercised. Confidence: high for the value and for no effect on keys in the boot run; medium for the meaning of the bits. **Writer: not established.** No writer is found in Blue's ARM9. The byte pattern `a8ff7f02` appears only as literals in the readers above, and the word is not in the static image, so a write from ARM7 or firmware is the likely source.
+
+**Proposed signature (#175 P4, a proposal only; not applied to any decompile).** `void ReadKeyInput(ushort *out)`. The stored signature is `undefined FUN_02019130()`, while the decompile body is `void FUN_02019130(ushort *param_1)`. The body sets `*out` to the processed key word and also adds that word into the accumulator at `0x020DF89C` (read at `0x02019180`, write at `0x02019188`). The prototype's notes must record that side effect. The only caller is `FUN_02017B20` (`0x02017B38`), which passes the struct at `0x020F2790` and reads the output word back at once. Tags: **[blue-verified]** for the body; high for the prototype; medium on the accumulator's meaning.
 
 ### Key state
 
@@ -44,6 +53,8 @@ Hardware keys are active-low; the XOR makes them active-high. The OR with the wo
 ### Accumulator
 
 **[blue-verified]** for the structure, **medium** for the meaning. The accumulator at `0x020F2770` is ORed with the held keys each frame. Its int at `0x020F2768` is updated as `value *= (held | 0x054A1C41)`. The investigator reads this as an RNG mix, but the constant is not checked. Cross-check it with [`rng.md`](rng.md) before using it.
+
+**The product at `0x020F2768` is not an RNG step (#175 P3).** **[hypothesis]**, high on the code and medium on the meaning. `rng.md` has no match: the global and dungeon LCGs use `0x5D588B65`, and `0x054A1C41` appears in no doc, Rust file or Ghidra label in the repo. The factor is odd, so the product is invertible mod `2^32`, but nothing in the imported program consumes it. The only reader and writer in the program are `FUN_02017B20` (read at `0x02017CCC`, write at `0x02017D14`), and `FUN_020181AC` writes the initial value `0x004A14C1` (write at `0x020181F4`, called from the boot path at `0x02000CDC`). Not checked: overlay or trace-harness reads.
 
 ### Snapshot and consumers
 
@@ -242,9 +253,9 @@ The control nibbles and the size field agree with [`formats/compression.md`](../
 
 Input:
 
-- What the A, B, Select and Start keys do, and the menu bindings. The menu readers in overlay 1 (for example `FUN_ov_0001__02166B10`) were not checked.
-- What the word at `0x027FFFA8` holds, and what its mask does.
-- Whether the `0x054A1C41` multiply in the accumulator is an RNG step. Cross-check with [`rng.md`](rng.md).
+- What the A, B, Select and Start keys do, and the menu bindings (#175 P1, partly mapped). The dungeon main-loop reader `ov_0001::02166B10` is mapped against pmd-red `dungeon_main.c`; the rest is not. Suggested split: (a) finish the actions for B, Start, X and Y in that reader; (b) map the menu readers in overlay 1 against `dungeon_menu_*.c`, reading the buffer pointer first.
+- The writer of the word at `0x027FFFA8`, and the bit-15 behaviour, which the boot run never exercised (#175 P2). The word's meaning is not an open question: it is the shadow mask above.
+- What consumes the product at `0x020F2768`. Nothing in the imported program reads it; it is not an RNG step (#175 P3).
 - The repeat timing (48, then 43) is assumed from one call per VBlank. An emulator check would settle it.
 - The IRQ handler: this page names `FUN_02018ACC`. [`execution-model.md`](execution-model.md) still says the handler is not located, and needs updating.
 - `FUN_02017E60` is `LoadBufferedInputs` in [`execution-model.md`](execution-model.md) (recorded name, #161 P4) and `UpdateInputSnapshot` here. The name here is the one to change.
