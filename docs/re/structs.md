@@ -46,7 +46,7 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x56` | `types[2]` | `0x5C` | −6 | `sub_806F370_Async`, `sub_806F4A4` |
 | `+0x58` | `abilities[2]` | `0x5E` | −6 | `AbilityIsActive` |
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
-| `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` are written by the same unnamed writer; readers open; blue-verified (writer), offsets medium) | `0x78` | −8 | `0219082C` (blue-verified writer; unnamed in Blue) |
+| `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` are written by the same unnamed writer; readers partly found, see [aiTarget readers](#aitarget-readers-164); blue-verified (writer), offsets medium) | `0x78` | −8 | `0219082C` (blue-verified writer; unnamed in Blue) |
 | `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; probable-high; the name is red-hypothesis, the offset medium) | `0x79` | −8 | `ov_0001::02188030` (`RunMonsterAI`) clears it when the action is above PASS_TURN (blue-verified write); `ov_0001::02190FEC` (`DecideMovement`) sets it |
 | `+0x87` | IQ skills, one bit per skill (bit *n* is tested with mask `1 << n`) | — | — | `ov_0001::021805B0` (`IqSkillIsEnabled`). Bits 4, 5 and 8 are used in the hit and AI paths |
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
@@ -92,6 +92,37 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 Not listed: the `IQ` field at Red `0x0C`. Blue's IQ bits are at `+0x87` (above). Entity info `+0x0C` is the learn gate (#164 P3, [hypothesis]): `FUN_02001AF4` (`GetMovesLearnedAtLevel`) is called through `FUN_ov_0001__02182E5C`, which passes an entity-info field as the gate (call at `ov_0001::02182E98`). The IQ meaning is not confirmed, and the threshold 333 is not a level. See the open questions.
 
 The status records are smaller in Blue: the distance between consecutive ones shrinks (for example, reflect to sure shot is 0x13 bytes in Blue and 0x18 in Red), so each status record needs its own check.
+
+### aiTarget readers (#164)
+
+Investigator C, static Ghidra only; no runtime run. **[blue-verified]** for the accesses and the decompiles; **[hypothesis]** for the roles.
+
+Red reference: `pmd-red` `dungeon_ai_movement.c` 277–281 tests `aiObjective == AI_CHASE_TARGET || == AI_CHASE_REMEMBERED_TARGET`, then `aiTarget->spawnGenID == aiTargetSpawnGenID`. `AIObjective` in `dungeon_entity.h`: 1 chase target, 2 chase remembered target, 3 roam, 4 leave room, 5 run away, 6 stand still, 7 take item. Blue's `+0x70` is Red's `+0x78` (shift −8), so `aiObjective` is at info `+0x70` and `aiTargetSpawnGenID` at `+0x74`.
+
+**Method.** The bridge has no wildcard byte search. The search covered `LDRB` with offset `0x70` and `LDRH` with offset `0x74` (512 register combinations), and each hit was decompiled. It covers only immediate-offset forms with the base register in the encoding, so it can miss loads with the base in another register.
+
+**Readers and writers in Blue.** The roles are **[hypothesis]**.
+
+| Function (address) | Field | Access | Blue code | Role (hypothesis) |
+|---|---|---|---|---|
+| `FUN_ov_0001__02175A00` (`02175A00`, hit `02175A60`) | `+0x74` | read (`LDRH`) | compares `info+0x74` with the candidate entity's `+0x26` (its spawn ID) | target validity check; matches Red 279–281 |
+| `FUN_ov_0001__02191394` (`02191394`, hits `02191730` and `02191754`) | `+0x70` and `+0x74` | write and read | writes objectives 1, 7, 1, 2, 6; reads `(objective − 1) < 2` (chase, Red 277) with `info+0x78` non-null; compares `+0x74` with the target's `+0x26` (Red 279–281) | the chase branch of Red's `dungeon_ai_movement.c`; candidate for the Blue counterpart |
+| `FUN_ov_0001__02190854` (`02190854`, hit `021909A8`) | `+0x70` | write and read | writes 3, 6, 4, 3; tests `!= 4` | roam and leave-room states |
+| `FUN_ov_0001__02190FEC` (`02190FEC`, hit `02191068`) | `+0x70` | read | tests `== 1` (chase target) | chase state |
+| `FUN_ov_0001__02189768` (`02189768`, hit `021898B8`) | `+0x70` | read and write | tests `== 1`, writes 6 (stand still) | stand-still transition |
+
+Excluded (not `aiTarget` in Blue):
+- `FUN_020319F4` (`020319F4`, hits `02031AD4` and `02031B0C`): `+0x74` is a table of shorts in another struct.
+- `FUN_ov_0000__0214E2A4` (`0214E2A4`, hits `0214E4DC` and `0214E534`): writes `param_1+0x74` (a u32) and `param_1+0x70` (bytes) in a struct that is not shown to be the info; not classified.
+- `FUN_ov_0001__0216E7B4` (`0216E7B4`, hit `0216E818`): reads `*(param_2+0x70)` as a pointer; the target is unclear; not classified.
+
+**Objective values.** Blue writes 1, 2, 3, 4, 6 and 7, the same numbers as Red's enum. The names are assumed to match; that is **[open]**.
+
+**Not verified:**
+- That the Blue enum has the same names and meanings as Red's. Only the numbers are shared.
+- That `FUN_ov_0001__02191394` is the counterpart of Red's chase branch. It matches the comparisons, not the name.
+- Readers missed by the byte search (base register not in the encoding, or a different immediate form). A full read list needs a decompile-based search of all overlay-1 AI functions. **[open]**
+- Runtime behaviour: nothing was run; no retail dump is configured.
 
 ## Dungeon struct
 
@@ -310,7 +341,7 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 - **Entity info size.** `0x1D4` (468), measured in the emulator (#163 P1, runtime). Method: `info = base + k*0x1D4` for the team and wild entries of a dungeon at its start. The allocator and the per-record field check are not verified (see the size note above).
 - **IQ bits at info `+0x87`.** `IqSkillIsEnabled` tests them. Check whether this field is part of the info struct and how it relates to the Red `IQ` field at `0x0C`.
 - **Learn gate at info `+0x0C` (#164 P3, [hypothesis]).** Blue's `GetMovesLearnedAtLevel` is `FUN_02001AF4`. Its caller `FUN_ov_0001__02182E5C` (call at `ov_0001::02182E98`) is the only caller that passes an entity-info field as the gate, and that field is info `+0x0C`. `FUN_02001844` reads the same gate from the Pokemon struct at `+0x0A`, which the Recruited Pokémon table lists as `IQ`. The IQ meaning is not confirmed, and the threshold 333 is not a level. Red's `IQ` readers (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`) are not matched in Blue. **Open:** the readers and the writer of info `+0x0C`.
-- **`aiTarget` inner layout (#164 P2).** The four offsets `aiTargetPos` `+0x80`, `aiObjective` `+0x70`, `aiTargetSpawnGenID` `+0x74` and `aiTarget` `+0x78` are written by the same writer, `0219082C`, which is unnamed in Blue (blue-verified, writer). Their readers are open: Red compares `aiObjective` with 1 or 2 and checks `aiTarget->spawnGenID` against `aiTargetSpawnGenID` (`dungeon_ai_movement.c` 277-281), but no reader is found in Blue. `aiTargetingEnemy` `+0x72` and `unkC` `+0x7C` are not written by that writer. The Blue value 0 for `aiObjective` comes from the writer alone. The offsets follow the −8 shift (medium).
+- **`aiTarget` inner layout (#164 P2).** The four offsets `aiTargetPos` `+0x80`, `aiObjective` `+0x70`, `aiTargetSpawnGenID` `+0x74` and `aiTarget` `+0x78` are written by the same writer, `0219082C`, which is unnamed in Blue (blue-verified, writer). Red compares `aiObjective` with 1 or 2 and checks `aiTarget->spawnGenID` against `aiTargetSpawnGenID` (`dungeon_ai_movement.c` 277-281). Readers are partly found (#164 readers, above): `FUN_ov_0001__02175A00` reads `+0x74` and five functions read or write `+0x70`. **[open]** A full read list needs a decompile-based search of the overlay-1 AI functions, because the byte search can miss loads with the base in another register. `aiTargetingEnemy` `+0x72` and `unkC` `+0x7C` are not written by that writer. The Blue value 0 for `aiObjective` comes from the writer alone. The offsets follow the −8 shift (medium).
 - **`RunMonsterAI`** `ov_0001::02188030`: check its remaining branches against Red's `dungeon_ai.c`.
 - **Status write sites (#166 P1, P2).** Found by a search of one call level from the move executor `ov_0001::0215B384` and the move-effect switch `ov_0001::02156824` (314 functions), and of `LDRB`/`STRB` at offsets `0xC9` and `0xCB`. Writers behind a function-pointer table or a second call level were not reached, so the curse, leech-apply and most cringe writers are not established. Blinker cross-eyed (2) and eyedrops (3) were not found by the `LDRB`/`STRB` search, which covers only the immediate offset in the low byte. The `+0xCA = 8` default in `FUN_0205938C` (ARM9 `020593B0`, along with `+0xC9 = 0` and `+0xCB = 0`) is not checked against any reader. The turn roll `FUN_ov_0001__0219CF28` is not named. Cringe writers for paused, infatuated, cowering, taunted and encore are not checked. The readers list stays open. Runtime: no emulator check. Tags: blue-verified for write sites and offsets; red-hypothesis for the names; [hypothesis] for the class names.
 - **Trap entities.** The writer of `traps[64]` (`+0x114B4`) is not found. Search the overlay 1 functions called from the floor-generation chain (`GenerateFloor`, `ov_0001::02151E7C`), or dump RAM after a floor load (#17).
