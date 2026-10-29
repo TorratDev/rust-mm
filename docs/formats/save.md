@@ -37,6 +37,19 @@ These are research notes. Nothing here has been checked against a real save file
 - **Red cross-check** (`pret/pmd-red` `src/save.c`): marker sector `0x1F` and default `0xF1209` match. Red's quicksave sector was not checked.
 - No local real save was available for a check. Runtime values were not read.
 
+**Quick-save and the global RNG state** (investigator C on [#171](https://github.com/TorratDev/rust-mm/issues/171), P2; static Ghidra only, no runtime run)
+
+- **[lead]** Answer: a quick-save resume does not set the global LCG `sPRNGState` (`0x020DF704`). The quick-save data does not carry it, so after a resume the global LCG keeps whatever value the session had before the load. High confidence for the code path; the runtime effect is not run.
+- **[blue-verified]** Writers of `0x020DF704` are `SetRNGSeed` (`0x020118F8`, `0x02011904`), `Rand16Bit` (`0x020119BC`, `0x020119C4`) and `SeedRng` (`0x02011A0C`). In the save code, `SetRNGSeed` is called only from `ReadSaveFromPak` (`0x0202A250`), the main-save reader.
+- **[blue-verified]** `LoadAndRunQuickSaveDungeon_Async` (`0x0201E204`, branch `setup+6 != 0`) calls `PrepareQuickSaveRead`, a loop of `ReadQuickSave` with `MainLoops_RunFrameActions`, `IsQuickSaveValid`, `FinishQuickSaveRead`, `FUN_0202A4A0` and `LoadAndRunDungeon_Async`. None of these calls `SetRNGSeed`, `ReadSaveFromPak` or a `Rand*` function, and none writes `0x020DF704` directly.
+- **[blue-verified]** `FUN_0200D4DC` (`0x0200D4DC`) is the one place the branch touches the global LCG. It runs only when `setup+0x60 == -2`. It calls `Rand32Bit()` (two LCG steps, `0x0201198C`), seeds the Mersenne Twister, and reads `unk418` through `sub_8011C34` (`0x0202A060`). See the `unk418` accessors above.
+- **[open]** Where `setup+0x60` is set to `-2`. It is not in `LoadAndRunQuickSaveDungeon_Async`, `FUN_0202A4A0` or `LoadAndRunDungeon_Async`, so the `FUN_0200D4DC` draw on resume is unresolved.
+- **[blue-verified]** The quick-save write (`FUN_0202B140`, state 1, `0x0202B1xx`) calls `FUN_0202B5DC` and `WriteSaveSector` only. It does not call `GetRNGState`. `WriteSavetoPak` (state 2) is the only caller of `GetRNGState` on this path, so the global state is saved only in the main save's `+0x420`.
+- **[blue-verified]** `FUN_0202B57C`, `FUN_0202B5DC`, `FUN_0202EDAC`, `FUN_0202F280` and `FUN_0206DB78` contain no RNG accesses.
+- **[lead]** Per-frame draws keep moving the global LCG during the read loop. `MainLoops_RunFrameActions` runs each frame, and the frame callback `FUN_02018ACC` (see #175 P3 and #44) draws from it. So the global state changes during the read even though the read does not set it.
+- **[open]** Whether the dungeon LCG (`gDungeonRngState`, `ov_0001::021B3F58`) is in the quick-save sector. The sector routines above show no RNG accesses, but the sector contents were not decoded.
+- **[open]** The resume condition in `RunDungeon_Async` for the dungeon preseed. #47 (`re/rng.md`) says the preseed is drawn once per run and not on resume; not re-checked here.
+
 **Checksum**
 
 - **[blue-verified]** The header's first 4 bytes (word 0) hold a checksum: the sum of the other 32-bit words in the block. `CalculateChecksum` (`02029FD4`) writes it; `ValidateChecksum` (`02029F98`) checks it.
