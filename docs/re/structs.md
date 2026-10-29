@@ -263,6 +263,30 @@ Open, not verified (the #170 P1 comment's list, left as it is):
 - Runtime: no emulator check (no Blue dump configured in this session).
 - `FUN_02002F88` returns 0 when nothing matches. Callers that test the result for a nonzero pointer were not all checked.
 
+## Mail record (#170 P3)
+
+The mail record that `FUN_0200D4DC` (`sub_809542C` in [#47](https://github.com/TorratDev/rust-mm/issues/47)) builds. Offsets written by the builder, compared with pmd-red's `include/structs/str_wonder_mail.h` (`unkStruct_203B480`) and `src/code_8094F88.c` (`sub_809542C`). Source: the #170 P3 comment by investigator A; static, Ghidra copy `rescue-arm9-a`, no emulator check.
+
+Tags: **[blue-verified]** for the writes; the Red field names are **[red-hypothesis]**.
+
+| Blue offset | Written by | Red field | Match |
+|-------------|-----------|-----------|-------|
+| `+0x00` (u8) | `= 1` | `mailType` at `0x0` | offset and value (1 in both) |
+| `+0x04`, `+0x08` (u32 each) | copies of `param_1[0]` and `param_1[1]` | `dungeonSeed` (`DungeonMailSeed`, 8 bytes) at `0x4` | size and position |
+| `+0x0C` (u16) | roster record `+6` | `clientSpecies` at `0xC`, set from `GetLeaderMon1()->speciesNum` | position; the source is medium (roster `+6` as species is not verified) |
+| `+0x10` (u32) | `Random32MersenneTwister()` after `MersenneTwister_InitializeState(Rand32Bit())` | `unk10` at `0x10` | position and call sequence |
+| `+0x14` (10 bytes) | roster name through `FUN_020024D0`, then `FUN_02008AF0` (decoded) | `playerName[10]` at `0x14` | position; Red's `sub_809542C` has no decoding step |
+| `+0x24` (u32) | `sub_8011C34()` | `unk24` at `0x24` | same call |
+| `+0x2C` (u8) | `FUN_02006410(byte at mail +4)` | `rescuesAllowed` (`s8`) at `0x2C`, set from `GetRescuesAllowed(dungeonSeed.location.id)` | **offset matches; value open (below)** |
+
+Not written by `FUN_0200D4DC`: `+0x01` (missionType), `+0x20` (`item` in Red) and `+0x28` (`unk28` in Red). Red sets these elsewhere; the Blue writers were not looked for.
+
+**Open: the byte at `+0x2C` may not be `rescuesAllowed`.**
+- `FUN_02006410(index)` returns the byte at `table + index * 0x10`: byte `+0x0` of a 16-byte record. The stride matches pmd-red's `DungeonDataEntry` (`include/dungeon_data.h`, size `0x10`).
+- In that struct, byte `+0x0` is `stairDirectionUp`, and `rescuesAllowed` is at `+0x3`. If Blue's table has Red's layout, the mail byte and the byte `RunDungeon_Async` stores at `gDungeon + 0x66B` (from `FUN_02006410(setup + 4)`) are `stairDirectionUp`, not `rescuesAllowed`.
+- Red reads `rescuesAllowed` at `gDungeon->unk644.unk37` (`src/run_dungeon.c` 139). Blue's `+0x66B` is a different layout, so this is not a direct comparison.
+- **Not verified:** whether Blue's table has Red's layout, and whether Blue's record puts the `+0x3` byte elsewhere. This needs a read of the table or of its users.
+
 ## RAM for golden traces
 
 What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) should read on each turn trigger ([`turns.md`](turns.md)), all through the pointer in `gDungeon`:

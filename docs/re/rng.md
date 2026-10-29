@@ -91,7 +91,23 @@ Two functions use it. Both seed it from the global LCG, and neither feeds the Me
 | `0200D4DC` | `sub_809542C` | Mail-record builder. One MT output is stored as the mail's `unk10`. | `LoadAndRunQuickSaveDungeon_Async` (`0201E304`) | `Rand32Bit` once before seeding |
 | `0206C6E4` | `HandleTestTrackerState` | Personality test, state machine. Case 15 (`PERSONALITY_TEST_END`) uses MT outputs, then passes the result to `sub_8011C40`. | Reached through a dispatch table at `ov_0000::02159D00` | `Rand32Bit` for the product factor, then `Rand32Bit` for the seed |
 
-Both match `pmd-red`: `sub_809542C` in `src/code_8094F88.c:270–283`, and case 15 in `src/personality_test1.c:96`. The constant 13 in the personality product loop is `NUM_PERSONALITIES` in Red; it has not been checked against a Red header. **For golden traces:** these calls draw from the global LCG, so a dump of `sPRNGState` must account for the extra draws when either routine runs.
+Both match `pmd-red`: `sub_809542C` in `src/code_8094F88.c:270–283`, and case 15 in `src/personality_test1.c:96`. The constant 13 in the personality product loop matches `NUM_PERSONALITIES` in Red (`MISC` = 13 in `include/constants/personality_test.h`); see the tracker notes below (#170 P2). **For golden traces:** these calls draw from the global LCG, so a dump of `sPRNGState` must account for the extra draws when either routine runs.
+
+### Personality tracker (#170 P2, P3)
+
+Source: the #170 P2 and P3 comment by investigator A. Static, Ghidra copy `rescue-arm9-a`; read-only, nothing renamed or saved. `tracker` is `*DAT_0206C874` (a pointer to the tracker pointer) in `FUN_0206C6E4` (`0x0206C6E4`).
+
+**Tags:** **[blue-verified]** for the offsets, the loop bound, the switch and the arithmetic; **[hypothesis]** for the reading of the 13 words as one score per personality; red-hypothesis for the meaning of the words.
+
+| Offset | Size | Use (Blue) | Tag |
+|--------|------|------------|-----|
+| `+0x00` | u32 | call counter, `*T = *T + 1` on every call | blue-verified |
+| `+0x3C` | u32 | phase selector: `switch` with cases 0 to 15. Cases 0 to 14 each call one routine. Case 15 is the final step. The routine returns 0, or 3 when done | blue-verified (switch and returns) |
+| `+0x4C` to `+0x7C` | 13 words (`i` = 0 to 12) | read in the final loop, `value *= (i + word[i] + 3)`; the loop runs `while (iVar3 < 0xd)` | blue-verified (loop and arithmetic); [hypothesis] for one score per personality |
+
+- **P2, the constant 13.** The loop bound is 13. In Red, `enum NaturePersonalities` runs `HARDY` (0) to `QUIRKY` (12), and `MISC` = 13 is the `#define NUM_PERSONALITIES` (`include/constants/personality_test.h`). Blue's bound matches `NUM_PERSONALITIES`. The count is the evidence; the field meaning is not established (medium).
+- The result is seeded from `Rand32Bit()` and `MersenneTwister_InitializeState`. The output of `Random32MersenneTwister()` is added, retried if it is `-1`, then passed to `sub_8011C40`.
+- **Not verified:** the routines behind cases 0 to 14 (`FUN_0206C590`, `FUN_0206C568` and others), apart from case 15's arithmetic; `sub_8011C40` and `sub_8011C34`; the 13 words as personality scores; runtime (no Blue dump configured, no emulator check).
 
 ## 16-bit generator
 
