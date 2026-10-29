@@ -10,7 +10,7 @@ Only three of the 145 ARM9 overlays hold code (V8 in [`verification.md`](../veri
 
 | Overlays | RAM | Contents | Loaded by |
 |----------|-----|----------|-----------|
-| 0 | `02138860` | Ground mode code (towns, menus, scripts) | `NDS_LoadOverlay_GroundMain`, at start-up and after every dungeon or overlay-7 mode |
+| 0 | `02138860` | Ground mode code (towns, menus, scripts) | `NDS_LoadOverlay_GroundMain` (`0201DCEC`). Its three callers, the only ones of the overlay-0 loader: `GameLoop_Async` (`0201F2FC`, start-up), `LoadAndRunDungeon_Async` (`0201DB70`, after every dungeon) and `RunOverlay7Mode` (`0201DAC4`, after overlay 7). Tag: **blue-verified** (static). |
 | 1 | `02138860` | Dungeon code (RNG, combat, AI, floor generation, ...) | `LoadAndRunDungeon_Async` |
 | 2–6 | `021B4900` | Text tables for the dungeon, one per language | `LoadAndRunDungeon_Async`, through `gLanguageTextOverlayIds` = {2, 4, 3, 5, 6} indexed by `GetLanguage()` (the table is at `020DF90C`) |
 | 7 | `02138860` | Code for title-menu choice 5, a mode Red does not have; entry `ov_0007::02139F80` | `RunOverlay7Mode` (`0201DAC4`). Its screen is not seen, so the entry is not named |
