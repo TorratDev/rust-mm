@@ -42,7 +42,7 @@ Order of operations:
 
 1. Map tiles, x = 0 to 55 (outer loop) and y = 0 to 31 (inner loop), 1792 tiles. Each tile gets `ResetTile(GetTileMut(x, y))`. Then `terrainFlags |= 0x10` (impassable wall) when any of its 8 neighbours is outside the 56 × 32 map. That marks the map's own perimeter ring: the tiles with x = 0 or 55, or y = 0 or 31. Tiles next to the edge are not marked.
 2. Stairs pair B: `+0xC0BC` and `+0xC0BE` are set to `0xFFFF` (−1).
-3. The 8 × 8 fixed-room cell records (`unkE27C` in Red): `ResetTile` on each. The cell base is `DAT_0214C0A4`, which is not read (see Still not done). The stride is `0x14` per x and `0xA0` per y, so each cell is one 0x14-byte tile record.
+3. The 8 × 8 fixed-room cell records (`unkE27C` in Red): `ResetTile` on each. The cell base is `DAT_0214C0A4` (`0xC11C`, see the pool-word table below). The stride is `0x14` per x and `0xA0` per y, so each cell is one 0x14-byte tile record.
 4. Item count: `+0x3424` (u16) = 0.
 5. Traps: for `i` = 0 to 63, the first 4 bytes of the entity that `traps[i]` points to (the pointer table at `+0x114B4`) are set to 0. There is no NULL check, so a NULL entry writes to address 0.
 
@@ -55,6 +55,20 @@ Order of operations:
 - Red indexes the 8 × 8 cells as `[x][y]`; Blue's index is in the other order. Every cell is reset, so the order does not change the result.
 
 The Rust `PortedSteps` (see the Prologue section) resets the map and stairs pair B only. The rest of this body is for the port in [#111](https://github.com/TorratDev/rust-mm/issues/111).
+
+### Overlay 1 pool words (#179)
+
+Five overlay 1 pool words, read from `rescue-re/code/overlay_0001.bin` at RAM base `0x02138860` by the reviewer. `ghidra-cli` `memory read` fails on overlay pool words, so this is the only source for them. Values: **[blue-verified]** (read from the file, one read so far). Meanings: **[hypothesis]**.
+
+| Pool word | Value | Meaning |
+|-----------|-------|---------|
+| `DAT_0214C0A4` | `0xC11C` | [hypothesis] Confirms the 8 × 8 cell base `+0xC11C` |
+| `DAT_02179124` | `0x584` | [hypothesis] The spawn-request list is at `gDungeon + 0x584`, not Red's `0x57C` |
+| `DAT_02149E78` | `0x021B45CC` | [hypothesis] The shop bounds are the overlay global `021B45CC`, not `gDungeon + 0xC0E0..0xC0EC` |
+| `DAT_021525F0` | `0x021B45CC` | [hypothesis] Same global |
+| `DAT_021525FC` | `0x021B45C8` | [hypothesis] The shop-centre pair |
+
+A second read of these values is still open (#179 P1), so the "Still not done" bullets below stay open.
 
 ## Emulator check
 
@@ -330,9 +344,9 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 - The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
 - The fixed rooms and the layout generators (cases 3 to 7, 9 and 10) are tracked in [#148](https://github.com/TorratDev/rust-mm/issues/148). The enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up are their own issues. The driver calls them through `FloorSteps`.
 - Unresolved in the #48 findings:
-  - `DAT_0214C0A4`, the base of ResetFloor's 8 × 8 cell records. It is an overlay pool word and could not be read: `memory read` fails on it, and overlay-form addresses are not accepted. The `+0xC11C` offset in `structs.md` is Red's and is not confirmed in Blue.
-  - `DAT_02179124`, the base of the P2 list (`*PTR_gDungeon + DAT_02179124`). Not read. If it is Red's `unk57C` (0x57C), the list is at dungeon `+0x57C`; that is an assumption. Blue's consumer of the list (Red `sub_806C3C0`, which spawns each active entry with `SpawnWildMon`) is not located.
-  - `DAT_02149E78`, the shop-bounds pointer. The bounds are four ints there, not in `gDungeon`. The table in the struct notes lists `+0xC0E0` to `+0xC0EC` for them; that matches only if the pointer targets those offsets. Unverified.
+  - `DAT_0214C0A4`, the base of ResetFloor's 8 × 8 cell records. It is an overlay pool word and could not be read: `memory read` fails on it, and overlay-form addresses are not accepted. The `+0xC11C` offset in `structs.md` is Red's and is not confirmed in Blue. The value is read from the overlay file (`0xC11C`, see the pool-word table above); the second read is open.
+  - `DAT_02179124`, the base of the P2 list (`*PTR_gDungeon + DAT_02179124`). Value read from the overlay file: `0x584`, see the pool-word table above. The read value `0x584` puts the list at `gDungeon + 0x584`, not Red's `0x57C`: a [hypothesis] until the second read (#179 P1). Blue's consumer of the list (Red `sub_806C3C0`, which spawns each active entry with `SpawnWildMon`) is not located.
+  - `DAT_02149E78`, the shop-bounds pointer. The bounds are four ints there, not in `gDungeon`. The table in the struct notes lists `+0xC0E0` to `+0xC0EC` for them; that matches only if the pointer targets those offsets. Unverified. The pointer's value is read from the overlay file as `0x021B45CC` (see the pool-word table above). That the target is an overlay global and not `gDungeon + 0xC0E0` is a [hypothesis].
   - The item-chance table at `021AAA38`: 16 layouts of 0x12 bytes, data. Its Red name is `[red-hypothesis]`.
   - The terrain type of the out-of-bounds tile that the south test reads at `y = 31` (P5b). It needs the tileset data or a runtime read.
 
