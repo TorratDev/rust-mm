@@ -64,7 +64,78 @@ Hardware keys are active-low; the XOR makes them active-high. The OR with the wo
 - **Dungeon directions.** `ResolveDungeonDirection` (`FUN_020271E0`, **[blue-verified]**, high) maps the D-pad to a direction code. Down `0x80` → 1, Right `0x10` → 2, Up `0x40` → 4, Left `0x20` → 8. That code indexes a 16-byte table at `0x020B219C`, which gives 8 directions without R: 0 Down, 1 DownRight, 2 Right, 3 UpRight, 4 Up, 5 UpLeft, 6 Left, 7 DownLeft.
 - **R for diagonals.** With R held (`0x100`) the lookup uses the table at `0x020B218C`, which gives only the diagonals.
 - **Emission.** A direction is emitted on the 4th identical frame, then on every frame while held (debounce counter `> 2`).
-- **Not mapped.** A, B (except the tap flag), Select, Start and the menu bindings. See [Open questions](#open-questions).
+- **Not mapped here.** The button actions are in [Dungeon reader actions](#dungeon-reader-actions-175-p1-a) and [Menu readers and helpers](#menu-readers-and-helpers-175-p1-b). See [Open questions](#open-questions).
+
+### Dungeon reader actions (#175 P1 a)
+
+Scope: the dungeon main-loop reader `FUN_02166B10` (`ov_0001::02166B10`, 727 lines in the decompile). A, Select, R and L are covered only where they gate one of B, Start, X or Y. Static decompile (Ghidra copy `rescue-arm9-a`), compared with pmd-red `dungeon_main.c`. Tags: **[blue-verified]** for the tests and branches; **[hypothesis]** for the action names; **[open]** for the callees.
+
+**Input source (corrected).** The reader reads the snapshot at `0x020F27A0`, not the current key struct at `0x020F2790`. The overlay literal `ov_0001::02167AA8` holds `0x020F27A0` (see [Snapshot and consumers](#snapshot-and-consumers)). An earlier pass read `0x020F2790`; that was wrong. The snapshot layout is the same as the current struct: `+0` held, `+2` pressed, `+6` flags (`0x2` B tap, `0x100` R tap). The bit values below are the same for both.
+
+**Bit values** (the reader's tests; they match pmd-red `include/gba/io_reg.h` 702 to 717): A `0x1`, B `0x2`, Select `0x4`, Start `0x8`, R `0x100`, L `0x200`, X `0x400`, Y `0x800`.
+
+| Button | Test in the reader | Action (structure) | Tag |
+|--------|--------------------|--------------------|-----|
+| **A + B** (held `0x3`) | mode byte at `PTR_DAT_ov_0001__02167AAC + 4`, and `FUN_0200B9A4` | sets the leader action to pass turn (`FUN_021418D4(1)`) and the flag at `0x663`. Matches `dungeon_main.c` 176 to 180 | blue-verified; high |
+| **Select** (pressed `0x4`) | gated by `+0x15FA2 == 0` and mode byte not 6 | opens the floor map: a loop `FUN_0213AC4C(10, 0x2F)`. A toggles the byte at `0x021B4210`; B or Select leaves. Matches `dungeon_main.c` 371 to 383 | blue-verified; high |
+| **B** (pressed `0x2`, mode 0, `iVar21+0x32 != 0`) | lines 258 to 264 | calls `FUN_021480E4()`, clears `0x021B4768`, calls `FUN_02017DBC` and `FUN_02017D34`. A cancel, by behaviour | blue-verified (structure); [hypothesis] for the name |
+| **B tap** (`flags & 0x2`) | lines 218 to 223 | leaves the loop with action 0 | blue-verified; Red's `shortPress & B` (`dungeon_main.c` 252) not compared for the action |
+| **L + B** (held `0x200`, pressed `0x2`) | lines 271 to 285 | calls `FUN_0200C538`, `FUN_021552D4`, `FUN_0215550C`, `FUN_0215570C(0)`, `FUN_021558CC`, then `FUN_02017DBC` and `FUN_02017D34` | blue-verified (structure); callees [open]; Red condition at `dungeon_main.c` 302 to 303 matches |
+| **Start** (pressed `0x8`) | `bVar23` (line 299), mode byte `PTR_DAT_02167AAC+6` is 0 | calls `FUN_02166530(leader)`, sets the flag at `0x021B4768` to 1, copies the slot from `info+0x44` to `iVar21+0x33`, sets `+0x34` to `0xFF`, then `FUN_02017DBC()`. Does nothing here when the mode byte is not 0 | blue-verified (structure); [open] for `FUN_02166530` |
+| **R tap** (`flags & 0x100`) | the same gate as Start (`bVar23`, line 311) | the same block as Start. Matches `dungeon_main.c` 323 for the gate; the action is not verified | blue-verified (gate); medium (action) |
+| **Y** (pressed `0x800`) | lines 188 to 189 (mode 0, sets `bVar6`); lines 266 to 270 (mode not 0, held `0x800`); line 304 (mode not 0, pressed `0x800`) | mode 0: same block as Start. Mode not 0: calls `FUN_021480E4` and clears `0x021B4768` | blue-verified (code); see the X and Y note |
+| **X** (pressed `0x400`) | lines 212 to 217, only when A is not pressed and no touch or other trigger is set | leaves the loop with action 0, the same exit as B tap | blue-verified (code); see the X and Y note |
+
+**X and Y note.** The reader tests X (`0x400`) and Y (`0x800`) in the key struct, but `ReadKeyInput` never sets them. Its formula, `((KEYINPUT | shadow) ^ 0x2FFF) & 0x2FFF`, takes bits 10 and 11 from `KEYINPUT`. Those bits read 1 at idle, so they come out 0. So the X and Y branches are not reached from the key path in this build. **[hypothesis]**: on the DS, X and Y sit outside `REG_KEYINPUT` (in `REG_EXTKEYIN`, `0x04000136`), which Blue's `ReadKeyInput` does not read. That was not checked in Blue. A runtime probe (scratch, not committed) saw no `0x400` or `0x800` over 25,100 frames, but its boot inputs never pressed X or Y, so that does not settle it.
+
+**Other gates used above.** A (pressed `0x1`) is tested at lines 210 to 256, when A is not pressed, for the other triggers and action codes 0 or 1. A is also tested at line 357 in the Select loop.
+
+**Runtime (scratch probe, not committed, so no command or hash is recorded).** Boot inputs to frame 25,100 show Start `0x8` (frames 900, 1020, 1300, 1360) and A `0x1` (frames 1140, 1330) in the snapshot, with no B or R tap. So B, B tap, R tap, L + B and the cancel path were not observed. **[hypothesis]** for the action names; the callees are not read.
+
+**Not verified.** The callees `FUN_02166530`, `FUN_021480E4`, `FUN_021418D4`, `FUN_0213AC4C`, `FUN_0200C538`, `FUN_021552D4`, `FUN_0215550C`, `FUN_0215570C`, `FUN_021558CC`. The branch for B and Start when the mode byte is not 0 (line 297 and line 304 were read, not run). Whether B, Start and the other buttons do the same in the menu overlays (see below).
+
+### Menu readers and helpers (#175 P1 b)
+
+**Status: partial.** The 39 functions in overlay 1 that load the snapshot pointer are listed, but 28 of them show no direct bit test and are not mapped to a pmd-red `dungeon_menu_*.c` function. Tags: **[blue-verified]** for the pointer, the bit tests and the call shapes; **[hypothesis]** for every behaviour label and every pmd-red match.
+
+**Snapshot pointer.** `FUN_02017E60` (frame action #9) copies the accumulator at `0x020F2770` to `0x020F27A0` and clears the accumulator's held, pressed and flags words. Literal pool: `0x02018194` gives `0x020F2770`; `0x020181A0` gives `0x020F27A0`. Pmd-red's `gRealInputs` (`include/input.h`, 0x10 bytes) matches the current key struct at `0x020F2790` field for field; the snapshot is a separate copy that the menus and the dungeon reader read. The overlay-1 literal `ov_0001::02167AA8` holds `0x020F27A0`, and `FUN_02166B10` loads it in 22 places (inlined copies). Pool scan (`a0 27 0f 02`) finds 39 functions in overlay 1 that load the pointer; the list is in the investigator's scratch output, not in the repo.
+
+**Direct readers.** These read snapshot bits in the function itself.
+
+| Reader | Bits tested | Named callees | Behaviour (hypothesis) | Closest pmd-red (hypothesis) | Confidence |
+|--------|-------------|---------------|------------------------|------------------------------|------------|
+| `ov_0001::0215325C` | pressed `0x3` (A and B) | `DungeonRunFrameActions` | A/B prompt loop | none found | low |
+| `ov_0001::021552D4` | pressed A and B | `DungeonRunFrameActions` | A/B prompt loop; `FUN_02166B10` calls it on L + B | none found | low |
+| `ov_0001::0216B130` | pressed A and B | `GetLanguage` | A/B prompt | none found | low |
+| `ov_0001::0216B2C0` | pressed A and B | `GetLanguage` | A/B prompt | none found | low |
+| `ov_0001::0216AD10` | pressed A and B; held `+4 & 0x40` and `0x80` (repeat up and down) | `GetLeader`, `EntityIsValid` | list with cursor, leader-related | `ShowDungeonToWhichMonMenu` (team), by the leader and entity calls | low |
+| `ov_0001::02174B8C` | pressed A, B, `0x10` and `0x20` (Right and Left); repeat up and down | `GetLanguage` | list with cursor and horizontal paging | none found | low |
+| `ov_0001::02175178` | pressed A and B; repeat up and down | `GetLanguage` | list with cursor (7 pools) | none found | low |
+| `ov_0001::0216F550` | pressed A and B | `GetTile`, `GetEntityType` | tile or item description prompt | `ShowTileDescription` (tile), by `GetTile` | low |
+| `ov_0001::0216FA78` | pressed A and B | `GetFloorType` | floor-based prompt | `ShowDungeonStairsMenu` or `ShowStairsDescription` (stairs), by floor type | low |
+| `ov_0001::021729FC` | pressed `0x30`, `0xC` and B | `GetLanguage` | page switch (Left and Right, Select and Start) | none found | low |
+| `ov_0001::02166B10` (dungeon main reader) | held A, B, L, R, `0x800`; pressed A, B, `0x4`, `0x8`, `0x100`, `0x400`, `0x800`; tap `+6 & 0x2` | `GetTileMut`, `IsFloorOver` | dungeon main loop, not a menu | none (dungeon loop) | see dungeon reader actions |
+
+Also `FUN_02165C80` (`ov_0001::02165EC4`) tests held B (`+0 & 2`) directly. Its callees are `GetEntityType`, `GetLanguage` and `GetTile`; it is not matched to a Red function.
+
+Read the table as follows. The six A/B prompts are small confirm or cancel windows. The three with up and down repeat are list menus; `ov_0001::0216AD10` is the candidate for the team "which monster" menu. The rest are short choice windows. None matches `ShowDungeonTeamMenu`, `ShowDungeonMovesMenu`, `ShowDungeonItemsMenu` or `ShowDungeonOthersMenu` yet, because those are probably in the 28 unmapped readers. The dungeon reader is listed as `ov_0001::02166EC0` in one row of the investigator's table; the same function is `FUN_02166B10` everywhere else, so the row is a typo [open].
+
+**Shared helpers.** The readers call the same helpers. Shared callees by reader count: `DungeonRunFrameActions` (26), `FUN_ov_0001__0219CEEC` (21), `FUN_ov_0001__0219CED4` (20), `FUN_ov_0001__0219CEA4` (19), `FUN_0202D230` (16), `FUN_0202C560` (15), `FUN_0202C5E4` (15), `FUN_ov_0001__0213A37C` (12), `FUN_ov_0001__0219CE90` (9). None of these loads the snapshot address, and none is among the 39 readers, so each reader reads the snapshot inline and then calls a helper to draw, wait or step.
+
+| Helper | Body (call shape) | Name (hypothesis) | Confidence |
+|--------|-------------------|-------------------|------------|
+| `ov_0001::0219CEA4` | calls `PTR_FUN_0219CEB4(DAT_0219CEB8, 0x100)` | `CallMenuHandlerA` | low; the target is a pointer, not resolved |
+| `ov_0001::0219CED4` | calls `PTR_FUN_0219CEE4(DAT_0219CEE8, 0x100)` | `CallMenuHandlerB` | low; same |
+| `ov_0001::0219CE90` | calls `PTR_FUN_0219CEA0(0x130, 0x100)` | `CallMenuInputRegister` | low; `0x130` is the low part of `REG_KEYINPUT` (`0x04000130`), so the target may read the key register |
+| `ov_0001::0219CEEC` | if the argument is 0 or the count is above 1, calls `FUN_0201BC30(DAT_0219CF24, 0x100)` | `RefreshMenuWindow` | low |
+| `ov_0001::0219CD64` | if the argument differs from `DAT_0219CD88`, calls `FUN_0201BC30(arg, 0x100)` | `SetMenuWindowIfChanged` | low |
+| `ov_0001::0213AC4C` (`FUN_0213AC4C`) | called as `(10, 0x2F)` in the Select loop and `(4, 0x3E)` after the menu | `RunMenuLoop` | low; the arguments are not read |
+
+Not named: `FUN_0202D230`, `FUN_0202D240`, `FUN_0202C560`, `FUN_0202C5E4`, `FUN_0202DE34` and `FUN_0213A37C`. Their bodies were not read.
+
+**What unblocks the rest.** Resolve the pointer targets `PTR_FUN_0219CEB4`, `PTR_FUN_0219CEE4` and `PTR_FUN_0219CEA0`, and read `FUN_0201BC30`. That names the menu-drawing layer the readers share. Then read the 28 unmapped readers, including `FUN_0216B958` (481 lines, 12 frame calls) and `FUN_0216C638`, and compare them with `ShowDungeonTeamMenu`, `ShowDungeonMovesMenu`, `ShowDungeonItemsMenu`, `ShowDungeonOthersMenu`, `ShowDungeonStairsMenu` and `ShowDungeonTileMenu`.
+
+**Not verified.** The pointer targets; the body of `FUN_0201BC30`; the 28 unmapped readers; the Red-to-Blue mapping for every menu; any menu at run time (the boot run reaches the dungeon, not the menus). The label of `ov_0001::021729FC` in the investigator's comment is garbled, and its address is used here [open].
 
 ## Touch
 
@@ -336,7 +407,8 @@ The control nibbles and the size field agree with [`formats/compression.md`](../
 
 Input:
 
-- What the A, B, Select and Start keys do, and the menu bindings (#175 P1, partly mapped). The dungeon main-loop reader `ov_0001::02166B10` is mapped against pmd-red `dungeon_main.c`; the rest is not. Suggested split: (a) finish the actions for B, Start, X and Y in that reader; (b) map the menu readers in overlay 1 against `dungeon_menu_*.c`, reading the buffer pointer first.
+- What the A, B, Select and Start keys do, and the menu bindings (#175 P1, partly mapped). Part (a), the dungeon reader `ov_0001::02166B10`, has its actions recorded above; the callees are open. Part (b), the menu readers, is partial: 28 of the 39 snapshot readers are not mapped, and the helper pointer targets (`PTR_FUN_0219CEB4`, `PTR_FUN_0219CEE4`, `PTR_FUN_0219CEA0`) and `FUN_0201BC30` are unread. The helper names above are hypotheses.
+- Whether X and Y reach the key path at all. `ReadKeyInput` takes bits 10 and 11 from `REG_KEYINPUT`; the DS puts X and Y outside it (**[hypothesis]**, `REG_EXTKEYIN` at `0x04000136`, not checked in Blue). Check `REG_EXTKEYIN` (#175 P1 a).
 - The writer of the word at `0x027FFFA8`, and the bit-15 behaviour, which the boot run never exercised (#175 P2). The word's meaning is not an open question: it is the shadow mask above.
 - What consumes the product at `0x020F2768`. Nothing in the imported program reads it; it is not an RNG step (#175 P3).
 - The repeat timing (48, then 43) is assumed from one call per VBlank. An emulator check would settle it.
