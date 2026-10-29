@@ -142,11 +142,25 @@ Touch consumers, from x-refs and the decompile of each caller. `FUN_0200C4F4` is
 
 **[blue-verified]**, high. `InitDisplayRegisters` (`FUN_02074FC8`, called from `0x02000BE0`):
 
-- sets POWCNT1 (`0x04000304`) to `(v & 0xFFFFFDF1) | 0x8000 | 0x20E | 1`, where `v` is the register's current value;
+- sets POWCNT1 (`0x04000304`) to `(v & 0xFFFFFDF1) | 0x20E` in the boot write at `0x02000BB8`–`0x02000BCC`, where `v` is the current value; bit 15 is set in `FUN_02074FC8` and the LCD-on step is the `FUN_0207D5F4` call (see [POWCNT1](#powcnt1-and-the-lcd-power-path-177-p5));
 - clears DISPCNT;
 - clears the BG registers on both engines: engine A is 0x60 bytes from `0x04000008`, engine B is 0x70 bytes from `0x04001000`;
 - sets `MASTER_BRIGHT` (`0x0400006C`) to 0;
 - writes the affine identity to `0x04000020/26/30/36` and `0x04001020/26/30/36` (the findings' shorthand for the four offsets on each engine), so BG2 and BG3 PA and PD are 0x100.
+
+### POWCNT1 and the LCD power path (#177 P5)
+
+**[blue-verified]** for the writes and the call chain. **[hypothesis]** for the bit names, which come from the standard DS hardware reference. No repo doc or pmd-red source covers POWCNT.
+
+- **[hypothesis]** Bit names: bit 0 LCD power (screens on or off); bit 1 engine A (2D) power; bit 2 3D rendering power; bit 3 3D geometry power; bit 9 engine B (2D) power; bit 15 display swap (which engine is on the top screen).
+- **[blue-verified]** Boot, `0x02000BB8`–`0x02000BCC`: `POWCNT1 = (POWCNT1 & 0xFFFFFDF1) | 0x0000020E`. Bits 1, 2, 3 and 9 are cleared and then set to 1. Bits 0 and 15 are not touched here.
+- **[blue-verified]** Boot, `0x02000BD0`: calls `FUN_0207D5F4`, the LCD power call.
+- **[blue-verified]** `FUN_02074FC8` (`02074FD4`–`02074FFC`) sets bit 15 (`|= 0x8000`), then applies a mask and OR from the literals at `0x0207510C` and `0x02075110`. The values were not read.
+- **[blue-verified]** `FUN_0207D5F4` (`0x0207D5F4`) calls `FUN_0207D614` through the pointer at `0x0207D610` (`0x0207D614`): `FUN_0207D614(param == 1, 0, 0, 1)`. The indirect call is at `0x0207D60C`.
+- **[blue-verified]** `FUN_0207D614` (`0x0207D614`): with `param_1 == 0` it clears bit 0 (`& 0xFFFE`); with `param_1 == 1` it sets bit 0 (`|= 1`), after a check of a counter difference below 8 when `param_3 == 0`. The POWCNT1 pointer is `DAT_0207D700` = `0x04000304`.
+- **[blue-verified]** `FUN_0207D5D8` (`0x0207D5D8`) returns bit 0 of POWCNT1 (`DAT_0207D5F0` = `0x04000304`).
+- **[blue-verified]** Callers of `FUN_0207D5F4`: the boot path (`0x02000BD0`) and `FUN_0207D704` (`0x0207D7A8`, the fade).
+- **[open]** The counter that the `param_3 == 0` check tests is not identified. The values at `0x0207510C` and `0x02075110`, and the exact effect of bit 15 in Blue, were not read.
 
 ### Per-frame flush
 
@@ -200,7 +214,7 @@ Callers of `FUN_0201A110`: `LoadAndRunDungeon_Async`, `NDS_LoadOverlay_GroundMai
 ### What is not known
 
 - Which engine and BG show the title, ground and dungeon content. Engine A is the only engine with a DISPCNT write (#177 P1, [above](#dispcnt-writers-and-engine-use-177-p1)). Which BG each scene shows is open; see [Open questions](#open-questions).
-- The meaning of the POWCNT1 bits. The findings give bit 15 as display swap, with the hardware documentation as the only source. This is not verified in Blue.
+- The meaning of the POWCNT1 bits. The bit names are **[hypothesis]** from the hardware reference (#177 P5), not from Blue. See [POWCNT1 and the LCD power path](#powcnt1-and-the-lcd-power-path-177-p5).
 
 ## Sprites (OAM) and fades
 
@@ -339,13 +353,13 @@ Touch:
 Screens and fades:
 
 - P3d: which engine and BG each scene uses. This needs the DISPCNT writes from each scene loader, and the scene map from [#44](https://github.com/TorratDev/rust-mm/issues/44).
-- P3e: the meanings of the POWCNT1 bits. Only the hardware documentation covers them. The investigator tagged this `[red-hypothesis]`, but the source is not Red.
+- **[open]** P3e (#177 P5): the bit 15 effect in Blue, the values at `0x0207510C` and `0x02075110` (`FUN_02074FC8`), and the counter behind the `param_3 == 0` check in `FUN_0207D614`. The bit names are **[hypothesis]** from the hardware reference, not from Blue or Red.
 - **[hypothesis]** The ARM7 meaning of IPC command 8, most likely brightness or backlight (#177 P2). The ARM7 code was not checked. **[open]** The payloads in `DAT_0207DD84`, `DAT_0207DD88` and `DAT_0207DD8C` were not read.
 - **[open]** The helper that receives the two `MASTER_BRIGHT` addresses (`0x0400006C`, `0x0400106C`) from `FUN_02018578` (#177 P2).
 - **[open]** The caller chain of `FUN_02018B44` (the scene reset path); the #177 P2 pass did not verify it.
 - **[open]** P3: the title fade-out is not decoded. The 32-frame fade-in is located in `GameLoop_Async`. Which palette buffer is BG and which is OBJ is **[hypothesis]**.
 - **[open]** Which BG each scene shows (P1, mapping not traced); see [DISPCNT writers](#dispcnt-writers-and-engine-use-177-p1).
-- An inconsistency in the cross-reference: the tool attributes the POWCNT1 (`0x04000304`) accesses at `0x0207D68C` to `0x0207D6B4` to `FUN_0207D614`, but the decompile of `FUN_0207D614` has no POWCNT access. Treat the attribution as suspect until it is checked.
+- **[open]** Re-check the cross-reference attribution. #177 P5 finds that the POWCNT1 (`0x04000304`) accesses at `0x0207D68C`, `0x0207D694`, `0x0207D6A4` and `0x0207D6B4` are correctly attributed to `FUN_0207D614`, because they access `*DAT_0207D700`, and that `0x0207D5DC` (`FUN_0207D5D8`) reads `DAT_0207D5F0` = `0x04000304`. An earlier note here said the decompile of `FUN_0207D614` had no POWCNT access, which P5 contradicts. Re-read that decompile before either claim is relied on.
 - **[open]** P4a: the OAM entry format (attr1 and attr2) and the sources of `DAT_02012AE4` and `DAT_02012AE0`. The jump table that holds `0x0206DC18`, and so the scene that calls `ClearOamA` (`FUN_0201ADA0`), is not identified.
 - **[open]** The window DMA through DMA0 (`FUN_0201966C`): what the WIN0H, WIN1H, WIN0V and WIN1V values show on screen. The HBlank timing is **[hypothesis]**, a guess.
 - **[open]** `FUN_0201AFF0`: the boot caller `0x02000CF4` (#177 P4) and the "scene load" label in the OAM writers conflict. Reconcile which is right.
