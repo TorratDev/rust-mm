@@ -213,6 +213,56 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x1E` | `moves[4]` (6 bytes each) | `0x2C` |
 | `+0x36` | `name[10]` | `0x4C` |
 
+## Roster and mail helpers (#170 P1, proposed names)
+
+Static evidence from the investigator comment on [#170](https://github.com/TorratDev/rust-mm/issues/170), read in the Ghidra copy `rescue-arm9-a`. Read-only: nothing is renamed in the project. The names are proposals for the orchestrator, not applied renames.
+
+Tags: **[blue-verified]** for the behaviour, callers and literal-pool values. **[red-hypothesis]** for the names: they are our own, not taken from the repo or `pmd-red`.
+
+Literal-pool values [blue-verified]:
+
+| Literal | Value | Used for |
+|---------|-------|----------|
+| `DAT_02002FFC` | `0x020DF484` | roster base |
+| `DAT_02003000` | `0x19D` (413) | roster record count |
+| `DAT_020024E0` | `0x02008C0C` | character-copy routine |
+| `DAT_02006420` | `0x0209281B` | base of a 16-byte-record table |
+| `DAT_02008C04` | `0x02091C44` | error text used by the decoder |
+| `DAT_0200D588` | `0x020DF6EC` | mail-record pointer block |
+
+The roster base and count match [`rng.md`](rng.md) and [#161](https://github.com/TorratDev/rust-mm/issues/161) P2 (records of 0x40 bytes, 413 of them).
+
+**`FUN_02002F88` at `0x02002F88`: proposed `FindFirstActiveRosterRecord`** [blue-verified behaviour; red-hypothesis name]
+- Scans the 413-entry roster from `0x020DF484` in steps of `0x40`. Returns the first record whose `u16` at `+0` has bit 0 set and whose byte at `+2` is nonzero. Returns 0 if none matches.
+- Callers: `FUN_0200D4DC`, `FUN_0201E020`, `FUN_02052AAC`, `FUN_0206A6DC`, `FUN_02069848`, and others.
+- Confidence: high for the behaviour; medium that the array is the 0x40-byte roster (the pointer and count match `rng.md`).
+
+**`FUN_020024D0` at `0x020024D0`, `FUN_020024D0(dst, rec)`: proposed `CopyRosterNameToBuffer`** [blue-verified behaviour; red-hypothesis name]
+- Calls `FUN_02008C0C(dst, rec + 0x36, 10)`: copies up to 10 characters through the per-character map `FUN_02008C50` (not read), then NUL-terminates. The `+0x36` field is `name[10]` in the Recruited Pokémon table above.
+- Callers: `FUN_0200D4DC`, `FUN_02052AAC`, `FUN_02065844`, `FUN_02057FE8`, `FUN_02038C28`, `FUN_02038D48`, `FUN_02042378`, `FUN_02052560`.
+- Confidence: high for the offset and length; medium for the record identity.
+
+**`FUN_02008AF0` at `0x02008AF0`, `FUN_02008AF0(dst, src)`: proposed `DecodeHexEscapes`** [blue-verified behaviour; red-hypothesis name]
+- Copies `src` to `dst`. Each `~` followed by two hex digits (`0-9`, `a-f`, `A-F`) becomes one byte, high nibble first. Other bytes are copied unchanged. A bad digit prints the error at `0x02091C44` and gives a 0 nibble. Writes a 0 terminator at the end.
+- Callers: `FUN_0200D4DC`, `FUN_0201E020`, `FUN_02004590`, `FUN_02002788`, `FUN_0219C898` (three sites), `FUN_02069848`, `FUN_021461D0` (overlay 0), `FUN_0206C170`.
+- Confidence: high for the behaviour (read from the code).
+
+**`FUN_02006410` at `0x02006410`, `FUN_02006410(index)`: proposed `GetTableByteByIndex16`** [blue-verified behaviour; red-hypothesis name]
+- Returns the byte at `0x0209281B + index * 0x10`. The table's meaning is not established.
+- Callers: `FUN_0200D4DC` (index = the byte at the mail record's `+4`, stored at `+0x2C` of the record) and `RunDungeon_Async` (`0x0206DCEC`, index = the setup struct's `+4`).
+- Confidence: high for the behaviour; low for a more specific name. Only `GetTableByteByIndex16` is proposed.
+
+**Mail-record builder `FUN_0200D4DC` at `0x0200D4DC`: context only** [blue-verified structure; not checked against the mail format]
+- Writes a flag of 1 at `+0`, copies two parameters to `+4` and `+8`, and seeds the Mersenne Twister with `Rand32Bit`. Stores a random value at `+0x10`, a roster `u16` at `+0xC`, the decoded text at `+0x14`, `sub_8011C34()` at `+0x24` and the table byte at `+0x2C`.
+- [#47](https://github.com/TorratDev/rust-mm/issues/47) named this function `sub_809542C`. The structure is consistent with a mail record; this was not checked against the mail format.
+
+Open, not verified (the #170 P1 comment's list, left as it is):
+- The per-character map `FUN_02008C50`, which turns each name character into a code.
+- The table at `0x0209281B`: what its bytes mean, and which of the two callers it belongs to.
+- The roster `+6` byte copied into the mail record's `+0xC`.
+- Runtime: no emulator check (no Blue dump configured in this session).
+- `FUN_02002F88` returns 0 when nothing matches. Callers that test the result for a nonzero pointer were not all checked.
+
 ## RAM for golden traces
 
 What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) should read on each turn trigger ([`turns.md`](turns.md)), all through the pointer in `gDungeon`:
