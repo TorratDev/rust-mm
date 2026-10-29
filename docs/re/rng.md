@@ -156,9 +156,59 @@ The labels for the named callers are medium. `FUN_ov_0001__0217af58` as an anima
 
 **Dungeon message display reaches the global LCG** (static, low confidence; see [`ai.md`](ai.md), P6-f). The static walk from the AI code reaches `Rand32Bit` along `02154BF0` (message display) → `02154910` → `0213AFA8` → `0213AD54` → `02142504` → `0217B120`. So a dungeon message can advance `sPRNGState` as well as `gDungeonRngState`. The chain runs through `0213AFA8` and `0217B120`, which [`symbols.md`](../symbols.md) names `DungeonRunFrameActions` and `UpdateMonsterSprite`; those names were not checked against this path. A runtime check is open.
 
+## Unnamed global-LCG callers (#168 P3)
+
+Investigator C decompiled every unnamed caller of `Rand32Bit` (`0201198C`), `RandInt` (`02011968`) and `RandRange` (`02011924`). The x-ref lists give 76 call sites in 41 unnamed functions; named callers are excluded. Tags: **[blue-verified]** for the call relations and constants from the decompile; **[hypothesis]** for the subsystem label, which is inferred from the callees and not from a string, a message or a runtime check. Confidence is per row. Source: the #168 comment. Nothing was run in the emulator.
+
+| Function (address) | RNG calls | Key callees | Label | Tag | Confidence |
+|--------------------|-----------|-------------|-------|-----|------------|
+| `FUN_02006B4C` (`02006B4C`) | `RandInt` ×2 | `AddKecleonWareItem`, `FUN_02006D4C` | Kecleon shop: ware items | [hypothesis] | high |
+| `FUN_02006E0C` (`02006E0C`) | `RandInt` ×2 | `AddKecleonShopItem`, `InitKecleonShopItem`, `FUN_02006EA0` | Kecleon shop: shop items | [hypothesis] | high |
+| `FUN_02008458` (`02008458`) | `RandRange` | `FUN_020080D8`, `FUN_020082FC`, `FUN_02008504` | item or bulk generation, same family as `InitBulkItem` | [hypothesis] | medium |
+| `FUN_0200D4DC` (`0200D4DC`) | `Rand32Bit` | `MersenneTwister_InitializeState`, `Random32MersenneTwister` | the mail-record builder (see [Mersenne Twister](#mersenne-twister)); the comment's label was a Mersenne Twister seed | [hypothesis] | medium |
+| `FUN_0200EDA4` (`0200EDA4`) | `Rand32Bit` | `FUN_0200F184`, `FUN_0200F250`, `FUN_0200F2F0`, `FUN_0200F394`, `FUN_0200F3AC`, `FUN_0200F3E4` | cluster with `FUN_0200F768` (team or floor generation) | [hypothesis] | low |
+| `FUN_0200EED4` (`0200EED4`) | `RandRange` ×2 | `FUN_0200F768`, `FUN_0201F994`, `FUN_0206A66C` | cluster with `FUN_0200F768` | [hypothesis] | low |
+| `FUN_0200F3E4` (`0200F3E4`) | `RandInt` | `FUN_02006794`, `FUN_02007450` | unknown; called from `FUN_0200F768` and `FUN_0200EDA4` | [hypothesis] | low |
+| `FUN_0200F46C` (`0200F46C`) | `RandInt` | `FUN_02009120` | unknown | [hypothesis] | low |
+| `FUN_0200F5C4` (`0200F5C4`) | `RandInt`, `RandRange` | `FUN_020061D8`, `FUN_02006364`, `FUN_020703B8`, `FUN_0208625C` | unknown; called from `FUN_0200F768` | [hypothesis] | low |
+| `FUN_0200F768` (`0200F768`) | `Rand32Bit` ×5, `RandInt` ×3 | `FUN_0206A0B0`, `FUN_0206A170`, `FUN_0206A228`, `FUN_0206A2E0`, `FUN_0206A384`, `FUN_0206A6DC`, `02069FF0` | the central cluster: picks a value and fills by helper | [hypothesis] | low |
+| `FUN_02069FF0`, `FUN_0206A0B0`, `FUN_0206A2E0` (`02069FF0`, `0206A0B0`, `0206A2E0`) | `RandInt` | `FUN_0206A6DC` (common helper) | cluster with `FUN_0200F768` | [hypothesis] | low |
+| `FUN_0206A170`, `FUN_0206A228` (`0206A170`, `0206A228`) | `Rand32Bit` + `RandInt` | `FUN_0206A6DC` | cluster with `FUN_0200F768` | [hypothesis] | low |
+| `FUN_02012648` (`02012648`) | `Rand32Bit` | none in the RNG family | sprite animation; already noted above | [blue-verified] for the call; [hypothesis] for the label | medium |
+| `FUN_02018ACC` (`02018ACC`) | `Rand32Bit` ×2 | `FUN_02017B20` (input poll), `FUN_0201D150`, `FUN_0201966C` | frame callback: per-frame RNG (see [Per-frame steps](#per-frame-steps-159)) | [blue-verified] | high |
+| `FUN_0201DE24` (`0201DE24`) | `RandInt(100)` | `FUN_02007B68` | item and money loss, not a transition (see [`execution-model.md`](execution-model.md)); one draw of 0 to 99 | [hypothesis] | medium |
+| `FUN_0201F008` (`0201F008`) | `RandInt(3)` | `OpenFileAndGetFileDataPtr`, `MemoryAlloc`, `MemoryFree`, `GetLanguage` | file-loading routine that picks one of three variants | [hypothesis] | low |
+| `FUN_0204730C` (`0204730C`) | `RandInt(0xFF)` | `FUN_0200475C` | unknown; one byte drawn | [hypothesis] | low |
+| `FUN_0206C394` (`0206C394`) | `RandInt(13)` | `FUN_0206C034` | cluster with `FUN_0206C6E4` (Mersenne Twister) | [hypothesis] | low |
+| `FUN_0206C590` (`0206C590`) | `RandInt(55)` | `FUN_0202EDF0` | cluster with `FUN_0206C6E4` | [hypothesis] | low |
+| `FUN_0206C6E4` (`0206C6E4`) | `Rand32Bit` ×2 | `MersenneTwister_InitializeState`, `Random32MersenneTwister`, `FUN_0206C0F0` to `FUN_0206C590` | the personality test (see [Mersenne Twister](#mersenne-twister)); the comment's label was a Mersenne Twister user | [hypothesis] | medium |
+| `FUN_ov_0000__02140860` (`02140860`, overlay 0) | `Rand32Bit` ×1, `RandInt` ×3 | about 100 callees, including `GetNumberOfFilledInventorySlots` and `AddToTeamMoney` | large overlay-0 routine; subsystem unclear | [hypothesis] | low |
+| `FUN_ov_0000__021548EC` (`021548EC`, overlay 0) | `RandInt(15)` | about 16 callees | overlay-0 routine; subsystem unclear | [hypothesis] | low |
+| `FUN_ov_0001__0213E6D8` (`0213E6D8`, overlay 1) | `RandInt(2)`, `RandInt(0xFF)`, `RandInt(n*2+8)` | `DungeonRunFrameActions`, `GetLeader`, `MemoryAlloc` | dungeon run-level helper | [hypothesis] | low |
+| `FUN_ov_0001__021492EC` (`021492EC`, overlay 1) | `RandInt(4)` | `GetTile`, `GetTileMut` | dungeon tile operation; one of four directions | [hypothesis] | medium |
+| `FUN_ov_0001__02155760` (`02155760`, overlay 1) | `Rand32Bit` | `EntityIsValid`, `FUN_02012648`, `FUN_020198AC`, `FUN_0217AD64` | entity update using the sprite RNG | [hypothesis] | low |
+| `FUN_ov_0001__0217AF58` (`0217AF58`, overlay 1) | `Rand32Bit` ×2 | `FUN_020128DC`, `FUN_02156134`, `FUN_02178C04` | entity routine | [hypothesis] | low |
+| `FUN_ov_0001__0217B120` (`0217B120`, overlay 1) | `Rand32Bit` ×2 | `FUN_02012648`, `FUN_02025DA0`, `FUN_0213E314`, `FUN_0213EDF4`, `FUN_021401C0` | entity routine (about 20 callees) | [hypothesis] | low |
+| `FUN_ov_0001__0219DCF0` (`0219DCF0`, overlay 1) | `RandInt(6)` ×2 | `FUN_ov_0001__0219CD64` | one of six draws; subsystem unclear | [hypothesis] | low |
+| `FUN_ov_0001__0219F09C` (`0219F09C`, overlay 1) | `RandInt(8)` | `EntityIsValid`, `FUN_ov_0001__0217ADF8` | entity routine | [hypothesis] | low |
+| `FUN_ov_0001__0219F128` (`0219F128`, overlay 1) | `RandInt(8)` ×2 | `EntityIsValid`, `FUN_ov_0001__0217ADF8` | entity routine (same family as `0219F09C`) | [hypothesis] | low |
+| `FUN_ov_0007__02138C34` (`02138C34`, overlay 7) | `RandInt(15)` | `FUN_02008040`, `FUN_020146C8`, `FUN_02014A64`, `FUN_02015F40` | overlay-7 routine | [hypothesis] | low |
+| `FUN_ov_0007__02138EFC` (`02138EFC`, overlay 7) | `RandInt` ×2 | `FUN_0200661C`, `FUN_02007450` | overlay-7 routine | [hypothesis] | low |
+| `FUN_02001330` (`02001330`) | `RandInt(10)`, `RandInt(0x12)` | `FUN_02001330` (recursive) | unknown small routine | [hypothesis] | low |
+| `FUN_02005828` (`02005828`) | `RandInt` ×2 | `FUN_0200661C` | unknown | [hypothesis] | low |
+| `FUN_02007184` (`02007184`) | `RandInt(16)`, `RandInt(4)` | `FUN_0200220C`, `FUN_02007164` | unknown | [hypothesis] | low |
+
+**Counts (from the comment).** Of the 41 functions, 12 call `Rand32Bit` and 29 call `RandInt` or `RandRange` only. Of those: three are Kecleon shop or ware (two high, and `FUN_02008458` medium); two are per-frame or sprite (`FUN_02018ACC` high, `FUN_02012648` medium). Eight are in the `FUN_0200F768` or `FUN_0206A*` cluster, which is not named. The Mersenne Twister group (`FUN_0200D4DC`, `FUN_0206C6E4`, `FUN_0206C394`, `FUN_0206C590`) is medium.
+
+**Where this file and the comment differ.**
+- `FUN_0201DE24` is labelled "scene transition" in the comment. [`execution-model.md`](execution-model.md) (#161 P2) identifies it as item and money loss, not a transition, and this table follows that.
+- The comment says `rng.md` lists passwords or Wonder Mail as candidates for the Mersenne Twister group. This file does not, and its own identification of `FUN_0200D4DC` and `FUN_0206C6E4` (see [Mersenne Twister](#mersenne-twister)) is used above. The password and Wonder Mail candidates are not added until checked.
+
+**Not verified:** no runtime check; the names of the `FUN_0200F768` cluster and of the overlay-0 and overlay-1 entity routines rest on callee names only; the overlay-7 labels rest on the overlay-7 screen, which was not checked (see [#161 P3](https://github.com/TorratDev/rust-mm/issues/161)); the helpers `FUN_0206A6DC` and `FUN_0200661C` were not decompiled.
+
 ## Open questions
 
-- Classify the unnamed callers by reading their bodies: the dungeon callers (about 60 functions) and the global callers (about 25). This feeds #48, #50 and #52.
+- The unnamed global-LCG callers are classified above with [hypothesis] labels. Still open: the `FUN_0200F768` cluster and the overlay-0 and overlay-1 entity routines (callee names only), and the dungeon callers (about 60 functions, #48, #50, #52). This feeds #48, #50 and #52.
 - Correct the subsystem labels above once the bodies are read.
 - Which of the 20 `OtherRandInt` callers use the 16-bit generator for gameplay, and which for presentation. Needs the bodies and an emulator check.
 - Whether any other code writes `gOtherRngState` through a pointer alias (literal-pool search).
