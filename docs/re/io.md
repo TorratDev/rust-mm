@@ -77,7 +77,15 @@ Hardware keys are active-low; the XOR makes them active-high. The OR with the wo
 
 ### Calibration
 
-**[blue-verified]** for the control flow, high; the parameters are **not verified**. `CalibrateTouch` (`FUN_0207CA44`) passes raw coordinates through when the flag at `DAT_0207CB6C+0x30` is zero. Otherwise it applies an affine transform with parameters at `0x0207CB70`, then clamps X to `0..0xFF` and Y to `0..0xBF`. That is a 256 × 192 screen. The source of the parameters is not checked.
+**[blue-verified]** for the control flow. `CalibrateTouch` (`FUN_0207CA44`) passes raw coordinates through when the flag at `DAT_0207CB6C+0x30` is zero. Otherwise it applies an affine transform, then clamps X to `0..0xFF` and Y to `0..0xBF`. That is a 256 × 192 screen. The parameter block is elsewhere than the first reading suggested (#176 P1):
+
+- `0x0207CB70` is a literal-pool word, not the parameter block. It holds `0x0213736C`, the block's address. `CalibrateTouch` reads the four parameters through this pointer (decompile at `0x0207CAB4`). **[blue-verified]**
+- `DAT_0207CB6C` holds `0x02137354`, the touch-sample struct. Its enable flag is at `+0x30`, which is `0x02137384`. **[blue-verified]**
+- The block is written only by `FUN_0207CF5C` (`0x0207CF5C`), called once at boot from `0x02000D24` (in the boot routine described in [`execution-model.md`](execution-model.md#start-up-and-the-title-menu)). It writes `0x0213736C` and `0x02137370`, sets `+0x30` to 1, and clears it when its argument is null. The writes go through the DS divider (busy-wait on `0x8000`). **[blue-verified]**
+- The boot code at `0x02000CFC` to `0x02000D24` calls `FUN_0207D0A4(sp+0xE)` and passes that buffer to `FUN_0207CF5C` when the call returns nonzero. **[blue-verified]**
+- `FUN_0207D0A4` (`0x0207D0A4`) reads a 9-field structure at `0x027FFC80` (through the pointer at `0x0207D14C`): raw X1 at `+0x58`, raw Y1 at `+0x5A`, screen X1 at `+0x5C` (u8), screen Y1 at `+0x5D` (u8), raw X2 at `+0x5E`, raw Y2 at `+0x60`, screen X2 at `+0x62` (u8), screen Y2 at `+0x63` (u8). The field order is from the call to `FUN_0207CB74`. **[blue-verified]**
+- `FUN_0207CB74` (`0x0207CB74`) takes the two point pairs. It checks ranges (raw `<= 0xFFF`, screen X `<= 0xFF`, Y `<= 0xBF`, no equal points), computes the scale and offset with the divider, and returns 0 on success. If all four raw fields are 0, or the call fails, `FUN_0207D0A4` returns zeros. **[blue-verified]**
+- **Source of the points:** the ARM9 code only reads `0x027FFC80`. Its only ARM9 reader is `FUN_0207D0A4` (`0x0207D0B4`, `0x0207D0C8`), and no ARM9 code writes it, so the two calibration points are loaded from outside the ARM9 program. The usual source is the DS user-information area that the firmware loader copies into main RAM. **[hypothesis]** for that identity: NitroSDK's user-info layout was not checked against a header, so the field names are ours. **[open]:** the fallback when the firmware data is empty. The code returns zeros, but `FUN_0207CF5C` still sets the enable flag, so the effect on a touch is not traced.
 
 ### Touch state
 
@@ -101,6 +109,32 @@ Thresholds in the findings: a move under 7 px, and frame counts of 11 and 12. Th
 - `FUN_0200C4F4` is the position getter, with the same gate. It has about 10 callers, including overlay 1.
 - The gate byte is a serialised options bit. Its name is not confirmed.
 - In the dungeon, a touch within ±10 px of an active slot (flag `0x8000`, stride `0x3C`, 8 slots) returns that slot index (`ResolveDungeonDirection`, above). The meaning of the actor fields `+0x4DD4` to `+0x4DDA` is not verified.
+
+### Touch-only and touch-optional consumers (#176 P2)
+
+Touch consumers, from x-refs and the decompile of each caller. `FUN_0200C4F4` is the position getter and `FUN_0200C354` the valid-touch gate. **[blue-verified]** for the call sites and the button bits tested in each function. A **touch-only** label means no button bit is tested in that function; the caller was not checked, so the label is **[hypothesis]** for any function marked "candidate".
+
+| Caller | Overlay | What it does with the touch | Button bits tested in the same function | Classification |
+|--------|---------|------------------------------|------------------------------------------|----------------|
+| `FUN_0202B3B4` | ARM9 | Hit test of the touch point against a list of rectangles (5-short entries); returns the entry id | none | touch-only (this function); caller not checked |
+| `FUN_02026F5C` | ARM9 | Tests whether the touch is inside a region | none | touch-only (this function); caller not checked |
+| `FUN_0202B474` | ARM9 | Touch read; 40 lines | none | touch-only ([hypothesis]; candidate, not read in full) |
+| `FUN_0202CB20` | ARM9 | Touch read; 59 lines | none | touch-only ([hypothesis]; candidate, not read in full) |
+| `FUN_0202BDF4` | ARM9 | Touch read | one test on bit `0x8` (Start, if read as a button) | touch-optional ([hypothesis]; candidate) |
+| `FUN_0202CE90` | ARM9 | Touch read; 100 lines | one test on bit `0x8` | touch-optional ([hypothesis]; candidate) |
+| `FUN_02030944` | ARM9 | Touch read; 108 lines | two tests on bit `0x8` | touch-optional ([hypothesis]; candidate) |
+| `ov_0000::0213F7D8` | overlay 0 (ground) | Touch read, 3 calls | A, B, X bits (`0x1`, `0x2`, `0x400`) | touch-optional |
+| `ov_0001::02165320` | overlay 1 (dungeon) | Touch read, direction resolve (`ResolveDungeonDirection`) | A bit (`0x1`) | touch-optional |
+
+- **The ground gate.** `FUN_0200C354` has one caller, `ov_0000::0213F7D8`. Its gate is the byte at `0x020DED14+7`. That byte gates all touch input in ground mode, so ground touch input is switched off by the options byte. This ties to the options bit, which is not yet named (**[open]**, see the next bullet).
+- **The options bit.** Not named. The byte at `0x020DED14+7` is the gate for ground touch (above). **[open]**
+- **Dungeon.** `ResolveDungeonDirection` gives a touch direction, and the dungeon reader (`ov_0001::02166B10`, see [#175](https://github.com/TorratDev/rust-mm/issues/175)) also reads the button bits. Touch is an alternative to the buttons, not the only input. **[blue-verified]** for the call sites; medium for the classification.
+
+**[open]** (not verified):
+- Which feature each ARM9 consumer belongs to. The names are `FUN_`, and [`symbols.md`](../symbols.md) names none of them.
+- Whether `FUN_0202B474` and `FUN_0202CB20` have a button path in their callers.
+- Whether bit `0x8` in the three ARM9 consumers is Start or another flag.
+- Runtime: none. No Blue dump is configured in this session.
 
 ## Screens
 
