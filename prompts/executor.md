@@ -38,4 +38,6 @@ DONE: <summary, verification result, PR URL if any>
 or
 BLOCKED: <what is missing, failing, or too large for one PR>
 
+Then send that same line to the orchestrator with the hc send command it gave you. Do the same after every later task or REVISE.
+
 Do not work beyond the task.
