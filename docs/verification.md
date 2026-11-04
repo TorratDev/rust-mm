@@ -366,3 +366,18 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** partial. Confirmed at runtime: the blank-card load path, the size and unit globals, the state-5 stall given status 1, and the absence of a device on the boot path. Open: valid-save cases, the zeroed real-card behaviour, the real trigger of status 1, and the session pointer in other scenes.
 - **Fallback adopted:** none.
 - **Notes:** The two probes are the repository copies of the findings' `p1_probe.py` and `p7_probe.py`, with paths made relative to the script. They take the ROM as an argument and refuse any SHA-1 other than the supported one. Both pass `python -I -m py_compile`. They must run without `-I`, which hides the user-installed `desmume` module. Still open, as listed in [`formats/save.md`](formats/save.md#4-open-runtime-checks): P1.5, P2c, P3.7, P5 unlock meanings, P6.4, P7.3, P7.5, P7.7, P8, and X.1.
+
+## #160 P2 — Overlay 0 residency at the scene runner
+
+- **Assumption:** overlay 0 (the ground code, `GroundStation_UnloadBank` at `0214FCA4`) is resident at every scene-runner entry, whatever the scene id. The static part is in [`re/execution-model.md`](re/execution-model.md#ground-chain-and-overlay-0-160).
+- **Date:** 2026-11-04
+- **Environment:** Windows 11, Python 3.12.10, py-desmume (DeSmuME), `SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (supported, read in place, not copied).
+- **Evidence:**
+  - Command: `python verification/v7-trace/overlay0_residency.py <ROM> <OUT> 2700` (the boot inputs from [`boot_to_dungeon.txt`](../verification/v7-trace/boot_to_dungeon.txt)). Run without `-I`. `<OUT>` is outside the repository.
+  - Output sha256: `5e74aa824ca60d0989806dd4cf0a81d727a99918cfad8238e2b3fee4198e31c4`.
+  - Runner entries (scene id, bytes at `0x0214FCA4`): frame 74, `0xF`, `10402de944109fe50000e0e3f040d1e1`; frame 614, `0x10`, same bytes; frame 2575, `0`, same bytes.
+  - Overlay 0 loads at frame 45. `SetBank` events at frames 76, 616, 1133, 1270, 1789 and 2579 (banks 235, 6, 5, 234, 229, 228), all with the same bytes. The variable at `0x0215D704` (value read before each call) reads -1 at frames 76, 616 and 2579, and 6, 5 and 234 at frames 1133, 1270 and 1789.
+  - Not reached in this run: dungeon entry (`0201DB70`) and the overlay reload after it, the overlay-7 path, and scene ids 1 to `0xC`. The run was 2700 frames, so the dungeon was not entered.
+- **Outcome:** partial. Confirmed at runtime for scene ids `0xF`, `0x10` and `0`, and after five bank loads: overlay 0 code is intact at the runner entries. Static answer (residency does not depend on the id, with the boot, dungeon and overlay-7 unload/reload pairs and bank loads above overlay 0's BSS) is in the RE doc. Open: ids 1 to `0xC` at runtime, the reload after a dungeon, the overlay-7 path, the load-failure path, and the text overlay unloaded at `0201DBE8` (P2e).
+- **Fallback adopted:** none.
+- **Notes:** The probe is the repository copy of the scratch `p2_residency.py`, with the harness path made relative to the script and a SHA-1 check added. It also runs `python -I -m py_compile` clean. The scratch run logs are not committed. Ids 1 to `0xC` need inputs that reach them.
