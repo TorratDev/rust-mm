@@ -348,3 +348,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Two-step intervals (#159 P3, runtime, repeated).** The 2-step intervals are real, not a hook artifact. Two runs of the 3000-frame plain probe from power-on were byte-identical (scratch `rng_dungeon.py`, not committed; sha256 `4758e33e74ab1c5e423a3b786291d2ba253a336b9f8dd0999332f7ea82720c65`; command not recorded in the findings). Of the 1174 two-step frames, 1172 lie outside the frame-routine window counted from frame 21. The double frame-routine hit at frame 2419 advances 4 steps, like its neighbours. The committed script does not reproduce these hashes (see Repeat run above). Details: [`re/rng.md`](re/rng.md#per-frame-steps-159).
 - **Fallback adopted:** none.
 - **Notes:** Next: hook `Rand32Bit` (`0201198C`) and its callers on the frame path, rerun the same script.
+
+---
+
+## #197 — Save load and session runs
+
+- **Assumption:** the save-load path, the state machine that follows it, and the session struct pointer behave on a running game as the static decompiles in [`formats/save.md`](formats/save.md) say.
+- **Date:** 2026-11-04 (blank-card run). The other cases come from the investigation findings; their dates are not recorded.
+- **Environment:** Windows 11, Python 3.12.10, py-desmume (DeSmuME). ROM `pmdb.nds` at the repository root, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (the supported dump, not committed). Addresses checked in Ghidra copies `rescue-arm9-a`, `-b` and `-c`.
+- **Evidence:**
+  - **Blank card (run, 2026-11-04):** `python verification/v7-trace/save_load_probe.py <ROM> <OUT> --card none --frames 3000`. Output sha256 `e9ebbe3279a5b88b408c092687725e6fc1ae1605732bc6a82eeefc88b95843bf` (scratch, not committed). Both copies return status 2; the boot read result is 2; the state goes 2 → 4 → 6 at frame 2473 with no message. Globals at the end: size `0x40000`, unit `0x1000`, session pointer `0x0`, `unk418` `-1`, alternate-device flag `0x0`.
+  - **Injected zeroed copy A (findings run, `zero_reads`):** zeros written at the `ReadSaveSector` return. Copy A status 0 and magic 0, so `ReadSaveFromPak` returns 4, and copy B is not read. Fault injection, not a real card.
+  - **Forced status 1 (findings run, `force1`):** r0 set to 1 on both copies. State 5 from frame 2459; 1,543 more calls to frame 4000, with no exit. Fault injection.
+  - **Zeroed card file import:** `backup.import_file` did not reach the game in this build (DeSmuME logged "Will operate in RAM"). Not a result.
+  - **Boot to dungeon (findings run, `save_session_probe.py`, 24,960 frames):** `FUN_020660E4` and `FUN_02065F88` never fired; the session pointer was 0 at the dungeon. The device detect `FUN_0201D638` ran once at frame 52 and found no device (flag `0x020F38A0` = 0). Quick-save sectors: reads at 0, 6 and 31, and erase writes at 31 (frames 2460 and 2563); `WriteSavetoPak` did not fire. Command: `python verification/v7-trace/save_session_probe.py <ROM> <OUT>`. The script was compiled in this entry but not re-run.
+  - Fault injection overwrites a return code or a buffer. It shows what the code does with a given input, not what a real card produces.
+- **Outcome:** partial. Confirmed at runtime: the blank-card load path, the size and unit globals, the state-5 stall given status 1, and the absence of a device on the boot path. Open: valid-save cases, the zeroed real-card behaviour, the real trigger of status 1, and the session pointer in other scenes.
+- **Fallback adopted:** none.
+- **Notes:** The two probes are the repository copies of the findings' `p1_probe.py` and `p7_probe.py`, with paths made relative to the script. They take the ROM as an argument and refuse any SHA-1 other than the supported one. Both pass `python -I -m py_compile`. They must run without `-I`, which hides the user-installed `desmume` module. Still open, as listed in [`formats/save.md`](formats/save.md#4-open-runtime-checks): P1.5, P2c, P3.7, P5 unlock meanings, P6.4, P7.3, P7.5, P7.7, P8, and X.1.
