@@ -12,9 +12,14 @@ Modes:
       idle / A held / idle / Select held / idle (see WINDOWS). With --state, the
       run starts from a save state at the dungeon instead of booting.
   plain: boot inputs only, from power-on, for --frames frames.
+  boot-hold: boot inputs from power-on, with --hold (none, A or SELECT) held on top
+      of the scripted input over the boot frames where the frame routine runs
+      (BOOT_HOLD, #159 P4). Ends with a "steps" event: the LCG steps per frame,
+      as a histogram, before, during and after the hold.
 
 Usage:
-  rng_per_frame.py ROM OUT [--mode windows|plain] [--frames N] [--state FILE]
+  rng_per_frame.py ROM OUT [--mode windows|plain|boot-hold] [--frames N] [--state FILE]
+                   [--hold none|A|SELECT]
 
 ROM is your own dump (supported SHA-1 only, see docs/supported-dumps.md). Nothing
 from the dump is written to OUT except the logged state values. Keep OUT out of the
@@ -45,6 +50,8 @@ FLAG_PTR = 0x02018B24  # literal: pointer to the flag word tested with 0xC2
 # Frames after the dungeon starts: (frame, keymask). Idle, A held, idle, Select held, idle.
 WINDOWS = [(0, 0), (300, "A"), (600, 0), (900, "SELECT"), (1200, 0)]
 WINDOW_LENGTH = 1500
+# Boot frames where the frame routine runs (runtime, #159 P4): [start, end).
+BOOT_HOLD = (2418, 2562)
 
 
 def sha1_of(path):
@@ -55,16 +62,30 @@ def sha1_of(path):
     return h.hexdigest()
 
 
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("rom")
     p.add_argument("out")
-    p.add_argument("--mode", choices=["windows", "plain"], default="windows")
-    p.add_argument("--frames", type=int, default=27000, help="total frames (plain: boot frames)")
+    p.add_argument("--mode", choices=["windows", "plain", "boot-hold"], default="windows")
+    p.add_argument("--frames", type=int, help="total frames (default: 27000; boot-hold: 2600)")
     p.add_argument("--state", help="save state at the dungeon to start from (windows mode)")
+    p.add_argument("--hold", choices=["none", "A", "SELECT"], default="none",
+                   help="button held over BOOT_HOLD (boot-hold mode)")
     a = p.parse_args()
+    if a.frames is None:
+        a.frames = 2600 if a.mode == "boot-hold" else 27000
     if a.state and a.mode != "windows":
         p.error("--state is only for windows mode")
+    if a.hold != "none" and a.mode != "boot-hold":
+        p.error("--hold is only for boot-hold mode")
     if sha1_of(a.rom) not in SUPPORTED_SHA1:
         sys.exit("not a supported dump (see docs/supported-dumps.md)")
 
@@ -107,6 +128,30 @@ def main():
             emu.cycle(with_joystick=False)
             log(f, "boot")
         write({"ev": "end", "frames": a.frames})
+    elif a.mode == "boot-hold":
+        boot = rt.parse_inputs(os.path.join(HERE, "boot_to_dungeon.txt"))
+        held = keymask(getattr(Keys, "KEY_" + a.hold)) if a.hold != "none" else 0
+        lo, hi = BOOT_HOLD
+        hist = {"before": {}, "hold": {}, "after": {}}
+        cur, prev = 0, None
+        for f in range(a.frames):
+            if f in boot:
+                cur = boot[f]
+            if f in boot or f in (lo, hi):
+                # Keys change only at scripted frames and at the hold edges.
+                keypad = cur | (held if lo <= f < hi else 0)
+                emu.input.keypad_update(keypad)
+            emu.cycle(with_joystick=False)
+            state = ram.u32(S_PRNG)
+            if prev is not None:
+                k = rt.steps_to(prev, state, limit=50)
+                window = "before" if f < lo else ("hold" if f < hi else "after")
+                key = "none" if k is None else str(k)
+                hist[window][key] = hist[window].get(key, 0) + 1
+            prev = state
+            log(f, "boot")
+        write({"ev": "steps", "hold": a.hold, "window": list(BOOT_HOLD), "hist": hist})
+        write({"ev": "end", "frames": a.frames})
     else:
         keys = {"A": keymask(Keys.KEY_A), "SELECT": keymask(Keys.KEY_SELECT)}
         windows = {frame: (keys[name] if isinstance(name, str) else 0) for frame, name in WINDOWS}
@@ -138,9 +183,9 @@ def main():
         write({"ev": "end", "frames": WINDOW_LENGTH})
 
     out.close()
-    emu.destroy()  # libdesmume ends the process here, so it comes last
     print(f"sha256 {digest.hexdigest()}", file=sys.stderr)
-    print(f"file sha256 {hashlib.sha256(open(a.out, 'rb').read()).hexdigest()}", file=sys.stderr)
+    print(f"file sha256 {sha256_of(a.out)}", file=sys.stderr)
+    emu.destroy()  # libdesmume ends the process here, so it comes last
 
 
 if __name__ == "__main__":
