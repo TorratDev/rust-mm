@@ -13,7 +13,7 @@ Only three of the 145 ARM9 overlays hold code (V8 in [`verification.md`](../veri
 | 0 | `02138860` | Ground mode code (towns, menus, scripts) | `NDS_LoadOverlay_GroundMain` (`0201DCEC`). Its three callers, the only ones of the overlay-0 loader: `GameLoop_Async` (`0201F2E4`, call at `0201F2FC`, start-up), `LoadAndRunDungeon_Async` (`0201DB70`, after every dungeon) and `RunOverlay7Mode` (`0201DAC4`, after overlay 7). Tag: **blue-verified** (static). |
 | 1 | `02138860` | Dungeon code (RNG, combat, AI, floor generation, ...) | `LoadAndRunDungeon_Async` |
 | 2–6 | `021B4900` | Text tables for the dungeon, one per language | `LoadAndRunDungeon_Async`, through `gLanguageTextOverlayIds` = {2, 4, 3, 5, 6} indexed by `GetLanguage()` (the table is at `020DF90C`) |
-| 7 | `02138860` | Code for title-menu choice 5, a mode Red does not have; entry `ov_0007::02139F80` | `RunOverlay7Mode` (`0201DAC4`). Its screen is not seen, so the entry is not named |
+| 7 | `02138860` | Code for title-menu choice 5, a mode Red does not have; entry `ov_0007::02139F80` (blue-verified). Its screen was seen only under fault injection: a species sprite grid with the message "Please close the DS system. To end this adventure, press B" ([details](#overlay-7-the-choice-5-screen-161-p3)) | `RunOverlay7Mode` (`0201DAC4`), called from `GameLoop_Async` case 5 |
 | 8, 9 | `0215D720` | 32 bytes each, no functions; no loader in this dump | — (see the loader inventory) |
 | 10–144 | `0215D720` | Ground-mode "banks" (data) | `GroundStation_LoadBank`, through `gGroundBankTable` (`020DB8E0`): 246 entries of 8 bytes, {overlay id, pointer into it}. The ids run 10–144 (135 distinct); 8 and 9 never occur |
 
@@ -46,7 +46,16 @@ Overlay loading uses the NitroSDK sequence `FS_LoadOverlayInfo`, `FS_InitFile`, 
 | 2 | `RunGameMode_Async(1)`, or `RunGameMode_Async(2)` after deleting the first type-7 mail | yes |
 | 3 | new game: two set-up calls, then `RunGameMode_Async(0)` | yes (`MENU_NEW_GAME`) |
 | 4 | `RunGameMode_Async(3)` | yes |
-| 5 | `RunOverlay7Mode` | **Blue only** |
+| 5 | `RunOverlay7Mode` | **Blue only** (the route is static; the real title path is open, see below) |
+
+### Overlay 7: the choice-5 screen (#161 P3)
+
+- **Route (static, blue-verified).** `GameLoop_Async` (`0x0201F2E4`) calls `FUN_020628BC` (`0x0201F69C`) and stores the result in `r8` (`0x0201F6A0`). The loop breaks on 2, 3, 4 or 5. Its `switch` has `case 5: RunOverlay7Mode()`. `RunOverlay7Mode` (`0x0201DAC4`) is called only from `0x0201F7E8`. It loads overlay 7 (the literal at `0x0201DB64`), calls `ov_0007::02139F80`, unloads overlay 7 and reloads overlay 0.
+- **Who returns 5 (static, decompile).** Inside `FUN_020628BC`, the value 5 comes from state `0xF`, which runs when `FUN_0206978C()` returns 3. The other states return 1 to 4. Whether the normal title path (with a save) reaches state `0xF` is **[open]**.
+- **The entry (decompile; blue-verified up to the strings).** It reads the language, allocates and clears its state, and loads a palette file (`palet…`) and a sprite file (`ax_03d…`). The species comes from `FUN_02002F88`, which `structs.md` names `FindFirstActiveRosterRecord`; with no roster record the default index is 1. It fades in, runs a 32-step loop (`FUN_ov_0007__021394B0`, `FUN_ov_0007__021393B0`), calls `FUN_ov_0007__02139A98`, fades out, frees its memory and returns. Strings: `palet…`, `ax_03d…`, `sprite file error`. The sub-functions beyond the entry are not decompiled. The names of the sprite and palette files are abbreviated here because the findings give them that way.
+- **What it shows (fault injection, screenshot).** With the title result forced to 5 (see the #161 P3 entry in [`verification.md`](../verification.md)): a grid of about 100 species sprites on a blue background, one pink sprite in the lower centre, and a message box with a DS icon: "Please close the DS system. To end this adventure, press B". Two frames of one run differed in pixels; the change was not analysed.
+- **Buttons (fault injection).** A has no visible effect over 500 frames (investigator B's run). B leaves overlay 7 about 120 frames after entry. The title function then runs again (the title return hook counts 1 → 8), and the screen shows the title logo and story text. The New Game / Adventure Log menu was not captured in our repeat run up to frame 4500. Investigator B's run showed that menu at frame 4200 with a different input file; the difference is **[open]**.
+- **Meaning.** **[hypothesis]**: an end-of-adventure screen ("To end this adventure"), with the sprite grid as its background. It is not linked to a save, and the real title route to choice 5 is not tested.
 
 ## Frame wait and interrupts
 
@@ -200,7 +209,7 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 - The entry of the boot routine, before `02000C84`.
 - The caller of the 4 RNG steps per frame, and the A and Select effect (Select has no data after emulated frame 2508).
 - The caller slot of `FUN_02018ACC` and the writer of its flag word (see [#159](rng.md#per-frame-steps-159)).
-- What overlay 7's screen is. Not obtained (#161 P3): the fresh-boot title menu shows New Game and Adventure Log only, and choice 5 is not offered in that boot. It is probably offered only with a save, which was not tested. Its team-name strings suggest a team screen, but nothing links them to the title menu.
+- Overlay 7 on the real title path (#161 P3). The screen is seen only under fault injection (see [Overlay 7](#overlay-7-the-choice-5-screen-161-p3)). The fresh-boot title menu shows New Game and Adventure Log only, so choice 5 is not offered in that boot. Whether state `0xF` of `FUN_020628BC` runs with a save is open and needs a save.
 - Scene-runner inner phases `0x0` to `0x11` of states 1 and 2 (the switch on `DAT_02070358`, not named), and the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (their readers are not traced). The phase names and the variable `0x19` values are in [Scene runner states](#scene-runner-states-161-p1).
 - Which bank each ground scene uses.
 - Text overlay (#160 P2e): in `LoadAndRunDungeon_Async` the decompile calls `FS_UnloadOverlay(0, lang id)` at `0201DBE8`, right after loading the language overlay (2 to 6) and before overlay 1. Step 2 of [Into a dungeon and back](#into-a-dungeon-and-back) says the text overlay is loaded for the dungeon, so the two disagree. Not checked at runtime; the text overlay's bytes at `0x021B4900` during a dungeon would settle it.

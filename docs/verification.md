@@ -54,7 +54,7 @@ Copy this section for each check.
 - **Environment:** Linux (Ubuntu 24.04, gcc 13.3, cmake 3.28.3), rustc 1.97.0 stable, `sdl3` 0.20.0 with `sdl3-sys` 0.7.2+SDL-3.4.18, feature `build-from-source-static`. CI: `ubuntu-latest` and `windows-latest` (MSVC), rustc 1.99.0 stable.
 - **Evidence:**
   - Probe: [`verification/sdl3-probe`](../verification/sdl3-probe). Feature `build-from-source-static` builds SDL from the source bundled in the `sdl3-src` crate, so no network download of SDL is needed.
-  - Linux build needs the packages listed in [`.github/workflows/verify.yml`](../.github/workflows/verify.yml) (CMake configure fails without them).
+  - Linux build needs the packages that the CI workflow `.github/workflows/verify.yml` listed (CMake configure fails without them). That workflow file was removed in `320b68d` and is not in the repository, so the list is no longer here.
   - Local run: window, 256×192 texture target, `with_texture_canvas` + `copy` + `present`, gamepad subsystem with `GamepadButtonDown` events, and an audio playback stream with an `AudioCallback`. `cargo build` succeeds. Run with `SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy`: 120 frames, exit 0, "gamepads attached: 0". No gamepad was attached, so gamepad input was not exercised.
   - CI run [38444628595](https://github.com/TorratDev/rust-mm/actions/runs/38444628595): `cargo build` and `cargo run` (headless, exit 0) pass on both `ubuntu-latest` and `windows-latest`.
 - **Outcome:** confirmed. Static bundled build links and runs on Linux and Windows MSVC.
@@ -206,7 +206,7 @@ Copy this section for each check.
 
 - **Assumption:** a DS emulator can be scripted to dump ARM9 memory and RNG state per turn (DeSmuME Lua, BizHawk + melonDS core, or melonDS GDB stub).
 - **Date:** 2026-10-13
-- **Environment:** Linux (Ubuntu 24.04), Python 3.13. `desmume-cli` 0.9.11 from apt. `py-desmume` 0.0.9 from PyPI (bundles libdesmume 0.9.12; wheels for Linux, Windows and macOS). CI: `ubuntu-latest` and `windows-latest`, job `v7` in [`.github/workflows/verify.yml`](../.github/workflows/verify.yml).
+- **Environment:** Linux (Ubuntu 24.04), Python 3.13. `desmume-cli` 0.9.11 from apt. `py-desmume` 0.0.9 from PyPI (bundles libdesmume 0.9.12; wheels for Linux, Windows and macOS). CI: `ubuntu-latest` and `windows-latest`, job `v7` in `.github/workflows/verify.yml` (the workflow file was removed in `320b68d`; the link was broken, see #161).
 - **Evidence:**
   - Retail ROM not available in this session, so the check uses a synthetic ROM built by [`make_test_rom.py`](../verification/v7-trace/make_test_rom.py) (source [`test_rom.s`](../verification/v7-trace/test_rom.s), no retail code). Each frame its ARM9 code bumps a counter, mixes `KEYINPUT` into an LCG (stand-in for the game RNG) and stores both at `0x02100000`. The instruction at `0x02000044` runs once per frame, right after the update, standing in for the turn-advance routine.
   - **Candidates tried:**
@@ -381,3 +381,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** partial. Confirmed at runtime for scene ids `0xF`, `0x10` and `0`, and after five bank loads: overlay 0 code is intact at the runner entries. Static answer (residency does not depend on the id, with the boot, dungeon and overlay-7 unload/reload pairs and bank loads above overlay 0's BSS) is in the RE doc. Open: ids 1 to `0xC` at runtime, the reload after a dungeon, the overlay-7 path, the load-failure path, and the text overlay unloaded at `0201DBE8` (P2e).
 - **Fallback adopted:** none.
 - **Notes:** The probe is the repository copy of the scratch `p2_residency.py`, with the harness path made relative to the script and a SHA-1 check added. It also runs `python -I -m py_compile` clean. The scratch run logs are not committed. Ids 1 to `0xC` need inputs that reach them.
+
+---
+
+## #161 P3 — Overlay 7 under fault injection
+
+- **Assumption:** overlay 7 (entry `ov_0007::02139F80`, reached from title choice 5 through `RunOverlay7Mode`) shows a screen, and B leaves it for the title menu. This is checked by forcing the title result to 5, which is fault injection and not a game path. The real title route to choice 5 needs a save and is not tested here.
+- **Date:** 2026-11-04
+- **Environment:** Windows 11, Python 3.12.10, py-desmume (DeSmuME). ROM `pmdb.nds` at the repository root, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (the supported dump, not committed). Ghidra copy `rescue-arm9-b` for the static route.
+- **Evidence:**
+  - Command (the first run): `python verification/v7-trace/overlay7_inject.py <ROM> <OUTDIR> --frames 3000 --force-at 2476 --press B:120 --shots 2600,2800,3000`. The forced title result is written at `0x0201F6A0` (r0 and r8 set to 5) on the first title return at frame 2476. `<OUTDIR>` is outside the repository. The log's sha256 was `8bb73829d46d0b1a0d611659398bc25b744371ef8947f839109502b1a8a53553`.
+  - Log of that run: `TITLE first return frame=2476`, `INJECT frame=2476`, `OV7 entry reached frame=2509` (33 frames after the injection, once), `PRESS B at frame 2629`, `RELEASE at frame 2634`, and `done ... ov7_hits=1 title_hits=8`. The overlay 7 entry is hit once.
+  - Screenshot at frame 2600 (before B): a grid of about 100 species sprites on a blue background, one pink sprite in the lower centre, and the message box "Please close the DS system. To end this adventure, press B".
+  - Repeat with `--frames 4500 --shots 3000,3200,3600,4000,4500` (log sha256 `0359ee0a62a682478548f3f0b72e3aa4633f909cd1ae1270f2c85636c1e8996f`): the title return hook counts 8 by frame 2740, and the screens show the title logo with story text (frame 2740), then text on a coloured background (frames 3200 to 4500). The New Game / Adventure Log menu is **not** captured in this repeat. The earlier investigator run captured that menu at frame 4200 with a different input file; that screenshot is in scratch and is not reproduced here.
+  - Control (no injection, investigator B): the fresh-boot title shows New Game and Adventure Log only, and choice 5 is not offered.
+  - The probe was compiled with `python -I -m py_compile`. It must be run without `-I`, which hides the user-installed `desmume` module.
+- **Outcome:** partial. Confirmed under injection: the overlay 7 entry is reached once, and the sprite-grid screen with its message is shown. B leaves overlay 7, the title function runs again, and the game continues to the title logo and story text. The return to the New Game / Adventure Log menu is not reproduced in this run and is open. The meaning of the screen and the real route to choice 5 are open.
+- **Fallback adopted:** none.
+- **Notes:** The probe is the repository copy of the investigator's `ov7.py`, with the paths made relative to the script. It refuses any SHA-1 other than the supported one. Also fixed in this entry: the broken `.github/workflows/verify.yml` links (the file was removed in `320b68d`). The open items are in [`re/execution-model.md`](re/execution-model.md#open-questions).
