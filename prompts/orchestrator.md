@@ -14,6 +14,16 @@ After Platform, ask the user in plain text: "Which epic number do you want to ru
 
 Do not read issues or progress files until you have an epic number.
 
+## Resume
+
+Once you have the epic number, check whether this is a restart. A restart is when ./progress.md has the header "Epic: #<EPIC>" and at least one row that is not done. If so, rebuild your state before you run Workflow:
+
+1. Run hc ls and herdr-app ls. Note the space, the role tabs and every live session whose name is in the Roles table. Reuse them. Never start a second session with a name that is already live, and never make a second tab for a role.
+2. Run hc get <name> on each live session. If it is working, wait for its report as usual. If it is idle or done, read its last output (hc read <name> --lines 100) to learn where its task stopped.
+3. For each row that is not done, match it to the evidence: its session, its worktree (git worktree list), its branch (git log), its PR (gh pr list --head <branch>) and the sub-issue comments. Correct the row's status if the evidence disagrees with it.
+4. A task whose session is gone but whose worktree still exists goes back to a free executor with the same worktree and branch. Add to the dispatch text: "Resume: the worktree already holds earlier work; read git log and git status first." Do not delete that worktree.
+5. Tell the user in one short list what you found and what you will do next. Then continue with Workflow from the first step that is not finished.
+
 ## Roles
 
 Each role has one tab in your space. A role that needs more than one session gets more panes inside its own tab. It never gets a second tab.
