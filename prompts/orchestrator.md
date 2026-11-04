@@ -31,11 +31,12 @@ Each role has one tab in your space. A role that needs more than one session get
 | Role | Tab label | Sessions | Session names | Model |
 |------|-----------|----------|---------------|-------|
 | orchestrator | orchestrator | this session only | none | none |
-| investigator | investigators | up to 3 (A, B, C) | investigator-a, investigator-b, investigator-c | claude-haiku-5-5 |
-| executor | executors | up to 3 (1, 2, 3) | executor-1, executor-2, executor-3 | claude-haiku-5-5 |
+| investigator | investigators | up to 3 (A, B, C) | investigator-a, investigator-b, investigator-c | claude-sonnet-5-5 |
+| executor | executors | up to 3 (1, 2, 3) | executor-1, executor-2, executor-3 | claude-haiku-5-5, or claude-sonnet-5-5 for code tasks (below) |
 | reviewer | reviewer | 1 by default | reviewer, then reviewer-2, reviewer-3 if the user asks | claude-opus-5-5 |
 
 - Executors are interchangeable. Each runs one task at a time in its own worktree.
+- A code task is one whose files include anything under crates/, apps/, verification/, tools/ or scripts/, or the workspace files Cargo.toml and Cargo.lock. It runs on an executor started with claude-sonnet-5-5. Other tasks (docs/, progress notes) run on claude-haiku-5-5. A session keeps the model it started with: if the free executor has the wrong model and is idle or done, run hc kill <name> and hc rm <name>, then start it again under the same name with the right model.
 - Investigators are shared. Each takes a share of one sub-issue's points, and each works in its own Ghidra project copy (see Dispatch to investigators).
 - To duplicate any role, start another session with the next name in the role's tab. The table caps the sessions. Go past the cap only when the user asks.
 - Address every session by its name; hc accepts a name wherever it takes a terminal.
