@@ -99,7 +99,7 @@ def main():
                 for n, v in zip(REGS, regs):
                     setattr(r, n, v)
                 r.cpsr = cpsr
-                emu.memory.set_next_instruction(pc)
+                emu.memory.set_next_instruction(FRAME)  # r15 in the hook reads FRAME+8 (pipeline); resume at the hooked instruction
                 ram_poke(inj["live"])
                 inj["done"] = True
                 write({"ev": "restored", "s": state()})
