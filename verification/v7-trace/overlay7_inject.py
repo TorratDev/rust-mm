@@ -121,8 +121,10 @@ def main():
         if (f + 1) in shots:
             emu.screenshot().save(os.path.join(a.outdir, f"frame{f + 1:05d}.png"))
             log_line(f"shot frame={f + 1} title_hits={state['hits']} ov7_hits={state['ov7_hits']}")
-    log_line(f"done frames={a.frames} secs={time.monotonic() - t:.1f} forced={state['forced']} "
+    log_line(f"done frames={a.frames} forced={state['forced']} "
              f"ov7_first={state['ov7_first']} ov7_hits={state['ov7_hits']} title_hits={state['hits']}")
+    # Wall-clock time goes to stdout only, so log.txt is identical between runs.
+    print(f"secs={time.monotonic() - t:.1f}", flush=True)
     log.close()
     emu.destroy()  # libdesmume ends the process here, so it comes last
 
