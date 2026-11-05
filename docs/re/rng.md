@@ -93,21 +93,60 @@ Two functions use it. Both seed it from the global LCG, and neither feeds the Me
 
 Both match `pmd-red`: `sub_809542C` in `src/code_8094F88.c:270–283`, and case 15 in `src/personality_test1.c:96`. The constant 13 in the personality product loop matches `NUM_PERSONALITIES` in Red (`MISC` = 13 in `include/constants/personality_test.h`); see the tracker notes below (#170 P2). **For golden traces:** these calls draw from the global LCG, so a dump of `sPRNGState` must account for the extra draws when either routine runs.
 
-### Personality tracker (#170 P2, P3)
+### Personality tracker (#170 P2, P2b, P3)
 
-Source: the #170 P2 and P3 comment by investigator A. Static, Ghidra copy `rescue-arm9-a`; read-only, nothing renamed or saved. `tracker` is `*DAT_0206C874` (a pointer to the tracker pointer) in `FUN_0206C6E4` (`0x0206C6E4`).
+Source: the #170 P2 and P3 comment by investigator A (static, Ghidra copy `rescue-arm9-a`), and the #170 P2b comment by investigator B (static, copy `rescue-arm9-b`). Read only; nothing renamed or saved. Red facts are from pret/pmd-red (`src/personality_test1.c`, `include/personality_test1.h`, `include/constants/personality_test.h`, `src/save.c`), read only. `tracker` is `*DAT_0206C874` (a pointer to the tracker pointer) in `FUN_0206C6E4` (`0x0206C6E4`).
 
-**Tags:** **[blue-verified]** for the offsets, the loop bound, the switch and the arithmetic; **[hypothesis]** for the reading of the 13 words as one score per personality; red-hypothesis for the meaning of the words.
+**Tags:** **[blue-verified]** for the offsets, the loop bound, the switch, the arithmetic and the case behaviour. The 13 words are the per-personality totals: **[blue-verified]** for their role (#170 P2b). The names (`NatureTotals`, the case names) are **red-hypothesis**.
 
 | Offset | Size | Use (Blue) | Tag |
 |--------|------|------------|-----|
 | `+0x00` | u32 | call counter, `*T = *T + 1` on every call | blue-verified |
 | `+0x3C` | u32 | phase selector: `switch` with cases 0 to 15. Cases 0 to 14 each call one routine. Case 15 is the final step. The routine returns 0, or 3 when done | blue-verified (switch and returns) |
-| `+0x4C` to `+0x7C` | 13 words (`i` = 0 to 12) | read in the final loop, `value *= (i + word[i] + 3)`; the loop runs `while (iVar3 < 0xd)` | blue-verified (loop and arithmetic); [hypothesis] for one score per personality |
+| `+0x4C` to `+0x7C` | 13 words (`i` = 0 to 12) | per-personality totals (`NatureTotals`): case 2 adds to them, case 4 takes the largest; read in the final loop, `value *= (i + word[i] + 3)`, `while (iVar3 < 0xd)` | blue-verified (role, loop and arithmetic); red-hypothesis (name) |
 
-- **P2, the constant 13.** The loop bound is 13. In Red, `enum NaturePersonalities` runs `HARDY` (0) to `QUIRKY` (12), and `MISC` = 13 is the `#define NUM_PERSONALITIES` (`include/constants/personality_test.h`). Blue's bound matches `NUM_PERSONALITIES`. The count is the evidence; the field meaning is not established (medium).
-- The result is seeded from `Rand32Bit()` and `MersenneTwister_InitializeState`. The output of `Random32MersenneTwister()` is added, retried if it is `-1`, then passed to `sub_8011C40`.
-- **Not verified:** the routines behind cases 0 to 14 (`FUN_0206C590`, `FUN_0206C568` and others), apart from case 15's arithmetic; `sub_8011C40` and `sub_8011C34`; the 13 words as personality scores; runtime (no Blue dump configured, no emulator check).
+- **P2, the constant 13.** The loop bound is 13. In Red, `enum NaturePersonalities` runs `HARDY` (0) to `QUIRKY` (12), and `MISC` = 13 is the `#define NUM_PERSONALITIES` (`include/constants/personality_test.h`). Blue's bound matches `NUM_PERSONALITIES`. The count matches the 13 totals, which are the per-personality totals (see the case table below).
+- The result is seeded from `Rand32Bit()` and `MersenneTwister_InitializeState`. The output of `Random32MersenneTwister()` is added, retried if it is `-1`, then passed to `sub_8011C40` (`0202A050`, see [Global 0x02132D98](#global-0x02132d98-170-p2b)).
+- **Not verified (#170 P2b):** the contents and stride of the answer-effects table (Blue reads 13-byte rows; Red's layout is 16 bytes, red-hypothesis); the question category table at `DAT_0206C680` and the answer-menu tables; what `0x02132D98` is used for by its readers (the writers and readers are listed below; the readers were not read); the helper routines beyond the Red names (`FUN_0202EDAC`, `FUN_0202F280`, ...); runtime (no Blue dump configured, no emulator check).
+
+#### Test states, cases 0 to 15 (#170 P2b)
+
+`FUN_0206C6E4` is Red's `HandleTestTrackerState`: the counter at `+0`, a `switch` on the state at `+0x3C`, and 16 states in Red's enum order. Each case calls one Blue routine. **Tags:** **[blue-verified]** for the behaviour and the transitions; **red-hypothesis** for the Red names; **high** confidence. Init is `FUN_0206C87C` (Red `InitializeTestStats`): it calls `FUN_0201E1D4` on `tracker+4` (Red `ReadTeamBasicInfo`), then zeroes the counter, state, question counter, the 13 totals and the 55 question flags, and sets nature and gender to 0.
+
+| Case | Blue routine | Red state | What it does |
+|------|--------------|-----------|--------------|
+| 0 | `FUN_0206C590` | `GenerateNewQuestionOrGender` | Counts questions at `+0x40` (at most 8, `< 9`). Picks `RandInt(0x37)` (55 questions) until the question is unused (`tracker+0x80+q != 1`), stores it at `+0x44`, and marks every question of the same category (table `DAT_0206C680`) as used. State 1. Once the count is reached, opens the gender menu (`FUN_0202EDF0`), state 3 |
+| 1 | `FUN_0206C568` | `CallPromptNewQuestion` | Calls `FUN_0206C090` (`PromptNewQuestion`); state 2 |
+| 2 | `FUN_0206C4C0` | `UpdateNatureTotals` | `FUN_0202EDAC(&answer)` (Red `sub_80144A4`). Answer 99 (Red `BRAVE_2B_TRIGGER`) sets the question to 0x37 and state 1. Otherwise adds the 13 bytes of `effects[answer*13 + i]` to `+0x4C + 4*i`; state 0 |
+| 3 | `FUN_0206C438` | `SetPlayerGender` | Answer 0 or 1 to `+0xB8` (Red `playerGender`) and to a byte at `+8` of a global (game options); `func_0x02138CC0(0)` (Red `sub_8099690(0)`); state 4 |
+| 4 | `FUN_0206C394` | `RevealPersonality` | `RandInt(0xD)`, then 12 wrap-around steps keeping the strictly larger total. Nature at `+0x48`; starter id from the table at `[gender*2 + nature*4]`, stored at `+8` (Red `StarterID`); `FUN_0206C034` (`PrintPersonalityTypeDescription`); state 5 |
+| 5 | `FUN_0206C340` | `RevealStarter` | Wait, dialogue, `FUN_0206BF74` (`PersonalityTest_DisplayStarterSprite`); state 6 |
+| 6 | `FUN_0206C310` | `AdvanceToPickPartnerPrompt` | Wait; state 7 |
+| 7 | `FUN_0206C2D0` | `PromptPickPartner` | Dialogue; state 8 |
+| 8 | `FUN_0206C2A0` | `AdvanceToPartnerSelection` | Wait; state 9 |
+| 9 | `FUN_0206C26C` | `CallCreatePartnerSelectionMenu` | `FUN_0206CD9C(starter id at +8)` (`CreatePartnerSelectionMenu`); state 10 |
+| 10 | `FUN_0206C1FC` | `PromptForPartnerNickname` | `FUN_0206CCF0()` (`HandlePartnerSelectionInput`). Ignores the two sentinel returns `DAT_0206C258` and `DAT_0206C25C` (Red 0xFFFF and 0xFFFE). `FUN_0206CC8C`; partner id to `+0xA` (Red `PartnerID`); dialogue; state 11 |
+| 11 | `FUN_0206C1CC` | `AdvanceToPartnerNicknameScreen` | Wait; state 12 |
+| 12 | `FUN_0206C170` | `NicknamePartner` | `FUN_020025AC(+0xA)` (`GetMonSpecies`); `FUN_02008AF0` copies the name to `+0x24` (Red `PartnerNick`); `FUN_02031528(3, +0x24)` (`CreateConfirmNameMenu`); state 13 |
+| 13 | `FUN_0206C120` | `PrintEndIntroText` | `FUN_020314BC()`, `FUN_02031488` (`CleanConfirmNameMenu`); dialogue; state 14 |
+| 14 | `FUN_0206C0F0` | `AdvanceToTestEnd` | Wait; state 15 |
+| 15 | inline | `PERSONALITY_TEST_END` | `Rand32Bit() * counter`, reseeds the MT, `value *= (i + total[i] + 3)` over the 13 words, adds the MT output, retries on -1, stores through `sub_8011C40`; returns 3. Identical to Red |
+
+**Layout** (Blue offset, Red offset in brackets): counter `+0` (`+0`); TeamBasicInfo `+4` (`+4`) with StarterID `+8` (`+8`) and PartnerID `+0xA` (`+0xA`); partner nickname `+0x24` (`+0x20`); TestState `+0x3C` (`+0x34`); QuestionCounter `+0x40` (`+0x38`); currQuestionIndex `+0x44` (`+0x3C`); playerNature `+0x48` (`+0x40`); NatureTotals `+0x4C` (`+0x44`); QuestionTracker `+0x80` (`+0x78`); playerGender `+0xB8` (`+0xB0`). Everything after TeamBasicInfo is shifted by +8, so Blue's TeamBasicInfo is 8 bytes longer (0x38). Tag: blue-verified.
+
+**Answer effects:** Blue's rows are 13 bytes (`answer * 0xd`). Red's `PersonalityEffects` is `u8[NUM_PERSONALITY_TEST_EFFECTS]`, 16 bytes. Which is right for Blue's table is not verified. Tag: blue-verified for Blue's code; red-hypothesis for Red's layout.
+
+#### Global 0x02132D98 (#170 P2b)
+
+**Tags:** blue-verified, high. `sub_8011C40` is `0202A050` (`*DAT_0202A05C = x`), and `sub_8011C34` is `0202A060` (`return *DAT_0202A06C`). Both literal-pool entries hold `0x02132D98`, one global word (Red `gUnknown_202DE28`, red-hypothesis).
+
+- Writers of `sub_8011C40`: `FUN_0206C6E4` (`0206C85C`, the test result), `ReadSaveFromPak` (`0202A248`, load from the save), `FUN_0202A954` (`0202A968`, writes -1 after `sub_8011C28(0)`; Red `sub_80122D0`), `FUN_ov_0000__02140860` (`ov_0000::021409D0`).
+- Readers (`sub_8011C34`): `WriteSavetoPak` (`0202A578`, save), `FUN_02066D14`, `FUN_02051AD4`, `FUN_02065224`, `FUN_02062FD0`, `FUN_0200D4DC`, `FUN_ov_0007__021390E8`, `FUN_ov_0000__02140860`.
+- This is the same pattern as Red's `save.c` (saved as `unk418`, restored on load, -1 on reset). What the value is used for is not established.
+
+#### The 13 words are the per-personality totals (#170 P2b)
+
+**Tags:** blue-verified for the role; red-hypothesis for the name; high. They are Red's `NatureTotals[13]`: zeroed at init, added to per question by `effects[answer][i]` (case 2), and the largest one (random start, strict `>`, wrap-around) decides the player's nature (case 4), which selects the starter and the description. The count 13 equals `NUM_PERSONALITIES`.
 
 ## 16-bit generator
 
