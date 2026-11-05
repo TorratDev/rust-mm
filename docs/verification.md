@@ -413,3 +413,17 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Injection (follow-up):** `python verification/v7-trace/other_rng.py <ROM> <OUT> --frames 2700 --inject 2500`. At the first hit of the frame routine (`0201F268`) at or after frame 2500 the probe saves the registers, calls `OtherRandom16` four times with LR = `0201F268` (from the live state, then from `0xFFFF`), reads `r0` and the state, and restores the registers and the state word. Two runs gave a byte-identical log, sha256 `46863b159f39469eb2b839667bbc5adcedff4ea944c0e771aeb9e52172d02fac` (SHA-1 check as above). Live state `0x348C`: returns 25497, 27682, 3703, 11432; from `0xFFFF`: 912, 34893, 3270, 29771. `r0` equals the new state, top 16 bits 0; `state' = state * 109 + 1021` (16 bits). Test: `other_rng_matches_forced_calls_on_the_retail_rom`. Natural callers are still not reached.
 - **Outcome (natural callers):** not reached. The entry/exit hooks are proven to fire by the injection run. Needs input that reaches a caller (for example the `FUN_02140860` event check or an actor script in ground mode).
 - **Fallback adopted:** none.
+
+---
+
+## #175 P5 — D-pad repeat timing
+
+- **Assumption:** `UpdateKeyState` (`FUN_02017B20`) is called once per frame and its D-pad repeat counter starts at 1, fires at 48 and resets to 43 (static reading in [`re/io.md`](re/io.md#d-pad-repeat)).
+- **Date:** 2026-11-05
+- **Environment:** Windows 11, py-desmume (DeSmuME 0.9.12), `SDL_VIDEODRIVER=dummy`. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (checked by the probe, supported, not committed).
+- **Evidence:**
+  - Command: `python verification/v7-trace/dpad_repeat.py <ROM> <OUT>` (defaults: Down held from frame 800 for 200 frames, no other input). `<OUT>` is outside the repository. The probe logs the key struct at `0x020F2790` (held, pressed, repeat, flags, group, counter) every frame.
+  - Output sha256 `a2467ac72b44c0b2a1b8c673887786032b146d5b63d42cc0adb3c3e26fcf6c02`, identical in two runs.
+  - Frames counted from the press: pressed at 0; repeat nonzero at 0, 47, 52, 57, ... 197 (every 5 frames). The counter reads 1 at frame 0, 47 at frame 46, then 43 at frame 47 (the fire).
+- **Outcome:** confirmed for Down: fires at the press, again after 47 frames (counter 48, reset to 43), then every 5 frames. One call per frame holds. Up, Left and Right were not run.
+- **Fallback adopted:** none.
