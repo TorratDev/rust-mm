@@ -116,11 +116,11 @@ Select a batch of sub-issues to run now:
 
 For each sub-issue in the batch:
 0. Points. If the sub-issue has no points list, derive them from its Tasks and from the open questions in docs/re/ that the sub-issue covers. Post the derived points as a comment on the sub-issue (gh issue comment <n> --body "..."), then use them. Do not dispatch underived points.
-1. If the Objective is unclear, or the work needs reverse engineering or a Ghidra check, dispatch its points to the investigators. Split the points across A, B, and C and run them in parallel. Wait for all three, then use their combined findings as the task. Investigators are shared, so investigate one sub-issue at a time.
+1. If the Objective is unclear, or the work needs reverse engineering or a Ghidra check, dispatch its points to the investigators. Split the points across A, B, and C and run them in parallel. Wait for every investigator you dispatched (one or two if there are fewer points), then use their combined findings as the task. Investigators are shared, so investigate one sub-issue at a time.
 2. Dispatch the task to a free executor with the Dispatch to executors format. The task is: issue number, Objective, files it may touch, verification command, the evidence to record, and the worktree and branch.
 3. Wait for the DONE or BLOCKED line, then read the executor output. Do not assume it received the task or finished.
 4. Send the review to the reviewer as described in Dispatch to the reviewer. Queue reviews that arrive together. Wait for its report, then read it.
-   - PASS: tell the executor to open a PR with "Closes #<n>". Mark the sub-issue done.
+   - PASS: tell the executor to open a PR. Say which link to use: "Closes #<n>" if the PR finishes the sub-issue, or "Refs #<n>" if it covers only some of its points. For Refs, add: "do not write close, fix or resolve next to any issue number, even negated". When the PR is open, wait for its checks (gh pr checks <PR> --watch). If they pass, merge it yourself: gh pr merge <PR> --squash --delete-branch. Then mark the sub-issue done (Closes) or partial (Refs). After a Refs merge, check with gh issue view <n> that the sub-issue is still open, and reopen it if it is not.
    - REVISE: send the revision to the same executor and increment attempts.
    - SPLIT or ESCALATE: follow the rules below.
    - BLOCKED: record it in progress.md. Ask the user if a human decision is needed.
