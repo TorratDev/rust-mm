@@ -123,7 +123,7 @@ Tag: **[blue-verified]**. Blue's copy of `pmd-red`'s `OtherRandom16` (`src/other
 - **Accesses:** x-ref to `020E03F4` lists three accesses, all in `OtherRandom16` (a read at `02023BA4`, a write at `02023BB0`, a read at `02023BB4`). A literal-pool search (#169 P3, below) finds no other static word that holds the address. Aliasing through a run-time pointer is not ruled out.
 - **Seeding:** no runtime seed write was found. The state starts from the static value.
 - **Callers:** x-ref to `OtherRandInt` (`02023B84`) lists 20 call sites: `OtherRandRange` (`02023B78`, 1), `FUN_02021d9c` (5, at `02021E88`, `02021EB0`, `02021ED8`, `02021EFC`, `02021F14`), `FUN_0201ff48` (1, at `0201FFFC`), and overlay 0 (13: `FUN_ov_0000__02140860` at `ov_0000::02141998`, `FUN_ov_0000__02154220` at `ov_0000::02154618`, and 11 call sites in `FUN_ov_0000__021421cc`). Investigator C's text says 18 direct sites; the list has 19 outside `OtherRandRange`. The list is taken as given. What these callers use the generator for is classified in [Caller classes (#169 P2)](#caller-classes-169-p2) below.
-- **Emulator check:** none yet. The unit tests in `crates/sim/src/rng.rs` check the formula only, from values computed separately.
+- **Emulator check:** **[blue-verified, runtime]**, forced call (not a natural caller; none is reached on the boot path, see [`verification.md`](../verification.md)). `verification/v7-trace/other_rng.py --inject` calls `02023B9C` with LR set to the frame routine: from the live state `0x348C` the returns are 25497, 27682, 3703, 11432, and from `0xFFFF` they are 912, 34893, 3270, 29771. In every call `r0` equals the new state and its top 16 bits are 0 (zero-extended), and the new state is `state * 109 + 1021` in 16 bits. The live state at frame 2500 was the static `0x348C`, so nothing writes it before then. The vectors are the test `other_rng_matches_forced_calls_on_the_retail_rom` in `crates/sim/src/rng.rs`.
 
 ### Caller classes (#169 P2)
 
@@ -132,25 +132,25 @@ Source: the #169 comment by investigator B. The 20 sites are in the ARM9 and in 
 | Caller | Sites | Use (from decompile) | Class | Confidence |
 |--------|-------|----------------------|-------|------------|
 | `OtherRandRange` (`02023B78`) | 1 | wrapper; its own callers are the uses | wrapper | high |
-| `FUN_02021D9C` (`02021E88` and four more) | 5 | a random offset of 2 to 3 or 8 units, then `FUN_0208625C(value, 8)`, a wrap to 8 steps, in a switch on an actor state; looks like facing or direction | presentation (likely) | low |
-| `FUN_0201FF48` (`0201FFFC`) | 1 | script opcode `0xB`: the parameter is replaced by a random value in `[0, n)` | script-defined (unknown) | low |
+| `FUN_02021D9C` (`02021E88` and four more) | 5 | a facing transform on one of 8 directions (checked `0 <= dir < 8`), mode 0 to 9: the 5 random sites are in modes 6 (2), 7, 8 (`rand(8) & ~1`) and 9 (`rand(8)`), each a random turn or a random direction, then `x mod 8` through `FUN_0208625C` [blue-verified, high] | presentation (likely) | medium |
+| `FUN_0201FF48` (`0201FFFC`) | 1 | opcode `0xB` of a script arithmetic operator evaluator (0 set, 1 sub, 2 add, 3 mul, 4 div, 5 mod, 6 and, 7 or, 8 xor, 9 set bit, 10 clear bit, `0xB` = `rand(b)`, `a` ignored), used by script value cases `0xC1` and `0xC2` of `FUN_ov_0000__021421CC` [blue-verified, high] | script-defined (random operand) | medium |
 | `FUN_ov_0000__02140860` (`ov_0000::02141998`) | 1 | "S10 event check": if the event state is 0 (`FUN_02020D90`), a 1-in-256 roll sets event flag `0x44` | gameplay (ground event trigger) | medium |
 | `FUN_ov_0000__02154220` (`ov_0000::02154618`) | 1 | for states `0xE` to `0x1D`, a random value `0` to `17` goes to an actor field at `+0xA0` | presentation (likely) | low |
-| `FUN_ov_0000__021421CC` (`ov_0000::021440B0` and ten more) | 11 | 8 sites place or jitter an actor position (8.8 fixed point: `<< 8`, `+0x18`/`+0x19`); 2 sites write a random value to a script field (`+0x4E`); 1 site (`case 0xC3`) discards the result | 8 presentation, 2 unknown, 1 RNG-advance only | medium |
+| `FUN_ov_0000__021421CC` (`ov_0000::021440B0` and ten more) | 11 | 8 sites place or jitter an actor position (8.8 fixed point: `<< 8`, `+0x18`/`+0x19`); 2 sites write a random value to script field `+0x4E` (`case 0x6D`: `rand(param)`; `case 0xDC`: `min + rand(max - min)`), which looks like a command duration or step counter, so a random duration [hypothesis, medium: no read of `+0x4E` found]; 1 site (`case 0xC3`) is a random script `switch` value: the result goes through `FUN_ov_0000__021405B4` to field `+0x28` [blue-verified, high] | 8 presentation, 2 random duration (hypothesis), 1 random script switch value | medium |
 
-Totals: presentation (likely) 14 sites (5, 1 and 8 in the three rows above); gameplay 1 (`FUN_02140860`); script-defined or unknown 3 (`FUN_0201FF48` and the two `+0x4E` sites); RNG advance only 1 (`case 0xC3`); wrapper 1. That is 20.
+Totals: presentation (likely) 14 sites (5, 1 and 8 in the three rows above); gameplay 1 (`FUN_02140860`); script-defined 4 (`FUN_0201FF48`, the two `+0x4E` sites, and the `case 0xC3` switch value, which is not an advance-only call); wrapper 1. That is 20.
 
-Only the `FUN_02140860` event trigger is a clear gameplay use. **Not verified:** no emulator run for any caller; `FUN_0208625C` is taken as a wrap and its body was not read; the meaning of script field `+0x4E` and of script opcode `0xB`; whether `FUN_02021D9C` is facing or an animation. The emulator check of the state and the zero-extended return is still open (see [Open questions](#open-questions)).
+Only the `FUN_02140860` event trigger is a clear gameplay use. **Not verified:** no emulator run for any caller; which scripts use opcode `0xB`, commands `0x6D` and `0xDC` and switch `0xC3`; who reads and decrements `+0x4E`. `FUN_0208625C` is the signed divide with remainder (`__aeabi_idivmod`: r0 quotient, r1 remainder, divisor 0 gives quotient 0 and remainder `a`), so "wrap to 8" is `x mod 8` through r1 [blue-verified, high]. The emulator check of the state and the zero-extended return is still open (see [Open questions](#open-questions)).
 
 ### Literal-pool search for the state address (#169 P3)
 
 Tags: **[blue-verified]** (static search). High confidence for the exact search; medium for "no alias", since run-time pointers are not covered.
 
 - `0x020E03F4` (bytes `f4 03 0e 02`, all of memory): one hit, at `02023BBC`. That is the literal pool entry that `OtherRandom16` already uses.
-- `0x020E03F8` (bytes `f8 03 0e 02`): 19 hits, all in ARM9 code between `02023DD8` and `020255FC`. Each is a pointer to a global table base. Two were checked (`FUN_02023CF0` and `FUN_02024048`): both walk 0xD0-byte task or effect entries, and neither uses the state address or a −4 offset. The other 17 were not read.
+- `0x020E03F8` (bytes `f8 03 0e 02`): 19 hits, all in ARM9 code between `02023DD8` and `020255FC`. Each is the address of a global pointer variable that holds the base of a heap block of 0x20 entries of 0xD0 bytes, allocated by `FUN_02025508` (entry `+4 = -1` marks a free slot; effect or task manager is a hypothesis). All 19 functions (36 pool loads) were read: 34 loads read the word at offset 0, 2 (in `FUN_02025508`) write it, and none uses a negative offset or `sub` on the loaded register, so none reaches `0x020E03F4` (`base - 4`) [blue-verified, static, high].
 - `0x020E03F0`: no hits.
 
-**Result:** no static literal or data word holds `0x020E03F4` except the one already known, so the state has no static alias. Aliasing through a run-time computed pointer is not ruled out. The 17 unread hits for `0x020E03F8` are an open item.
+**Result:** no static literal or data word holds `0x020E03F4` except the one already known, and none of the 19 `0x020E03F8` hits reaches it, so the state has no static alias. Aliasing through a run-time computed pointer is not ruled out, and the `0x020E03F8` search covered the ARM9 block only, not the overlays.
 
 **Dungeon callers:** none. The generator has no callers in overlay 1.
 
@@ -366,8 +366,8 @@ Source: investigator B. Static Ghidra only; no runtime run. Red names are **red-
 
 - The unnamed global-LCG callers are classified above with [hypothesis] labels. Still open: the names of the `FUN_0200F768` mission cluster (its structure is read; the meaning of record fields `+0`, `+2` and `+0x11`, and which array is the player's accepted list, are not established). Of the dungeon callers (#168 P1), the 13 labels that have no name in other docs have these open points: `021A7124` (which event), `02145660` (which item), and the trap ids behind `021972B4` and `02197CB8` (the dispatcher `02197D88` is checked only for its summon and warp cases). The floor weight tables behind `021388D4`, `02138B74` and `02138C68` are not decoded. This feeds #48, #50 and #52.
 - Correct the subsystem labels above once the bodies are read.
-- The 20 `OtherRandInt` callers are classed in [Caller classes (#169 P2)](#caller-classes-169-p2) with [hypothesis] labels. Open: the meaning of script field `+0x4E` and opcode `0xB`, whether `FUN_02021D9C` is facing or an animation, and the body of `FUN_0208625C`.
-- Whether any run-time pointer writes `gOtherRngState` through an alias. The static literal-pool search found none (#169 P3); 17 `0x020E03F8` neighbour hits are unread.
-- An emulator vector for the 16-bit generator: a state dump before and after a call that uses it.
+- The 20 `OtherRandInt` callers are classed in [Caller classes (#169 P2)](#caller-classes-169-p2) with [hypothesis] labels. Open: who reads `+0x4E`, and which scripts use opcode `0xB`, commands `0x6D` and `0xDC`, and switch `0xC3`.
+- Whether any run-time pointer writes `gOtherRngState` through an alias. The static literal-pool search found none (#169 P3, all 19 `0x020E03F8` hits read); overlays were not searched for `0x020E03F8`.
+- A natural-caller trace of the 16-bit generator: the forced-call vectors are in, but no caller is reached on the boot path (needs input that reaches a ground caller).
 - Whether the quick-save branch in the save routines leaves the global RNG state from the dungeon (not checked).
 - The caller slot of `FUN_02018ACC` and the writer of its flag word (see [Per-frame steps](#per-frame-steps-159)). The A and Select check on the frame routine needs a boot-phase run (frames 2418 to 2561).
