@@ -18,15 +18,15 @@ Each class has a status byte and a turns or counter byte. The offsets are in [`s
 | `+0x9D` | burn | burn damage countdown | blue-verified (read and reset per turn) |
 | `+0x9E` | burn | bad-poison damage index | blue-verified (incremented per turn) |
 | `+0xA0` status, `+0xA8` turns | frozen | 1 `STATUS_FROZEN`; 3 `STATUS_WRAP`; 4 `STATUS_WRAPPED`; 2 shadow hold, 5 ingrain, 6 petrified, 7 constriction | 1: blue-verified write and message. 2 to 7: message routes blue-verified; names red-hypothesis |
-| `+0xAC` status, `+0xAD` counter | cringe | 2 `STATUS_CONFUSED`; 7 `STATUS_INFATUATED`; 1 cringe, 3 paused, 4 cowering, 5 taunted, 6 encore | 2 and 7: blue-verified writes. Others: red-hypothesis message cases. The `+0xAC` offset is inferred from the Own Tempo cure, not from a documented field |
+| `+0xAC` status, `+0xAD` counter | cringe | 2 `STATUS_CONFUSED`; 7 `STATUS_INFATUATED`; 1 cringe, 3 paused, 4 cowering, 5 taunted, 6 encore | 1 to 7: blue-verified writes, one setter per value (#166 P1c; see the cringe section). Names are red-hypothesis. The `+0xAC` offset is inferred from the Own Tempo cure, not from a documented field |
 | `+0xAE` | bide | 1 `STATUS_BIDE`; 0xC enraged; flags 7 flying, 8 bouncing, 9 diving, 10 digging in `+0xDC` | blue-verified writes (setter `0218E428`); names red-hypothesis. See [#189 P1](#bide-and-sure-shot-189-p1) |
 | `+0xB1` status, `+0xB2` counter | reflect | 2 `STATUS_SAFEGUARD` (gate); 3 `STATUS_LIGHT_SCREEN` (reader); 11, 12, 13 (writers); 14 `STATUS_MIST` (reader); 1 and 4 to 10 writers not found | blue-verified for the listed writes and readers; names red-hypothesis. See [#189 P4](#reflect-class-189-p4) |
-| `+0xB3` status, `+0xB6` counter | curse | 1 cursed, 2 decoy, 3 snatch (Red's curse class) | red-hypothesis (strong) |
-| `+0xB8` status, `+0xC1` counter | leech seed | — | red-hypothesis (class guessed from the offset) |
+| `+0xB3` status, `+0xB6` counter, `+0xB7` | curse | 1 cursed, 2 decoy, 3 snatch | blue-verified writes (#166 P1b; see the curse section below); names red-hypothesis (Red's curse class) |
+| `+0xB8` status, `+0xC1` counter | leech seed | 1 leech seed, 2 destiny bond | blue-verified writes (#166 P1c; see the leech section below); names red-hypothesis |
 | `+0xC4` status, `+0xC5` counter | sure shot | 1 `SURE_SHOT`; 2 `WHIFFER`; 3 `SET_DAMAGE`; 4 `FOCUS_ENERGY` | blue-verified writes; names red-hypothesis. End routine read. See [#189 P1](#bide-and-sure-shot-189-p1) |
 | `+0xC7` status, `+0xC8` counter | transform, invisible, mobile | 1 `INVISIBLE`; 2 `TRANSFORMED`; 3 `MOBILE` | blue-verified writes; names red-hypothesis. See [#189 P2](#muzzled-transform-invisible-mobile-blinker-189-p2) |
 | `+0xC9` status, `+0xCA` counter | blinker | 1 `BLINKER`; 2 `CROSS_EYED`; 3 `EYEDROPS` | blue-verified writes (#189 P2) |
-| `+0xCB` status, `+0xCC` counter | muzzled | 1 muzzled | blue-verified write `0218C1AC` (#189 P2) |
+| `+0xCB` status, `+0xCC` counter | muzzled, 0 or 1 only | 1 muzzled (`0218C1AC`); no writer of 2 or 3 (#166 P2b) | blue-verified writes (#189 P2, #166 P2b) |
 | `+0xD7` | terrified | flag and timer share the byte | blue-verified read in the chain |
 | `+0xE0`, `+0xE4` to `+0xE8`, `+0xE9` to `+0xED` | speed stage and counters | — | blue-verified (see [`structs.md`](structs.md#entity-info)) |
 
@@ -87,7 +87,7 @@ Sleep, nightmare, napping and yawning share one byte. A status can be set only w
 | Yawning | `0215E0C0` | `021AA2BC` = (2, 2) | `gYawnTurnRange` {2, 2} | yes |
 | Napping | `02161370` | `021AA344` = (2, 4) | `gNappingTurnRange` {2, 4} | yes |
 
-- The roll itself is `CalculateStatusTurns` (`0219CF28`), which rolls `DungeonRandRange` on a (min, max) pair. For a monster it also adjusts the roll: a check with argument `0x12` halves it, and a check with argument `0x14` caps it at 5 when it is above 4. The checks come from `021805B0`. The meaning of `0x12` and `0x14` (ability or IQ) was not compared with Red's `CalculateStatusTurns` (medium).
+- The roll itself is `CalculateStatusTurns` (`0219CF28`), which rolls `DungeonRandRange` on a (min, max) pair. For a monster it also adjusts the roll: a check with argument `0x12` halves it, and a check with argument `0x14` caps it at 5 when it is above 4. The checks come from `021805B0`. `0x12` is an IQ skill bit and `0x14` is an ability. The roll gives `0x7F` for permanent and is never below 1 (blue-verified behaviour, #166 P2b). The name `CalculateStatusTurns` is red-hypothesis.
 - **Yawn-end roll.** `0218FE64` case 4 rolls `021AA2C0` = (4, 8), then sleeps for roll + 1 turns. The value equals Red's nightmare range, but the source is not confirmed. Red's yawn end goes through `sub_80420B8` → `sub_804151C(0x19, 1)`, which is not a sleep-range call (low).
 
 ### Sleep: countdown and per-turn
@@ -225,14 +225,64 @@ None found for frozen in the chain (step 4), by the x-ref walk to depth 2. The r
 
 ## Cringe class (`+0xAC`, `+0xAD`)
 
-**Write sites belong to #166.** The confusion and infatuation setters are listed here for the class, but their write sites are the subject of #166, so the names may be merged there.
+**Write sites (#166 P1c).** Each value 1 to 7 has one setter. It writes `+0xAC` = value and `+0xAD` = turns + 1, with turns from `0219CF28` (paused takes the turns as a parameter). These are blue-verified writes. The names are red-hypothesis, from Red's enum and the setters. The end routine `0218FA80` and the spawn reset `0217930C` clear the class.
+
+| Value | Setter | Callers | Red analogue |
+|-------|--------|---------|--------------|
+| 1 cringe | `FUN_ov_0001__021887E0` | 9 call sites in the `0215xxxx` and `0216xxxx` move-effect functions | `TryInflictCringeStatus` |
+| 2 confused | `FUN_ov_0001__0218E27C` | 10 call sites, plus a computed jump entry at `021465F0` and `021465F4` | `ConfuseStatusTarget` |
+| 3 paused | `FUN_ov_0001__0218AB34` (turns as a parameter) | `021767E4`, `021606C0`, `0215BE14` | `PausedStatusTarget` |
+| 4 cowering | `FUN_ov_0001__0218E19C` | `02161F44` | `CowerStatusTarget` |
+| 5 taunted | `FUN_ov_0001__0218D004` | `0215E6F8` | `TauntStatusTarget` |
+| 6 encore | `FUN_ov_0001__0218CC14` | `0215DD14` | `EncoreStatusTarget` |
+| 7 infatuated | `FUN_ov_0001__0218A9F8` (calls `AbilityIsActive(target, ')')` first) | `0215BAF8`, `02163454` | `InfatuateStatusTarget` |
 
 - **Confusion** (`0218E27C`, value 2). **blue-verified, high.** Red's `ConfuseStatusTarget` (`move_orb_effects_2.c:35`).
 - **Infatuation** (`0218A9F8`, value 7). **blue-verified, high.** Red's `InfatuateStatusTarget` (`move_orb_effects_1.c:307`).
 - **Immunity and cure.** Own Tempo (ability `0x40`, `'@'`) is checked in `02175850`. It cures when `0xAC` is 2 or 7. The setters' immunity checks were not listed in the findings.
 - **Per turn.** In the chain (step 5), the end function `0218FA80` runs when the counter reaches 0. It has seven values, each with a message (1 to 7), then clears `+0xAC`, refreshes the display (`0213FF34`), and calls `CalcSpeedStage`. **blue-verified** for the shape. The mapping (1 cringe, 2 confused, 3 paused, 4 cowering, 5 taunted, 6 encore, 7 infatuated) is red-hypothesis, and high confidence on the mapping.
 - **RNG.** None found in the chain for this class (step 5 has no call that consumes it).
-- **Confusion** (value 2): setter, turn range and readers are in [#190 P3](#confusion-and-cringe-190-p3). Runtime behaviour was not observed. The cringe values 1 and 3 to 6 are only message cases, and their writers are not confirmed.
+- **Confusion** (value 2): setter, turn range and readers are in [#190 P3](#confusion-and-cringe-190-p3). Runtime behaviour was not observed. The setters for values 1 and 3 to 6 are in the table above. Their message text was not decompiled.
+
+## Curse, leech seed and muzzled writes (#166)
+
+Blue-verified writes from a decompile text search of all of ov_0001 and the ARM9 (#166 P1b, P1c, P2b). Names are red-hypothesis unless marked.
+
+### Curse class (`+0xB3`, `+0xB6`, `+0xB7`)
+
+| Value | Setter | Other writes | Red analogue |
+|-------|--------|--------------|--------------|
+| 1 cursed | `FUN_ov_0001__0218D218` (called from `FUN_ov_0001__021612C8` at `021612D0`) | `+0xB3 = 1` only when it is not already 1. `+0xB6` = `FUN_ov_0001__0219CF28(target, 0x021AA354)` + 1; `+0xB7` = 0. Guarded by `MonsterIsType(user, 0x0E)` (Ghost); otherwise a self stat-drop branch. Halves the user's HP (`FUN_0208625C(hp, 2)`, minimum 1) | `CurseTarget`, Red lines 510-520 |
+| 2 decoy | `FUN_ov_0001__0218D384` (from `FUN_ov_0001__02163650` at `0216365C`) | `+0xB3 = 2` unconditionally, after ending an old status with `FUN_ov_0001__0218F6C8(..., 2)` if `+0xB3` was not 0. `+0xB4` = the user's `info+6` (isNotTeamMember); `+0xB5` = param_3; `+0xB6` = `FUN_ov_0001__0219CF28` on `0x021AA380` with flag 1, plus 1; `+0xB7` = 0. Sets `gDungeon+0x335C` = 1 and the AI objective of the entities (`+0x70`) | Decoy, Red lines 449-471 |
+| 3 snatch | `FUN_ov_0001__0218D0E0` (from `FUN_ov_0001__02163068` at `02163070`) | `+0xB3 = 3` only when it is not already 3. `+0xB6` = `FUN_ov_0001__0219CF28` on `0x021AA358` with flag 0, plus 1; `+0xB7` = 0. Clears any other snatch holder first (`FUN_ov_0001__0218F6C8(..., 0)`). Sets `gDungeon+0x158C8` = target and `+0x158D4` = the target's `info+0x8C` | Snatch, Red lines 541-556 |
+
+Clears and readers:
+- `FUN_ov_0001__0218F6C8` is the end routine. It sets `+0xB3 = 0` at its tail for every status. Case 2 clears `gDungeon+0x335C` and refreshes the entity; case 3 clears `gDungeon+0x158C8` and `+0x158D4`. Value 4 is an empty case, and nothing writes it.
+- Callers of `FUN_ov_0001__0218F6C8`: `FUN_ov_0001__0217D5FC` (six sites, `0217E0EC` to `0217E528`), `FUN_ov_0001__02190100` (at `0219019C`), and `TickStatusAndHealthRegen` (`02185F40`, when the `+0xB6` counter reaches 0).
+- `TickStatusAndHealthRegen` (`ov_0001::02185C70`) decrements `+0xB6` through `FUN_ov_0001__0219BF1C` when `+0xB3` is not 0, and calls `FUN_ov_0001__0218F6C8(e, e, 0)` at 0.
+- `FUN_ov_0001__0217930C` (the spawn reset) clears `+0xB3`, `+0xB6` and `+0xB7`. The suspend-save load `FUN_ov_0001__021992FC` copies saved bytes into `+0xB3` to `+0xB7`.
+
+### Leech seed class (`+0xB8`, `+0xBC`, `+0xC0`, `+0xC1`, `+0xC2`)
+
+| Value | Setter | Other writes | Red analogue |
+|-------|--------|--------------|--------------|
+| 1 leech seed | `FUN_ov_0001__0218DAE4(user, target, displayMessage)`, called from `FUN_ov_0001__02163204` at `02163210` | Refuses a Grass target (`MonsterIsType(target, 4)`), and shows the already-seeded message when `+0xB8` is already 1. `+0xC1` = `FUN_ov_0001__0219CF28(target, range)` + 1; `+0xC2` = 0; `+0xC0` = 0xFF, then the user's slot index in the 0x14-entity table (`dungeon +0x11364`); `+0xBC` = the user's `info+0x8C` | `HandleLeechSeed`, `move_orb_effects_2.c` about line 268 |
+| 2 destiny bond | `FUN_ov_0001__0218D908(user, target)`, called from `FUN_ov_0001__021635B8` at `021635C0` | Writes the user's info, not the target's. `+0xC1` = roll + 1; `+0xC2` = 0; `+0xC0` and `+0xBC` record the target's slot and ID the same way | `DestinyBondStatusTarget`, about line 333 |
+
+- Clears: `FUN_ov_0001__0218DA68` sets `+0xB8` = 0 on each of the 0x14 slots whose `+0xB8` is 1 or 2 and whose `+0xBC` equals this entity's `info+0x8C`, then refreshes the display (`0213FF34`). Its callers are `FUN_ov_0001__0217D5FC` (three calls) and `FUN_ov_0001__021778F4` (entity removal). Red's analogue is `sub_8078084`. The end routine `FUN_ov_0001__0218F610` is called from `FUN_ov_0001__02190100`, `0215B384` and `TickStatusAndHealthRegen` (`02185F88`). `FUN_ov_0001__0217E890` and `FUN_ov_0001__021861E8` also clear it, and so does the spawn reset.
+- Layout these writes show: `+0xB8` status, `+0xBC` the other monster's `info+0x8C`, `+0xC0` the slot (`0xFF` for none), `+0xC1` turns, `+0xC2` the damage countdown. The order differs from Red's `LeechSeedClassStatus`.
+
+### Spawn reset (`FUN_ov_0001__0217930C`, red-hypothesis name `ResetMonEntityData`)
+
+Blue-verified. It writes zero to `+0x99` to `+0x9E`, `+0xA0`, `+0xA8`, `+0xA9`, `+0xAC`, `+0xAD`, `+0xAE`, `+0xB1`, `+0xB2`, `+0xB3`, `+0xB6`, `+0xB7`, `+0xB8`, `+0xC1`, `+0xC2`, `+0xC4` to `+0xC8`, `+0xC9` to `+0xCF`, `+0xD1` to `+0xD4`, `+0xD8`, `+0xDA`, `+0xDC`, `+0xEE` and `+0xEF`. It sets `+0xA4` = `0x22` (Red's `constrictionAnimation` = 34) and `+0x132` and `+0x133` = `0xFF`. Callers: `FUN_ov_0001__0217D5FC` (three calls), `FUN_ov_0001__021794CC` (two), `FUN_ov_0001__02190074` and `FUN_ov_0001__02182900`. Red's analogue is `ResetMonEntityData` in `dungeon_mon_spawn.c` lines 819 to 842. `+0xC0` and `+0xBC` are not cleared here, while Red zeroes `damageCountdown` but not `monsterIndex`.
+
+### Muzzled byte `+0xCB` (#166 P2b)
+
+- `+0xCB` takes only 0 and 1 in the scanned code (ov_0000, ov_0001 and the ARM9). `FUN_ov_0001__0218C1AC` sets it to 1 and `+0xCC` = roll + 1. If it is already 1, it only prints a message.
+- `FUN_ov_0001__0218F27C` (`0218F2EC`) reads and clears it. `FUN_ov_0001__0217930C` resets it.
+- Readers compare `== 1` or `!= 0`, except two. `0213FF34` indexes a table at `PTR_DAT_021ABA70 + (+0xCB) * 4`, and `02176EB8` uses the value in a status-icon byte (`+0xCB + 'N'`).
+- No writer of 2 or 3 exists. This is Red's `muzzled` 0/1 flag (#189 P2: Safeguard gate, pool `0x021AA2B0` = (10, 10) = `gMuzzledTurnRange`). The blinker class is `+0xC9` (setters `0218BBB4`, `0218BAC8`, `0218B9F4` write 1 to 3). Checked on `rescue-arm9-c` in review: `0218C1AC` stores `+0xCB`/`+0xCC`, `0218BBB4` stores `+0xC9`/`+0xCA`, `0218CE68` stores `+0xC7`/`+0xC8`.
+- Turn roll: `FUN_ov_0001__0219CF28(entity, range, flag)` rolls `DungeonRandRange` on the range. A `0x7F` result is permanent. For a monster with flag set, IQ bit `0x12` halves it, and ability `0x14` caps it at 5 when it is above 4. The result is never below 1 (blue-verified behaviour; name red-hypothesis as `CalculateStatusTurns`).
 
 ## Reflect class (`+0xB1`, `+0xB2`)
 
@@ -311,7 +361,7 @@ Static findings from Ghidra copies A, B and C, with runtime checks where marked.
   - for `status == 0xC` (enraged): `+0xAF = roll(0x021AA350) + 1`;
   - calls `FUN_0213FDE0` and the message, then `FUN_0213FF34` (display refresh).
 - **Roll pools** (overlay 1 bytes, blue-verified read): `0x021AA34C` = (3, 5), matching Red's `gBideTurnRange` {3, 5}; `0x021AA350` = (4, 10), matching Red's `gEnragedTurnRange` {4, 10}.
-- The roll is `FUN_0219CF28` (`CalculateStatusTurns` in Red). Its argument `0` and the adjustment were not compared to Red's `CalculateStatusTurns` (medium).
+- The roll is `FUN_0219CF28` (`CalculateStatusTurns` in Red). Its argument `0` is kept as read, and the adjustment is the one in the roll note above (blue-verified behaviour; the name is red-hypothesis).
 - **Bide per turn.** `FUN_021861E8` (`DoEndOfTurnEffects_Async`) reads `+0xAE == 1` and `+0xAE == 0xC`. The countdown and the release (Red `dungeon_turn_effects.c:361-395`: bide release fires `TryUseChosenMove` with `MOVE_BIDE_2`; enraged end logs a message) were **not decompiled** in this pass. Not verified.
 - **Bide end** `FUN_ov_0001__0218E3E4`. Clears `+0xAE`, `+0x11C` and `+0xDC`, unless `+0xAE` is 1 or 0xC, so bide and enraged keep their state. Red counterpart: `entityInfo->bideClassStatus.status = 0` at `dungeon_turn_effects.c:364` and `:385`. The caller of `FUN_0218E3E4` was not identified. blue-verified for the function body, red-hypothesis for the role.
 - **Sure shot setters.** All write `+0xC4` with a constant (Red `SureShotStatusTarget`, `WhifferStatusTarget`, `FixedDamageStatusTarget`, `FocusEnergyStatusTarget`, `move_orb_effects_2.c:357-440`). blue-verified for the writes.
@@ -657,7 +707,7 @@ Tag: **blue-verified** (decompile); **red-hypothesis** (the Red side, from the p
 - **`+0x144` bits** (dispatcher `0215BAF8`). Effects are in #190 P4. Their writers are not located.
 - **Mist** (reflect value 14): its check was not found in Blue.
 - **Wrap damage** not found. Next lead `0x0219ADFC` (#190 P1).
-- **Bide per-turn release, the sure-shot caller and duration, long toss, perish song, curse, leech seed, snatch and decoy.** Not investigated in detail (see the not-verified items in #189). Red write sites are in `reference/pmd-red/src/move_orb_effects_*.c`. Split into two or three PRs by class.
+- **Bide per-turn release, the sure-shot caller and duration, long toss and perish song.** Not investigated in detail (see the not-verified items in #189). The curse, leech seed, snatch and decoy writes are in the curse and leech sections (#166 P1b, P1c). Red write sites are in `reference/pmd-red/src/move_orb_effects_*.c`. Split into two or three PRs by class.
 - **Class identity** of `+0xC7` and `+0xC9` resolved by #189 P2 and P3: `+0xC7` is invisible, transform or mobile; `+0xC9` is blinker.
 - **Regeneration gate.** Whether `+0x6 == 0` is Red's `!isNotTeamMember` (likely, not confirmed). Ability and item checks in regen (held item `'\n'`, `AbilityIsActive(3)`, weather `4` through `02195C48`) are not mapped to Red's constants.
 - **Red line-by-line comparison** of the burn and frozen setters: done in #191 P4.
