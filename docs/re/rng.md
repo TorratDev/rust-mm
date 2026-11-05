@@ -175,13 +175,13 @@ The x-ref counts are from the Ghidra copy. The **subsystem labels are a reading 
 | `DungeonRandInt` `ov_0001::0219D058` | 175 | 85 | `HandleDealingDamage_Async` (10), `CalcDamage` (3) | combat |
 | | | | `GenerateFloor` (3), `GenerateSecondaryTerrainFormations` (9), `SpawnNonEnemies` (7), `SpawnEnemies` (2), `CreateRoomsAndAnchors` (4), `AssignRooms` (4), `GenerateOuterRingFloor` (2), `GenerateCrossroadsFloor` (2), `GenerateTwoRoomsWithMonsterHouseFloor` (2) | floor generation |
 | | | | `DungeonRandRange` (2), `DungeonRandOutcome` (1), `DungeonRandOutcome_2` (1) | wrappers |
-| | | | 71 unnamed functions (#168 P1; this table said "about 60") | classified in [Dungeon RNG callers](#dungeon-rng-callers-168-p1-p2) |
+| | | | 65 unnamed functions after six names in other docs (#168 P1; 71 before that, and this table said "about 60") | classified in [Dungeon RNG callers](#dungeon-rng-callers-168-p1-p2) |
 | `DungeonRandRange` `ov_0001::0219D014` | 62 | 19 | `GenerateFloor` (4), `GenerateSecondaryTerrainFormations` (3), `SpawnNonEnemies` (4), `SpawnEnemies` (2), `CreateRoomsAndAnchors` (4), `GenerateOuterRingFloor` (4), `GenerateCrossroadsFloor` (4), `GenerateTwoRoomsWithMonsterHouseFloor` (2) | floor generation |
 | | | | 8 unnamed functions | unclassified |
-| `DungeonRandOutcome` `ov_0001::0219CFCC` | 4 | 2 | `FUN_ov_0001__02159f10` (2), `FUN_ov_0001__02159f6c` (2) | ability trigger (#168 P2) |
-| `DungeonRandOutcome_2` `ov_0001::0219CFF0` | 5 | 3 | `FUN_ov_0001__0218579c` (3), `FUN_ov_0001__02185568` (1), `FUN_ov_0001__02192d24` (1) | items, AI and unidentified (#168 P2) |
+| `DungeonRandOutcome` `ov_0001::0219CFCC` | 4 | 2 | `FUN_ov_0001__02159f10` (2), `FUN_ov_0001__02159f6c` (2) | secondary-effect roll: Serene Grace and Shield Dust (#168 P2b) |
+| `DungeonRandOutcome_2` `ov_0001::0219CFF0` | 5 | 3 | `FUN_ov_0001__0218579c` (3), `FUN_ov_0001__02185568` (1), `FUN_ov_0001__02192d24` (1) | items, AI item use and AI move choice (#168 P2b) |
 
-`DungeonRand16Bit` has one caller, `DungeonRandInt`. The unnamed callers of `DungeonRandInt` are 71 functions, not "about 60" (#168 P1); their site count is not given. The classification is in [Dungeon RNG callers](#dungeon-rng-callers-168-p1-p2).
+`DungeonRand16Bit` has one caller, `DungeonRandInt`. The unnamed callers of `DungeonRandInt` are 65 functions (71 before six were named in other docs; the old "about 60" was wrong; #168 P1); their site count is not given. The classification is in [Dungeon RNG callers](#dungeon-rng-callers-168-p1-p2).
 
 **Global LCG** (ARM9 and overlays 0, 1, 7):
 
@@ -190,7 +190,7 @@ The x-ref counts are from the Ghidra copy. The **subsystem labels are a reading 
 | `Rand32Bit` `0201198C` | 25 | 16 | `RandInt`, `SetRNGSeed` (`020118EC`), `RunDungeon_Async` (`0206DC20`), `GeneratePelipperJobs` (3) | RNG wrappers, seeding, items |
 | | | | `FUN_0200d4dc` (1), `FUN_0206c6e4` (2) | Mersenne Twister users (see above) |
 | | | | `FUN_ov_0001__0217af58` (2), `FUN_ov_0001__0217b120` (2, `UpdateMonsterSprite`), `FUN_02012648` (1, sprite animation) | animation |
-| | | | `FUN_0200eda4`, `FUN_0200f768` (4), `FUN_02018acc` (2), `FUN_ov_0001__02155760` (1, called from the per-turn update `FUN_02142504`), `FUN_0206a228`, `FUN_0206a170`, `FUN_ov_0000__02140860` | unclassified |
+| | | | `FUN_0200eda4`, `FUN_0200f768` (4), `FUN_02018acc` (2), `FUN_ov_0001__02155760` (1, called from the per-turn update `FUN_02142504`), `FUN_0206a228`, `FUN_0206a170`, `FUN_ov_0000__02140860` | mission generation (`FUN_0200f768` and its cluster, #168 P3b), frame callback (`FUN_02018acc`), sprite HUD (`FUN_ov_0001__02155760`), script task (`FUN_ov_0000__02140860`) |
 | `RandInt` `02011968` | 44 | 29 | `RandRange` (2) | wrappers |
 | | | | 26 unnamed functions | unclassified |
 | `RandRange` `02011924` | 7 | 5 | `InitBulkItem` (1), `GeneratePelipperJobs` (2) | items |
@@ -211,14 +211,14 @@ Investigator C decompiled every unnamed caller of `Rand32Bit` (`0201198C`), `Ran
 | `FUN_02006E0C` (`02006E0C`) | `RandInt` ×2 | `AddKecleonShopItem`, `InitKecleonShopItem`, `FUN_02006EA0` | Kecleon shop: shop items | [hypothesis] | high |
 | `FUN_02008458` (`02008458`) | `RandRange` | `FUN_020080D8`, `FUN_020082FC`, `FUN_02008504` | item or bulk generation, same family as `InitBulkItem` | [hypothesis] | medium |
 | `FUN_0200D4DC` (`0200D4DC`) | `Rand32Bit` | `MersenneTwister_InitializeState`, `Random32MersenneTwister` | the mail-record builder (see [Mersenne Twister](#mersenne-twister)); the comment's label was a Mersenne Twister seed | [hypothesis] | medium |
-| `FUN_0200EDA4` (`0200EDA4`) | `Rand32Bit` | `FUN_0200F184`, `FUN_0200F250`, `FUN_0200F2F0`, `FUN_0200F394`, `FUN_0200F3AC`, `FUN_0200F3E4` | cluster with `FUN_0200F768` (team or floor generation) | [hypothesis] | low |
-| `FUN_0200EED4` (`0200EED4`) | `RandRange` ×2 | `FUN_0200F768`, `FUN_0201F994`, `FUN_0206A66C` | cluster with `FUN_0200F768` | [hypothesis] | low |
-| `FUN_0200F3E4` (`0200F3E4`) | `RandInt` | `FUN_02006794`, `FUN_02007450` | unknown; called from `FUN_0200F768` and `FUN_0200EDA4` | [hypothesis] | low |
-| `FUN_0200F46C` (`0200F46C`) | `RandInt` | `FUN_02009120` | unknown | [hypothesis] | low |
-| `FUN_0200F5C4` (`0200F5C4`) | `RandInt`, `RandRange` | `FUN_020061D8`, `FUN_02006364`, `FUN_020703B8`, `FUN_0208625C` | unknown; called from `FUN_0200F768` | [hypothesis] | low |
-| `FUN_0200F768` (`0200F768`) | `Rand32Bit` ×5, `RandInt` ×3 | `FUN_0206A0B0`, `FUN_0206A170`, `FUN_0206A228`, `FUN_0206A2E0`, `FUN_0206A384`, `FUN_0206A6DC`, `02069FF0` | the central cluster: picks a value and fills by helper | [hypothesis] | low |
-| `FUN_02069FF0`, `FUN_0206A0B0`, `FUN_0206A2E0` (`02069FF0`, `0206A0B0`, `0206A2E0`) | `RandInt` | `FUN_0206A6DC` (common helper) | cluster with `FUN_0200F768` | [hypothesis] | low |
-| `FUN_0206A170`, `FUN_0206A228` (`0206A170`, `0206A228`) | `Rand32Bit` + `RandInt` | `FUN_0206A6DC` | cluster with `FUN_0200F768` | [hypothesis] | low |
+| `FUN_0200EDA4` (`0200EDA4`) | `Rand32Bit` | `FUN_0200F184`, `FUN_0200F250`, `FUN_0200F2F0`, `FUN_0200F394`, `FUN_0200F3AC`, `FUN_0200F3E4` | fixed first (tutorial) job: frees finished slots, then writes one job (state 5, dungeon 2, floor 3) | [blue-verified] structure; [hypothesis] name | medium |
+| `FUN_0200EED4` (`0200EED4`) | `RandRange` ×2 | `FUN_0200F768`, `FUN_0201F994`, `FUN_0206A66C` | GenerateMissions: fills the free slots of the 4-slot job array (one `FUN_0200F768` per slot, then the bonus-reward pick) | [blue-verified] structure; [hypothesis] name | high |
+| `FUN_0200F3E4` (`0200F3E4`) | `RandInt` | `FUN_02006794`, `FUN_02007450` | pick the reward or target item (ids 1..0xEF that pass the item filters); called from `FUN_0200F768` and `FUN_0200EDA4` | [blue-verified] | high |
+| `FUN_0200F46C` (`0200F46C`) | `RandInt` | `FUN_02009120` | pick a bonus-reward entry (ids 1..0x39 with table value 2 that no job record uses) | [blue-verified] | medium |
+| `FUN_0200F5C4` (`0200F5C4`) | `RandInt`, `RandRange` | `FUN_020061D8`, `FUN_02006364`, `FUN_020703B8`, `FUN_0208625C` | pick a free (dungeon, floor) pair for a new mission; called from `FUN_0200F768` | [blue-verified] | high |
+| `FUN_0200F768` (`0200F768`) | `Rand32Bit` ×5, `RandInt` ×3 | `FUN_0206A0B0`, `FUN_0206A170`, `FUN_0206A228`, `FUN_0206A2E0`, `FUN_0206A384`, `FUN_0206A6DC`, `02069FF0` | GenerateMission: one job record (dungeon and floor, job type, seed, client and target species, reward item, subtype) | [blue-verified] structure; [hypothesis] name | high (structure), medium (names) |
+| `FUN_02069FF0`, `FUN_0206A0B0`, `FUN_0206A2E0` (`02069FF0`, `0206A0B0`, `0206A2E0`) | `RandInt` | `FUN_0206A6DC` (common helper) | mission subtype pickers: `02069FF0` (subtype 6) and `0206A0B0` pick a (species, item) pair; `0206A2E0` picks a species pair (subtype 7) | [blue-verified] structure; [hypothesis] names | medium |
+| `FUN_0206A170`, `FUN_0206A228` (`0206A170`, `0206A228`) | `Rand32Bit` + `RandInt` | `FUN_0206A6DC` | mission subtype pickers: species pairs; `0206A170` sets subtype 9 and swaps client and target on `Rand32Bit() & 0x10`; `0206A228` subtype not read | [blue-verified] structure; [hypothesis] names | medium |
 | `FUN_02012648` (`02012648`) | `Rand32Bit` | none in the RNG family | sprite animation; already noted above | [blue-verified] for the call; [hypothesis] for the label | medium |
 | `FUN_02018ACC` (`02018ACC`) | `Rand32Bit` ×2 | `FUN_02017B20` (input poll), `FUN_0201D150`, `FUN_0201966C` | frame callback: per-frame RNG (see [Per-frame steps](#per-frame-steps-159)) | [blue-verified] | high |
 | `FUN_0201DE24` (`0201DE24`) | `RandInt(100)` | `FUN_02007B68` | item and money loss, not a transition (see [`execution-model.md`](execution-model.md)); one draw of 0 to 99 | [hypothesis] | medium |
@@ -227,16 +227,16 @@ Investigator C decompiled every unnamed caller of `Rand32Bit` (`0201198C`), `Ran
 | `FUN_0206C394` (`0206C394`) | `RandInt(13)` | `FUN_0206C034` | cluster with `FUN_0206C6E4` (Mersenne Twister) | [hypothesis] | low |
 | `FUN_0206C590` (`0206C590`) | `RandInt(55)` | `FUN_0202EDF0` | cluster with `FUN_0206C6E4` | [hypothesis] | low |
 | `FUN_0206C6E4` (`0206C6E4`) | `Rand32Bit` ×2 | `MersenneTwister_InitializeState`, `Random32MersenneTwister`, `FUN_0206C0F0` to `FUN_0206C590` | the personality test (see [Mersenne Twister](#mersenne-twister)); the comment's label was a Mersenne Twister user | [hypothesis] | medium |
-| `FUN_ov_0000__02140860` (`02140860`, overlay 0) | `Rand32Bit` ×1, `RandInt` ×3 | about 100 callees, including `GetNumberOfFilledInventorySlots` and `AddToTeamMoney` | large overlay-0 routine; subsystem unclear | [hypothesis] | low |
-| `FUN_ov_0000__021548EC` (`021548EC`, overlay 0) | `RandInt(15)` | about 16 callees | overlay-0 routine; subsystem unclear | [hypothesis] | low |
-| `FUN_ov_0001__0213E6D8` (`0213E6D8`, overlay 1) | `RandInt(2)`, `RandInt(0xFF)`, `RandInt(n*2+8)` | `DungeonRunFrameActions`, `GetLeader`, `MemoryAlloc` | dungeon run-level helper | [hypothesis] | low |
+| `FUN_ov_0000__02140860` (`02140860`, overlay 0) | `Rand32Bit` ×1, `RandInt` ×3 | `FUN_0200EED4` (case 4), `FUN_0200EDA4` (case 6), debug strings | script-task executor (`script_task_type_error`): case 2 seeds the game, cases 4 and 6 generate missions, case 0x29 `CREATE_NPC_NEW_FRIEND` picks a random species | [blue-verified] (strings and calls) | high |
+| `FUN_ov_0000__021548EC` (`021548EC`, overlay 0) | `RandInt(15)` | roster and table lookups; debug string `monster index error` | script monster-index resolver; the `RandInt(15)` is index 0x24, a random pick from a 15-entry species table | [blue-verified] (strings); medium for the table | high (label) |
+| `FUN_ov_0001__0213E6D8` (`0213E6D8`, overlay 1) | `RandInt(2)`, `RandInt(0xFF)`, `RandInt(n*2+8)` | `DungeonRunFrameActions`, `GetLeader`, `MemoryAlloc` | wind or blast particle spawn (only caller `0213EE9C`, from `UpdateWindTurns`); cosmetic | [blue-verified] body; [hypothesis] name | medium |
 | `FUN_ov_0001__021492EC` (`021492EC`, overlay 1) | `RandInt(4)` | `GetTile`, `GetTileMut` | dungeon tile operation; one of four directions | [hypothesis] | medium |
-| `FUN_ov_0001__02155760` (`02155760`, overlay 1) | `Rand32Bit` | `EntityIsValid`, `FUN_02012648`, `FUN_020198AC`, `FUN_0217AD64` | entity update using the sprite RNG | [hypothesis] | low |
-| `FUN_ov_0001__0217AF58` (`0217AF58`, overlay 1) | `Rand32Bit` ×2 | `FUN_020128DC`, `FUN_02156134`, `FUN_02178C04` | entity routine | [hypothesis] | low |
-| `FUN_ov_0001__0217B120` (`0217B120`, overlay 1) | `Rand32Bit` ×2 | `FUN_02012648`, `FUN_02025DA0`, `FUN_0213E314`, `FUN_0213EDF4`, `FUN_021401C0` | entity routine (about 20 callees) | [hypothesis] | low |
+| `FUN_ov_0001__02155760` (`02155760`, overlay 1) | `Rand32Bit` | `EntityIsValid`, `FUN_02012648`, `FUN_020198AC`, `FUN_0217AD64` | team-member HUD sprite update, called per team slot from `FUN_02142504` | [blue-verified] body; [hypothesis] name | medium |
+| `FUN_ov_0001__0217AF58` (`0217AF58`, overlay 1) | `Rand32Bit` ×2 | `FUN_020128DC`, `FUN_02156134`, `FUN_02178C04` | SetEntityAnimation: sets the animation and direction, starts the sprite at a random frame (`Rand32Bit() & 3`); cosmetic | [blue-verified] body; [hypothesis] name | high |
+| `FUN_ov_0001__0217B120` (`0217B120`, overlay 1) | `Rand32Bit` ×2 | `FUN_02012648`, `FUN_02025DA0`, `FUN_0213E314`, `FUN_0213EDF4`, `FUN_021401C0` | per-frame sprite update of one entity (consistent with `UpdateMonsterSprite` in [symbols.md](../symbols.md)); called from `FUN_02142504` | [blue-verified] body; [hypothesis] name | high |
 | `FUN_ov_0001__0219DCF0` (`0219DCF0`, overlay 1) | `RandInt(6)` ×2 | `FUN_ov_0001__0219CD64` | one of six draws; subsystem unclear | [hypothesis] | low |
-| `FUN_ov_0001__0219F09C` (`0219F09C`, overlay 1) | `RandInt(8)` | `EntityIsValid`, `FUN_ov_0001__0217ADF8` | entity routine | [hypothesis] | low |
-| `FUN_ov_0001__0219F128` (`0219F128`, overlay 1) | `RandInt(8)` ×2 | `EntityIsValid`, `FUN_ov_0001__0217ADF8` | entity routine (same family as `0219F09C`) | [hypothesis] | low |
+| `FUN_ov_0001__0219F09C` (`0219F09C`, overlay 1) | `RandInt(8)` | `EntityIsValid`, `FUN_ov_0001__0217ADF8` | face the 16 enemies (`gDungeon+0x11324`) toward a direction; a random facing if the direction is 8 or more | [blue-verified] | high |
+| `FUN_ov_0001__0219F128` (`0219F128`, overlay 1) | `RandInt(8)` ×2 | `EntityIsValid`, `FUN_ov_0001__0217ADF8` | face the team and the enemies with `info+0x98 == 2` toward a direction; random facing if 8 or more (same family as `0219F09C`) | [blue-verified] | high |
 | `FUN_ov_0007__02138C34` (`02138C34`, overlay 7) | `RandInt(15)` | `FUN_02008040`, `FUN_020146C8`, `FUN_02014A64`, `FUN_02015F40` | overlay-7 routine | [hypothesis] | low |
 | `FUN_ov_0007__02138EFC` (`02138EFC`, overlay 7) | `RandInt` ×2 | `FUN_0200661C`, `FUN_02007450` | overlay-7 routine | [hypothesis] | low |
 | `FUN_02001330` (`02001330`) | `RandInt(10)`, `RandInt(0x12)` | `FUN_02001330` (recursive) | unknown small routine | [hypothesis] | low |
@@ -247,21 +247,21 @@ Investigator C decompiled every unnamed caller of `Rand32Bit` (`0201198C`), `Ran
 
 The comment gives 41 functions, 76 call sites, and 12 and 29 for the two groups. The table does not reproduce these: it is 3 functions and about 10 call sites short. The 3 missing functions would be `RandInt`-only (29 minus 26), but the comment does not name them, so they are not added here. The comment's figures are cited as the comment's, and the table figures are the ones used in this section.
 
-Labels from the comment: three Kecleon shop or ware functions (`FUN_02006B4C`, `FUN_02006E0C`, and `FUN_02008458` as item or bulk generation); two per-frame or sprite (`FUN_02018ACC` high, `FUN_02012648` medium); the `FUN_0200F768` or `FUN_0206A*` cluster, which is not named. The Mersenne Twister group (`FUN_0200D4DC`, `FUN_0206C6E4`, `FUN_0206C394`, `FUN_0206C590`) is medium.
+Labels from the comment: three Kecleon shop or ware functions (`FUN_02006B4C`, `FUN_02006E0C`, and `FUN_02008458` as item or bulk generation); two per-frame or sprite (`FUN_02018ACC` high, `FUN_02012648` medium); the `FUN_0200F768` or `FUN_0206A*` cluster, which is now labelled mission generation (#168 P3b). The Mersenne Twister group (`FUN_0200D4DC`, `FUN_0206C6E4`, `FUN_0206C394`, `FUN_0206C590`) is medium.
 
 **Where this file and the comment differ.**
 - `FUN_0201DE24` is labelled "scene transition" in the comment. [`execution-model.md`](execution-model.md) (#161 P2) identifies it as item and money loss, not a transition, and this table follows that.
 - The comment says `rng.md` lists passwords or Wonder Mail as candidates for the Mersenne Twister group. This file does not, and its own identification of `FUN_0200D4DC` and `FUN_0206C6E4` (see [Mersenne Twister](#mersenne-twister)) is used above. The password and Wonder Mail candidates are not added until checked.
 
-**Not verified:** no runtime check; the names of the `FUN_0200F768` cluster and of the overlay-0 and overlay-1 entity routines rest on callee names only; the overlay-7 labels rest on the overlay-7 screen, which was not checked (see [#161 P3](https://github.com/TorratDev/rust-mm/issues/161)); the helpers `FUN_0206A6DC` and `FUN_0200661C` were not decompiled.
+**Not verified:** no runtime check; the mission cluster names are hypotheses (its structure is read); `FUN_0200F368`, `FUN_0200F568`, `FUN_02005828`, `FUN_0206A694`, `FUN_02006794` and `FUN_02007450` were not decompiled; the meaning of record fields `+0`, `+2` and `+0x11`, and which array is the accepted list, are not established; the Red Mission comparison is from memory, not read; the overlay-7 labels rest on the overlay-7 screen, which was not checked (see [#161 P3](https://github.com/TorratDev/rust-mm/issues/161)); `FUN_0200661C` was not decompiled. The overlay-0 and overlay-1 routines in the table are read from their bodies (#168 P3b).
 
 ## Dungeon RNG callers (#168 P1, P2)
 
-Source: the #168 comments by investigator A (P1) and investigator B (P2). Tags: **[blue-verified]** for the x-ref, call lines and decompile; **[hypothesis]** for subsystem labels, which come from named callees. Copy A (`rescue-arm9-a`) shows the names as `FUN_`, so the names in [`symbols.md`](../symbols.md) are not applied here. Nothing was run in the emulator.
+Source: the #168 comments by investigator A (P1) and investigator B (P2). Tags: **[blue-verified]** for the x-ref, call lines and decompile; **[hypothesis]** for subsystem labels, which come from named callees (the P1b and P2b labels come from bodies, with names as noted in each row). Copy A (`rescue-arm9-a`) shows the names as `FUN_`, so the names in [`symbols.md`](../symbols.md) are not applied here. Nothing was run in the emulator.
 
 ### `DungeonRandInt` callers (#168 P1)
 
-`DungeonRandInt` (`ov_0001::0219D058`) has 175 call sites, all unconditional, from 85 distinct functions. In copy A, 14 of those functions are named and 71 are unnamed. The "about 60" elsewhere in this file is corrected to 71.
+`DungeonRandInt` (`ov_0001::0219D058`) has 175 call sites, all unconditional, from 85 distinct functions. In copy A, 14 of those functions are named and 71 are unnamed. The "about 60" elsewhere in this file is corrected to 71. Six of the 71 have names in other docs (see the 19-caller table below), so 65 stay unnamed.
 
 The 71 unnamed functions, by bucket (**[hypothesis]**; bucket names medium, bucket sizes low):
 
@@ -274,13 +274,37 @@ The 71 unnamed functions, by bucket (**[hypothesis]**; bucket names medium, buck
 | Held item, ability or weather | 5 | named callees |
 | Message selection (`GetLanguage` string tables) | 6 | named callees |
 | AI weight filter `02192728` | 1 | named callee |
-| No named callee and no documented name: needs a body read | 19 | none |
+| No named callee: bodies read in #168 P1b (6 have names in other docs, 13 are labelled by us; see below) | 19 | none |
 
 The bucket counts sum to 38, against 39 in the comment, so one of the 71 is not accounted for. The comment says the bucket totals may be off by one.
 
 **Documented names (13), as in `symbols.md`:** `PlayMoveAttackerAnim` (`0213DD38`), `CarveShopAndPlaceItems` (`02149AF8`), `AccuracyCalc` (`0215A928`), `HasStatusThatPreventsActing` (`02180048`), `EnemyEvolution` (`02183BB4`), `AIDecideUseItem` (`0218579C`), `DoEndOfTurnEffects_Async` (`021861E8`), `RunMonsterAI` (`02188030`), `AIWander` (`02190854`), `AIMovement` (`021918D4`), `IsAITargetEligible` (`02192274`), `ChooseAIMove` (`02192D24`), and the recruit check `0217F9B8` (named in the P1 comment as `docs/re/data.md`; that file is not in this checkout, so the link is not added). Two of these disagree with the P2 labels below: `02149AF8` is `CarveShopAndPlaceItems` here, while P2 calls `FUN_02149AF8` floor generation (medium); `0218579C` is `AIDecideUseItem` here, while P2 calls `FUN_0218579C` items (medium). Both labels are kept as the investigators gave them.
 
-**No named callee and no documented name (19), need a body read:** `021388D4`, `02138B74`, `02138C68`, `02143290`, `021448A0`, `02145660`, `0214BD40`, `0214CF2C`, `0214F224`, `0214F6A0`, `021602FC`, `02161A00`, `021659D0`, `02182A94`, `02182B3C`, `02187FC4`, `021972B4`, `02197CB8`, `021A7124`. Their roll sites use generic caps (`100`, `8`, `4`, `5`, `3` or a variable), so the call context does not give a subsystem. Not verified: the bucket names come from callee names, not bodies.
+**The 19 callers with no named callee (#168 P1b).** Source: investigator A. Each body (decompile text, all under 200 lines) and its callers were read; all 19 are in `ov_0001`. Tags: **blue-verified** for the body and callers; the names are ours (**hypothesis**) unless marked *docs*, which means the name is already in another doc (a cross-check, not new). Six of the 19 are *docs*, so 13 stay labelled by us only.
+
+| Address | Label | What the body does (roll) | Callers | Tag, confidence |
+|---------|-------|---------------------------|---------|-----------------|
+| `021388D4` | monster species pick (weighted) | `DungeonRandInt(total)`, walks the species table cumulatively per column until it passes the roll; fallback `0x17C` | `021826A0`, `0219037C`, `021624D4`, `0219752C` (summon trap), `0219706C`, `02179E2C` | blue-verified; hypothesis (name). High for the pick, medium for the exact table |
+| `02138B74` | floor item pick (weighted) | roll over 12 category weights, then a second roll over the 0xF0 item weights of that category; fallback `0x69` | `02179990`, `02163724`, `021A75C0`, `02144714` | blue-verified; hypothesis (name). High |
+| `02138C68` | trap id pick (weighted) | roll over 20 trap weights; fallback `0x10` | `02198824` (random trap placement), `021983F8` | blue-verified; hypothesis (name). High |
+| `02143290` | item quantity roll | `DungeonRandInt(100)` halves the index until `table[i] <= n`; stores the quantity; fallback 1 | `021448A0` | blue-verified; hypothesis (name). Medium |
+| `021448A0` | item sticky flag and quantity | mode 0: `DungeonRandInt(100) < gDungeon+0x1A300` sets item flag 8; mode 1 forces it; category 6 goes to `02143290` | `02144714`, `021A75C0`, `0217D5FC`, `02163724`, `021613F0`, `02197828` | blue-verified; hypothesis (name). High |
+| `02145660` | item-use effect: one of five status setters | `DungeonRandInt(5)` after a status call picks one of `0218A410`, `02189CBC`, `0218A710`, `021885A0`, `02189534` | `02146880` (item effect dispatcher, case 0x54) | blue-verified (caller); hypothesis (name). Medium; the item is not identified |
+| `0214BD40` | array shuffle (spawn markers) | 2n swaps of two `DungeonRandInt(n)` entries | already named in [dungeon-generation.md](dungeon-generation.md) | docs, high |
+| `0214CF2C` | GenerateMazeRoom (standard step 8) | `DungeonRandInt(100) < chance`, gate `+0x34B6 < 0`, shuffle, then picks a cell and calls `0214CC7C` | `GenerateStandardFloor` (`02151CCC`), `GenerateOuterRoomsFloor` (`02150C24`) | docs, high |
+| `0214F224` | grid-cell connections (random walk) | body of AssignGridCellConnections | `021508E0`, `0214F6A0` | docs, high |
+| `0214F6A0` | AssignGridCellConnections (wrapper) | `DungeonRandInt(w)`, `DungeonRandInt(h)`, then `0214F224` | `GenerateStandardFloor`, `GenerateOuterRingFloor`, `GenerateLineFloor` | docs, high |
+| `021602FC` | Present (move 115) | roll 100: under 10 a 0x78 damage branch; under 0x1E heal maxHP/4 (`0218DF38`); under 0x3C a 0x50 damage; else 0x28 | `02156824` | docs (see [move-effects.md](move-effects.md)), high |
+| `02161A00` | Tri Attack (move 0xCF) | `DungeonRandInt(3)` picks the paralysis-like status (`0218A710`), a second status (`02189F68`) or the default (`021885A0`) | gates `0215675C`, `02159F6C` | docs (see [move-effects.md](move-effects.md)), high |
+| `021659D0` | confused or cowering direction, with walkability test | confusion: random direction 0..7, rotated until `0218141C` accepts; cowering: turn around | `0218453C` (action execution) | blue-verified; hypothesis (name). Medium-high |
+| `02187FC4` | confused or cowering direction, no walkability test | as `021659D0` without the test; updates facing through `02176D10` | `0218453C` | blue-verified; hypothesis (name). Medium-high |
+| `02182A94` | level-up: drop a random move | counts moves with flag bit 0, clears bit 1, `DungeonRandInt(count)`, deletes that entry from the 8-entry list | `02182E5C` (move list update that inserts learned moves) | blue-verified; hypothesis (name). Medium |
+| `02182B3C` | initial move set from the learnset | fills 4 slots from the learnset up to the level; when full, `DungeonRandInt(4)` picks the slot to overwrite | `0217A7EC`, `0217AA14` | blue-verified; hypothesis (name). High |
+| `021972B4` | gust trap: random push direction | `DungeonRandInt(8)`, then `021934D4` (push) | trap dispatcher `02197D88`, case 7 | blue-verified (case); hypothesis (name). Medium |
+| `02197CB8` | mud trap: random stat drop | roll 100: under 25 or under 50 drops stat A or B (`02189534`); else `021893A4` | `02197D88`, case 1 | blue-verified (case); hypothesis (name). Medium |
+| `021A7124` | scripted event: random not-yet-got entry | collects ids 1..0x39 whose table value (`02009120`) is not 2 or 3 and whose got byte is 0; `DungeonRandInt(n)`; returns 0x3A if none | `021A75C0` (a long event routine that marks the pick with `02009014`) | blue-verified (caller); hypothesis (name). Low on what the entries are |
+
+**Trap dispatcher `02197D88` (note, #168 P1b).** A switch on a trap-id byte. Case 4 is summon (it calls the species pick `021388D4` and `0219752C`), and case 6 is warp (the id that `02198824` uses in #165). Blue-verified for the summon case and the warp id. Cases 7 (gust), 1 (mud) and 3 (grimy item) are not checked beyond the caller table above.
 
 ### `DungeonRandRange` callers (#168 P2)
 
@@ -304,8 +328,8 @@ The bucket counts sum to 38, against 39 in the comment, so one of the 71 is not 
 | `SpawnNonEnemies` (`0214B898`) | 4 | spawn (non-enemies) | named; spawn bounds and count | high |
 | `FUN_0219CF28` (`0219CF3C`) | 1 | status duration | table range, adjusted by level type and ability, minimum 1 (`CalculateStatusTurns` by behaviour); P2 calls it the source of the leech-seed counter in #166 (**[hypothesis]**) | high |
 | `FUN_021967E0` (`02196AB4`) | 2 | combat (move effects) | calls `sub_806F370_Async` (damage), `InitPokemonMove`, `DungeonRunFrameActions` | medium |
-| `FUN_0219037C` (`0219055C`) | 1 | AI or movement (target tile) | `GetTileMut`, `DungeonRunFrameActions`; loop over candidate tiles with `DungeonRandInt(cap)` | low |
-| `FUN_0215FB74` (`0215FB94`) | 1 | combat or status (amount, unidentified) | range 0x80 to 0x180 scaled by the monster's level (`info+9`); result to `FUN_02156488` | low |
+| `FUN_0219037C` (`0219055C`) | 1 | dungeon event: monster house trigger (`TriggerMonsterHouse_Async`; see the P2b subsection) | `GetTileMut`, `DungeonRunFrameActions`; this `DungeonRandRange(min, max)` site rolls the monster count (capped to the candidates); a separate `DungeonRandInt(cap)` picks each tile among up to 100 candidates | blue-verified; red-hypothesis (name); high |
+| `FUN_0215FB74` (`0215FB94`) | 1 | move effect: fixed-damage move, Psywave (`case 0x6C`; see the P2b subsection) | range 0x80 to 0x180 times the user's level (`info+9`), divided by 0x100; result to `FUN_02156488` | blue-verified; red-hypothesis (name); high |
 | `FUN_0215A380` (`0215A39C`) | 1 | none (RNG advance only) | result discarded, under a `FUN_0200B408() == 0` guard | high |
 
 Totals: 50 sites in floor generation, 6 in spawning, 6 in the rest (62). **`FUN_0215A380` is RNG-advance-only**: its result is discarded, so a trace that counts RNG draws counts it.
@@ -316,17 +340,31 @@ Totals: 50 sites in floor generation, 6 in spawning, 6 in the rest (62). **`FUN_
 
 | Caller | Sites | Subsystem | Evidence | Confidence |
 |--------|-------|-----------|----------|------------|
-| `FUN_02159F10` (`02159F54`) | 2 | ability trigger | `AbilityIsActive(entity, 0x26)`, then `DungeonRandOutcome(pct)` | medium |
-| `FUN_02159F6C` (`02159FF8`) | 2 | ability trigger (with `IsFloorOver`) | `AbilityIsActive` for ids 0x26 and 0x4C, then `DungeonRandOutcome` | medium |
-| `FUN_02185568` (`0218563C`) | 1 (`OUT2`) | unidentified (combat or status chance) | entity-pair checks, then `DungeonRandOutcome_2` | low |
+| `FUN_02159F10` (`02159F54`) | 2 | secondary-effect roll (`RollSecondaryEffect`); Serene Grace (`0x26`) doubles the chance | `AbilityIsActive(entity, 0x26)`, then `DungeonRandOutcome(pct << 1)` or `DungeonRandOutcome(pct)` | blue-verified; red-hypothesis (names); high |
+| `FUN_02159F6C` (`02159FF8`) | 2 | secondary-effect roll (`sub_805727C`), with `IsFloorOver`; Shield Dust (`0x4C`) blocks it on the target | `AbilityIsActive` for ids 0x26 and 0x4C, then the same roll as `FUN_02159F10` | blue-verified; red-hypothesis (names); high |
+| `FUN_02185568` (`0218563C`) | 1 (`OUT2`) | AI item use: arc-item target collection (`GetPossibleAIArcItemTargets`) | per-target roll `DungeonRandOutcome_2(FUN_021473A8(e, item, 1))`; see the P2b subsection | blue-verified; red-hypothesis (name); high |
 | `FUN_0218579C` (`02185820`) | 3 (`OUT2`) | items | `GetItemInfo`, item entity type 3, tile item lookup | medium |
 | `FUN_02192D24` (`02192D80`) | 1 (`OUT2`) | AI (move choice) | `InitPokemonMove`, `IsTacticSet`, `GetMoveTypeForMonster` | medium |
 
-Totals: 9 sites (4 ability-trigger, 3 items, 1 AI, 1 unidentified). Not verified: the ability ids (0x26, 0x4C) and what the outcome sets off in the ability-trigger callers; the subsystem of `FUN_02185568`, `FUN_0215FB74` and `FUN_0219037C`; whether `FUN_02159F10` and `FUN_02159F6C` run once per turn or once per attack.
+Totals: 9 sites (4 secondary-effect rolls, 3 items, 2 AI: `FUN_02185568` and `FUN_02192D24`).
+
+### Secondary-effect rolls, AI item targets and two events (#168 P2b)
+
+Source: investigator B. Static Ghidra only; no runtime run. Red names are **red-hypothesis**, read from `pmd-red` (`dungeon_ai_items.c`, `dungeon_monster_house.c`, `dungeon_move_util.c`, `constants/ability.h`) and not copied.
+
+- **`0x26` = Serene Grace** (`ABILITY_SERENE_GRACE` = `0x26` in Red's `constants/ability.h`). **Blue-verified:** when the user has it, the roll is `DungeonRandOutcome(pct << 1)` instead of `DungeonRandOutcome(pct)`.
+- **`0x4C` = Shield Dust** (`ABILITY_SHIELD_DUST` = `0x4C`). **Blue-verified, in `FUN_02159F6C` only:** when the roll succeeds, the user is not the target and the target has Shield Dust, it calls `FUN_0213EB00` (Red `sub_80429C8`, the "unaffected" effect) and returns false, so the secondary effect is blocked.
+- **`FUN_02159F10(entity, pct)`** = Red `RollSecondaryEffect`: `pct == 0` is always true, else the Serene Grace doubling. **`FUN_02159F6C(user, target, pct)`** = Red `sub_805727C`: it returns false if `IsFloorOver()`, either entity is invalid, or the target's `info+0x12A` or HP is 0; then the same roll and the Shield Dust check. The caller applies the move's additional effect when the roll is true. Tags: blue-verified for the logic; red-hypothesis for the names.
+- **Once per attack per target, not per turn** (blue-verified callers). `02159F10` has 14 call sites and `02159F6C` about 45, all in move-effect handlers (for example `FUN_0215C654`, `FUN_0215CC64`, `FUN_0215F410`) reached only from the per-target dispatcher `FUN_02156824` (switch on move effect). That dispatcher is called by the move executors `FUN_0215B384` (at `0215B9D4`) and `FUN_0215AB34` (at `0215B004`). No per-turn caller exists.
+- **`FUN_02185568` (AI arc-item targets)** = Red `GetPossibleAIArcItemTargets` (red-hypothesis; `dungeon_ai_items.c` lines 297–330). **Blue-verified body:** it keeps active entities that are valid, not the user, pass `FUN_02141C08` and `FUN_02180994(user, e, 0, 1) == 1` (can see), and are within Chebyshev distance under 0xB. If `param_4 == 0`, it makes one roll per target, `DungeonRandOutcome_2(FUN_021473A8(e, item, 1))` (Red `GetAIUseItemProbability`), and a success appends the target's position. Callers: `FUN_0218579C` (`AIDecideUseItem`) at `021858AC` and `02185B4C`. So this is AI item use, not combat or status.
+- **`FUN_0215FB74` (Psywave)** = Red `PsywaveMoveAction` (red-hypothesis). **Blue-verified:** `DungeonRandRange(0x80, 0x180)` times the user's level (`info+9`), divided by 0x100; below 0 becomes 1 and above 199 becomes 199; then `FUN_02156488`. Its only caller is `FUN_02156824`, switch case `0x6C` (`02158BD0`).
+- **`FUN_0219037C` (monster house trigger)** = Red `TriggerMonsterHouse_Async` (red-hypothesis). **Blue-verified, matching Red line by line:** it returns early unless the entity passes `info+6 == 0`, the tile has flag `0x40` (Red `TERRAIN_TYPE_IN_MONSTER_HOUSE`), and the one-shot flag at dungeon `+0x661` is 0 (it sets the flag to 1). The room is dungeon `+0x34AC` (Red `monsterHouseRoom`; see #165 P4), with 0xFF meaning none. The candidates are the room's tiles, or a 9x9 area around the entity. The count comes from `DungeonRandRange(min, max)`, capped to the candidate count. Each monster is placed by `DungeonRandInt(cap)` over the candidates (with wrap-around), then `FUN_021388D4(1)` (Red `GetRandomFloorMonsterId(1)`), a spawn struct with level 0, `FUN_02175BA0`, `FUN_02179CFC` (`SpawnWildMon`), the drop-in animation, and `FUN_021401CC(1)`. Its nine callers are movement and step handlers (`02187200`, `021732C4`, `02173F18`, `0217371C`, `021740EC`, `02173CCC`, `02173A48`, `02174280`, `02173800`), not AI.
+
+**Not verified (#168 P2b):** the exact status each of the ~59 secondary-effect handlers applies (only sampled); the identity of `DungeonRandOutcome` and `DungeonRandOutcome_2` in Blue (the table above lists both; P2b did not check it); the behaviour for multi-hit moves (the roll runs per hit that reaches the handler, not verified); any runtime check.
 
 ## Open questions
 
-- The unnamed global-LCG callers are classified above with [hypothesis] labels. Still open: the `FUN_0200F768` cluster and the overlay-0 and overlay-1 entity routines (callee names only), and, of the dungeon callers, the 19 functions with no named callee, which need a body read (#168 P1). This feeds #48, #50 and #52.
+- The unnamed global-LCG callers are classified above with [hypothesis] labels. Still open: the names of the `FUN_0200F768` mission cluster (its structure is read; the meaning of record fields `+0`, `+2` and `+0x11`, and which array is the player's accepted list, are not established). Of the dungeon callers (#168 P1), the 13 labels that have no name in other docs have these open points: `021A7124` (which event), `02145660` (which item), and the trap ids behind `021972B4` and `02197CB8` (the dispatcher `02197D88` is checked only for its summon and warp cases). The floor weight tables behind `021388D4`, `02138B74` and `02138C68` are not decoded. This feeds #48, #50 and #52.
 - Correct the subsystem labels above once the bodies are read.
 - The 20 `OtherRandInt` callers are classed in [Caller classes (#169 P2)](#caller-classes-169-p2) with [hypothesis] labels. Open: the meaning of script field `+0x4E` and opcode `0xB`, whether `FUN_02021D9C` is facing or an animation, and the body of `FUN_0208625C`.
 - Whether any run-time pointer writes `gOtherRngState` through an alias. The static literal-pool search found none (#169 P3); 17 `0x020E03F8` neighbour hits are unread.
