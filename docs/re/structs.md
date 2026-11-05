@@ -197,19 +197,23 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x5B8` | `unk5C0` | `0x5C0` | `RunDungeon_Async` |
 | `+0x638` | start of `unk644` | `0x644` | see below |
 | `+0x3360` | `deoxysForm` | `0x3800` | `RunDungeon_Async` |
+| `+0x3364` | `floorItems[64]`, 3-byte `Item` slots (red-hypothesis name) | `0x3804` (4-byte slots, `unk3804`) | `SpawnItemEntity` (`ov_0001::02141F58`), through `DAT_02142064` = `0x3364` |
 | `+0x3424` | `numItems` | `0x3904` | `ResetFloor` |
 | `+0x34AA` | shop flag (1 when the Kecleon shop pass ran, else 0) | `unk3A0A` | `0x3A0A` | `GenerateFloor` end; the shop pass `0x02149AF8`. Blue `+0x34AA` to Red `0x3A0A`: gap `0x560` |
-| `+0x34AC` | stairs room index (floor type 2 only) | not matched | `SpawnNonEnemies` (`ov_0001::0214B650`) writes it |
+| `+0x34AC` | `monsterHouseRoom`, the monster-house room index (`0xFF` when none; red-hypothesis name) | `0x3A0C` | `ov_0001::02151E7C` sets `0xFF` at floor start. Written by `0214D190` (monster-house selection) and by `0214B650`: on floor type 2 the stairs room becomes the monster-house room. Read by `0219037C`, `021826A0` and `021946FC` (which clears it to 0). Shift `−0x560`, the same as `+0x34A8` |
 | `+0x34AE`, `+0x34B0`, `+0x34B4` | `tileset`, `unk3A10`, `fixedRoomNumber` | `0x3A0E`, `0x3A10`, `0x3A14` | `RunDungeon_Async` |
 | `+0x34B8` | `tiles[32][56]` (0x14 bytes each, see below) | `0x3A18` (0x18 bytes each) | `sub_80495E4` |
-| `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` | `0xE21C` | `ResetFloor` (pmd-red's comment says `0xEA1C`; the layout gives `0xE21C`); written by `SpawnNonEnemies` |
+| `+0xC0B8`, `+0xC0BA` | `playerSpawn.x`, `.y` (leader start, `-1` when unset; red-hypothesis name) | `0xEA18` | pair A. Reset to `-1` at each try of `ov_0001::02151E7C` (`ResetFloor` clears only pair B). Written by `SpawnNonEnemies` step 6 and `FUN_ov_0001__02152B20`. Shift `−0x2960`, the same as pair B |
+| `+0xC0BC`, `+0xC0BE` | `stairsSpawn.x`, `.y` (`-1` when unset; red-hypothesis name) | `0xEA1C` | pair B. Cleared by `ResetFloor`; written by `SpawnNonEnemies` step 1 and `FUN_ov_0001__02152B20`. Shift `−0x2960`. Red's value is from pmd-red's `str_dungeon.h` (checked) |
 | `+0xC11C` | `unkE27C[8][8]` (fixed-room tiles) | `0xE27C` | `ResetFloor`. Blue's base, `DAT_0214C0A4`, is not read (unverified); the offset is Red's and is not confirmed in Blue |
 | `+0xC106` | not matched (`weatherDamageCounter` in the notes) | not matched | weather resolver `021953B4`: decremented, set to 9 when it is 0 |
 | `+0xC107` | 8 weather sources, one byte each | not matched | `021953B4`: each moves toward its natural value (`+0xC10F`), the highest is taken |
 | `+0xC10F` | 8 natural weather values, one byte each | not matched | `021953B4` |
 | `+0xC660` | `tilePointers[32][56]` | `0xE8C0` | `GetTile`, `GetTileMut`, `sub_80495E4` |
+| `+0xE5E4` | junction-tile counts per room, `s16[32]` | not matched | `FUN_ov_0001__0214D82C` zeroes and fills them; read by `FUN_ov_0001__02190B80` |
+| `+0xE624` | junction-tile lists per room: 32 entries of `(s16 x, s16 y)` in a 0x80-byte block per room | not matched | `FUN_ov_0001__0214D82C` writes; read by `FUN_ov_0001__02190854` and `FUN_ov_0001__02190B80` |
 | `+0x113B4` | `items[64]` (entity pointers) | `0x1361C` | `SpawnItemEntity` (searches the 64 entries for a free slot) and `0219B700` |
-| `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` clears all 64. No function that writes trap entities is found |
+| `+0x114B4` | `traps[64]` (entity pointers) | `0x1371C` | `ResetFloor` clears all 64. Filled by `FUN_ov_0001__021428F8`; trap entities are claimed by `FUN_ov_0001__02142068`. See the Traps note below |
 | `+0x11314` | `teamPokemon[4]` (entity pointers) | `0x1357C` | `GetLeader` |
 | `+0x11324` | `wildPokemon[16]` (entity pointers) | `0x1358C` | five loops over 16 entries with `EntityIsValid` (`0219F09C`, ...) |
 | `+0x11364` | active team list, 20 slots, each checked for a valid entity | not matched | `EnemyEvolution` (`ov_0001::02183BB4`), `sub_8044AB4` (`ov_0001::021406F8`) |
@@ -217,7 +221,7 @@ Pointed to by `gDungeon` (`0x020E0788`). Identical to Red at least up to `0x17A`
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
 | `+0x1A2F8`–`+0x1A308` | `floorProperties` fields | `0x1C576`–`0x1C588` | `RunDungeon_Async` ([`dungeon-generation.md`](dungeon-generation.md)) |
 
-The shift grows: −8 at `0x5C0`, −0xC at `unk644`, −0x4A0 at `0x3800`, −0x560 at `0x3A0E`, −0x2160 at `stairsSpawn`, −0x2268 from `traps` on. From the tiles to the tile pointers, the extra shift is exactly 4 bytes per tile (56 × 32 map tiles plus 64 fixed-room tiles).
+The shift grows: −8 at `0x5C0`, −0xC at `unk644`, −0x4A0 at `0x3800`, −0x560 at `0x3A0E`, −0x2160 at `unkE27C`, −0x2960 at `playerSpawn` and `stairsSpawn`, −0x2268 from `traps` on. From the tiles to the tile pointers, the extra shift is exactly 4 bytes per tile (56 × 32 map tiles plus 64 fixed-room tiles).
 
 ### `unk644` sub-struct
 
@@ -244,7 +248,7 @@ In Blue it starts at `0x638`. Its first field checked, `unk10`, is at Red's rela
 | Blue | Red field | Red | Notes |
 |------|-----------|-----|-------|
 | `+0x00` | `terrainFlags` (u16) | `0x00` | `0x10` = impassable wall (set on the map border by `ResetFloor`); `0x200` is set by `ResolveInvalidSpawns` (`ov_0001::0214C1A8`) |
-| `+0x02` | `spawnOrVisibilityFlags` (u16) | `0x04` | bits used by `SpawnNonEnemies` (`0x2` item candidate, `0x4` trap or other candidate), `SpawnEnemies` and `SpawnNonEnemies` (gate on `0x8`, `0x20`, `0x40`, `0x100`), and `ResolveInvalidSpawns` (clears `0x4` when `0x1` or `0x2` is set). The bit names are guessed; the uses are blue-verified |
+| `+0x02` | `spawnOrVisibilityFlags` (u16) | `0x04` | spawn word, see [tile bits](#tile-bits-165-p2): used by `SpawnNonEnemies` (`0x1` stairs, `0x2` item, `0x4` trap), `SpawnEnemies` (`0x8`), and `ResolveInvalidSpawns` (clears `0x4` when `0x1` or `0x2` is set). `SpawnNonEnemies` also gates on terrain bits `0x8`, `0x20`, `0x40` and `0x100` (the terrain word at `+0x00`) |
 | `+0x04` | `unk8`: graphics variant, picked with the global RNG; cosmetic ([`dungeon-generation.md`](dungeon-generation.md#emulator-check)) | `0x08` | |
 | `+0x05` | `room` (`0xFF` = none) | `0x09` | written by `CreateRoomsAndAnchors` (`ov_0001::0214F7A8`) as a counter from 0; anchor tiles get `0xFE`; `ResetTile` sets `0xFF` |
 | `+0x06` | `walkableNeighborFlags[4]` | `0x0A` | one byte per crossable-terrain kind |
@@ -252,7 +256,39 @@ In Blue it starts at `0x638`. Its first field checked, `unk10`, is at Red's rela
 | `+0x0C` | `monster` (entity pointer) | `0x10` | |
 | `+0x10` | `object` (item or trap entity pointer) | `0x14` | |
 
-**Rooms.** The room data is per tile: the room index is in `+0x05`. A persistent room array in the dungeon struct was not found (medium confidence). The 30-byte cell grid (`x0`/`y0`/`x1`/`y1` at `+0`/`+2`/`+4`/`+6`, room flag at `+0x1C`) is generation scratch passed in by the caller, `GenerateStandardFloor` and its siblings. The meaning of `gNumRoomsAssigned` (`ov_0001::021B45BC`) is taken from older notes and was not rechecked.
+### Tile bits (#165 P2)
+
+A tile has two 16-bit flag words, and the same bit numbers mean different things in each. The terrain word is `+0x00`; the spawn word is `+0x02`. Every note must say which word a bit is in. Names are **[red-hypothesis]** from `pmd-red`'s `include/structs/map.h`. The uses are **[blue-verified]** (static Ghidra, decompiles of `ov_0001`).
+
+Terrain word (`+0x00`):
+
+| Bit | Name (red-hypothesis) | Blue evidence |
+|-----|-----------------------|---------------|
+| `0x4` | `TERRAIN_CORNER_CUTTABLE` | `StairsAlwaysReachable` |
+| `0x8` | `TERRAIN_NATURAL_JUNCTION` | `SpawnNonEnemies` "plain" test; `FUN_ov_0001__021983F8` refuses it for a trap |
+| `0x10` | `TERRAIN_IMPASSABLE_WALL` | `ResetFloor` border; `ResolveInvalidSpawns` |
+| `0x20` | `TERRAIN_SHOP` | "plain" test; `FUN_ov_0001__021983F8` refuses it |
+| `0x40` | `TERRAIN_IN_MONSTER_HOUSE` | `SpawnNonEnemies` steps 2 and 4; set on the stairs room when floor type 2 |
+| `0x100` | `TERRAIN_UNBREAKABLE` | "plain" test; `ResolveInvalidSpawns` |
+| `0x200` | `TERRAIN_STAIRS` | set by `ResolveInvalidSpawns`; `FUN_ov_0001__021983F8` refuses it |
+
+Spawn word (`+0x02`):
+
+| Bit | Name (red-hypothesis) | Blue evidence |
+|-----|-----------------------|---------------|
+| `0x1` | `SPAWN_STAIRS` | `SpawnNonEnemies` step 1 |
+| `0x2` | `SPAWN_ITEM` | `SpawnNonEnemies` steps 2 to 4 |
+| `0x4` | `SPAWN_TRAP` | `SpawnNonEnemies` step 5; `FUN_ov_0001__02198824` reads it to place traps |
+| `0x8` | `SPAWN_MONSTER` | `SpawnEnemies` blocked-tile bit |
+| `0x10` | `SPAWN_SPECIAL_TILE` | stairs candidate exclusion (role by Red only) |
+| `0x20` | `SPAWN_SECONDARY_STRUCTURE` (Red `unk5`) | gate in the item chance table (role by Red only) |
+| `0x40` | `SPAWN_WARP_TILE` (Red `unk6`) | `FUN_ov_0001__02198824` forces trap id 6 (the warp trap in Red's enum) |
+
+`0x100` and `0x200` exist only in the terrain word; `0x2`, `0x4`, `0x8`, `0x20` and `0x40` exist in both words with different meanings. Blue-verified roles: spawn `0x4` and `0x40` (read by `02198824`) and terrain `0x200`; the other roles rest on the uses above or on Red. Trap ids 6 (warp) and `0x11` (wonder) come from Red's enum and are not checked in Blue's trap table.
+
+**Rooms.** The room data is per tile: the room index is in `+0x05`. No room-bounds array is in the dungeon struct (medium confidence; see open questions). The 30-byte cell grid (`x0`/`y0`/`x1`/`y1` at `+0`/`+2`/`+4`/`+6`, room flag at `+0x1C`) is generation scratch passed in by the caller, `GenerateStandardFloor` and its siblings. `gNumRoomsAssigned` (`ov_0001::021B45BC`) is a counter local to `AssignRooms` (`ov_0001::0214FB4C`): its six references are all inside it. It counts the cells that the call marks as having a room, and it is read only inside that call. **[blue-verified, high]**
+
+The dungeon struct does keep per-room junction tiles, in `+0xE5E4` and `+0xE624`. `FUN_ov_0001__0214D82C` fills them from the tiles with terrain bit `0x8`. It is called as the last step of `FinalizeJunctions` (`0214DB0C`) and from `FUN_ov_0001__021946FC` (`02194A00`). The AI reads them in `FUN_ov_0001__02190854` and `FUN_ov_0001__02190B80`. **[blue-verified for the layout and the readers; medium for completeness]**
 
 Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row stride `0x460`; `GetTile(x, y)` returns `tilePointers[y][x]` (dungeon `+0xC660`, row stride `0xE0`) or, outside 56 × 32, the out-of-bounds tile `gCurTilesetOobTile`.
 
@@ -279,7 +315,15 @@ Size `0x14` (Red `0x18`). The grid is `tiles[y][x]` at dungeon `+0x34B8`, row st
 
 Blue's struct is 0x23C bytes (Red 0x268). The difference is packing: Blue stores `Item` in 3 bytes and `BulkItem` in 2, where Red's arrays use a 4-byte stride for both.
 
-**Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` (`ov_0001::02141F58`) takes a free slot. It sets the entity type to 3 (`ENTITY_ITEM`), copies the position to `+0x4`/`+0x6`, and sets `entity+0x70` to the 3-byte `Item` slot `gDungeon + 3·i + DAT_02142064`. The base `DAT_02142064` is not read. `SpawnItem` then copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field.
+**Floor items** [blue-verified]: 64 entity pointers at dungeon `+0x113B4` (Red `0x1361C`). `SpawnItemEntity` (`ov_0001::02141F58`) takes a free slot. It sets the entity type to 3 (`ENTITY_ITEM`), copies the position to `+0x4`/`+0x6`, and sets `entity+0x70` to the 3-byte `Item` slot `gDungeon + 3·i + DAT_02142064`. The base `DAT_02142064` is `0x3364` (blue-verified; read from the overlay), so the array is dungeon `+0x3364` to `+0x3423`: 64 slots of 3 bytes, with the info of item entity `i` at `gDungeon + 0x3364 + 3·i`. `SpawnItem` then copies the `Item` into the entity's info, sets `isVisible` and puts the entity in the tile's `object` field.
+
+**Traps** [blue-verified for the writers and flows; red-hypothesis for the names]: `traps[64]` (`+0x114B4`) holds entity pointers. `FUN_ov_0001__021428F8` fills the 64 pointers, each to a 0x74-byte entity of type 0 (`*(gDungeon + i*4 + 0x114B4) = i*0x74 + gDungeon + DAT_02142A98`). It also initialises the team, enemy and item arrays. It has no direct caller. `FUN_ov_0001__02142068` (red-hypothesis name `SpawnTrap`) claims the first invalid entity: type 2 (trap), `+0x70` = the 2-byte trap record at `gDungeon + DAT_0214211C + i*2` (id, flags), and the position at `+4` and `+6`. Its callers:
+- `FUN_ov_0001__02198824` (red-hypothesis name `SpawnInitialTraps`), after generation: for each tile with spawn bit `0x4`, id 6 if the tile has spawn bit `0x40`, else a weighted draw `FUN_02138C68` from the floor's trap-weight table. Id `0x11` gets flags 2 and `isVisible`. Its caller is not found (see open questions).
+- `FUN_ov_0001__02152FAC` (called from `FUN_ov_0001__02152B20`): fixed-room traps. The id is the fixed-room table byte `+0xB`, used when it is not `0x14`, and `+0x20` is table byte `+0xD`.
+- `FUN_ov_0001__021983F8` (runtime placement; called from `02198330` and `0215FEEC`): places a given trap id on a tile, reusing an existing trap entity if there is one. It refuses a tile with terrain `0x200`, `0x8` or `0x20`, a terrain type other than 1, or room `0xFF`.
+- `02199B40` (suspend-save restore).
+
+Trap placement is not in `GenerateFloor` (`ov_0001::02151E7C`) itself. `GenerateFloor` only marks tiles with spawn bit `0x4`, and for fixed rooms it reaches `FUN_ov_0001__02142068` through `02152B20` and `02152FAC`. The random traps come from `02198824`, which runs after `GenerateFloor`.
 
 ## Recruited Pokémon
 
@@ -401,9 +445,9 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 - **IQ gummi cap (#164 P3b).** The cap constant at `0214607C` (used by `02145EC8` to clamp IQ) was not read: the literal pool is not mapped at that address in this program view.
 - **IQ writers outside the search (#164 P3b).** Writers that take the info as a parameter, or use non-halfword forms, were not covered by the search that found the IQ writers. Only the 25 functions with both patterns were reviewed.
 - **Status write sites (#166 P1, P2).** Found by a search of one call level from the move executor `ov_0001::0215B384` and the move-effect switch `ov_0001::02156824` (314 functions), and of `LDRB`/`STRB` at offsets `0xC9` and `0xCB`. Writers behind a function-pointer table or a second call level were not reached, so the curse, leech-apply and most cringe writers are not established. Blinker cross-eyed (2) and eyedrops (3) were not found by the `LDRB`/`STRB` search, which covers only the immediate offset in the low byte. The `+0xCA = 8` default in `FUN_0205938C` (ARM9 `020593B0`, along with `+0xC9 = 0` and `+0xCB = 0`) is not checked against any reader. The turn roll `FUN_ov_0001__0219CF28` is not named. Cringe writers for paused, infatuated, cowering, taunted and encore are not checked. The readers list stays open. Runtime: no emulator check. Tags: blue-verified for write sites and offsets; red-hypothesis for the names; [hypothesis] for the class names.
-- **Trap entities.** The writer of `traps[64]` (`+0x114B4`) is not found. Search the overlay 1 functions called from the floor-generation chain (`GenerateFloor`, `ov_0001::02151E7C`), or dump RAM after a floor load (#17).
-- **`DAT_02142064`**, the base of the floor-item slots (dungeon `+0x3·i`). Read its value to name the floor-item storage.
-- **Dungeon `+0xC0B8`/`+0xC0BA`** (checked for `-1` next to the stairs; meaning unknown), and the later use of `+0x34AC` (stairs room, floor type 2).
-- **Tile spawn bits.** Names for `0x2`, `0x4`, `0x8`, `0x20`, `0x40`, `0x100` and `0x200`. Name them after the trap writer is found.
-- **Rooms.** Confirm that no persistent room array exists (medium confidence now), and recheck `gNumRoomsAssigned`.
+- **Trap writer caller.** `FUN_ov_0001__02198824` (random trap placement after `GenerateFloor`) has no caller found: no x-ref, no branch encoding and no pointer literal in ov_0001 or ov_0000. It may be called through a function-pointer table or from another overlay.
+- **Floor-item array.** The reader of `numItems` (Blue `+0x3424`, Red `0x3904`) is not found. Only `SpawnItemEntity` references the `0x3364` literal; other writers through the array are not ruled out.
+- **`+0x34AC` readers.** The meaning of the write of 0 in `021946FC` and of the two thresholds in `021826A0` is not verified.
+- **Tile spawn bits 0x10 and 0x20.** Their roles are by Red's names only. Trap ids 6 (warp) and `0x11` (wonder) come from Red's enum and are not checked in Blue's trap table.
+- **Rooms.** No room-bounds array was found. Still open: the global `DAT_0214FD78`, which `AssignRooms` writes after its count (not resolved); whether other overlays or ov_0000 read `+0xE5E4` or `+0xE624` (the search covered ov_0001 only); and the values of `DAT_02190B7C` and `DAT_02190FE4`, since the pool is unmapped in this view, so the `0xE624` base is inferred from `0214D82C`.
 - Add the remaining trace fields (statuses, moves, held items, floor items, inventory) to `verification/v7-trace/retail_trace.py` and check them by emulator.
