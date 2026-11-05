@@ -4,13 +4,13 @@ How Blue reads the buttons and the touch screen, sets up the two screens, fills 
 
 Dump: `BlueRescueTeamEur`. Addresses are RAM addresses. Plain addresses are in the ARM9 binary (`arm9.bin`); `ov_NNNN::` marks code in an overlay. Tags: **[blue-verified]** means read in Blue's code, and where a finding is only about control flow it says so; **[red-hypothesis]** and **[tentative]** are as in [`rng.md`](rng.md). **[hypothesis]** marks a meaning the investigators did not confirm, and **[open]** marks a gap; both are as the #177 investigators tagged them. "Not verified" and "unknown" mark what the investigators did not check.
 
-**Evidence basis.** Every finding on this page is static: decompile, cross-reference and memory-read results from three Ghidra copies of the ARM9 project. No emulator check was run for input, screens, sprites, fades or file loading. So the button-repeat timing and the frame cadence below are assumed, not measured. Nothing here is compared against `pmd-red` except where a name is marked.
+**Evidence basis.** Every finding on this page is static: decompile, cross-reference and memory-read results from three Ghidra copies of the ARM9 project. The one emulator check is the D-pad repeat timing (#175 P5, [below](#d-pad-repeat)); no emulator check was run for the rest of input, screens, sprites, fades or file loading. The frame cadence is assumed, not measured. Nothing here is compared against `pmd-red` except where a name is marked.
 
 ## Buttons
 
 ### Frame path
 
-**[blue-verified]**, high. The VBlank IRQ handler is `FUN_02018ACC`. `FUN_02075C5C(1, FUN_02018ACC)` registers it in IRQ slot 0, and the literal `0x02000D60` holds `0x02018ACC`. This names the handler that [`execution-model.md`](execution-model.md) lists as not located; that page should be updated to match.
+**[blue-verified]**, high. The VBlank IRQ handler is `FUN_02018ACC`. `FUN_02075C5C(1, FUN_02018ACC)` registers it in IRQ slot 0, and the literal `0x02000D60` holds `0x02018ACC`. [`execution-model.md`](execution-model.md) agrees: the handler is IRQ 0 (VBlank) and is `FUN_02018ACC`.
 
 The handler calls `FUN_02017B20` (`UpdateKeyState`) each frame. That calls `FUN_02019130` (`ReadKeyInput`), which:
 
@@ -18,14 +18,16 @@ The handler calls `FUN_02017B20` (`UpdateKeyState`) each frame. That calls `FUN_
 - masks with `0x2FFF` (literal at `0x02019198`) and computes `((KEYINPUT | *0x027FFFA8) ^ 0x2FFF) & 0x2FFF`, then adds bit `0x8000` copied from `*0x027FFFA8`;
 - adds the result into a running sum at `0x020DF89C`.
 
-Hardware keys are active-low; the XOR makes them active-high. The OR with the word at `0x027FFFA8` clears bits rather than setting them. Keys are active-low, so a 1 bit in the word (bits 0 to 11 or 13) forces that key to "released". Bits 10, 11 and 13 are not key bits, and `ReadKeyInput` masks them out.
+Hardware keys are active-low; the XOR makes them active-high. The OR with the word at `0x027FFFA8` clears bits rather than setting them. Keys are active-low, so a 1 bit in the word (bits 0 to 11 or 13) forces that key to "released". The mask `0x2FFF` **keeps** bits 10 and 11 (X `0x400`, Y `0x800`) and bit 13 (`0x2000`); it does not remove them (#175 P2b, **[blue-verified]**, static, high). A bit comes out pressed only if both `KEYINPUT` and the shadow word have 0 there, so X and Y reach the key path through the shadow word (see the X and Y note).
 
 **Shadow word at `0x027FFFA8` (#175 P2).** The formula above is **[blue-verified]**, from the literal pool at `0x02019190`: `REG_KEYINPUT` `0x04000130`, the shadow word `0x027FFFA8`, mask `0x2FFF`, and the accumulator `0x020DF89C`. Bit 15 is copied from the shadow word. Its readers are **[blue-verified]**, and all test `0x8000`:
 - `FUN_02019794` (literal read at `0x020197BC`): plays a sound (`FUN_0207d704`) when bit 15 is set and `DAT_02019820` is nonzero.
 - `FUN_0207F418` (literal read at `0x0207F420`): calls `FUN_0207d9ec` when bit 15 is set.
 - Overlay 7 wait loop `FUN_ov_0007__02139A98` (literal at `ov_0007::02139F4C`): exits early when bit 15 is set.
 
-**[hypothesis]** (boot probe, py-desmume, scratch and not committed, so no command or output hash is recorded in the repo; this stays a hypothesis until the probe is committed or its command and output hash are recorded): the word is `0x0` at frame 0, then `0x2C00` from frame 15 to the end of the run, and it did not change across 547 or more `KEYINPUT` changes. The `KEYINPUT` values seen were `0x3FE`, `0x3F7` (Start at frame 900), `0x37F`, `0x3BF`, `0x3EF` and `0x3DF`. Because bits 10, 11 and 13 are masked, this word changed no key in that run. Bit 15 was never set, so the three bit-15 branches were not exercised. Confidence: high for the value and for no effect on keys in the boot run; medium for the meaning of the bits. **Writer: not established.** No writer is found in Blue's ARM9. The byte pattern `a8ff7f02` appears only as literals in the readers above, and the word is not in the static image, so a write from ARM7 or firmware is the likely source.
+**[hypothesis]** (boot probe, py-desmume, scratch and not committed, so no command or output hash is recorded in the repo; this stays a hypothesis until the probe is committed or its command and output hash are recorded): the word is `0x0` at frame 0, then `0x2C00` from frame 15 to the end of the run, and it did not change across 547 or more `KEYINPUT` changes. The `KEYINPUT` values seen were `0x3FE`, `0x3F7` (Start at frame 900), `0x37F`, `0x3BF`, `0x3EF` and `0x3DF`. Bits 10, 11 and 13 of the word were 1 (`0x2C00`), which forces X, Y and bit 13 to released, so this word changed no key in that run. Bit 15 was never set, so the three bit-15 branches were not exercised. Confidence: high for the value and for no effect on keys in the boot run; medium for the meaning of the bits. **Writer: not established.** No writer is found in Blue's ARM9. The byte pattern `a8ff7f02` appears only as literals in the readers above, and the word is not in the static image, so a write from ARM7 or firmware is the likely source.
+
+**Readers and writers of the shadow word (#175 P2b).** **[blue-verified]**, static, high. A word scan of every initialised block (ARM9 and all overlays) finds five literal-pool entries for `0x027FFFA8`, in four places, and every reference is a load: `FUN_02019130` (`ReadKeyInput`, `0x02019134`), `FUN_02019794` (`0x020197BC`), `FUN_0207F418` (`0x0207F420`) and `FUN_ov_0007__02139A98` (three references: `ov_0007::02139ADC`, `02139C54`, `02139DF4`). No ARM9 or overlay code stores to it, and the mirror `0x023FFFA8` is in no pool. So it is written from outside the imported program; the ARM7 is the likely writer (**[hypothesis]**: the ARM7 was not checked). Bit 15 is copied into the returned key value by `ReadKeyInput` (`0x0201915C` to `0x02019170`); ordinary key code does not test it afterwards. The three hooks above test `0x8000`: sound (`FUN_0207D704` with `0xC` or `0x1C`, chosen by `DAT_02019824`), `FUN_0207D9EC` followed by `FUN_0207F344(1, 1)` and `FUN_0207800C()`, and an early exit from the overlay 7 wait loop. A lid-closed or sleep signal fits this pattern (**[hypothesis]**, medium; the callees `FUN_0207D704` and `FUN_0207D9EC` were not read). `FUN_020191A0` toggles bit 15 of a different register, `0x04000204` (`REG_EXMEMCNT`), not the shadow word.
 
 **Proposed signature (#175 P4, a proposal only; not applied to any decompile).** `void ReadKeyInput(ushort *out)`. The stored signature is `undefined FUN_02019130()`, while the decompile body is `void FUN_02019130(ushort *param_1)`. The body sets `*out` to the processed key word and also adds that word into the accumulator at `0x020DF89C` (read at `0x02019180`, write at `0x02019188`). The prototype's notes must record that side effect. The only caller is `FUN_02017B20` (`0x02017B38`), which passes the struct at `0x020F2790` and reads the output word back at once. Tags: **[blue-verified]** for the body; high for the prototype; medium on the accumulator's meaning.
 
@@ -44,7 +46,9 @@ Hardware keys are active-low; the XOR makes them active-high. The OR with the wo
 
 ### D-pad repeat
 
-**[blue-verified]** for the logic, high. The counter starts at 1 on a new direction and fires at 48. It then resets to 43, so it fires every 5 frames after the first fire, about 47 frames after the press. The timing assumes one call per VBlank; it is not measured.
+**[blue-verified]** for the logic, high. The counter starts at 1 on a new direction and fires at 48. It then resets to 43, so it fires every 5 frames after the first fire, about 47 frames after the press. The timing assumes one call per VBlank.
+
+**Measured (#175 P5, runtime, py-desmume).** `verification/v7-trace/dpad_repeat.py` boots with no input, holds Down from frame 800 for 200 frames and logs the key struct at `0x020F2790` every frame. Counting frames from the press: held and pressed are set at frame 0 and `repeat` (`+4`) is nonzero at frame 0 (counter 1), so the first direction fires at once; then `repeat` fires at frame 47 (the counter reaches 48 and is reset to 43) and every 5 frames after that (52, 57, 62, and so on to 197). So the static logic is confirmed (48, then 43, 5 frames apart, one call per frame), with the detail that the press frame itself also fires and the first repeat comes 47 frames later. Two runs gave identical logs; the command and hash are in [`verification.md`](../verification.md). Only Down was held; the other directions share the code (`held & 0xF0` is one group) but were not run.
 
 ### B and R taps
 
@@ -56,9 +60,11 @@ Hardware keys are active-low; the XOR makes them active-high. The OR with the wo
 
 **The product at `0x020F2768` is not an RNG step (#175 P3).** **[hypothesis]**, high on the code and medium on the meaning. `rng.md` has no match: the global and dungeon LCGs use `0x5D588B65`, and `0x054A1C41` appears in no doc, Rust file or Ghidra label in the repo. The factor is odd, so the product is invertible mod `2^32`, but nothing in the imported program consumes it. The only reader and writer in the program are `FUN_02017B20` (read at `0x02017CCC`, write at `0x02017D14`), and `FUN_020181AC` writes the initial value `0x004A14C1` (write at `0x020181F4`, called from the boot path at `0x02000CDC`). Not checked: overlay or trace-harness reads.
 
+**No consumer (#175 P2b).** **[blue-verified]**, static, high for literals and medium for computed access. A word scan of every block finds exactly two pool entries for `0x020F2768`: `FUN_02017B20` (`0x02017CC0`) and `FUN_020181AC` (`0x020181D0`, the init). In `FUN_02017B20` (`0x02017CC4` to `0x02017D14`) the word is multiplied by `heldKeys | 0x054A1C41` and stored back; the value is never compared, passed or copied afterwards. The accumulator at `0x020F2770` (8 bytes above) is used by `FUN_02017B20`, `FUN_02017D90`, `FUN_02017E60` and `FUN_020181AC`, all with positive offsets, so none reaches `0x020F2768` through it. No overlay has a pool entry for `0x020F2768` or `0x054A1C41` (the constant appears once, at `0x02017D30`). So the product is write-only in this build. Not covered: accesses through registers loaded from something other than a literal pool.
+
 ### Snapshot and consumers
 
-**[blue-verified]**, high. `FUN_02017E60` (`UpdateInputSnapshot`, frame action #9 in [`execution-model.md`](execution-model.md), named `LoadBufferedInputs` there, a recorded name; see [Frame action names](execution-model.md#frame-action-names-161-p4)) copies the accumulator to `0x020F27A0` and clears it. About 40 functions read `0x020F27A0`, in the ARM9 and in overlays 0, 1 and 7. Its touch work is in [Touch](#touch).
+**[blue-verified]**, high. `FUN_02017E60` (`LoadBufferedInputs`, the recorded name; frame action #9 in [`execution-model.md`](execution-model.md); see [Frame action names](execution-model.md#frame-action-names-161-p4)) copies the accumulator to `0x020F27A0` and clears it. About 40 functions read `0x020F27A0`, in the ARM9 and in overlays 0, 1 and 7. Its touch work is in [Touch](#touch).
 
 - **Title loop.** `GameLoop_Async` uses the L button (`0x200`) as a pressed edge and as held state, to call `FUN_02019634(0x13)` and `FUN_02019634(0)`. This is the title loop's L gate.
 - **Dungeon directions.** `ResolveDungeonDirection` (`FUN_020271E0`, **[blue-verified]**, high) maps the D-pad to a direction code. Down `0x80` → 1, Right `0x10` → 2, Up `0x40` → 4, Left `0x20` → 8. That code indexes a 16-byte table at `0x020B219C`, which gives 8 directions without R: 0 Down, 1 DownRight, 2 Right, 3 UpRight, 4 Up, 5 UpLeft, 6 Left, 7 DownLeft.
@@ -86,7 +92,7 @@ Scope: the dungeon main-loop reader `FUN_02166B10` (`ov_0001::02166B10`, 727 lin
 | **Y** (pressed `0x800`) | lines 188 to 189 (mode 0, sets `bVar6`); lines 266 to 270 (mode not 0, held `0x800`); line 304 (mode not 0, pressed `0x800`) | mode 0: same block as Start. Mode not 0: calls `FUN_021480E4` and clears `0x021B4768` | blue-verified (code); see the X and Y note |
 | **X** (pressed `0x400`) | lines 212 to 217, only when A is not pressed and no touch or other trigger is set | leaves the loop with action 0, the same exit as B tap | blue-verified (code); see the X and Y note |
 
-**X and Y note.** The reader tests X (`0x400`) and Y (`0x800`) in the key struct, but `ReadKeyInput` never sets them. Its formula, `((KEYINPUT | shadow) ^ 0x2FFF) & 0x2FFF`, takes bits 10 and 11 from `KEYINPUT`. Those bits read 1 at idle, so they come out 0. So the X and Y branches are not reached from the key path in this build. **[hypothesis]**: on the DS, X and Y sit outside `REG_KEYINPUT` (in `REG_EXTKEYIN`, `0x04000136`), which Blue's `ReadKeyInput` does not read. That was not checked in Blue. A runtime probe (scratch, not committed) saw no `0x400` or `0x800` over 25,100 frames, but its boot inputs never pressed X or Y, so that does not settle it.
+**X and Y note (corrected, #175 P2b).** The reader tests X (`0x400`) and Y (`0x800`) in the key struct. `ReadKeyInput` does not mask them out: `((KEYINPUT | shadow) ^ 0x2FFF) & 0x2FFF` keeps bits 10 and 11. They arrive through the shadow word `0x027FFFA8`: a key is pressed only if both `KEYINPUT` and the shadow word have 0 in that bit. **No ARM9 or overlay code reads `REG_EXTKEYIN` (`0x04000136`)**: no literal-pool entry holds `0x04000136`, and a scan of 282,222 instructions for the immediates `0x136` and `0x04000136` finds 10 hits, all byte accesses at offset `0x136` of a struct (entity info `+0x136`), none from the I/O page. **[blue-verified]**, static, high for the formula and for the absence of reads. **[hypothesis]**, medium: the ARM7 fills the shadow word from `REG_EXTKEYIN` (X bit 10, Y bit 11, pen-down bit 13, hinge bit 15, all active-low). In the boot run the shadow word was `0x2C00` (bits 10, 11 and 13 set), which would force X and Y to released; whether that value changes while the console runs, and the idle value of `KEYINPUT` bits 10 and 11 on the ARM9, are **not verified**. A runtime probe (scratch, not committed) saw no `0x400` or `0x800` over 25,100 frames, but its boot inputs never pressed X or Y. Pressing X and Y in a probe would settle it.
 
 **Other gates used above.** A (pressed `0x1`) is tested at lines 210 to 256, when A is not pressed, for the other triggers and action codes 0 or 1. A is also tested at line 357 in the Select loop.
 
@@ -96,7 +102,7 @@ Scope: the dungeon main-loop reader `FUN_02166B10` (`ov_0001::02166B10`, 727 lin
 
 ### Menu readers and helpers (#175 P1 b)
 
-**Status: partial.** The 39 functions in overlay 1 that load the snapshot pointer are listed, but 28 of them show no direct bit test and are not mapped to a pmd-red `dungeon_menu_*.c` function. Tags: **[blue-verified]** for the pointer, the bit tests and the call shapes; **[hypothesis]** for every behaviour label and every pmd-red match.
+**Status: partial.** The 39 functions in overlay 1 that load the snapshot pointer are listed. 11 show their bit tests in the table below; the other 28 are classed by their keys in [The 28 other readers](#the-28-other-readers-175-p1-c). Menu names for them are hypotheses. Tags: **[blue-verified]** for the pointer, the bit tests and the call shapes; **[hypothesis]** for every behaviour label and every pmd-red match.
 
 **Snapshot pointer.** `FUN_02017E60` (frame action #9) copies the accumulator at `0x020F2770` to `0x020F27A0` and clears the accumulator's held, pressed and flags words. Literal pool: `0x02018194` gives `0x020F2770`; `0x020181A0` gives `0x020F27A0`. Pmd-red's `gRealInputs` (`include/input.h`, 0x10 bytes) matches the current key struct at `0x020F2790` field for field; the snapshot is a separate copy that the menus and the dungeon reader read. The overlay-1 literal `ov_0001::02167AA8` holds `0x020F27A0`, and `FUN_02166B10` loads it in 22 places (inlined copies). Pool scan (`a0 27 0f 02`) finds 39 functions in overlay 1 that load the pointer; the list is in the investigator's scratch output, not in the repo.
 
@@ -124,18 +130,40 @@ Read the table as follows. The six A/B prompts are small confirm or cancel windo
 
 | Helper | Body (call shape) | Name (hypothesis) | Confidence |
 |--------|-------------------|-------------------|------------|
-| `ov_0001::0219CEA4` | calls `PTR_FUN_0219CEB4(DAT_0219CEB8, 0x100)` | `CallMenuHandlerA` | low; the target is a pointer, not resolved |
-| `ov_0001::0219CED4` | calls `PTR_FUN_0219CEE4(DAT_0219CEE8, 0x100)` | `CallMenuHandlerB` | low; same |
-| `ov_0001::0219CE90` | calls `PTR_FUN_0219CEA0(0x130, 0x100)` | `CallMenuInputRegister` | low; `0x130` is the low part of `REG_KEYINPUT` (`0x04000130`), so the target may read the key register |
-| `ov_0001::0219CEEC` | if the argument is 0 or the count is above 1, calls `FUN_0201BC30(DAT_0219CF24, 0x100)` | `RefreshMenuWindow` | low |
-| `ov_0001::0219CD64` | if the argument differs from `DAT_0219CD88`, calls `FUN_0201BC30(arg, 0x100)` | `SetMenuWindowIfChanged` | low |
+| `ov_0001::0219CEA4` | calls `PTR_FUN_0219CEB4(DAT_0219CEB8, 0x100)`; the target is `FUN_0201BC30`, the id is `0x12F` | `PlayMenuSEBack` | hypothesis, medium; back or denied |
+| `ov_0001::0219CED4` | calls `PTR_FUN_0219CEE4(DAT_0219CEE8, 0x100)`; the target is `FUN_0201BC30`, the id is `0x12E` | `PlayMenuSEAccept` | hypothesis, medium; accept or confirm |
+| `ov_0001::0219CE90` | calls `PTR_FUN_0219CEA0(0x130, 0x100)`; the target is `FUN_0201BC30`, the id is `0x130` | `PlayMenuSEAltAccept` | hypothesis, medium; alternate accept (Start). `0x130` is a sound id, not `REG_KEYINPUT` |
+| `ov_0001::0219CEEC` | if the argument is 0 or the count is above 1, calls `FUN_0201BC30(DAT_0219CF24, 0x100)` (id `0x12D`) | `PlayMenuSECursor` | hypothesis, medium; cursor move, used with Up and Down |
+| `ov_0001::0219CD64` | if the argument differs from `DAT_0219CD88`, calls `FUN_0201BC30(arg, 0x100)` | `PlayMenuSEIfChanged` | hypothesis, medium; generic |
 | `ov_0001::0213AC4C` (`FUN_0213AC4C`) | called as `(10, 0x2F)` in the Select loop and `(4, 0x3E)` after the menu | `RunMenuLoop` | low; the arguments are not read |
 
 Not named: `FUN_0202D230`, `FUN_0202D240`, `FUN_0202C560`, `FUN_0202C5E4`, `FUN_0202DE34` and `FUN_0213A37C`. Their bodies were not read.
 
-**What unblocks the rest.** Resolve the pointer targets `PTR_FUN_0219CEB4`, `PTR_FUN_0219CEE4` and `PTR_FUN_0219CEA0`, and read `FUN_0201BC30`. That names the menu-drawing layer the readers share. Then read the 28 unmapped readers, including `FUN_0216B958` (481 lines, 12 frame calls) and `FUN_0216C638`, and compare them with `ShowDungeonTeamMenu`, `ShowDungeonMovesMenu`, `ShowDungeonItemsMenu`, `ShowDungeonOthersMenu`, `ShowDungeonStairsMenu` and `ShowDungeonTileMenu`.
+**The helper pointers (#175 P1c, corrected).** **[blue-verified]**, high for the target and the routine. All three pointer words (`ov_0001::0219CEB4`, `0219CEE4`, `0219CEA0`) hold `0x0201BC30`, `FUN_0201BC30`, and their second arguments (`0x12F`, `0x12E`, `0x130`) are sound ids, not key registers. `FUN_0201BC30(id, volume)` is a play-sound routine: it returns when `id == DAT_0201BD78` (no sound), clamps the volume to `0x100`, looks the id up in a table at `DAT_0201BD84 + (id - 300)` (ids from 300 are effects), picks one of 5 channels (`min(4, table byte)`) and starts a voice (`FUN_0201B368`, with the mutex `FUN_02076FF0` and `FUN_02076F80`). The earlier guess that `0x130` is the low part of `REG_KEYINPUT` was wrong. These helpers are the menu sound layer, not the input layer. The sound ids' roles in the table above are **[hypothesis]**, medium, from where each is called.
 
-**Not verified.** The pointer targets; the body of `FUN_0201BC30`; the 28 unmapped readers; the Red-to-Blue mapping for every menu; any menu at run time (the boot run reaches the dungeon, not the menus). The label of `ov_0001::021729FC` in the investigator's comment is garbled, and its address is used here [open].
+### The 28 other readers (#175 P1c)
+
+**Snapshot layout seen by the menus.** **[blue-verified]**, high. The snapshot pointer is used with `+0` held, `+2` pressed, `+4` held with repeat (Up, Down, Left and Right autorepeat) and `+6` flags. Bits, DS order: `1` A, `2` B, `4` Select, `8` Start, `0x10` Right, `0x20` Left, `0x40` Up, `0x80` Down, `0x100` R, `0x200` L, `0x400` X, `0x800` Y. Almost every menu also tests four touch-button flags in its widget struct, ORed with the key tests: `+0x27` confirm, `+0x28` cancel, `+0x29` right or next, `+0x2A` left or previous. The cursor widget functions are `FUN_0202D230` (draw and update), `FUN_0202C560` (cursor up) and `FUN_0202C5E4` (cursor down).
+
+The 28 readers are `0213AC1C`, `02154580`, `02154EDC`, `02155054`, `021664B0`, `02168774`, `0216A0D8`, `0216AFE8`, `0216B458`, `0216B958`, `0216C638`, `0216D194`, `0216D77C`, `0216E2D8`, `0216EBFC`, `0216F898`, `0216FDA0`, `0216FF80`, `02170398`, `0217185C`, `02171AA8`, `02171BD8`, `02171D00`, `02171E40`, `02172498`, `021725BC`, `0219D140` and `02165C80`. Keys are pressed (`+2`) unless noted. Key tests **[blue-verified]**, high; the "what they are" column **[hypothesis]**, low to medium.
+
+| Group | Readers | Keys | What they are |
+|-------|---------|------|---------------|
+| list: A, B, Up/Down repeat | `0216C638`, `0216F898`, `0216FDA0`, `02170398`, `0217185C`, `02171D00`, `02171E40` | A accept (SE `0x12E`), B cancel (SE `0x12F`), repeat Up `0x40` and Down `0x80` move the cursor (SE `0x12D`) | plain vertical choice lists |
+| list + horizontal repeat | `02171AA8`, `02171BD8` | as above, plus repeat `0x10` and `0x20` | choice lists with two columns |
+| paged list | `0216A0D8`, `0216B958` | A, B, pressed Right `0x10` and Left `0x20` = next and previous page, Up/Down repeat | `0216A0D8` reads `gTeamInventoryRef` (3-byte items) and each member's `+0x5A` held item, and tests pressed `4` and `8`: the items menu (closest Red `ShowDungeonItemsMenu`). `0216B958` (483 lines, no inventory reads) is a second paged list |
+| A, B, Start | `0216D194` | A accept, Start `8` alternate accept (SE `0x130` if the entry is enabled, else SE `0x12F`), B cancel; calls `GetLeader` | leader-related list, possibly the team menu |
+| A, X, B | `02168774` | A or X (`0x400`) both accept; B cancel; Up/Down repeat; calls `GetLeader`, `GetTile`, `GetEntityType` | item or tile action list; X duplicates A (Red `ShowDungeonOthersMenu` or an item action list is a guess) |
+| B + Up/Down | `0216D77C` | B, Up/Down repeat, no A | scroll view |
+| A/B only | `0216AFE8`, `0216B458`, `02154580`, `0219D140` | `0216AFE8` and `0216B458`: A and B; `02154580`: pressed `&3` and a stylus coordinate check; `0219D140`: A only | confirm prompts and message waits |
+| R held + direction | `0216EBFC` | held R `0x100` with pressed `0x10` to `0x80`, and the move array at info `+0xF4` (`FUN_0200AC60`, `FUN_0200B110`) | the moves menu with reorder (closest Red `ShowDungeonMovesMenu`) |
+| wait loops | `0213AC1C`, `021664B0`, `02154EDC`, `02155054`, `02172498`, `021725BC` | `0213AC1C`: wait until held `&0xF0` is released; `021664B0`: wait while held R (`gDungeon+0x65C/0x65D`); `02154EDC`, `02155054`: message-log scroll on repeat Down and Up; `02172498`, `021725BC`: one-shot message, repeat Down | helpers, not menus |
+| pressed D-pad + A/B (touch widgets) | `0216E2D8`, `0216FF80` | pressed A, B, Right and Left with the touch flags `+0x27` to `+0x2A`; `0216FF80` reads a team flag next to `gDungeon` at `+6` | page or tab dialogs |
+| held B | `02165C80` | held `&2` | reads tile and entity (`GetTile`) while B is held; not a menu |
+
+Select appears only as pressed `4` in `0216A0D8`, and Start only as pressed `8` in `0216A0D8`, `0216D194` and `021729FC`. Mapping to Red `dungeon_menu_*.c`: the moves menu (`0216EBFC`) and the items menu (`0216A0D8`) are reasonably supported; `02168774` and `0216D194` (leader, tile and entity calls; X and Start accept) are weaker guesses for the team, others or tile-action menus; the rest are generic lists and prompts, and `0216B958` has no Red match.
+
+**Not verified.** Any menu at run time (the boot run reaches the dungeon, not the menus); which of `02168774` and `0216D194` is the team menu; the Select and Start effects in `0216A0D8`; the Red-to-Blue mapping for every menu. The label of `ov_0001::021729FC` in the investigator's comment is garbled, and its address is used here [open].
 
 ## Touch
 
@@ -435,13 +463,11 @@ The control nibbles and the size field agree with [`formats/compression.md`](../
 
 Input:
 
-- What the A, B, Select and Start keys do, and the menu bindings (#175 P1, partly mapped). Part (a), the dungeon reader `ov_0001::02166B10`, has its actions recorded above; the callees are open. Part (b), the menu readers, is partial: 28 of the 39 snapshot readers are not mapped, and the helper pointer targets (`PTR_FUN_0219CEB4`, `PTR_FUN_0219CEE4`, `PTR_FUN_0219CEA0`) and `FUN_0201BC30` are unread. The helper names above are hypotheses.
-- Whether X and Y reach the key path at all. `ReadKeyInput` takes bits 10 and 11 from `REG_KEYINPUT`; the DS puts X and Y outside it (**[hypothesis]**, `REG_EXTKEYIN` at `0x04000136`, not checked in Blue). Check `REG_EXTKEYIN` (#175 P1 a).
-- The writer of the word at `0x027FFFA8`, and the bit-15 behaviour, which the boot run never exercised (#175 P2). The word's meaning is not an open question: it is the shadow mask above.
-- What consumes the product at `0x020F2768`. Nothing in the imported program reads it; it is not an RNG step (#175 P3).
-- The repeat timing (48, then 43) is assumed from one call per VBlank. An emulator check would settle it.
-- The IRQ handler: this page names `FUN_02018ACC`. [`execution-model.md`](execution-model.md) still says the handler is not located, and needs updating.
-- `FUN_02017E60` is `LoadBufferedInputs` in [`execution-model.md`](execution-model.md) (recorded name, #161 P4) and `UpdateInputSnapshot` here. The name here is the one to change.
+- What the A, B, Select and Start keys do, and the menu bindings (#175 P1, partly mapped). Part (a), the dungeon reader `ov_0001::02166B10`, has its actions recorded above; the callees are open. Part (b): the 28 other readers are classed by their keys (#175 P1c), the helper pointers are resolved (play-sound routine `FUN_0201BC30`), and the menu names are hypotheses; which reader is the team menu, and any menu at run time, are open.
+- Whether X and Y can come out pressed at run time (#175 P2b). They do reach the key path through the shadow word `0x027FFFA8`, and no code reads `REG_EXTKEYIN`. Open: the ARM7 side (what fills the shadow word and its value while a key is held) and the idle value of `KEYINPUT` bits 10 and 11 on the ARM9. A probe that presses X and Y would settle it.
+- The writer of the word at `0x027FFFA8`: none in the ARM9 or overlays (#175 P2b, all five pool references are loads); the ARM7 is the likely writer (**[hypothesis]**). The bit-15 hooks were never exercised at run time, and their callees `FUN_0207D704` and `FUN_0207D9EC` are unread.
+- The product at `0x020F2768` has no consumer in this build (write-only, #175 P2b); the meaning of the constant `0x054A1C41` is open.
+- The repeat timing is measured for Down (#175 P5); Up, Left and Right were not run.
 
 Touch:
 
