@@ -21,7 +21,7 @@ Same size as Red, 0x74 bytes, and the same offsets wherever checked; Red's `Enti
 
 Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes are missing before the types, in the status block, around the speed counters and before the belly. The **Shift** column is Blue offset minus Red offset.
 
-**Size: 0x1D4 (468 bytes), measured in the emulator (#163 P1; blue-verified, runtime).** In a dungeon at its start, the team and wild info pointers (`entity+0x70`) are all multiples of `0x1D4` from base `0x02113FB0`: the five occupied sampled slots are at offsets 0, `0x1D4`, `0x750`, `0x924` and `0x0AF0`, and team members 2 and 3 are empty. Ten slots (k = 0 to 9) were checked as `base + k*0x1D4`: each holds a plausible record (species at `+0x2`, level at `+0x9`, HP at `+0xE`, max HP at `+0x10`), and empty slots are zero. Two runs gave byte-identical output. The stride is the only value in the shift table's bound (`0x1C8` to `0x208`, blue-verified) that divides the measured offsets. Red's size is `0x208`, which was not re-measured. **Not verified:** the allocator or array base (which code allocates the array, and whether `0x02113FB0` is its start); whether every record fills all `0x1D4` bytes (only the fields above were checked); other floors and species, and the slot count (slots 0 to 39 were read, only 0 to 6 were occupied); the rule that a record size equals the array stride in general (it rests on the array being a plain array).
+**Size: 0x1D4 (468 bytes), measured in the emulator (#163 P1; blue-verified, runtime).** In a dungeon at its start, the team and wild info pointers (`entity+0x70`) are all multiples of `0x1D4` from base `0x02113FB0`: the five occupied sampled slots are at offsets 0, `0x1D4`, `0x750`, `0x924` and `0x0AF0`, and team members 2 and 3 are empty. Ten slots (k = 0 to 9) were checked as `base + k*0x1D4`: each holds a plausible record (species at `+0x2`, level at `+0x9`, HP at `+0xE`, max HP at `+0x10`), and empty slots are zero. Two runs gave byte-identical output. The stride is the only value in the shift table's bound (`0x1C8` to `0x208`, blue-verified) that divides the measured offsets. Red's size is `0x208`, which was not re-measured. The array's placement and its writers are in the next subsection (#163 P2). **Not verified:** whether every record fills all `0x1D4` bytes (only the fields above were checked); other floors and species, and the slot count (slots 0 to 39 were read, only 0 to 6 were occupied); the rule that a record size equals the array stride in general (it rests on the array being a plain array).
 
 | Blue | Red field | Red | Shift | Evidence |
 |------|-----------|-----|-------|----------|
@@ -92,6 +92,38 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 Not listed: the `IQ` field at Red `0x0C`. Blue's IQ bits are at `+0x87` (above). Entity info `+0x0C` is the learn gate (#164 P3, [hypothesis]): `FUN_02001AF4` (`GetMovesLearnedAtLevel`) is called through `FUN_ov_0001__02182E5C`, which passes an entity-info field as the gate (call at `ov_0001::02182E98`). The IQ meaning is not confirmed, and the threshold 333 is not a level. See the open questions.
 
 The status records are smaller in Blue: the distance between consecutive ones shrinks (for example, reflect to sure shot is 0x13 bytes in Blue and 0x18 in Red), so each status record needs its own check.
+
+### Placement and writers (#163 P2)
+
+Static evidence from the investigator's Ghidra run on `rescue-arm9-a` (all addresses in `ov_0001`, the retail Blue overlay). No runtime run for this part. **[blue-verified]** for the addresses, literal values and decompiles. **[hypothesis]** for the proposed names below, which are ours, not from `pmd-red`.
+
+There is no separate allocator. The info array is a fixed array inside the Dungeon struct, and each entity's `+0x70` is set at spawn to
+
+`info = gDungeon + 0x68C + slot * 0x1D4`, with `gDungeon = *(0x020E0788)`.
+
+The array has 20 slots: team members in slots 0 to 3 (base literal `0x68C`) and enemies in slots 4 to 19 (base literal `0xDDC` = `0x68C + 4 * 0x1D4`). Team and enemy are one contiguous array. This matches the P1 measurement: base `0x02113FB0` = `gDungeon` `0x02113924` + `0x68C`, and the offsets `0x750` (= `4 * 0x1D4`), `0x924` and `0xAF0`. The total size would be `20 * 0x1D4 = 0x2480`, which is not confirmed.
+
+The stride `0x1D4` is an immediate in each spawn writer (`mov rX,#0x1d4`, then `mla`). Writers, all decompiled:
+
+| Function | Role | Entity pointer array | Slots | Base literal | Stride and store |
+|----------|------|----------------------|-------|--------------|------------------|
+| `FUN_ov_0001__021422dc` (caller `02179a28` in `02179990`) | spawn team member | `gDungeon + 0x11314` | 4 | `0x68C` at `02142490` | `mov` at `0x02142398`, `mla` at `0x021423a0`, `str +0x70` at `0x021423a4` |
+| `FUN_ov_0001__02142120` (caller `02179d34` in `02179cfc`) | spawn enemy | `gDungeon + 0x11324` | 16 | `0xDDC` at `0x021422d8` | `mov` at `0x021421e4`, `mla` at `0x021421ec` |
+| `FUN_ov_0001__02199194` (from `021992fc` when its `param_2` is non-zero) | restore team from suspend save | `+0x11314` | slot `param_3` | `0x68C` at `0x021992f8` | not re-read |
+| `FUN_ov_0001__0219902c` (from `021992fc` when its `param_2` is zero) | restore enemy from suspend save | `+0x11324` | slot `param_3` | `0xDDC` at `0x02199190` | not re-read |
+
+`021999d4` loops over 4 team and 16 enemy slots through `021992fc`, so the suspend restore rewrites the same slots.
+
+Each writer also sets `entity +0x00` to 1 (valid), the entity's slot byte at `+0x24`, and info `+0x02` (species). Info `+0x04` and `+0x06` are 0 for a team member and 1 for an enemy (`+0x06` is `isNotTeamMember` above). It also sets the footprint slot and length at info `+0x135` and `+0x136`, which are not interpreted here.
+
+Proposed names (not applied, and not added to [`symbols.md`](../symbols.md), because its rows are applied to the Ghidra project as renames): `FUN_ov_0001__021422dc` as `SetupTeamEntity`, `FUN_ov_0001__02142120` as `SetupEnemyEntity`, `FUN_ov_0001__02199194` as `RestoreTeamEntity`, `FUN_ov_0001__0219902c` as `RestoreEnemyEntity`.
+
+**Not verified:**
+- Whether the whole `0x2480` is cleared at floor start: the reset of the array was not read.
+- The total size `0x2480` itself.
+- Other writers of `+0x70` with a non-immediate stride. The byte search covered `mov r?,#0x1d4` for r0 to r12 in the `mov` encoding and the 4-byte literal. One literal hit at `0x0219CAFE` is data or unaligned and was ignored. The search is not exhaustive.
+- Other overlays (non-dungeon overlays) were not checked.
+- The field layout is out of scope here.
 
 ### aiTarget readers (#164)
 
@@ -338,7 +370,7 @@ What the V7 dumper ([#55](https://github.com/TorratDev/rust-mm/issues/55)) shoul
 
 ## Open questions
 
-- **Entity info size.** `0x1D4` (468), measured in the emulator (#163 P1, runtime). Method: `info = base + k*0x1D4` for the team and wild entries of a dungeon at its start. The allocator and the per-record field check are not verified (see the size note above).
+- **Entity info size.** `0x1D4` (468), measured in the emulator (#163 P1, runtime). Method: `info = base + k*0x1D4` for the team and wild entries of a dungeon at its start. The array's clear at floor start, its total size `0x2480`, and the per-record field check are not verified (see [placement and writers](#placement-and-writers-163-p2) and the size note above).
 - **IQ bits at info `+0x87`.** `IqSkillIsEnabled` tests them. Check whether this field is part of the info struct and how it relates to the Red `IQ` field at `0x0C`.
 - **Learn gate at info `+0x0C` (#164 P3, [hypothesis]).** Blue's `GetMovesLearnedAtLevel` is `FUN_02001AF4`. Its caller `FUN_ov_0001__02182E5C` (call at `ov_0001::02182E98`) is the only caller that passes an entity-info field as the gate, and that field is info `+0x0C`. `FUN_02001844` reads the same gate from the Pokemon struct at `+0x0A`, which the Recruited Pokémon table lists as `IQ`. The IQ meaning is not confirmed, and the threshold 333 is not a level. Red's `IQ` readers (`HandleGummiItemAction`, `sub_8072778`, `WriteMonster`) are not matched in Blue. **Open:** the readers and the writer of info `+0x0C`.
 - **`aiTarget` inner layout (#164 P2).** The four offsets `aiTargetPos` `+0x80`, `aiObjective` `+0x70`, `aiTargetSpawnGenID` `+0x74` and `aiTarget` `+0x78` are written by the same writer, `0219082C`, which is unnamed in Blue (blue-verified, writer). Red compares `aiObjective` with 1 or 2 and checks `aiTarget->spawnGenID` against `aiTargetSpawnGenID` (`dungeon_ai_movement.c` 277-281). Readers are partly found (#164 readers, above): `FUN_ov_0001__02175A00` reads `+0x74` and four functions read or write `+0x70`. **[open]** A full read list needs a decompile-based search of the overlay-1 AI functions, because the byte search can miss loads with the base in another register. `aiTargetingEnemy` `+0x72` and `unkC` `+0x7C` are not written by that writer. The Blue value 0 for `aiObjective` comes from the writer alone. The offsets follow the −8 shift (medium).
