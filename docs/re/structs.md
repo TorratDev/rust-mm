@@ -335,7 +335,7 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 |------|-------|-----|
 | `+0x03` | `level` | `0x03` |
 | `+0x04` | `dungeonLocation` | `0x04` |
-| `+0x06` | `speciesNum` | `0x08` |
+| `+0x06` | `speciesNum` (the species id, #170 P3b; [blue-verified], see [Roster record +6](#roster-record-6-is-the-species-id-170-p3b)) | `0x08` |
 | `+0x08`, `+0x09` | `unkC[2]` (levels) | `0x0C` |
 | `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]) | `0x14` |
 | `+0x0C` | `pokeHP` | `0x16` |
@@ -346,6 +346,50 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x1C` | `heldItem` (2-byte `BulkItem`) | `0x28` |
 | `+0x1E` | `moves[4]` (6 bytes each) | `0x2C` |
 | `+0x36` | `name[10]` | `0x4C` |
+
+### Roster record +6 is the species id (#170 P3b)
+
+Verdict: **[blue-verified]**, high. Roster `+6` (s16) is the species id (Red `Pokemon.speciesNum`, Red `0x08`). The mail record's `+0xC` (`clientSpecies`) therefore copies a species id. The roster is 413 records of `0x40` bytes at `0x020DF484`; record `+0` bit 0 is "in use".
+
+Writers (static, Ghidra copy `rescue-arm9-c`; names are **[hypothesis]**):
+- `FUN_020033A8` (proposed `InitRosterRecord`): builds a fresh record. `+6` takes the species argument verbatim, `+0` is set to 1 and `+3` (level) to 1. Every other derived field is a lookup keyed by the species (for example `FUN_020022C0`, `FUN_0200224C`, `FUN_0200222C`, `FUN_020016B4`, `FUN_020026D0`).
+- `FUN_02003130` (proposed `AddRosterRecord`): inserts the built record. It reads the species at `+6`, indexes the species table (stride `0x48`, base `*DAT_02003210`) for the key at `+0x16`, finds a free slot whose `FUN_02009230(slot)` equals that key, copies the 0x40 bytes, clears bit `0x4000` of `+0`, and calls `FUN_020115BC(species)` (not decompiled).
+- `FUN_0200303C` is `FUN_020033A8` followed by `FUN_02003130`. `FUN_02003080(species)` finds the free slot without writing.
+
+Serialization: `WritePoke1Bits` (`02003E1C`) writes `+6` as 9 bits (0 to 511), which holds the species table size `0x1A8` (424). The read side (`ReadPoke1Bits`) was not decompiled; [hypothesis] it mirrors the write. `FUN_02003AD0` writes a different struct (`+8` and `+0xA` are 16 bits each, `+0xC` is 9 bits), so it is not this record; not examined.
+
+Readers (all use `+6` as a species index):
+- `FUN_02002838`: for active and team records, `FUN_020023E0(species)`, which is the per-species cost byte at `+9` of the `0x48` species entry. It sums these and tests `< 7` (a team limit of at most 4 members).
+- `FUN_0200D4DC` (mail): `mail+0xC = *(s16 *)(FUN_02002F88() + 6)`.
+- `FUN_0206A6DC` (mission species filter, #168 P3b): compares the mission species with `FUN_02002F88()+6` and with `FUN_02002F0C()+6` (the partner, the record whose `+4` is `'A'`), after a `FUN_020010E8` round trip.
+- `FUN_02002EA4` and `FUN_02002F0C` find records by `+4 == '@'` and `+4 == 'A'` (Red `dungeonLocation`, `+0x04`).
+
+The value is an index into the species table, not a roster id. `FUN_020010E8` folds the Unown form ids `0xCA` to `0xE2` into `0xC9` (201), so `+6` is the species or form id.
+
+**Not verified:** the read side of the save (`ReadPoke1Bits`) and the load path that sets `+6`; `FUN_020115BC`, `FUN_02009230` and the table at `*DAT_02003214`; writers outside the constructor (evolution or form change writing `+6` in place), since only the `0x02002000` to `0x02003F00` helpers were scanned; runtime (no emulator check).
+
+## Dungeon data table (#170 P1b)
+
+The table at `0x02092818` holds one `0x10`-byte record per dungeon, Red's `DungeonDataEntry` (`include/dungeon_data.h`, read only). The layout matches Red field by field on records 0 and 1 **[blue-verified]**. That record 0 starts at `0x02092818` is **medium**: the bytes before it belong to another table, and the start was fixed by the alignment of the `1000` field. Records continue in `0x10` steps (the rows dumped to `0x02092A7C` follow the pattern).
+
+| Offset | Red field | Records 0 and 1 |
+|--------|-----------|-----------------|
+| `+0` | `stairDirectionUp` | 0, 0 |
+| `+1` | `enemiesEvolveWhenKOed` | 0, 0 |
+| `+2` | `recruitingEnabled` | 0, 1 |
+| `+3` | `rescuesAllowed` (s8) | 0xFF, 0xFF |
+| `+4` | `maxItemsAllowed` | 0x14, 0x14 |
+| `+5` | `maxPartyMembers` | 3, 3 |
+| `+6` | `levelResetTo1` | 0, 0 |
+| `+7` | `keepMoney` | 1, 1 |
+| `+8` | `leaderCanSwitch` | 0, 0 |
+| `+9` | `hasCheckpoint` | 0, 0 |
+| `+0xA` | `enterWithoutGameSave` | 1, 1 |
+| `+0xB` | `HMMask` | 0, 0 |
+| `+0xC` | `turnLimit` (s16) | 0x03E8 (1000), 0x03E8 |
+| `+0xE` | `randomMovementChance` (s16) | 0, 0 |
+
+`FUN_02006410(index)` is `GetRescuesAllowed` (proposed; red-hypothesis name). It returns byte `+3` of record `index`, that is `0x0209281B + index * 0x10`. Both callers use this one global table: the mail builder `FUN_0200D4DC` (index from mail `+4`) and `RunDungeon_Async` (`0x0206DCEC`, index from the setup struct's `+4`). Records beyond 1 are not mapped to dungeon ids or names.
 
 ## Roster and mail helpers (#170 P1, proposed names)
 
@@ -360,7 +404,7 @@ Literal-pool values [blue-verified]:
 | `DAT_02002FFC` | `0x020DF484` | roster base |
 | `DAT_02003000` | `0x19D` (413) | roster record count |
 | `DAT_020024E0` | `0x02008C0C` | character-copy routine |
-| `DAT_02006420` | `0x0209281B` | base of a 16-byte-record table |
+| `DAT_02006420` | `0x0209281B` | `rescuesAllowed` of dungeon record 0 (table base `0x02092818`, stride `0x10`; see [Dungeon data table](#dungeon-data-table-170-p1b)) |
 | `DAT_02008C04` | `0x02091C44` | error text used by the decoder |
 | `DAT_0200D588` | `0x020DF6EC` | mail-record pointer block |
 
@@ -368,11 +412,18 @@ The roster base and count match [`rng.md`](rng.md) and [#161](https://github.com
 
 **`FUN_02002F88` at `0x02002F88`: proposed `FindFirstActiveRosterRecord`** [blue-verified behaviour; red-hypothesis name]
 - Scans the 413-entry roster from `0x020DF484` in steps of `0x40`. Returns the first record whose `u16` at `+0` has bit 0 set and whose byte at `+2` is nonzero. Returns 0 if none matches.
-- Callers: `FUN_0200D4DC`, `FUN_0201E020`, `FUN_02052AAC`, `FUN_0206A6DC`, `FUN_02069848`, and others.
+- Callers: 38 sites in 33 functions (ARM9, overlays 0 and 7). Examples: `FUN_0200D4DC`, `FUN_0201E020`, `FUN_02052AAC`, `FUN_0206A6DC`, `FUN_02069848`.
+- Handling of the 0 return (#170 P1b; blue-verified sites, medium classification by eye):
+  - Test for 0: `FUN_0201E020`, `FUN_02067AE0`, `FUN_0206964C`, `FUN_ov_0007__02139054`, `FUN_ov_0007__02139A98`, `FUN_ov_0007__02139F80`; `FUN_ov_0000__02140860` at 2 of its 3 sites.
+  - Assert, then use: `FUN_ov_0000__021548EC` (`hero index error`).
+  - Compare only: `FUN_0203C9D8`, `FUN_ov_0000__02154D14`.
+  - Store the pointer without dereferencing: `FUN_0203CB30`, `FUN_02047D74`, `FUN_0204873C` (a later reader may dereference).
+  - Dereference with no check: `FUN_0200D4DC`, `FUN_02028628`, `FUN_02029734`, `FUN_0206A6DC`, `FUN_0204A40C`, `FUN_0204BDB8`, `FUN_0204F76C`, `FUN_0205F598`, `FUN_02042378`, `FUN_02052AAC`, `FUN_02057FE8`, `FUN_0203A244`, `FUN_02058A9C`, and the first site of `FUN_ov_0000__02140860`. `FUN_ov_0000__02153884` returns the pointer as is for some cases.
+  - So about 13 functions test or assert, and about 15 dereference unchecked. That a hero record always exists in play is a hypothesis: it was not checked at game start or on the title screen.
 - Confidence: high for the behaviour; medium that the array is the 0x40-byte roster (the pointer and count match `rng.md`).
 
 **`FUN_020024D0` at `0x020024D0`, `FUN_020024D0(dst, rec)`: proposed `CopyRosterNameToBuffer`** [blue-verified behaviour; red-hypothesis name]
-- Calls `FUN_02008C0C(dst, rec + 0x36, 10)`: copies up to 10 characters through the per-character map `FUN_02008C50` (not read), then NUL-terminates. The `+0x36` field is `name[10]` in the Recruited Pokémon table above.
+- Calls `FUN_02008C0C(dst, rec + 0x36, 10)`: copies up to 10 characters. `FUN_02008C0C` copies each byte through `FUN_02008C50`, which is an identity stub (`bx lr`), so the bytes are copied unchanged [blue-verified]; then NUL-terminates. The `+0x36` field is `name[10]` in the Recruited Pokémon table above.
 - Callers: `FUN_0200D4DC`, `FUN_02052AAC`, `FUN_02065844`, `FUN_02057FE8`, `FUN_02038C28`, `FUN_02038D48`, `FUN_02042378`, `FUN_02052560`.
 - Confidence: high for the offset and length; medium for the record identity.
 
@@ -381,21 +432,20 @@ The roster base and count match [`rng.md`](rng.md) and [#161](https://github.com
 - Callers: `FUN_0200D4DC`, `FUN_0201E020`, `FUN_02004590`, `FUN_02002788`, `FUN_0219C898` (three sites), `FUN_02069848`, `FUN_021461D0` (overlay 0), `FUN_0206C170`.
 - Confidence: high for the behaviour (read from the code).
 
-**`FUN_02006410` at `0x02006410`, `FUN_02006410(index)`: proposed `GetTableByteByIndex16`** [blue-verified behaviour; red-hypothesis name]
-- Returns the byte at `0x0209281B + index * 0x10`. The table's meaning is not established.
+**`FUN_02006410` at `0x02006410`, `FUN_02006410(index)`: proposed `GetRescuesAllowed`** [blue-verified behaviour; red-hypothesis name]
+- Returns `rescuesAllowed` of dungeon `index`: the byte at `0x0209281B + index * 0x10` (see [Dungeon data table](#dungeon-data-table-170-p1b)).
 - Callers: `FUN_0200D4DC` (index = the byte at the mail record's `+4`, stored at `+0x2C` of the record) and `RunDungeon_Async` (`0x0206DCEC`, index = the setup struct's `+4`).
-- Confidence: high for the behaviour; low for a more specific name. Only `GetTableByteByIndex16` is proposed.
+- Confidence: high for the behaviour; medium for the table start (record 0).
 
 **Mail-record builder `FUN_0200D4DC` at `0x0200D4DC`: context only** [blue-verified structure; not checked against the mail format]
 - Writes a flag of 1 at `+0`, copies two parameters to `+4` and `+8`, and seeds the Mersenne Twister with `Rand32Bit`. Stores a random value at `+0x10`, a roster `u16` at `+0xC`, the decoded text at `+0x14`, `sub_8011C34()` at `+0x24` and the table byte at `+0x2C`.
 - [#47](https://github.com/TorratDev/rust-mm/issues/47) named this function `sub_809542C`. The structure is consistent with a mail record; this was not checked against the mail format.
 
-Open, not verified (the #170 P1 comment's list, left as it is):
-- The per-character map `FUN_02008C50`, which turns each name character into a code.
-- The table at `0x0209281B`: what its bytes mean, and which of the two callers it belongs to.
-- The roster `+6` byte copied into the mail record's `+0xC`.
+Open, not verified (after #170 P1b and P3b):
+- The table beyond record 1 is not mapped to dungeon ids or names; record 0's start is medium.
+- Which roster index the hero always has, and whether a hero record exists at game start or on the title screen (not checked).
+- `FUN_02002F88` returns 0 when nothing matches; about 15 callers dereference without a check (see the list above).
 - Runtime: no emulator check (no Blue dump configured in this session).
-- `FUN_02002F88` returns 0 when nothing matches. Callers that test the result for a nonzero pointer were not all checked.
 
 ## Mail record (#170 P3)
 
@@ -407,19 +457,16 @@ Tags: **[blue-verified]** for the writes; the Red field names are **[red-hypothe
 |-------------|-----------|-----------|-------|
 | `+0x00` (u8) | `= 1` | `mailType` at `0x0` | offset and value (1 in both) |
 | `+0x04`, `+0x08` (u32 each) | copies of `param_1[0]` and `param_1[1]` | `dungeonSeed` (`DungeonMailSeed`, 8 bytes) at `0x4` | size and position |
-| `+0x0C` (u16) | roster record `+6` | `clientSpecies` at `0xC`, set from `GetLeaderMon1()->speciesNum` | position; the source is medium (roster `+6` as species is not verified) |
+| `+0x0C` (u16) | roster record `+6` | `clientSpecies` at `0xC`, set from `GetLeaderMon1()->speciesNum` | position; the source is high: roster `+6` is the species id ([Roster record +6](#roster-record-6-is-the-species-id-170-p3b)) |
 | `+0x10` (u32) | `Random32MersenneTwister()` after `MersenneTwister_InitializeState(Rand32Bit())` | `unk10` at `0x10` | position and call sequence |
 | `+0x14` (10 bytes) | roster name through `FUN_020024D0`, then `FUN_02008AF0` (decoded) | `playerName[10]` at `0x14` | position; Red's `sub_809542C` has no decoding step |
 | `+0x24` (u32) | `sub_8011C34()` | `unk24` at `0x24` | same call |
-| `+0x2C` (u8) | `FUN_02006410(byte at mail +4)` | `rescuesAllowed` (`s8`) at `0x2C`, set from `GetRescuesAllowed(dungeonSeed.location.id)` | **offset matches; value open (below)** |
+| `+0x2C` (u8) | `FUN_02006410(byte at mail +4)` | `rescuesAllowed` (`s8`) at `0x2C`, set from `GetRescuesAllowed(dungeonSeed.location.id)` | offset matches; value is `rescuesAllowed` (dungeon table field `+3`, see [Dungeon data table](#dungeon-data-table-170-p1b)) |
 
 Not written by `FUN_0200D4DC`: `+0x01` (missionType), `+0x20` (`item` in Red) and `+0x28` (`unk28` in Red). Red sets these elsewhere; the Blue writers were not looked for.
 
-**Open: the byte at `+0x2C` may not be `rescuesAllowed`.**
-- `FUN_02006410(index)` returns the byte at `table + index * 0x10`: byte `+0x0` of a 16-byte record. The stride matches pmd-red's `DungeonDataEntry` (`include/dungeon_data.h`, size `0x10`).
-- In that struct, byte `+0x0` is `stairDirectionUp`, and `rescuesAllowed` is at `+0x3`. If Blue's table has Red's layout, the mail byte and the byte `RunDungeon_Async` stores at `gDungeon + 0x66B` (from `FUN_02006410(setup + 4)`) are `stairDirectionUp`, not `rescuesAllowed`.
-- Red reads `rescuesAllowed` at `gDungeon->unk644.unk37` (`src/run_dungeon.c` 139). Blue's `+0x66B` is a different layout, so this is not a direct comparison.
-- **Not verified:** whether Blue's table has Red's layout, and whether Blue's record puts the `+0x3` byte elsewhere. This needs a read of the table or of its users.
+**Resolved (#170 P1b): the byte at `+0x2C` is `rescuesAllowed`.** `FUN_02006410` returns byte `+3` of the dungeon data record, and in Blue's table that byte is `rescuesAllowed` (the layout matches Red's `DungeonDataEntry` field by field; the record 0 start is medium). See [Dungeon data table](#dungeon-data-table-170-p1b).
+- Red reads `rescuesAllowed` at `gDungeon->unk644.unk37` (`src/run_dungeon.c` 139). Blue's byte that `RunDungeon_Async` stores at `gDungeon + 0x66B` was not compared with that field, so the `+0x66B` layout is still unchecked.
 
 ## RAM for golden traces
 
