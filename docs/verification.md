@@ -399,3 +399,16 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** partial. Confirmed under injection: the overlay 7 entry is reached once, and the sprite-grid screen with its message is shown. B leaves overlay 7, the title function runs again, and the game continues to the title logo and story text. The return to the New Game / Adventure Log menu is not reproduced in this run and is open. The meaning of the screen and the real route to choice 5 are open.
 - **Fallback adopted:** none.
 - **Notes:** The probe is the repository copy of the investigator's `ov7.py`, with the paths made relative to the script. It refuses any SHA-1 other than the supported one. Also fixed in this entry: the broken `.github/workflows/verify.yml` links (the file was removed in `320b68d`). The open items are in [`re/execution-model.md`](re/execution-model.md#open-questions).
+
+---
+
+## #169 P1 — OtherRandom16 emulator vector (not reached)
+
+- **Assumption:** the 16-bit generator (`OtherRandom16`, `02023B9C`, state u16 at `020E03F4`) is called in ground mode, and the boot path of `boot_to_dungeon.txt` passes through ground code that uses it.
+- **Date:** 2026-11-05
+- **Environment:** Windows 11, py-desmume (DeSmuME 0.9.12), `SDL_VIDEODRIVER=dummy`. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (checked by the probe, supported, not committed).
+- **Evidence:**
+  - Command: `python verification/v7-trace/other_rng.py <ROM> <OUT> --frames N`, with N = 2700, 12000 and 27000. `<OUT>` is outside the repository. Hooks: entry `02023B9C` (logs state and `lr`) and `02023BB8` (logs state and `r0`).
+  - Result: zero calls in all three runs; the log holds only the `end` event. Output sha256 `ed1d57e743858ee2ded7b6ddc3d054e4f5b9ed63d5ab7593c922730d8366066c` (2700 frames, identical in two runs), `845ef0f325707c85982eccccdec67fea0e6a4e7ef373ea55de3c6ebd705cb1b1` (12000), `67440d99fd8833c106f4adee338f55930401cb65d787d3b14a97e14e602aa0a4` (27000).
+- **Outcome:** not reached. No vector recorded and no test added to `OtherRng`; the hook itself is not proven to fire (no call to confirm it). Needs input that reaches a caller (for example the `FUN_02140860` event check or an actor script in ground mode).
+- **Fallback adopted:** none.
