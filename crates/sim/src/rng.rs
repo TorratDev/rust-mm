@@ -326,8 +326,24 @@ mod tests {
         assert_eq!(rng.state(), 54021 + 0xBF * 0x12 + 0x34 * 0x56);
     }
 
-    // No emulator-captured vectors exist for the 16-bit generator yet. These
-    // tests check the formula only: the expected values were computed
+    // Vectors from forced calls of OtherRandom16 (02023B9C) on the retail ROM by
+    // verification/v7-trace/other_rng.py --inject (#169 P1): the return value r0
+    // equals the new state, with the top 16 bits zero. Not a natural caller.
+    #[test]
+    fn other_rng_matches_forced_calls_on_the_retail_rom() {
+        for (start, outs) in [
+            (0x348C, [25497, 27682, 3703, 11432]),
+            (0xFFFF, [912, 34893, 3270, 29771]),
+        ] {
+            let mut rng = OtherRng::from_state(start);
+            for out in outs {
+                assert_eq!(rng.next_u16(), out);
+                assert_eq!(rng.state(), out);
+            }
+        }
+    }
+
+    // The tests below check the formula only: the expected values were computed
     // separately (Python, `state * 109 + 1021` in 16 bits).
 
     #[test]
