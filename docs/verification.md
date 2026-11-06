@@ -419,6 +419,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 
 ---
 
+## #258 — Scene entry scripts
+
+- **Assumption:** the per-frame script-context steppers, the two-stage entry-script selection, and the absence of opcode 9 with map 3 or 4 in the walked scripts, match the decompiles in [`re/execution-model.md`](re/execution-model.md#entry-script-of-a-scene-258-p1).
+- **Date:** 2026-11-06 for the write-up. The findings do not record the dates of the runs.
+- **Environment:** Linux, py-desmume with the SDL dummy video driver. `XDG_CONFIG_HOME` pointed at a scratch folder, so DeSmuME's configuration and save files stayed outside the user's folder. Input: `verification/v7-trace/boot_to_dungeon.txt`. ROM: scratch copies of the supported dump; the dump's SHA-1 is not recorded in the finding. Static work in the Ghidra copy `rescue-arm9-b` (read-only).
+- **Evidence:** all probes are scratch scripts, not committed. Command form: `python <script> <scratch ROM> <out> <frames>`.
+  - **`p258.py`, 20,000 frames** (hooks on the three step functions, `FUN_021461D0`, the scene runner and the bank calls): script SHA-1 `8c7c91a006e3520ff2d862b6f86f631286e3548f`, output SHA-1 `cfac7b9317f2653582b891b5dc8f2293f2021ad3`. [blue-verified runtime]
+  - **`p258d.py`, 80 frames** (hooks on `FUN_02147C48`, `02147C18`, `02147EDC`, `02148024`, `021480E4` and `0214D804`): script SHA-1 `dc317cc4a9cab4f2f8b0189c1d8f36f9554761c3`, output SHA-1 `5fc44ca40cacee94d7e15645d2cdc984c976fbd7`. [blue-verified runtime]
+  - **`p258e.py`, 3,200 frames** (hooks on `FUN_0214D498`, the scene runner, `FUN_0214D420` and the master-context `FUN_02147C48`): script SHA-1 `f88026b35fc2679737f84d5d8a17b537d0572679`, output SHA-1 `00da04274aa4e5e477ec9830456de9e53faba39a`. This is the run that shows the two stages. [blue-verified runtime]
+  - **`p258c.py`, 90 frames** (write watch on the master context): script SHA-1 `b6760cbfada048debd9c10a38302b6448c06ed3d`, output SHA-1 `7a51188df82f48340e08cc51c6e545bb6cd0b1bc`. [blue-verified runtime]
+  - **Static walk, `walk258.py` and `count258.py`:** script SHA-1 `9fee9c8ed2ec0e80f058be20cfa65eaeba12ed8c` and `7e4e179af0d72059d41e4ea0d6c4097206f567f3`. The counts are in [`re/execution-model.md`](re/execution-model.md#opcode-9-with-map-3-or-4-258-p2); no output hash is recorded in the finding. [blue-verified, bounded]
+- **Outcome:** partial. Confirmed at runtime: the three steppers fire at runner frame 79, one master context and the lives, objects and effects contexts; the two-stage entry for scene ids `0xF`, `0x10` and `0`; the later kind-5 installs at frames 1136, 1270 and 1789. Bounded static result: no opcode 9 with map 3 or 4 in 592 walked scripts. Not confirmed: the scene-id mapping for ids 1 to `0xE`.
+- **Fallback adopted:** none.
+- **Notes:** No scene-to-bank or scene-to-script table is committed, and no script bytes are recorded, per the #160 decision. The logs and the scratch ROM copies stay in the scratchpad outside the repository.
+
 ## #161 P3 — Overlay 7 under fault injection
 
 - **Assumption:** overlay 7 (entry `ov_0007::02139F80`, reached from title choice 5 through `RunOverlay7Mode`) shows a screen, and B leaves it for the title menu. This is checked by forcing the title result to 5, which is fault injection and not a game path. The real title route to choice 5 needs a save and is not tested here.
