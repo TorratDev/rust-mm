@@ -384,6 +384,23 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 
 ---
 
+## #160 P4 — Text overlay residency across a dungeon run
+
+- **Assumption:** `FS_UnloadOverlay` on the language text overlay (id 2 to 6, called at `0201DBE8`) leaves the overlay's bytes in RAM. So the text tables are still resident at `RunDungeon_Async` entry and during the dungeon. The static reading is in [`re/execution-model.md`](re/execution-model.md#into-a-dungeon-and-back).
+- **Date:** not recorded in the investigator's run. This entry is written 2026-11-06.
+- **Environment:** py-desmume 0.0.9 in a scratch venv, `SDL_VIDEODRIVER=dummy`, SDL dummy audio. Supported dump `pmdb.nds`, SHA-1 starting `6f018873`, read in place and not copied.
+- **Evidence:**
+  - Method: a scratch probe (`probe.py`) replayed [`boot_to_dungeon.txt`](../verification/v7-trace/boot_to_dungeon.txt) for 25000 frames. It hooks `FS_UnloadOverlay` at `0x0207BB28` (entry), `LoadAndRunDungeon_Async` at `0x0201DB70`, `RunDungeon_Async` at `0x0206DC20` and `FS_StartOverlay` at `0x0207BC9C`. At each hook it reads the first 0x1000 bytes at `0x021B4900` and hashes them. The probe is a scratch script, not a repository file. It is not committed, so no command here re-runs it from the repo; the output was kept outside the repository.
+  - Frame 24939 (entry to `LoadAndRunDungeon_Async`): the bytes at `0x021B4900` are zero.
+  - Frame 24941: `FS_UnloadOverlay(0, 2)` (the English text overlay) runs and finds the text bytes already loaded. The first 16 bytes equal the first 16 bytes of the English overlay file, compared offline.
+  - Frame 24952 (`RunDungeon_Async` entry, after the unload): the 0x1000-byte hash is identical to the hash before the unload. Hash prefix `85ae4f3c3aa1`.
+  - Frame 25000 (end of the run): the hash is unchanged. This comes from two reviewer re-runs of the probe, which were identical: hash prefix `85ae4f3c3aa1` at frames 24941 to 24952 and at the end of the 25000-frame run. The investigator's own output ended at frame 24952.
+- **Outcome:** confirmed for overlay 2 (English) on this dump. The text bytes stay resident from the unload through `RunDungeon_Async` entry and the end of the run. The unload itself only drops registered callbacks in the overlay's range (static, `FUN_0207BB98`). **Confidence:** high that the bytes stay after the unload; medium for residency over the whole dungeon. **Not verified:** other languages (only id 2 was seen); any write to `0x021B4900` between the entry and end checks; the reload after the dungeon; the post-dungeon `FS_UnloadOverlay` of overlay 1 (not hashed).
+- **Fallback adopted:** none.
+- **Notes:** The probe ran against 25000 frames of the boot replay. The dungeon run stopped 48 frames in, so the dungeon's later frames were not sampled.
+
+---
+
 ## #161 P3 — Overlay 7 under fault injection
 
 - **Assumption:** overlay 7 (entry `ov_0007::02139F80`, reached from title choice 5 through `RunOverlay7Mode`) shows a screen, and B leaves it for the title menu. This is checked by forcing the title result to 5, which is fault injection and not a game path. The real title route to choice 5 needs a save and is not tested here.
