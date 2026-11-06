@@ -38,15 +38,15 @@ Issues: [#28](https://github.com/TorratDev/rust-mm/issues/28) header, [#29](http
 | `0x0C` | BSS size |
 | `0x10`, `0x14` | static initializer start, end |
 | `0x18` | FAT file ID |
-| `0x1C` | flags: bits 0–23 compressed size, **bit 24 = BLZ-compressed** (issue #30) |
+| `0x1C` | flags: bits 0–23 compressed size, **bit 24 = BLZ-compressed** (issue #30; the overlay loader `FUN_0207BC9C` tests it as bit 0 of byte `+0x1F`, #283 P4a) |
 
 Bit 24 is taken from the issue. Whether the stored size is in bits 0–23 is per GBATEK and is still to be checked on the dump.
 
 ## BLZ ("backwards LZ")
 
-Footer: `0x00` (u32) = footer length in the top 8 bits and compressed length in the low 24 bits. The footer length is 8 in most overlays, but the Blue dump has 9 (overlay 6), so the decoder accepts 8–24. Bytes before the compressed region are stored raw. `0x04` (u32) = growth in bytes. Decoding reads the stream from the end and writes the output from the end. Output is capped at 16 MiB (`blz::MAX_OUTPUT`). Full algorithm: the module comment in `blz.rs`.
+Footer: `0x00` (u32) = footer length in the top 8 bits and compressed length in the low 24 bits. The footer length is 8 in most overlays, but the Blue dump has 9 (overlay 6), so the decoder accepts 8–24. Bytes before the compressed region are stored raw. `0x04` (u32) = growth in bytes. Decoding reads the stream from the end and writes the output from the end. Output is capped at 16 MiB (`blz::MAX_OUTPUT`). Full algorithm: the module comment in `blz.rs`. The Blue ARM9 decoder (`FUN_02000934`, [`re/io.md`](../re/io.md#not-found-and-a-negative), #283 P4a) reads the same two words at the end of the data (at end − 8 and end − 4), with the footer length in the top 8 bits of the first word, which agrees with this layout.
 
-**Open:** whether `arm9.bin` is BLZ-compressed. The survey tagged it *unknown* (453,292 bytes, entropy 7.21). The decoder is available, but the ARM9 compression flag is not decided. Answer it from the dump.
+**Open:** whether `arm9.bin` is BLZ-compressed. The Blue ARM9 contains the BLZ decoder (`FUN_02000934`, #283 P4a). `_start` calls it only when the module-parameter compressed-static-end field is nonzero: the argument is the word at `+0x14` of the structure whose pointer is the literal at `0x0200090C`. That field's value was not read, so the flag is not decided. The survey tagged it *unknown* (453,292 bytes, entropy 7.21). Answer it from the dump.
 
 ## Memory map
 
