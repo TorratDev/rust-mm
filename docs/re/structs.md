@@ -347,6 +347,16 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x1E` | `moves[4]` (6 bytes each) | `0x2C` |
 | `+0x36` | `name[10]` | `0x4C` |
 
+### Roster move layout (#239 P2c)
+
+The 6-byte move in a roster record (`+0x1E`, four of them) is not the dungeon `Move`. Save widths (`WritePoke1MovesBits` at `0x020094D8`, mirrored by the reader `FUN_020094A0`): `+0` 4 bits (`moveFlags`), `+2` 9 bits (move id), `+4` 7 bits (the ginseng value). The save writes neither `+1` nor `+5`. [blue-verified]
+
+- `FUN_0200978C` converts a roster move to a dungeon `Move` (callers `FUN_02001E40`, `ov_0001::02178828`, `ov_0001::0217A754`). For each of the four moves: if `src[0] & 1` is 0, `dst[0] = 0`. Otherwise `dst[0] = src[0]`, `dst[1] = 0`, `dst[2..3] = src[2..3]` (the id), `dst[4]` = the move's max PP from the move table (`id × 0x24 + 0xC`), and `dst[5] = src[4]` (the ginseng). So PP is derived at load and not stored, and roster `+4` becomes dungeon `+5`. [blue-verified]
+- Roster `+1` (`moveFlags2`) is ignored on the way in (`dst[1] = 0`). At a new game it is `0x02` in the first two moves of both in-use records (one state, runtime), so the save drops a nonzero value. The code that writes it was not found. [blue-verified reads; runtime for one state]
+- Roster `+5` is not read by the converter and is unused in this format. [blue-verified]
+- The dungeon `Move` (info `+0xF4`) keeps all six bytes; the quick-save serializer `ov_0001::0219A444` writes all six. [blue-verified]
+- Which code sets the ginseng of a roster move after a dungeon is **[open]**: no info-to-roster copy of moves was found. [hypothesis]
+
 ### Roster record +6 is the species id (#170 P3b)
 
 Verdict: **[blue-verified]**, high. Roster `+6` (s16) is the species id (Red `Pokemon.speciesNum`, Red `0x08`). The mail record's `+0xC` (`clientSpecies`) therefore copies a species id. The roster is 413 records of `0x40` bytes at `0x020DF484`; record `+0` bit 0 is "in use".
