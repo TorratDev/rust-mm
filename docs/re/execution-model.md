@@ -142,7 +142,7 @@ The scene runner is `FUN_0206F7EC`. Its state is `DAT_0207035C` (`0x02133CE0`). 
 
 ### Ground chain and overlay 0 (#160)
 
-Investigator A's findings. The scene table is not in this file: the maintainer decides whether a derived bank table may be committed. Tag: **blue-verified** (decompile and xrefs, in overlay 0 unless stated).
+Investigator A's findings. **Decision:** no scene-to-bank table is committed, derived or raw. A tool derives each scene's bank from the user's own dump; the method is in [Where the map value comes from](#where-the-map-value-comes-from-160-p3). Tag: **blue-verified** (decompile and xrefs, in overlay 0 unless stated).
 
 | Routine | Role |
 |---------|------|
@@ -163,7 +163,41 @@ Investigator A's findings. The scene table is not in this file: the maintainer d
 
 `psVar1` is `DAT_02143130`, a pointer to the current bank short.
 
-**Mapping rule (from the code, not a table).** The bank index is the map value, except that map values 3 and 4 both give bank 3. The index then selects `gGroundBankTable[bank * 8]` in `GroundStation_LoadBank`.
+**Mapping rule (from the code, not a table).** The bank index is the map value, except that map values 3 and 4 both give bank 3. The index then selects `gGroundBankTable[bank * 8]` in `GroundStation_LoadBank`. Opcode 9 is an exception, and so is the adjusted map; see the caveats below.
+
+### Where the map value comes from (#160 P3)
+
+**[blue-verified]** for the sites and the variable reads, unless tagged. Source: the decompile of `FUN_ov_0000__021421CC` and the x-refs of the three BSS words. Names are the Ghidra `FUN_` names.
+
+The map value is never stored in a scene table. It is an operand of a script command, or the content of a script variable, read by the ground script interpreter `FUN_ov_0000__021421CC`. The interpreter keeps three shorts in overlay 0's BSS: the current map at `0x0215D340` (`DAT_02143158`), the adjusted map at `0x0215D33C` (`DAT_0214315c`), and the current bank at `0x0215D348` (`DAT_02143130`). `FUN_ov_0000__021481EC` sets all three to -1 at reset.
+
+Script commands are 0x18-byte records at the script cursor. Byte 0 of word 0 is the opcode. Word 1 is the operand, and `0xFFFFFFFF` means "use the current value". The bank is written only at four sites, all inside `FUN_021421CC`:
+
+| Opcode | Map value used | Bank written |
+|--------|----------------|--------------|
+| 8 (shares a label with 9; calls at `0x02142A54` and `0x02142A68`) | word 1, stored first into the current map | `FUN_0214D1F0(current map)`. The adjusted map gets `FUN_0214D208(map)`, but it is not used for the bank. |
+| 9 (other branch of the same label, `0x02142AC0`) | word 1 | copied unfolded from the adjusted map, which is set to the map value itself. No 3/4 fold and no `FUN_0214D208`. |
+| `0x1D` and `0x1E` (label `0x021431AC`; the call at `0x021431F0`) | word 1, or the current map when word 1 is `0xFFFFFFFF` | `FUN_0214D1F0(map)`, then `FUN_0214D420(bank, group, sector, flag)`. The current bank is set if it changed. |
+| `0xEC` (`0x021460B8`) | `FUN_02020F74(param_1 + 0x1D, halfword 1)`: the value of the script variable whose id is halfword 1 | `FUN_0214D1F0(var)`, then the current bank, then `FUN_0214D3A0(bank)`. |
+
+`0xEB` and `0xEA` (group-sector load), and the `FUN_0214D510` call at `0x02146064`, do not compute a bank. They pass the existing current bank.
+
+**The script variable getter (`FUN_02020F74`, ARM9 `0x02020F74`).** It takes `(base, id)`, where `base` is 0 for global and scene variables, and `param_1 + 0x1D` (a per-script local block) for ids of `0x400` and above. For ids below `0x400` the descriptor is at `0x02098060 + id * 0x10`, and the data is the block at `0x0210E640` plus the offset in the descriptor. The type is the short at descriptor `+0`. **[blue-verified]** for the layout; **[medium]** for the type-8 branch, which is computed by a switch (ids 2, `0x18`, and `0x21` to `0x27`; for example id 2 returns `FUN_0202A040()`).
+
+The current map is scene variable `0x11`, a signed 16-bit value at `0x0210E670`. The interpreter writes it at the end of opcodes 8 and 9 (`FUN_02020B48(0, 0x11, map)`). So a tool that reads the variable block at `0x0210E670` gets the current map without running the scripts. Variable `0x12` receives a field from the map's 0xC-byte record in the table at `0x020BF650`. **[blue-verified]** for 0x11 and 0x12. The other scene variables are not traced.
+
+**Caveats to the mapping rule.**
+
+- Opcode 9 stores the bank unfolded, so a map value of 3 or 4 gives bank 3 through opcodes 8, `0x1D` and `0x1E` only. **[blue-verified]** for the code. **[hypothesis]** that real scripts use opcode 9 with 3 or 4 is not checked.
+- The adjusted map from `FUN_0214D208` is a different number. It adds an offset from `FUN_0202A040()` for a few map ids, and for others uses scene variables `0x29` and `0x2A`. It does not select the bank. **[blue-verified]**
+- Opcode `0xEC` needs the value of its variable, which the scripts do not give. A static walk cannot resolve it without the variable's initial or saved value.
+
+**Derivation methods.** Neither method commits a table. Both run on the user's own dump, and the pairs are written only to a scratch directory outside the repository.
+
+1. **Static walk.** Start from the scene's entry script, and walk the scripts it reaches. For each 0x18-byte command with opcode 8, 9, `0x1D` or `0x1E`, read word 1 (if it is `0xFFFFFFFF`, use the previous map). The bank is 3 for opcodes 8, `0x1D` and `0x1E` when the map is 3 or 4, and the map itself otherwise. Opcode 9 is always unfolded. For `0xEC`, use the variable's initial or saved value, or method 2.
+2. **Runtime.** With py-desmume, break on `GroundStation_SetBank` (`ov_0000::0214FC50`), or read the current bank short at `0x0215D348` and the current map at `0x0215D340` (variable `0x11` at `0x0210E670`) at each scene start. This catches opcode `0xEC` and the paths that the static walk misses. Not run for this section.
+
+The entry script of each scene is not yet traced: the callers of `FUN_021461D0` (`FUN_021505D0`, `FUN_0215574C` and `FUN_02156CD8`) were not decompiled here. **[open]**, moved to a follow-up issue ([#258](https://github.com/TorratDev/rust-mm/issues/258)).
 
 **Overlay 0 and the bank overlays (#160 P2, blue-verified for the address ranges).** Overlay 0 is at `0x02138860` with size 150016 (`0x24A00`). Its BSS is at `0x0215D260` with size 1216, so overlay 0 with its BSS ends at `0x0215D720`. The ground banks (overlays 10 to 144) load at `0x0215D720`, where overlay 0 ends. So a bank does not overwrite overlay 0's code or BSS. The ground code (`FUN_021421CC`, `FUN_0214D510`, `FUN_0214D420`, `FUN_0214D3A0`, `FUN_0214D4FC`, `FUN_0214D1F0`, `GroundStation_SetBank` and `GroundStation_LoadBank`) is in overlay 0 and keeps running while a bank is loaded. Overlays 1 and 7 share the address `0x02138860` with overlay 0, so loading either one replaces it.
 
@@ -171,12 +205,13 @@ Investigator A's findings. The scene table is not in this file: the maintainer d
 
 Runtime [blue-verified] (RAM bytes at the runner entry, not hook bookkeeping): overlay 0 code (`10402de9 44109fe5` at `0x0214FCA4`) is intact at the runner entries for scene ids `0xF` (frame 74), `0x10` (frame 614) and `0` (frame 2575), and after five bank loads. Probe [`verification/v7-trace/overlay0_residency.py`](../../verification/v7-trace/overlay0_residency.py); command and result in [`verification.md`](../verification.md#160-p2--overlay-0-residency-at-the-scene-runner). The current-bank variable at `0x0215D704` (inside overlay 0's BSS) reads -1 before the first bank load.
 
-Ids 1 to `0xC`: [static only]. No input reached them. **Not verified:** the reload after a dungeon and the overlay-7 path were not seen at runtime (the run stops inside the dungeon); the load-failure path is untested (retail `FUN_02029dac` does nothing); runner entries during the dungeon were not covered. The text overlay's unload at `0201DBE8` is an open question below.
+Ids 1 to `0xC`: [static only]. No input reached them. **Not verified:** the reload after a dungeon and the overlay-7 path were not seen at runtime (the run stops inside the dungeon); the load-failure path is untested (retail `FUN_02029dac` does nothing); runner entries during the dungeon were not covered. The text overlay's unload at `0201DBE8` is settled in [Into a dungeon and back](#into-a-dungeon-and-back) (#160 P4).
 
 **Not verified**
 
-- The meaning of `FUN_02020F74` and of the default at `DAT_02143158` (a read of these gives the map value for each command).
-- The list of ground scenes 0 to C and the bank for each. This needs `gGroundBankTable` as a derived table, which the maintainer must approve before it is written down.
+- The other scene variables read by `FUN_02020F74` (apart from `0x11` and `0x12`) are not traced. The meaning of `FUN_02020F74` and of the current-map pointer `DAT_02143158` is in [Where the map value comes from](#where-the-map-value-comes-from-160-p3).
+- The list of ground scenes 0 to C and their banks is not written down: no table is committed (see the decision above). A tool derives it from the user's dump.
+- The entry script of each scene (#160 P3-d): the callers of `FUN_021461D0` are not traced. Moved to a follow-up issue ([#258](https://github.com/TorratDev/rust-mm/issues/258)).
 - The jump table behind `FUN_0214D4FC` (not recovered at `0x0214D508`). It may also map scenes to banks.
 - Whether the `case 0xEC` and command paths are the only ways `*psVar1` changes (`FUN_02147B48` and other writers were not checked).
 - Residency of overlay 0 for scene ids 1 to `0xC`: not reached by the boot run, so only the decompile supports it (see the residency paragraph above).
@@ -197,9 +232,9 @@ Investigator B's findings. Tags: **blue-verified** (structure and register addre
 `RunGameMode_Async` calls `LoadAndRunQuickSaveDungeon_Async` (`0201E204`), which allocates the dungeon buffers (`MemoryAlloc(…, 7)` twice), reads the quicksave if the setup asks for it, then calls `LoadAndRunDungeon_Async` (`0201DB70`):
 
 1. `NDS_UnloadOverlay_GroundMain` (overlay 0 out).
-2. Load the language text overlay (2–6) and overlay 1.
+2. Load and start the language text overlay (2–6), then call `FS_UnloadOverlay` on it (`FUN_0207BB28`, called at `0201DBE8`). That unload only drops the overlay's registered callbacks in its address range. It leaves the image in RAM, so the text tables stay resident through the dungeon. Then load and start overlay 1. **[blue-verified]** for the calls, and for the residency at runtime on one dump (#160 P4, see [`verification.md`](../verification.md#160-p4--text-overlay-residency-across-a-dungeon-run)).
 3. `RunDungeon_Async` (`0206DC20`, in the ARM9 although it calls into overlay 1): the dungeon itself, including RNG seeding ([`rng.md`](rng.md)).
-4. Unload overlay 1 and the text overlay, then `NDS_LoadOverlay_GroundMain` (overlay 0 back).
+4. Unload overlay 1 only (the text overlay is not unloaded a second time), then `NDS_LoadOverlay_GroundMain` (overlay 0 back).
 
 In Red, step 2 is a stub with a comment that the NDS version loads the dungeon overlay there.
 
@@ -211,8 +246,6 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 - The writer of the flag word that `FUN_02018ACC` tests (see [#159](rng.md#per-frame-steps-159)). Its caller is the IRQ dispatcher (VBlank, IRQ 0; [`io.md`](io.md#frame-path)).
 - Overlay 7 on the real title path (#161 P3). The screen is seen only under fault injection (see [Overlay 7](#overlay-7-the-choice-5-screen-161-p3)). The fresh-boot title menu shows New Game and Adventure Log only, so choice 5 is not offered in that boot. Whether state `0xF` of `FUN_020628BC` runs with a save is open and needs a save.
 - Scene-runner inner phases `0x0` to `0x11` of states 1 and 2 (the switch on `DAT_02070358`, not named), and the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (their readers are not traced). The phase names and the variable `0x19` values are in [Scene runner states](#scene-runner-states-161-p1).
-- Which bank each ground scene uses.
-- Text overlay (#160 P2e): in `LoadAndRunDungeon_Async` the decompile calls `FS_UnloadOverlay(0, lang id)` at `0201DBE8`, right after loading the language overlay (2 to 6) and before overlay 1. Step 2 of [Into a dungeon and back](#into-a-dungeon-and-back) says the text overlay is loaded for the dungeon, so the two disagree. Not checked at runtime; the text overlay's bytes at `0x021B4900` during a dungeon would settle it.
 - Whether modes 2 and 3 are reached in play.
 - Names for the IME helpers (proposed in #157 P2, awaiting confirmation) and the rename of `FUN_0201DE24` to `RemoveMoneyAndRandomItems` (proposed in [Scene graph](#scene-graph), awaiting confirmation).
 - Where the main loop of `RunDungeon_Async` advances a turn (the V7 trigger, #49).
