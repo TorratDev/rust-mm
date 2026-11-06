@@ -495,18 +495,19 @@ Lookup and read:
 
 ### Consumers at boot and in `GameLoop_Async`
 
-**[blue-verified]** for the names and call sites, high; the destination pointers are **low** confidence.
+**[blue-verified]** for the names and call sites, high. The destinations of the three parameter files are **[static]** (#178 P2, read from the code and the literals); the run-time selector of the two language-suffixed files is not read.
 
 | Consumer | Call site | File key | Archive | Bytes |
 |----------|-----------|----------|---------|-------|
 | `LoadKanjiFonts` (`FUN_020160A4`), boot | `0x02000CEC` | `kanji_a`, then `kanji_b` | 2 | `kanji_a` 0xA000, `kanji_b` 0x6400 |
-| `LoadMonsterParameters` | `0x0201F304` in `GameLoop_Async` | `monspara` | 2 | 0xA000 |
-| `LoadWazaParameters` (`FUN_0200B888`) | `0x0201F494` in `GameLoop_Async` | `wazapar{a,g,f,i,s}` | 2 | 0x18000 |
-| `LoadItemParameters` (`FUN_02008614`) | `0x0201F490` in `GameLoop_Async` | `itempar{a,g,f,i,s}` | 2 | 0xC000 |
+| `LoadMonsterParameters` (`FUN_02003794`) | `0x0201F304` in `GameLoop_Async` (`FUN_0201F2E4`) | `monspara` | 2 | 0xA000, to `0x06608000` |
+| `LoadWazaParameters` (`FUN_0200B888`) | `0x0201F494` in `GameLoop_Async` | `wazapar{a,g,f,i,s}` | 2 | 0x18000, to `0x06408000` |
+| `LoadItemParameters` (`FUN_02008614`) | `0x0201F490` in `GameLoop_Async` | `itempar{a,g,f,i,s}` | 2 | 0xC000, to `0x06214000` |
 
-- The suffix of `wazapar` and `itempar` is chosen by `GetLanguage()`. If it returns -1, the suffix is 0.
-- The name keys for these files are at `0x0208FA78`, `0x02091CD0` and `0x020913AC`. The findings do not map each key to its row.
-- `FUN_02028628` opens archives 3 and 5, with names built by `sprintf` from an ID. Its caller `FUN_02027C58` is not mapped.
+- **[static]** `monspara` is copied at boot. `FUN_02003794` loads it through `FUN_01FF9FC4(dst, src, n)` with `dst = 0x06608000` and `n = 0xA000`; it is called unconditionally from `FUN_0201F2E4` (#178 P2a, high).
+- **[static]** The `wazapar` and `itempar` variants are chosen by an index: `FUN_0202A040()` reads `*0x020E0488` at run time (**runtime not run**; the value is not read statically), and -1 maps to 0. The name `GetLanguage()` used in earlier notes is taken to be the same function (**[hypothesis]**, not checked). The variant names are in arrays at `0x02091CD0` (`wazapara` a, g, f, i, s) and `0x020913AC` (`itempara` a, g, f, i, s). `FUN_0200B888` and `FUN_02008614` open them with `FUN_0201A56C(name, 2)` (#178 P2b, P2c; structure high, selector runtime-only).
+- **[static]** The `monspara` name is at `0x0208FA78`.
+- **[static]** `FUN_02028628` opens archives 3 and 5. Its names are `ax%03d` (format at `0x020B2AFC`, filled with the species id), `wmapspr` (mode 3), `palet` (mode 5), and a 4-entry array at `0x020B2980` (`wmp2pal`, `wmp2mcc`, `wmp2font`, `wmp2font1`). `FUN_02029734` takes the names `ax%03d` (`0x020B2C4C`), `wmapspr` (`0x020B2C54`, mode 3), `palet` (`0x020B2C5C`, mode 5), and a 4-entry array at `0x020B2B3C` (`wmappal`, `wmapmcc`, `wmapcani`, `wmapfont`). The names are verified; the slot mapping is medium confidence (#178 P1a, P1b). The caller `FUN_02027C58` calls `FUN_02029734` and reads no names itself; its loop is not decoded. The meaning of the modes 2, 3 and 5 is not checked. **Open, see #277.**
 
 The names `LoadMonsterParameters`, `LoadWazaParameters` and `LoadItemParameters` are the ones used in [`execution-model.md`](execution-model.md) and [`data-tables.md`](data-tables.md).
 
@@ -516,17 +517,17 @@ The names `LoadMonsterParameters`, `LoadWazaParameters` and `LoadItemParameters`
 
 Anomalies the findings did not resolve:
 
-- The copy destinations `0x06608000` (monster), `0x06408000` (moves) and `0x06214000` (items) are not obviously RAM addresses. The cause is unknown.
-- `FUN_02018C98` reads into `0x02094E58`, which is also where an embedded `AT4PX` sub-file sits. Either the variable is not what it looks like, or the read overlaps that data.
-- The string `"/sound.sbin"` at `0x020973B4` is referenced from `FUN_0201C070` (at `0x0201C0BC`). How it is used is not resolved.
+- **[static]** The copy destinations `0x06608000` (monster), `0x06408000` (moves) and `0x06214000` (items) lie in the `0x06000000` range. That is an address-range observation only; what each copy is for was not traced (#178 P2a–c).
+- **[static, corrected]** `0x02094E58` is not a read target. It is static data in the initialised ARM9 image (`0x02000000`–`0x020E0ABF`), starting with the bytes `41 54 34 50` (`AT4P`), followed by the pointer `0x0219F958` and a 16-bit table. Its references are the reads in `FUN_02018B44` (`02018C04`) and `FUN_02018C98` (`02018CD4`), and the literals at `02018C4C` and `02018D0C`. `FUN_02018B44` copies 0xC000 bytes from it into a buffer from `FUN_01FFA054` and passes that buffer to the PX decoder `FUN_02013388` with 0xC000. `FUN_02018C98` passes the same literal to `FUN_0207B370`, whose behaviour is not read. So it is a source, not a destination, and the earlier overlap worry does not apply (#178 P2d, P2e, medium-high).
+- **[static]** The string `"/sound.sbin"` at `0x020973B4` is the second argument of `FUN_02072B24(DAT_0201c1a0, "/sound.sbin", buf, 0)`, called from `FUN_0201C070` (pool word `0x0201C1A4`, call at `0x0201C0BC`). `FUN_0201C070` is called once, from boot at `0x02000CC8`. It allocates 0x80000 bytes (`FUN_0207773c`) and splits them (`FUN_02072dbc`). `FUN_02072B24` declares that argument but never reads it; it passes its `param_3` to the reader `FUN_02072908`. Medium. Where the name is consumed is not resolved. **Open, see #277.**
 
 ## Decompression
 
 ### PX decoder
 
-**[blue-verified]** for the decoder, high; the caller list is **medium**. `PxDecompress` (`FUN_02013388`) accepts a header with the magic `AT4P` (header size 0x12) or `AT3P` (header size 0x10). Byte 4 `'N'` selects raw nibble mode. Otherwise the decoder reads the eight control nibbles and decodes literal and back-reference tokens. Helpers: `FUN_02013260` writes a byte, `FUN_020132D8` reads one back, `FUN_02013344` initialises the output, and `FUN_02013230` finishes it.
+**[blue-verified]** for the decoder, high; the caller list is **medium**. `PxDecompress` (`FUN_02013388`) accepts a header with the magic `AT4P` (header size 0x12) or `AT3P` (header size 0x10). Byte 4 `'N'` selects raw nibble mode. Otherwise the decoder reads the nine control bytes at 7-15 and decodes literal and back-reference tokens. Helpers: `FUN_02013260` writes a byte, `FUN_020132D8` reads one back, `FUN_02013344` initialises the output, and `FUN_02013230` finishes it.
 
-The control nibbles and the size field agree with [`formats/compression.md`](../formats/compression.md). The `AT3P` variant is new there. The byte-4 mode is not in that document, and it does not match the five-byte magic `AT4PX` given there. See [Open questions](#open-questions).
+The header, as read statically (#178 P4): the magic is four bytes, `AT4P` (header 0x12) or `AT3P` (header 0x10), compared byte by byte. Byte 4 is a mode byte: `'N'` selects raw mode, which copies from offset 7, with the count in bytes 5–6. Bytes 5–6 are a 16-bit end bound, not a 24-bit size. For `AT4P` only, bytes 0x10–0x11 must equal the caller's expected size when `param_2 != 0`. The compare accepts only these two magics; any other input returns 0. The five-byte form `AT4PX` in [`formats/compression.md`](../formats/compression.md) has `X` at byte 4, which is not `'N'`, so it takes the coded path (static inference). The other mode values are not enumerated. **Open, see #277.**
 
 ### Dispatcher
 
@@ -539,7 +540,8 @@ The control nibbles and the size field agree with [`formats/compression.md`](../
 ### Not found, and a negative
 
 - **[blue-verified]** A negative result: `FUN_01FF9FC4` is a trampoline into `FUN_0207853C`, a halfword-aligned copy. It is not a decompressor. Its roughly 50 callers are copies, not decoders.
-- **Not verified:** BLZ (overlays are not in `arm9.bin`), LZ10, LZ11, Huffman and the ground BPC codec are not located in the ARM9. A magic search for `AT4P` found only the embedded sub-file at `0x02094E58`. BLZ is listed for the ARM9 static area in [`formats/compression.md`](../formats/compression.md) and [`nds-container.md`](../formats/nds-container.md); the findings here cover only decoder code in `arm9.bin`. Finding the other decoders depends on [#42](https://github.com/TorratDev/rust-mm/issues/42) and [V8 (#18)](../verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses), and the ground BPC codec on [#160](https://github.com/TorratDev/rust-mm/issues/160).
+- **[static, negative, low confidence]** No BLZ, LZ10, LZ11 or Huffman decoder was found by magic search. `FUN_02013388` is the only PX decoder found. Absence is **not proven**. A magic search for `AT4P` found only the static sub-file at `0x02094E58`. The ground BPC codec is not located (#160).
+- **Not verified:** BLZ (overlays are not in `arm9.bin`), LZ10, LZ11, Huffman and the ground BPC codec are not located in the ARM9. **Open, see #277** (decoders). BLZ is listed for the ARM9 static area in [`formats/compression.md`](../formats/compression.md) and [`nds-container.md`](../formats/nds-container.md); the findings here cover only decoder code in `arm9.bin`. Finding the other decoders depends on [#42](https://github.com/TorratDev/rust-mm/issues/42) and [V8 (#18)](../verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses), and the ground BPC codec on [#160](https://github.com/TorratDev/rust-mm/issues/160).
 
 ## Open questions
 
@@ -573,9 +575,12 @@ Screens and fades:
 
 Files:
 
-- The copy destinations `0x06608000`, `0x06408000` and `0x06214000`. Not obviously RAM addresses; the cause is unknown. The findings suggest checking them with the py-desmume trace before any claim is made.
-- The read target `0x02094E58` overlaps an embedded `AT4PX` sub-file.
-- The `/sound.sbin` string at `0x020973B4`, referenced from `FUN_0201C070`: its use is unresolved.
-- Which files use the `AT3P` header, if any. Not checked.
-- Byte 4 of the PX header: the findings say `'N'` selects raw nibble mode, but `formats/compression.md` gives the five-byte magic `AT4PX`. Check the mode byte against the decompile.
+- The slot mapping of the world-map names (`FUN_02028628`, `FUN_02029734`) and the loop of `FUN_02027C58`, which calls `FUN_02029734`. **Open, see #277.**
+- The meaning of the modes 2, 3 and 5 of `FUN_0201A56C` and `FUN_0201A54C`. **Open, see #277.**
+- The consumer of `"/sound.sbin"`, through `FUN_02072B24` and `FUN_02072908`. **Open, see #277.**
+- Which files use the `AT3P` header, if any. The file list cannot be checked without a ROM dump (not available here). **Open, see #277.**
+- The decoders: BLZ, LZ10, LZ11, Huffman and the ground BPC codec are not found by magic search, which is not proof of absence. **Open, see #277.**
+- The runtime selector `*0x020E0488` that chooses the `wazapar` and `itempar` variants (**runtime not run**). **Open, see #277.**
+- Other values of the PX mode byte (byte 4) besides `'N'`. **Open, see #277.**
+- Closed statically: the copy destinations are in the `0x06000000` range (above); the read target `0x02094E58` is a static `AT4P` source, not a destination (above).
 - BLZ, LZ10, LZ11, Huffman and the ground BPC codec: not located in the ARM9. Depends on [#42](https://github.com/TorratDev/rust-mm/issues/42) and [#18](https://github.com/TorratDev/rust-mm/issues/18) for BLZ, and on [#160](https://github.com/TorratDev/rust-mm/issues/160) for the ground banks.
