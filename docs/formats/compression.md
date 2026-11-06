@@ -35,7 +35,7 @@ Header, as read statically from `FUN_02013388` (`PxDecompress`, [`re/io.md`](../
 | Offset | Size | Field |
 |--------|------|-------|
 | `0x00` | 4 | magic `AT4P` (header 0x12) or `AT3P` (header 0x10). The decoder compares it byte by byte; any other magic returns 0. |
-| `0x04` | 1 | mode byte. `'N'` (`0x4E`) selects raw mode: copy from offset 7, count in bytes 5–6. Other values take the coded path. The other values are not enumerated (open, see #277). |
+| `0x04` | 1 | mode byte. `'N'` (`0x4E`) selects raw mode: copy from offset 7, count in bytes 5–6. Other values take the coded path. The other values are not enumerated (open, see #280). |
 | `0x05` | 2 | `u16` container length, header included. The coded loop runs while the position, counted from the start of the header, is below it. In `'N'` mode the same field is the raw byte count. |
 | `0x07` | 9 | nine control bytes at offsets 7–15, read as `f[0..8]`. Each is compared, plus 3, with the token's high nibble plus 3, and mapped to codes `0x1F` down to `0x17`. Byte 15 is the ninth control value, treated like the other eight. |
 | `0x10` | 2 | `AT4P` only: decoded size, checked against the caller's expected size when `param_2 != 0`. Absent for `AT3P`. |
@@ -43,7 +43,7 @@ Header, as read statically from `FUN_02013388` (`PxDecompress`, [`re/io.md`](../
 
 The five-byte form `AT4PX` in older notes has `X` at byte 4. `X` is not `'N'`, so it takes the coded path. This is a static inference, not checked against the decoder's mode table.
 
-**PKDPX is not accepted by this decoder.** The compare in `FUN_02013388` admits only `AT4P` and `AT3P`, so the 32-bit `PKDPX` variant described in the crate is not supported by Blue's decoder as read. Whether another routine handles it is open (**#277**). The crate's PKDPX code has no Blue evidence.
+**PKDPX is not accepted by this decoder.** The compare in `FUN_02013388` admits only `AT4P` and `AT3P`, so the 32-bit `PKDPX` variant described in the crate is not supported by Blue's decoder as read. Whether another routine handles it is open (**#280**). The crate's PKDPX code has no Blue evidence.
 
 **Entry and dispatcher** (blue-verified, [`re/io.md`](../re/io.md#decompression)). The decoder is `FUN_02013388` (`PxDecompress`). A dispatcher, `FUN_02013858`, jumps through the slot at `0x02013864`, which holds `0x02013388`. The decoder accepts the `AT3P` magic (header 0x10) as well as `AT4P` (header 0x12). The caller list is medium confidence; only the halt-screen caller is known to decode a particular file.
 
@@ -58,7 +58,7 @@ The pattern rule was settled on Blue's portraits: the other three candidate read
 
 - **BLZ**: ARM9 static area and all 145 overlays ([`nds-container.md`](nds-container.md)).
 - **AT4PX**: inside the pack archives (portrait and learnset payloads, tilesets, title and halt screens).
-- **Nitro LZ10/LZ11/Huffman/RLE**: not found in this dump. Sub-files starting `10 00 00 00` (`hpNfont*`, `fontsp`) are 8x8 fonts with a glyph count of 16, not LZ10. **[static, negative, low confidence]**: a magic search of the ARM9 found no BLZ, LZ10, LZ11 or Huffman decoder; `FUN_02013388` is the only PX decoder found. Absence is **not proven**. Open, see **#277**.
+- **Nitro LZ10/LZ11/Huffman/RLE**: not found in this dump. Sub-files starting `10 00 00 00` (`hpNfont*`, `fontsp`) are 8x8 fonts with a glyph count of 16, not LZ10. **[static, negative, low confidence]**: a magic search of the ARM9 found no BLZ, LZ10, LZ11 or Huffman decoder; `FUN_02013388` is the only PX decoder found. Absence is **not proven**. Open, see **#280**.
 - **Ground BPC tiles**: compressed with a scheme not identified yet ([`maps.md`](maps.md)).
 
 `message_*.str` is **not compressed**: `20 34 00 00` is the first entry of a `u32` offset table (0x3420 / 4 = 3336 strings, [`text.md`](text.md)).
