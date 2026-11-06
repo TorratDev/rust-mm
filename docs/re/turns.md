@@ -145,12 +145,75 @@ Tag blue-verified for the code path, confidence high. Not verified: the body of 
 
 **Run decision** (`02166B10`, the leader's input and action selection). Tag blue-verified for the write pattern; red-hypothesis for the mapping of the fields to Red's names. Confidence medium.
 
-- When B is held (`*keys & 2`) or the press flag is set, and the belly test `FUN_0200B9A4` on the leader is nonzero: the leader's action index (`+0x46`) becomes 0 (run), and the run flag `dungeon+0x65C` becomes 1. Red's names: `actionUseIndex` and `unk28`.
+- When B is held (`*keys & 2`) or the press flag is set, and the belly test `FUN_0200B9A4` on the leader is nonzero: the leader's action index (`+0x46`) becomes 0 (run), and the run flag `dungeon+0x65C` becomes 1 when `info+0xAC` is not 2 (not confused). Red's names: `actionUseIndex` and `unk28`.
 - Otherwise the action index becomes 1 (walk), and the run flag is not set.
 
-The belly test is not yet settled; see the open questions.
+The belly test is settled in Blue; see [Run flag and belly test](#run-flag-and-belly-test-181-p3). The exact conditions are in that section.
 
 **Run frames** (`02140FAC`, `RunLeaderTurn_Async`). When `dungeon+0x65C` or `dungeon+0x663` (Red `unk2F`) is nonzero and the leader's display did not act, it calls `DungeonRunFrameActions(0xC)`. Tag blue-verified, confidence high for the checks. Red: `unk28 || unk2F`.
+
+### Run continuation checks (#181 P1)
+
+**[blue-verified]** for the order and the tests; the labels are ours. Source: static decompile of `ov_0001::02165F78` (`FUN_ov_0001__02165F78`, 167 lines) and `FUN_ov_0001__021664B0`. The check is called from the leader's input loop in `02166B10`, lines 116 to 124. Confidence: high for the order and the conditions, medium for the labels.
+
+**Where it is decided.** At the top of the leader's input loop (`02166B10`), when the run flag `dungeon+0x65C` is set, the code calls `FUN_ov_0001__02165F78`. If it returns nonzero, the leader gets action `+0x42 = 2` (walk) with `+0x46 = 0`, and the function returns. If it returns 0, the code calls `FUN_ov_0001__021664B0`, which is StopRunning.
+
+**StopRunning** (`FUN_ov_0001__021664B0`, `0x021664B0`). It sets `+0x65D |= +0x65C`, sets `+0x65C = 0`, and sets `+0x17C` and `+0x17E` to `0xFFFF` (clearing the touch or route target). Then it waits, one frame at a time (`FUN_0213AFA8(0x54)`), while the R key (mask `0x100`) is held and `+0x65D` is set. **[blue-verified]**
+
+Other callers of StopRunning: `FUN_ov_0001__0215439C` (`0x02154528`), `FUN_ov_0001__02154910` (`0x02154AAC`), `FUN_ov_0001__021861E8` (DoEndOfTurnEffects, `0x02186640`, when the belly reaches 0), `FUN_ov_0001__02195104` (4 sites) and 4 more sites in `02166B10`. Those events also stop a run. Only the belly-empty one is classified here. **[blue-verified]**
+
+**Stop conditions of `FUN_ov_0001__02165F78`.** A return of 0 stops the run. Setup: E is the leader (`FUN_0219C23C`); (x, y) is `E+4`, `E+6`; the direction is `info+0x44` (0 to 7; odd means diagonal, tested as `dir & 1`). The step offsets come from two direction tables (pool words `0x021664A8` and `0x021664AC`, stride 4). The tile lookup is `FUN_ov_0001__02149A08` (stride `0x14`: `+0x00` terrain word, `+0x05` room, `+0x06` walkable-neighbour mask, `+0x0C` monster, `+0x10` object). The entity type comes from `02142ADC`: 1 monster, 2 trap, 3 item.
+
+In order:
+
+1. Run flag `+0x65C` is zero: stop.
+2. An object on the leader's own tile (`tile+0x10` nonzero; an item or a trap): stop.
+3. `FUN_02165F58(E, x, y)` is nonzero: stop. It calls `FUN_021821E4`, which returns 1 for a position that is out of bounds, a wall (terrain `& 0x10`), a non-monster entity, or terrain that does not match the movement type from `FUN_0218267C(info+2)`. For the leader's own tile, this means standing on terrain that its movement type does not treat as plain.
+4. `FUN_02181384(E, dir)` is zero: stop (cannot step ahead). It is false when the tile ahead has wall bit `0x10`, has a monster (`+0x0C`), or the own tile's walkable-neighbour mask (`+0x06`) lacks the bit for `dir` (table at pool `0x02181418`).
+5. Room edge or doorway. `r` is the own tile's room (`+0x05`). If `r` is `0xFF` (corridor), the tile ahead must also be `0xFF`, or stop (entering a room). If `r` is not `0xFF`, own terrain bit `0x8` (`TERRAIN_NATURAL_JUNCTION`): stop.
+6. Monsters and stairs ahead. For the three tiles `dir-1`, `dir` and `dir+1` (mod 8): a monster on one of them, or terrain bit `0x200` (stairs), stops.
+7. Items. A 3 × 3 scan around the leader. An item (type 3) on a tile that is not one of the three behind the leader (`dir+3`, `dir+4`, `dir+5`) stops. The decompile drops the argument of `02142ADC`; the disassembly at `0x021661E4` to `0x02166200` shows that `r0` is the object pointer.
+8. Traps. A visible trap (type 2; `trap+0x20` nonzero, or the dungeon byte at `+0x15FA7` nonzero) stops. For a cardinal heading (`dir` even) only the cross tiles, in the leader's row or column, count. For a diagonal heading every tile of the 3 × 3 counts.
+9. Room change beside the path. For each cardinal neighbour (not the tile directly behind, and not blocked by the helper in check 3): when `r` is not `0xFF` and the neighbour's room differs from `r`, stop.
+10. Side openings (cardinal heading only). For the three tiles on each side, perpendicular to the heading: if the middle one is open (`FUN_02165F58 == 0`) and either corner is blocked (nonzero), stop. This is the corridor junction test: a side branch or a doorway has an open middle and a blocked corner.
+11. Otherwise return 1. A diagonal heading skips check 10.
+
+So the junction checks are 5, 9 and 10; items are 7; monsters are 4 and 6, and traps 8; stairs are 6.
+
+**Not verified:** the meaning of `+0x15FA7` and of `entity+0x20` (**[hypothesis]**); the movement-type helper `FUN_0218267C` and its return values; the contents of the direction tables; the Red equivalent (the check order is not compared with Red's `CheckLeaderTile` in this pass).
+
+### Run flag and belly test (#181 P3)
+
+**Run flag.** **[blue-verified]** for the behaviour; **[red-hypothesis]** for the name. Confidence: high for "run flag", medium for "= Red `unk28`".
+
+- `dungeon+0x65C` is set to 1 at one site (`02166B10`, line 552). It is cleared only by StopRunning. It is read by `FUN_ov_0001__02165F78` (check 1), by `02166B10` at line 116, and by `RunLeaderTurn_Async` (`02140FAC`, together with `+0x663`).
+- `+0x65D` is "was running": StopRunning ORs the run flag into it, and `02166B10` line 701 clears it.
+- `+0x663` is set by `FUN_021418D4(1)` and cleared at line 72.
+- The match to Red `unk28` (and `+0x663` to `unk2F`) rests on the offset-shift table in [`structs.md`](structs.md) and the table in this file, where `+0x65C` is Red `0x66C`. It does not rest on a new read.
+
+**Run decision and belly test.** **[blue-verified]** for the conditions; medium for the labels. Lines 543 to 553 of `02166B10`:
+
+- If `(keys & 2) == 0` and the touch-route flag is false, or `FUN_0200B9A4(info+0x10E) == 0`, the action index `+0x46` becomes 1 (walk), and the run flag stays 0.
+- Otherwise, if `info+0xAC` is not 2 (not confused), the run flag `+0x65C` becomes 1. In both cases `+0x46` becomes 0 (run).
+
+The same belly test gates the B+A case (lines 180 to 183: action 1, and `+0x663 = 1`) and lines 577 to 581 (B held, same test).
+
+**The belly test (settles P5.1).** `FUN_0200B9A4` reads the belly at `info+0x10E`. The belly is two signed halfwords: the low one (`+0x10E`) is the integer part, and the high one (`+0x110`) is a fraction in thousandths. **[blue-verified]**
+
+- The belly decrement, `FUN_0200BAB8` (called from `021861E8`, line 106), subtracts halfword by halfword. When the high halfword goes below 0, it adds one thousand to it and subtracts 1 from the low halfword. A negative low halfword becomes 0.
+- `FUN_0200B9A4` returns `lo + (hi != 0)` when `lo != 0`, and `(hi != 0)` when `lo == 0`. That is a **ceiling**. So the run gate is "the belly is not exactly 0", and a belly of 0.xxx still runs.
+- Starving uses the same test. `021861E8` (lines 123 to 130) treats `FUN_0200B9A4 == 0` as empty, which calls StopRunning and writes `+0x118`. The run gate and the starving check therefore agree.
+
+Tag: **[blue-verified]** for the arithmetic and the shared use. **[red-hypothesis]** that Red's function is also a ceiling; Red's run check was not read. Confidence: high for Blue, low for the Red match. A port must use the ceiling, not a floor: with a floor, a belly with a zero integer part would count as empty.
+
+### Swap flags (#181 P2)
+
+- **`0x8000`, the petrified-ally swap.** **[blue-verified]**, high for the writers in the swept range. Only `FUN_ov_0001__02165C80` (`ov_0001::02165C80`) ORs `0x8000` into the `u16` at `info+0x00`, of the walker (the leader) and of the adjacent ally. Its only caller is `FUN_ov_0001__02166B10` at `02167C68` (the player move and run path). It also sets `gDungeon+0xE` to 1.
+  - Preconditions in the decompile of `02165C80`: the adjacent tile holds an entity of type 1; the statuses at `info+0xA0` of both are not in {1, 2, 3, 4, 5, 7}; the byte at `+0xAC` is not 2 for either; the byte at `+0x99` is in {0, 2, 4}; `0215A23C(ally, 0)` is zero; `02181264(walker, dir)` is nonzero; and when the second parameter is nonzero and `021822DC(...)` is nonzero, a Yes/No prompt is shown. Both actions are set to walk (`021418AC(..., 2)`), and the ally's direction is `(walker dir + 4) & 7`.
+  - **Cleared** by `FUN_ov_0001__02140ED0`, called from the turn loop `FUN_ov_0001__02140FAC` at `02141148`. If `gDungeon+0xE` is nonzero, `02140ED0` clears it. Then, for each of the 20 entity slots at `gDungeon+0x11364` that is valid and has `0x8000`, it runs `02185C70`, `02183BB4`, `02188030(e, 0)`, `0218453C`, `0219DA90` and `0206D7B0(0)`, and then sets `info &= 0x7FFF` and `info |= 0x4000`. `02140ED0` returns early, with `0x8000` still set, when `FUN_0214067C()` is nonzero. So `0x8000` marks a one-turn swap in progress, and `0x4000` follows it. **[blue-verified]**
+  - **The AI path does not set it** (**[blue-verified]** in the swept range only). No other `|= 0x8000` on an entity word appears in the swept range. The hit in `0214A760` is a tile flag flood fill, not an entity. ARM9 and the other overlays were not swept, so this is not excluded there.
+  - **Open:** the menu writer `ov_0001::02175178`, which [ai.md](ai.md) lists as clearing `0x8000` and setting it on option 0. Investigator B's scan found no store from `02175178` under its patterns, so that claim is not confirmed here.
+- **`1 << 5`, the normal swap.** **[hypothesis]**: no Blue writer found. The scan covered the decompiled functions of `ov_0001` from `02138860` up to `021921B0`, about 1250 of 1710 (about 73%), searching for ORs and ANDs into the entity word. No `|= 0x20` is applied to `info+0x00`. Every `0x20` hit is a non-entity word (tile flags, move flags). Not excluded: writes in the unswept part of `ov_0001` (above `021921B0`), in ARM9 or other overlays, or in a form the decompiler folds differently. Red's source does not assign `MOVEMENT_FLAG_SWAPPING_PLACES` either, which is consistent. Confidence: medium. A write-watch trace of an ally swap on `info+0x00` bit 5 would settle it.
 
 ## Per-turn effects
 
@@ -230,9 +293,9 @@ The full map is in [`structs.md`](structs.md).
 - **Edge masks.** The `x < 2` wall byte `0x1F` is written as a value, while the other three edge cases clear bits. Check the disassembly of `02148F50`.
 - **IQ test and `+0xC7`.** The body of `021805B0` was not decompiled. The name of `+0xC7` as the invisible-class status is inferred from the value 3.
 - **P4.4, bit `0x4` readers.** A search of every `tile & 4` reader in overlay 1 has not been done.
-- **P5.1, belly test.** `FUN_0200B9A4` returns `lo+1` when `lo != 0`, and `hi != 0` when `lo == 0`. A belly between 0 and 1 (zero integer part) may count as nonzero here, where Red's `FixedPointToInt(belly) != 0` gives 0. Settle it before porting. The argument `info+0x10E` is not checked against Red's belly field. The action-index field `+0x46` is not matched to a Red name.
-- **P5.3, run-stop conditions.** Not traced. Map the tests in `02166B10` (lines 600 to 690) against Red's `CheckLeaderTile` (`dungeon_main.c:928`).
-- **P5.4 and P5.5, swap flags and setters (#52).** The setter of `0x8000` (the petrified-ally swap) was not found in Blue; Red's is `sub_805EC4C` (`dungeon_main.c:860`). The normal-swap flag `1 << 5` (`MOVEMENT_FLAG_SWAPPING_PLACES`) has no setter found in Red's `src`.
+- **P5.1, belly test.** The ceiling reading is settled in Blue, see [Run flag and belly test](#run-flag-and-belly-test-181-p3). Still open: that Red's run check is also a ceiling (Red's run check was not read); that the argument `info+0x10E` matches Red's belly field; and the Red name of the action-index field `+0x46`.
+- **P5.3, run-stop conditions.** The 11 ordered checks are recorded in [Run continuation checks](#run-continuation-checks-181-p1). Still open: the mapping to Red's `CheckLeaderTile` (`dungeon_main.c:928`), the contents of the direction tables, and the return values of `FUN_0218267C`.
+- **P5.4 and P5.5, swap flags (#52).** In Blue, the petrified-ally flag `0x8000` has one writer in the swept range, `02165C80`, and is cleared by `02140ED0`; see [Swap flags](#swap-flags-181-p2). Still open: the AI path outside the swept range, and the menu writer `02175178`. The normal-swap flag `1 << 5` has no Blue writer found in the swept range (a hypothesis). Red's setter of `0x8000` is `sub_805EC4C` (`dungeon_main.c:860`), and Red's `src` never assigns `MOVEMENT_FLAG_SWAPPING_PLACES`.
 - **P6.1, belly constant.** The decrement constant is not checked against Blue. Red's value is 0.1 in s48.16 (6554). `gBellyGoDownValues` and the linked-moves term are not checked.
 - **P6.2, hunger damage.** Red uses `DealDamageToEntity_Async(entity, 1, RESIDUAL_DAMAGE_HUNGER, DUNGEON_EXIT_FAINTED_FROM_HUNGER)`. The Blue call was not confirmed.
 - **P6.4, 11 unclassified callers** of the weather resolver: `0215DDE8`, `0215DE5C`, `0215EF50`, `021615A8`, `02195C38`, `021A2BC0`, `021A28E0`, `021A279C`, `021A5758`, `021A5678` and `021A55BC`.
