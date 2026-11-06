@@ -477,3 +477,17 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - Frames counted from the press: pressed at 0; repeat nonzero at 0, 47, 52, 57, ... 197 (every 5 frames). The counter reads 1 at frame 0, 47 at frame 46, then 43 at frame 47 (the fire).
 - **Outcome:** confirmed for Down: fires at the press, again after 47 frames (counter 48, reset to 43), then every 5 frames. One call per frame holds. Up, Left and Right were not run.
 - **Fallback adopted:** none.
+
+---
+
+## #278 P1–P5 — AI runtime probe
+
+- **Assumption:** the indirect calls and tables left open by #194 and #275 can be answered by one dungeon run: `02076AEC` call 2, `020731AC`, the `0207D500` lists, hook cell `0x02135394` and the table at `0x021B485C`, and `info+6` for team and wild monsters.
+- **Date:** 2026-11-06
+- **Environment:** Linux, py-desmume (DeSmuME 0.9.12), `SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`, `XDG_CONFIG_HOME` set to a fresh scratch directory, a scratch-named copy of the ROM. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (not committed).
+- **Evidence:**
+  - Command: `XDG_CONFIG_HOME=<fresh dir> SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ~/venvs/desmume/bin/python -I verification/v7-trace/ai_runtime_probe.py <scratch ROM copy> <OUT.json> --turn-frames 3000`. `<OUT.json>` is outside the repository. It uses `boot_to_dungeon.txt` and `turn_inputs.txt`; the dungeon is reached at frame 24960 and the run ends at frame 27960.
+  - Output SHA-1 `87f0b773319bc7cdc5513aaf530bc6b0503f03b0`, identical in two runs by investigator B and in two reruns by the executor (four runs in all, no difference).
+  - Hooks: exec `0x02076B28`, `0x0207D518`, `0x02076328`, `0x02076340`, `0x02185548`; write watches on `0x02135394`, the words `0x021B485C`–`0x021B48AC` and `0x021B3F44`; P5 reads `info+6` at each turn trigger.
+- **Outcome:** answers P1–P5 in [`re/ai.md`](re/ai.md) and [`re/structs.md`](re/structs.md). Limits: one new-game first floor and 3000 frames of "press A"; no item-throwing AI and no sleep or lid event occurred, so the entry values at `0x021B485C` and the walker's execution are unobserved.
+- **Fallback adopted:** none.
