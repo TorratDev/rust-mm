@@ -188,16 +188,16 @@ The current map is scene variable `0x11`, a signed 16-bit value at `0x0210E670`.
 
 **Caveats to the mapping rule.**
 
-- Opcode 9 stores the bank unfolded, so a map value of 3 or 4 gives bank 3 through opcodes 8, `0x1D` and `0x1E` only. **[blue-verified]** for the code. **[hypothesis]** that real scripts use opcode 9 with 3 or 4 is not checked.
+- Opcode 9 stores the bank unfolded, so a map value of 3 or 4 gives bank 3 through opcodes 8, `0x1D` and `0x1E` only. **[blue-verified]** for the code. In a bounded static walk no opcode 9 with 3 or 4 exists; see [Opcode 9 with map 3 or 4](#opcode-9-with-map-3-or-4-258-p2) for the counts and the coverage limits.
 - The adjusted map from `FUN_0214D208` is a different number. It adds an offset from `FUN_0202A040()` for a few map ids, and for others uses scene variables `0x29` and `0x2A`. It does not select the bank. **[blue-verified]**
 - Opcode `0xEC` needs the value of its variable, which the scripts do not give. A static walk cannot resolve it without the variable's initial or saved value.
 
 **Derivation methods.** Neither method commits a table. Both run on the user's own dump, and the pairs are written only to a scratch directory outside the repository.
 
-1. **Static walk.** Start from the scene's entry script, and walk the scripts it reaches. For each 0x18-byte command with opcode 8, 9, `0x1D` or `0x1E`, read word 1 (if it is `0xFFFFFFFF`, use the previous map). The bank is 3 for opcodes 8, `0x1D` and `0x1E` when the map is 3 or 4, and the map itself otherwise. Opcode 9 is always unfolded. For `0xEC`, use the variable's initial or saved value, or method 2.
+1. **Static walk.** Start from the scene's entry script (see [Entry script of a scene](#entry-script-of-a-scene-258-p1)), and walk the scripts it reaches. For each 0x18-byte command with opcode 8, 9, `0x1D` or `0x1E`, read word 1 (if it is `0xFFFFFFFF`, use the previous map). The bank is 3 for opcodes 8, `0x1D` and `0x1E` when the map is 3 or 4, and the map itself otherwise. Opcode 9 is always unfolded. For `0xEC`, use the variable's initial or saved value, or method 2.
 2. **Runtime.** With py-desmume, break on `GroundStation_SetBank` (`ov_0000::0214FC50`), or read the current bank short at `0x0215D348` and the current map at `0x0215D340` (variable `0x11` at `0x0210E670`) at each scene start. This catches opcode `0xEC` and the paths that the static walk misses. Not run for this section.
 
-The entry script of each scene is not yet traced: the callers of `FUN_021461D0` (`FUN_021505D0`, `FUN_0215574C` and `FUN_02156CD8`) were not decompiled here. **[open]**, moved to a follow-up issue ([#258](https://github.com/TorratDev/rust-mm/issues/258)).
+The entry script of each scene is traced for the mechanism; see [Entry script of a scene](#entry-script-of-a-scene-258-p1) (#258 P1).
 
 **Overlay 0 and the bank overlays (#160 P2, blue-verified for the address ranges).** Overlay 0 is at `0x02138860` with size 150016 (`0x24A00`). Its BSS is at `0x0215D260` with size 1216, so overlay 0 with its BSS ends at `0x0215D720`. The ground banks (overlays 10 to 144) load at `0x0215D720`, where overlay 0 ends. So a bank does not overwrite overlay 0's code or BSS. The ground code (`FUN_021421CC`, `FUN_0214D510`, `FUN_0214D420`, `FUN_0214D3A0`, `FUN_0214D4FC`, `FUN_0214D1F0`, `GroundStation_SetBank` and `GroundStation_LoadBank`) is in overlay 0 and keeps running while a bank is loaded. Overlays 1 and 7 share the address `0x02138860` with overlay 0, so loading either one replaces it.
 
@@ -211,12 +211,83 @@ Ids 1 to `0xC`: [static only]. No input reached them. **Not verified:** the relo
 
 - The other scene variables read by `FUN_02020F74` (apart from `0x11` and `0x12`) are not traced. The meaning of `FUN_02020F74` and of the current-map pointer `DAT_02143158` is in [Where the map value comes from](#where-the-map-value-comes-from-160-p3).
 - The list of ground scenes 0 to C and their banks is not written down: no table is committed (see the decision above). A tool derives it from the user's dump.
-- The entry script of each scene (#160 P3-d): the callers of `FUN_021461D0` are not traced. Moved to a follow-up issue ([#258](https://github.com/TorratDev/rust-mm/issues/258)).
+- The entry script of each scene (#160 P3-d): the mechanism is traced (#258 P1, see [Entry script of a scene](#entry-script-of-a-scene-258-p1)). Still open there: the scene-id to index mapping was observed only for ids `0xF`, `0x10` and `0`, and the variables that select ids 9 to `0xC`. Follow-up: [#267](https://github.com/TorratDev/rust-mm/issues/267).
 - The jump table behind `FUN_0214D4FC` (not recovered at `0x0214D508`). It may also map scenes to banks.
 - Whether the `case 0xEC` and command paths are the only ways `*psVar1` changes (`FUN_02147B48` and other writers were not checked).
 - Residency of overlay 0 for scene ids 1 to `0xC`: not reached by the boot run, so only the decompile supports it (see the residency paragraph above).
 - Whether any path loads overlay 1 or 7 during the ground scenes.
 - The bank overlays' own BSS and static initialisers, against the overlay 0 BSS range.
+
+### Entry script of a scene (#258 P1)
+
+**Tags.** [blue-verified] for the call sites, the structure and the runtime order, unless tagged. Names of the three managers are [red-hypothesis]. No scene-id table is committed (legal rule 3): the mapping is derived from the user's dump by the method below.
+
+**Per-frame steppers.** Three functions step the script contexts of entities every frame:
+
+- `FUN_021505D0`: 24 entities, stride `0x1F0`, array pointer in the BSS word `0x0215D1DC` (set by `FUN_0215559C`). Red-hypothesis role: people and monsters.
+- `FUN_0215574C`: 16 entities, stride `0x1C4`, array word `0x0215D1F8` (set by `FUN_02156B6C`). Red-hypothesis role: objects.
+- `FUN_02156CD8`: 16 entities, stride `0x1C4`, array word `0x0215D210` (set by `FUN_02157B98`). Red-hypothesis role: effects.
+
+Each calls `FUN_021461D0(ctx)` with `ctx = entity + 0x38`. That step reads the state halfword at `+0x26`: 0 is idle, 1 and 2 are start and wait, 3 is running (it calls the interpreter `FUN_021421CC`), and 4 is finished.
+
+The three are called from the ARM9 scene runner `FUN_0206F7EC` once per frame, in this order: `0214C0A8`, `02157DBC`, `021505D0`, `0215574C`, `02156CD8`, `0213E8F4`, `0213BC1C`. The calls are `bl` words between `0x0206FEAC` and `0x0206FEC4`. Ghidra shows no callers for them because the ARM9 calls into overlay 0 are not resolved in the project. All three fire at runner frame 79 (runtime).
+
+**The fourth caller, the master context.** `0x0214C0A8` has no Ghidra function. From its raw words it asserts that the global is set, calls `FUN_0214DCAC`, then calls `FUN_021461D0(*0x0215D1A8)`. The master context is allocated by `FUN_0214D804` (size `0x110`) and configured by `FUN_02148024` (group and sector both -1). Its runtime address is `0x021304F4`, the same at every scene. In a 20,000-frame run the step saw one master context, four lives contexts, two objects contexts and two effects contexts. **[blue-verified]**
+
+**Two stages.**
+
+1. **The ARM9 loader script.** [blue-verified] The runner reads the scene id from `*DAT_02070334` (`0x02133CEC`) and switches on it to give a script index, with -1 as the default. For ids 9 to `0xC` the index comes from the scenario record `FUN_02070890` (scene variable `0x14`, or `0x15` when `0x14` is `0x51`, field `+10`). For a few other ids it is one constant each, taken from a block the runner keeps on its stack. Then the runner calls `FUN_0214D498(index, 0)`, substituting the default constant when the index is -1. The index selects a 12-byte entry of an ARM9 table at `0x020DA5D4`, whose first field is a script pointer into ARM9 data. `FUN_0214D498` builds a reference of kind 2 with `FUN_02147E6C`, and `FUN_02147C48` installs it on the master context. These ARM9 loader scripts are short, in the same 0x18-byte format as the bank scripts: a bank load (opcode `0x1E`), a wait, and the end opcode `0xF0`. The table has 56 entries.
+2. **The bank's entry script.** [blue-verified] The `0x1E` command calls `FUN_0214D420(bank, group, sector, flag)`, which calls `FUN_0214D510`. `FUN_0214D510` writes a kind-2 reference to the first element of the sector's script list (`element + 8`). `FUN_0214D420` changes it to kind 5 only when its fourth argument (`flag`) is nonzero. The interpreter passes that argument as `(opcode == 0x1E)`, and `FUN_0214D498` does the same. `FUN_02147C48` installs the reference on the master context after the loader script has run. The sector record is 0x28 bytes, with the count at `+0x20` and the list pointer at `+0x24`.
+
+The bank layout behind this: the ARM9 table at `0x020DB8E0` has 246 entries of 8 bytes, `{overlay id, root pointer}`. The root is `{u32 group count, u32 groups pointer}`, and a group entry is `{u32 sector count, u32 sectors pointer}`. The group and sector of a `0x1E` command come from its high halfword and byte 1.
+
+**Runtime order** (`p258e`). For scene ids `0xF`, `0x10` and `0`, the master context first gets the loader script (kind 2), then `FUN_0214D420` runs, then one frame later it gets the bank script (kind 5, installed with the flag set by the `0x1E` load). Later script-driven scene changes repeat stage 2 only: kind-5 installs at frames 1136, 1270 and 1789 with new group numbers, and no new `FUN_0214D498` call. This is how scripts chain without the runner.
+
+**Method (static walk and runtime cross-check).**
+
+1. Start points: the 56 ARM9 loader entries (the pointer field of each 12-byte entry), and every sector-list element of every bank (`element + 8`).
+2. Walk 0x18-byte records. Byte 0 is the opcode, the low half of word 1 is a signed operand (-1 means "use the current value"), and `0xF0` ends a script. The cursor advances 0x18 per command.
+3. Scene id to index: take it from the runner's switch on the user's dump, in the tool and not in a committed table. Or read the argument of `FUN_0214D498` at runtime.
+4. Cross-check at runtime: break on `FUN_0214D498` (the index; `lr` `0x0206FDB4`, `0x0206FDC4` or `0x0206FE9C` for the three runner paths), on `FUN_02147C48` with `r0 = *0x0215D1A8` (the script pointer and its kind: 2 is a loader script, or a bank script installed by a `0x1D` load; 5 means the install came with the flag set, which is a `0x1E` load), and on `FUN_0214D420` (bank, group, sector).
+
+**Not verified.**
+
+- The scene-id to index mapping for every id. Ids `0xF`, `0x10` and `0` were seen at runtime; ids 1 to `0xE` were not reached by the boot run. Follow-up: [#267](https://github.com/TorratDev/rust-mm/issues/267).
+- How scene variables `0x14` and `0x15` are set for the scenario ids, and the `FUN_02070890` record format.
+- Whether a loader script branches on variables before its load command. The table was walked linearly, and its first commands are straight-line.
+- The `0x0214C0A8` neighbourhood has no function in the Ghidra project; the read was of raw words, and the project was not edited.
+- The manager names (people, objects, effects) are Red-hypothesis, not checked against Blue strings.
+
+Confidence: high for the call chain, the two-stage mechanism and the structure; medium for the full scene-id coverage ([#267](https://github.com/TorratDev/rust-mm/issues/267)).
+
+### Opcode 9 with map 3 or 4 (#258 P2)
+
+**Result: 0 occurrences** in the bounded static walk below. [blue-verified] for the walk, with the coverage limits stated.
+
+**Method** (scripts scratch only, not in the repo). Start points: every sector-list element of the 246 banks (5,398 references, 536 distinct script starts, no malformed bank root) and the 56 ARM9 loader entries. From each start, walk 0x18-byte records up to the next start in the same image, or to the first `0xF0` for the last script, so branch targets inside a script are included. The walk covered 100,078 records in the banks and 2,817 in the ARM9 scripts; this includes over-walk.
+
+**Counts** (no script bytes recorded):
+
+| Opcode | Records | With map value 3 or 4 | With value -1 |
+|--------|---------|-----------------------|---------------|
+| 8 | 439 | 5 | 6 |
+| **9** | **10** | **0** | **0** |
+| `0x1D` | 67 (banks) and 1 (ARM9) | 0 | 54 |
+| `0x1E` | 29 (banks) and 253 (ARM9) | 3 (ARM9) | 11 |
+
+So opcode 9 appears 10 times in the scripts the walk reaches, and never with 3 or 4. Opcodes 8 and `0x1E` carry 3 or 4 as documented above, and fold to bank 3 through `FUN_0214D1F0`.
+
+**Cross-check for false negatives.** A blind scan of every bank image, at every 24-byte phase used by a script start, finds 155 words with low byte 9. Two have word 1 equal to 3 or 4. Both sit in blocks of zero records (the four records on each side are all zero opcodes), so they are padding or non-script data, not commands. **[blue-verified]** for this reading.
+
+**Limits** (not verified).
+
+- Scripts not reachable from the sector lists or the ARM9 table, such as scripts in overlay 0 or built at runtime, were not walked.
+- 2,838 sector records have no list (count 0), and no script comes from them.
+- `-1` means the current value at runtime. No opcode 9 record has `-1`, so no runtime-resolved 3 or 4 comes from opcode 9.
+- Opcode `0xEC` (variable operand) is out of scope here.
+- The linear walk can run past a script's last `0xF0` into non-code bytes. That can only add false positives, and none were found.
+
+Confidence: high that no opcode 9 with 3 or 4 exists in the 592 scripts walked (536 bank scripts and 56 ARM9 loader scripts); medium for "in any script", because of the reachability limits.
 
 ### Frame action names (#161 P4)
 
