@@ -485,13 +485,52 @@ Named callers of `FUN_0201A110` (from the earlier pass; the full list is above):
 
 The findings give the size and the index as separate fields. Their sharing one 32-bit word is our reading, not checked.
 
-`sound.sbin` (index 9) is therefore loaded by this boot reader. [`formats/archive.md`](../formats/archive.md) excludes it; see the note there.
+**Correction (#277 P2, [static]).** `/sound.sbin` is not loaded by this boot reader, and the group lookup does not open it. It is opened by name on the NitroFS device `rom` ([path below](#the-soundsbin-open-path-277-p2)). [`formats/archive.md`](../formats/archive.md) excludes it; see the note there.
 
 Lookup and read:
 
 - `FindArchiveEntry` (`FUN_0201A56C(name, archive)`) binary-searches the archive's TOC range. Its return value is not checked.
 - `FUN_0201A404` reads the payload in 64-byte chunks.
 - `FUN_0201A188` and `FUN_0201A0B8` apply the SIR0 pointer fix-up (see [Decompression](#decompression)).
+
+### Mode-to-group table (#277 P1)
+
+**[static]**, high. The `mode` argument of `FindArchiveEntry` (`FUN_0201A56C`) and of `FUN_0201A54C` is a group index into the archive directory. `FUN_0201A6F0` builds the directory from a list of 10 pointers at `0x02096EE4`: group `i` uses entry `i`. The group start and end values are kept in two BSS tables, start at `0x020F50A0` and end at `0x020F5078`, filled at init. A lookup searches from `start[mode]` to `end[mode] - 1`. The values in those tables are not read statically (**runtime not run**).
+
+| Mode (group) | Group name |
+|--------------|------------|
+| 0 | none |
+| 1 | `/sample.sbin` |
+| 2 | `/system.sbin` |
+| 3 | `/titlemenu.sbin` |
+| 4 | `/dungeon.sbin` |
+| 5 | `/monster.sbin` |
+| 6 | `/effect.sbin` |
+| 7 | `/ground.sbin` |
+| 8 | `/ornament.sbin` |
+| 9 | `/sound.sbin` |
+
+Group 9 carries the name `/sound.sbin`, but the sound chain does not use this lookup (see below).
+
+Error paths **[static, high]**:
+- A negative start for a mode formats `file open error [%s]` (string at `0x02096F20`, branch at `DAT_0201a6b4`).
+- A name missing from the group formats `not find file [%s]` (string at `0x02096F0C`, branch at `DAT_0201a6c0`).
+
+The group start and end tables are **runtime-filled**; their values are not recorded here. **Open, see #280** (group tables).
+
+### The /sound.sbin open path (#277 P2)
+
+**[static]**, high for the chain, medium for the device behaviour. `/sound.sbin` is opened by name on the NitroFS device `rom`. It does not go through the archive reader or the group lookup.
+
+- `FUN_02072B24` (called from `FUN_0201C070`, see [File loading](#file-loading)) passes the name to `FUN_0207B5CC`. That function's `r1` still holds the name; the decompile drops it.
+- `FUN_0207B698` strips the leading `/`, stores `sound.sbin` at `state+0x3C`, sets the root `*0x021372CC` at `state+0x08`, and sets `state+0x44` to the output object, `FUN_02072B24`'s `param_1+0x78`.
+- `FUN_0207AD88(state, 4)` stores operation 4 at `state+0x10` and queues the request.
+- The name is consumed by `FUN_0207A48C`, the NitroFS path walker. It splits on `/` and `\`, looks up each component with `FUN_0207A998`, and writes the result to `*(state+0x44)`. [static] for the walker's body. **[hypothesis]** that it is reached through the 9-handler function table at `0x020DDE10`, with operation 4 selecting entry 4 (`0x020DDE20`, `FUN_0207A48C`). That link is not verified, because the dispatcher that reads `state+0x10` was not read (open, see #280).
+- The root device: `FUN_0207B884` registers one device, `rom` (string at `0x020E07B8`), through `FUN_0207AC40`. Its handler `FUN_0207BA34` maps operation 9 to `FUN_0207E044` and takes a 16-bit ID from `*0x021372DC`, not the name.
+- No caller in the sound chain reaches `FUN_0201A56C`. The archive reader `FUN_0201A404` and `FUN_0201A2C4` uses the same file-system layer (`FUN_0207B4A8`), but not the archive lookup.
+- `FUN_02072C70` is a read-request allocator (0x20-byte header plus data, callbacks, enqueued), not a name consumer. `FUN_0207B304` is a seek on the stream object (base 0, 1 or 2 = `+0x24` start, `+0x2C` cursor, `+0x28` end; it clamps and sets the cursor at `+0x2C`).
+
+Open: the operation-4 dispatcher, which reads `state+0x10` (possibly `FUN_0207AF44` or `FUN_0207AF8C` in the #45 state machine). **Open, see #280.**
 
 ### Consumers at boot and in `GameLoop_Async`
 
@@ -507,7 +546,9 @@ Lookup and read:
 - **[static]** `monspara` is copied at boot. `FUN_02003794` loads it through `FUN_01FF9FC4(dst, src, n)` with `dst = 0x06608000` and `n = 0xA000`; it is called unconditionally from `FUN_0201F2E4` (#178 P2a, high).
 - **[static]** The `wazapar` and `itempar` variants are chosen by an index: `FUN_0202A040()` reads `*0x020E0488` at run time (**runtime not run**; the value is not read statically), and -1 maps to 0. The name `GetLanguage()` used in earlier notes is taken to be the same function (**[hypothesis]**, not checked). The variant names are in arrays at `0x02091CD0` (`wazapara` a, g, f, i, s) and `0x020913AC` (`itempara` a, g, f, i, s). `FUN_0200B888` and `FUN_02008614` open them with `FUN_0201A56C(name, 2)` (#178 P2b, P2c; structure high, selector runtime-only).
 - **[static]** The `monspara` name is at `0x0208FA78`.
-- **[static]** `FUN_02028628` opens archives 3 and 5. Its names are `ax%03d` (format at `0x020B2AFC`, filled with the species id), `wmapspr` (mode 3), `palet` (mode 5), and a 4-entry array at `0x020B2980` (`wmp2pal`, `wmp2mcc`, `wmp2font`, `wmp2font1`). `FUN_02029734` takes the names `ax%03d` (`0x020B2C4C`), `wmapspr` (`0x020B2C54`, mode 3), `palet` (`0x020B2C5C`, mode 5), and a 4-entry array at `0x020B2B3C` (`wmappal`, `wmapmcc`, `wmapcani`, `wmapfont`). The names are verified; the slot mapping is medium confidence (#178 P1a, P1b). The caller `FUN_02027C58` calls `FUN_02029734` and reads no names itself; its loop is not decoded. The meaning of the modes 2, 3 and 5 is not checked. **Open, see #277.**
+- **[static]** `FUN_02028628` opens archives 3 and 5 (#277 P1c). Its names are `ax%03d` (format at `0x020B2AFC`, filled with the species id; mode 5, `/monster.sbin`), `wmapspr` (mode 3) and `palet` (mode 5), and a 4-entry array at `0x020B2980`. Entry 0 is `wmp2font` (`0x020B2968`), entry 1 `wmp2mcc` (`0x020B2954`), entry 2 `wmp2cani` (`0x020B295C`) and entry 3 `wmp2pal` (`0x020B294C`). Entry 4, `wmp2fon1` (`0x020B2974`), is not used by this consumer. This corrects the list in #178.
+- **[static]** `FUN_02029734` uses `ax%03d` (`0x020B2C4C`), `wmapspr` (`0x020B2C54`, mode 3), `palet` (`0x020B2C5C`, mode 5), and a 4-entry array at `0x020B2B3C` (#277 P1d). Entry 0 is `wmapfont` (`0x020B2B30`), entry 1 `wmapmcc` (`0x020B2B1C`), entry 2 `wmapcani` (`0x020B2B24`) and entry 3 `wmappal` (`0x020B2B14`). Strings for `wmapspr`, `palet` and `ax%03d` are also at `0x020B2B04`, `0x020B2B0C` and `0x020B2AFC`.
+- **[static]** The caller `FUN_02027C58` is an input loop (#277 P1f, medium-high). Setup calls `FUN_02029734`, `FUN_02027434` and `FUN_020299BC`. The loop calls `FUN_02027AE8`, whose return codes are: 0, keep polling; 1, call `FUN_02027038(a, b, 0x32)` and keep polling; 2, call `FUN_02027A1C`, and on nonzero set the output from `state+0x4DF4` and clean up (`FUN_020278F0`, `FUN_020296D0`, `FUN_01FF9FDC`); 3, exit with 0 if the cursor `state+0x4A20` equals `state+0x4A18`, else call `FUN_02027038(state+0x4A20, 0, 10)`. The codes are not named. Handle use inside `FUN_02013858`, `FUN_02013CCC` and `FUN_02012284` was not checked. **Open, see #280.**
 
 The names `LoadMonsterParameters`, `LoadWazaParameters` and `LoadItemParameters` are the ones used in [`execution-model.md`](execution-model.md) and [`data-tables.md`](data-tables.md).
 
@@ -519,7 +560,7 @@ Anomalies the findings did not resolve:
 
 - **[static]** The copy destinations `0x06608000` (monster), `0x06408000` (moves) and `0x06214000` (items) lie in the `0x06000000` range. That is an address-range observation only; what each copy is for was not traced (#178 P2a–c).
 - **[static, corrected]** `0x02094E58` is not a read target. It is static data in the initialised ARM9 image (`0x02000000`–`0x020E0ABF`), starting with the bytes `41 54 34 50` (`AT4P`), followed by the pointer `0x0219F958` and a 16-bit table. Its references are the reads in `FUN_02018B44` (`02018C04`) and `FUN_02018C98` (`02018CD4`), and the literals at `02018C4C` and `02018D0C`. `FUN_02018B44` copies 0xC000 bytes from it into a buffer from `FUN_01FFA054` and passes that buffer to the PX decoder `FUN_02013388` with 0xC000. `FUN_02018C98` passes the same literal to `FUN_0207B370`, whose behaviour is not read. So it is a source, not a destination, and the earlier overlap worry does not apply (#178 P2d, P2e, medium-high).
-- **[static]** The string `"/sound.sbin"` at `0x020973B4` is the second argument of `FUN_02072B24(DAT_0201c1a0, "/sound.sbin", buf, 0)`, called from `FUN_0201C070` (pool word `0x0201C1A4`, call at `0x0201C0BC`). `FUN_0201C070` is called once, from boot at `0x02000CC8`. It allocates 0x80000 bytes (`FUN_0207773c`) and splits them (`FUN_02072dbc`). `FUN_02072B24` declares that argument but never reads it; it passes its `param_3` to the reader `FUN_02072908`. Medium. Where the name is consumed is not resolved. **Open, see #277.**
+- **[static]** The string `"/sound.sbin"` at `0x020973B4` is the second argument of `FUN_02072B24(DAT_0201c1a0, "/sound.sbin", buf, 0)`, called from `FUN_0201C070` (pool word `0x0201C1A4`, call at `0x0201C0BC`). `FUN_0201C070` is called once, from boot at `0x02000CC8`. It allocates 0x80000 bytes (`FUN_0207773c`) and splits them (`FUN_02072dbc`). `FUN_02072B24` declares that argument but never reads it; it passes its `param_3` to the reader `FUN_02072908`. The consumer is resolved in the open path above (#277 P2); the operation-4 dispatcher is open, see #280.
 
 ## Decompression
 
@@ -527,7 +568,7 @@ Anomalies the findings did not resolve:
 
 **[blue-verified]** for the decoder, high; the caller list is **medium**. `PxDecompress` (`FUN_02013388`) accepts a header with the magic `AT4P` (header size 0x12) or `AT3P` (header size 0x10). Byte 4 `'N'` selects raw nibble mode. Otherwise the decoder reads the nine control bytes at 7-15 and decodes literal and back-reference tokens. Helpers: `FUN_02013260` writes a byte, `FUN_020132D8` reads one back, `FUN_02013344` initialises the output, and `FUN_02013230` finishes it.
 
-The header, as read statically (#178 P4): the magic is four bytes, `AT4P` (header 0x12) or `AT3P` (header 0x10), compared byte by byte. Byte 4 is a mode byte: `'N'` selects raw mode, which copies from offset 7, with the count in bytes 5–6. Bytes 5–6 are a 16-bit end bound, not a 24-bit size. For `AT4P` only, bytes 0x10–0x11 must equal the caller's expected size when `param_2 != 0`. The compare accepts only these two magics; any other input returns 0. The five-byte form `AT4PX` in [`formats/compression.md`](../formats/compression.md) has `X` at byte 4, which is not `'N'`, so it takes the coded path (static inference). The other mode values are not enumerated. **Open, see #277.**
+The header, as read statically (#178 P4): the magic is four bytes, `AT4P` (header 0x12) or `AT3P` (header 0x10), compared byte by byte. Byte 4 is a mode byte: `'N'` selects raw mode, which copies from offset 7, with the count in bytes 5–6. Bytes 5–6 are a 16-bit end bound, not a 24-bit size. For `AT4P` only, bytes 0x10–0x11 must equal the caller's expected size when `param_2 != 0`. The compare accepts only these two magics; any other input returns 0. The five-byte form `AT4PX` in [`formats/compression.md`](../formats/compression.md) has `X` at byte 4, which is not `'N'`, so it takes the coded path (static inference). The other mode values are not enumerated. **Open, see #280.**
 
 ### Dispatcher
 
@@ -541,7 +582,7 @@ The header, as read statically (#178 P4): the magic is four bytes, `AT4P` (heade
 
 - **[blue-verified]** A negative result: `FUN_01FF9FC4` is a trampoline into `FUN_0207853C`, a halfword-aligned copy. It is not a decompressor. Its roughly 50 callers are copies, not decoders.
 - **[static, negative, low confidence]** No BLZ, LZ10, LZ11 or Huffman decoder was found by magic search. `FUN_02013388` is the only PX decoder found. Absence is **not proven**. A magic search for `AT4P` found only the static sub-file at `0x02094E58`. The ground BPC codec is not located (#160).
-- **Not verified:** BLZ (overlays are not in `arm9.bin`), LZ10, LZ11, Huffman and the ground BPC codec are not located in the ARM9. **Open, see #277** (decoders). BLZ is listed for the ARM9 static area in [`formats/compression.md`](../formats/compression.md) and [`nds-container.md`](../formats/nds-container.md); the findings here cover only decoder code in `arm9.bin`. Finding the other decoders depends on [#42](https://github.com/TorratDev/rust-mm/issues/42) and [V8 (#18)](../verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses), and the ground BPC codec on [#160](https://github.com/TorratDev/rust-mm/issues/160).
+- **Not verified:** BLZ (overlays are not in `arm9.bin`), LZ10, LZ11, Huffman and the ground BPC codec are not located in the ARM9. **Open, see #280** (decoders). BLZ is listed for the ARM9 static area in [`formats/compression.md`](../formats/compression.md) and [`nds-container.md`](../formats/nds-container.md); the findings here cover only decoder code in `arm9.bin`. Finding the other decoders depends on [#42](https://github.com/TorratDev/rust-mm/issues/42) and [V8 (#18)](../verification.md#v8--ghidra-loads-arm9-and-overlays-at-real-addresses), and the ground BPC codec on [#160](https://github.com/TorratDev/rust-mm/issues/160).
 
 ## Open questions
 
@@ -575,12 +616,13 @@ Screens and fades:
 
 Files:
 
-- The slot mapping of the world-map names (`FUN_02028628`, `FUN_02029734`) and the loop of `FUN_02027C58`, which calls `FUN_02029734`. **Open, see #277.**
-- The meaning of the modes 2, 3 and 5 of `FUN_0201A56C` and `FUN_0201A54C`. **Open, see #277.**
-- The consumer of `"/sound.sbin"`, through `FUN_02072B24` and `FUN_02072908`. **Open, see #277.**
-- Which files use the `AT3P` header, if any. The file list cannot be checked without a ROM dump (not available here). **Open, see #277.**
-- The decoders: BLZ, LZ10, LZ11, Huffman and the ground BPC codec are not found by magic search, which is not proof of absence. **Open, see #277.**
-- The runtime selector `*0x020E0488` that chooses the `wazapar` and `itempar` variants (**runtime not run**). **Open, see #277.**
-- Other values of the PX mode byte (byte 4) besides `'N'`. **Open, see #277.**
+- Closed statically (#277 P1): the slot mapping of the world-map names and the modes 2, 3 and 5, from the mode-to-group table. The loop of `FUN_02027C58` is described above; its return-code names are open.
+- Closed statically (#277 P2), depending on the op-4 dispatcher (#280): the consumer of `"/sound.sbin"` is the NitroFS open by name on device `rom`. Whether operation 4 reaches the path walker `FUN_0207A48C` is not verified; the dispatcher that reads `state+0x10` is open, see #280.
+- Open, see #280: the names of the `FUN_02027AE8` return codes, and handle use inside `FUN_02013858`, `FUN_02013CCC` and `FUN_02012284`.
+- Open, see #280: which files use the `AT3P` header, if any. The file list cannot be checked without a ROM dump (not available here).
+- Open, see #280: the decoders. BLZ, LZ10, LZ11, Huffman and the ground BPC codec are not found by magic search, which is not proof of absence.
+- Open, see #280: the runtime selector `*0x020E0488` that chooses the `wazapar` and `itempar` variants (**runtime not run**).
+- Open, see #280: the group start and end tables (`0x020F50A0`, `0x020F5078`), runtime-filled and not read (**runtime not run**).
+- Open, see #280: other values of the PX mode byte (byte 4) besides `'N'`.
 - Closed statically: the copy destinations are in the `0x06000000` range (above); the read target `0x02094E58` is a static `AT4P` source, not a destination (above).
 - BLZ, LZ10, LZ11, Huffman and the ground BPC codec: not located in the ARM9. Depends on [#42](https://github.com/TorratDev/rust-mm/issues/42) and [#18](https://github.com/TorratDev/rust-mm/issues/18) for BLZ, and on [#160](https://github.com/TorratDev/rust-mm/issues/160) for the ground banks.
