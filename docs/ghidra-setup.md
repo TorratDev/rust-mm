@@ -190,6 +190,46 @@ Things to know:
 - **Script arguments** go after `--`. `script run` does not show compile errors; compile the script with `javac` against Ghidra's jars to see them. A script method must not reuse a `FlatProgramAPI` name (`find`, `setPlateComment`, ...).
 - Overlay addresses are written `ov_NNNN::ADDRESS`. Calls from the ARM9 into an overlay land on the `ram` address, not the overlay's.
 
+### Reading overlay memory (#179 P1)
+
+`ghidra memory read` failed on overlay addresses in our test. It rejected `ov_0001::0214C0A4` in upper and lower case, with and without `0x`, and with sizes 4 and 8, and reported `Failed to read memory: Error at index 0`, as if the last hex digit were dropped. Read the words through a small read-only GhidraScript run by the bridge instead. The script takes the output file as its first argument, so the result stays outside the repo:
+
+```java
+import ghidra.app.script.GhidraScript;
+import ghidra.program.model.address.Address;
+
+public class ReadWords extends GhidraScript {
+    @Override
+    public void run() throws Exception {
+        String[] args = getScriptArgs();
+        StringBuilder out = new StringBuilder();
+        for (int i = 1; i < args.length; i++) {
+            Address ad = currentProgram.getAddressFactory().getAddress(args[i]);
+            if (ad == null) {
+                out.append(args[i]).append(" bad\n");
+                continue;
+            }
+            out.append(String.format("%s = 0x%08X%n", ad, currentProgram.getMemory().getInt(ad)));
+        }
+        java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), out.toString());
+    }
+}
+```
+
+Run it against the project of the copy you are reading. For a copy named `<x>`, that is `rescue-arm9-<x>`; for the project itself it is `rescue-arm9`:
+
+```sh
+ghidra --project rescue-arm9-<x> --program arm9.bin script run ReadWords.java -- /path/outside/repo/words.txt ov_0001::0214C0A4 ov_0001::02179124
+```
+
+Then read `/path/outside/repo/words.txt`. Notes:
+
+- `script run` does not return `println` output, so the script writes its result to the file. Use a path outside the repo and do not commit the file.
+- `getInt` reads little-endian for this program. For the five pool words in #179 P1, the values read this way matched the overlay-file values.
+- The script only reads. It changes nothing in the project.
+- To cross-check a word, use `ghidra --project ... --program arm9.bin x-ref to ov_0001::ADDRESS`. It lists the loads of each pool word.
+- `disasm` at a pool word fails with "No instruction", because the word is data.
+
 ## Tested so far
 
 - **2026-10-14, Linux, sandbox, no retail dump.** Ghidra 11.4.3 (`ghidra_11.4.3_PUBLIC_20251203.zip`), OpenJDK 21.0.12. Synthetic ROM from [`tools/tests/synth_nds.py`](../tools/tests/synth_nds.py) (`--compress-arm9`: BLZ-compressed ARM9, two autoloads, three overlays, two of them BLZ-compressed, two sharing `0x02100000`). `import.sh` mapped 12 blocks. Analysis found the overlay functions from their static-initialiser entries. Calls from all three overlays to `0x02000020` resolved to the ARM9, and each overlay's literal-pool pointer resolved inside its own overlay space. `import.ps1` was not run (the test session could not run PowerShell).
