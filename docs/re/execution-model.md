@@ -236,7 +236,7 @@ The three are called from the ARM9 scene runner `FUN_0206F7EC` once per frame, i
 
 **Two stages.**
 
-1. **The ARM9 loader script.** [blue-verified] The runner reads the scene id from `*DAT_02070334` (`0x02133CEC`) and switches on it to give a script index, with -1 as the default. For ids 9 to `0xC` the index comes from the scenario record `FUN_02070890` (scene variable `0x14`, or `0x15` when `0x14` is `0x51`, field `+10`). For a few other ids it is one constant each, taken from a block the runner keeps on its stack. Then the runner calls `FUN_0214D498(index, 0)`, substituting the default constant when the index is -1. The index selects a 12-byte entry of an ARM9 table at `0x020DA5D4`, whose first field is a script pointer into ARM9 data. `FUN_0214D498` builds a reference of kind 2 with `FUN_02147E6C`, and `FUN_02147C48` installs it on the master context. These ARM9 loader scripts are short, in the same 0x18-byte format as the bank scripts: a bank load (opcode `0x1E`), a wait, and the end opcode `0xF0`. The table has 56 entries.
+1. **The ARM9 loader script.** [blue-verified] The runner reads the scene id from `*DAT_02070334` (`0x02133CEC`) and switches on it to give a script index, with -1 as the default. For ids 9 to `0xC` the index comes from the scenario record `FUN_02070890` (scene variable `0x14`, or `0x15` when `0x14` is `0x51`, field `+10`). For a few other ids it is one constant each, taken from a block the runner keeps on its stack. Then the runner calls `FUN_0214D498(index, 0)`, substituting the default constant when the index is -1. The index selects a 12-byte entry of an ARM9 table at `0x020DA5D4`, whose first field is a script pointer into ARM9 data. `FUN_0214D498` builds a reference of kind 2 with `FUN_02147E6C`, and `FUN_02147C48` installs it on the master context. These ARM9 loader scripts are short, in the same 0x18-byte format as the bank scripts: a bank load (opcode `0x1E`), a wait, and the end opcode `0xF0`. The table has at least 360 entries (not 56): it runs from `0x020DA5D4` to at most the bank table at `0x020DB8E0`, so at most 406; the count itself was not read ([#267 P1c](#runtime-repeat-and-forced-scene-ids-267)). [blue-verified runtime, medium-high]
 2. **The bank's entry script.** [blue-verified] The `0x1E` command calls `FUN_0214D420(bank, group, sector, flag)`, which calls `FUN_0214D510`. `FUN_0214D510` writes a kind-2 reference to the first element of the sector's script list (`element + 8`). `FUN_0214D420` changes it to kind 5 only when its fourth argument (`flag`) is nonzero. The interpreter passes that argument as `(opcode == 0x1E)`, and `FUN_0214D498` does the same. `FUN_02147C48` installs the reference on the master context after the loader script has run. The sector record is 0x28 bytes, with the count at `+0x20` and the list pointer at `+0x24`.
 
 The bank layout behind this: the ARM9 table at `0x020DB8E0` has 246 entries of 8 bytes, `{overlay id, root pointer}`. The root is `{u32 group count, u32 groups pointer}`, and a group entry is `{u32 sector count, u32 sectors pointer}`. The group and sector of a `0x1E` command come from its high halfword and byte 1.
@@ -245,20 +245,39 @@ The bank layout behind this: the ARM9 table at `0x020DB8E0` has 246 entries of 8
 
 **Method (static walk and runtime cross-check).**
 
-1. Start points: the 56 ARM9 loader entries (the pointer field of each 12-byte entry), and every sector-list element of every bank (`element + 8`).
+1. Start points: the ARM9 loader entries (the pointer field of each 12-byte entry; the first walk used 56, but the table has at least 360 entries, see [#267 P1c](#runtime-repeat-and-forced-scene-ids-267), so it missed entries), and every sector-list element of every bank (`element + 8`).
 2. Walk 0x18-byte records. Byte 0 is the opcode, the low half of word 1 is a signed operand (-1 means "use the current value"), and `0xF0` ends a script. The cursor advances 0x18 per command.
 3. Scene id to index: take it from the runner's switch on the user's dump, in the tool and not in a committed table. Or read the argument of `FUN_0214D498` at runtime.
 4. Cross-check at runtime: break on `FUN_0214D498` (the index; `lr` `0x0206FDB4`, `0x0206FDC4` or `0x0206FE9C` for the three runner paths), on `FUN_02147C48` with `r0 = *0x0215D1A8` (the script pointer and its kind: 2 is a loader script, or a bank script installed by a `0x1D` load; 5 means the install came with the flag set, which is a `0x1E` load), and on `FUN_0214D420` (bank, group, sector).
 
 **Not verified.**
 
-- The scene-id to index mapping for every id. Ids `0xF`, `0x10` and `0` were seen at runtime; ids 1 to `0xE` were not reached by the boot run. Follow-up: [#267](https://github.com/TorratDev/rust-mm/issues/267).
+- The natural scene-id to index mapping for ids 1 to `0xE`. Ids `0xF`, `0x10` and `0` were seen at runtime; ids 1 to `0xE` were not reached by the boot run [open]. The runner's selection for ids 1 to `0x11` was run with a forced id, see [Runtime repeat and forced scene ids](#runtime-repeat-and-forced-scene-ids-267).
 - How scene variables `0x14` and `0x15` are set for the scenario ids, and the `FUN_02070890` record format.
 - Whether a loader script branches on variables before its load command. The table was walked linearly, and its first commands are straight-line.
 - The `0x0214C0A8` neighbourhood has no function in the Ghidra project; the read was of raw words, and the project was not edited.
 - The manager names (people, objects, effects) are Red-hypothesis, not checked against Blue strings.
 
 Confidence: high for the call chain, the two-stage mechanism and the structure; medium for the full scene-id coverage ([#267](https://github.com/TorratDev/rust-mm/issues/267)).
+
+### Runtime repeat and forced scene ids (#267)
+
+Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trace/scene_entry_probe.py). Hooks (exec): the scene runner `0x0206F7EC` (`r0` = scene id), `FUN_0214D498` (`r0` = index; also the 12-byte entry at `0x020DA5D4 + 12 * index`: pointer and two words), `FUN_0214D420` (bank, group, sector, flag) and `FUN_02147C48`. Commands, ROM SHA-1, input SHA-1 and output SHA-1s are in [`verification.md`](../verification.md#267-p1--scene-entry-probe). Limit: new-game boot state only.
+
+- **P1a. Repeat of the #258 scenes `0`, `0xF` and `0x10`.** [blue-verified runtime, high] 3200 frames, no forced id. Runner id `0xF` at frame 74 (`lr 0x0201F4A0`) gives `FUN_0214D498` index `0x74` at frame 76 (`lr 0x0206FDB4`), then the master install and bank 235 group 1 sector 0 flag 1 at frame 76. Id `0x10` at frame 614 (`lr 0x0201F4B4`) gives index `0x75` at 616, then bank 6 group 5 sector 0 flag 1. Bank loads with flag 1 follow at frames 1133 (bank 5 group 29), 1270 (bank 234 group 1) and 1789 (bank 229 group 2) with no `FUN_0214D498` call. A `FUN_0214D498` call at frame 2380 has index `0x72` and `lr 0x0206FE9C` (the third runner path, no runner entry). Id `0` at frame 2575 (`lr 0x0201E710`) gives index `0x66` at 2579 (`lr 0x0206FDC4`, the default-substitution path), then bank 228 group 1 sector 0 flag 1. This matches the #258 mapping for `0xF`, `0x10` and `0`, and adds the frame-2380 call with index `0x72`.
+- **P1b. Selection for ids 1 to `0x11`, forced.** [blue-verified runtime for the selection code; high; **forced input, not natural transitions**] The boot input only reaches ids `0xF`, `0x10` and `0`. The probe's `--runner-sid ID` overwrites `r0` (the scene id) at the first runner entry (frame 74), 300 frames per id; the event `forced_runner_sid` marks it. The state around it (scene variables, save) is the new-game boot state, so the runner's own code selects the index but the context is not a real transition. Index passed to `FUN_0214D498`:
+  - ids 1, 2, 3, 4, 6, 7, 8: `0x66`, `lr 0x0206FDC4`, bank 228 group 1 sector 0 flag 1 (same as id 0);
+  - id 5: `0x70`, `lr 0x0206FDB4`; no bank load before frame 114; the probe then saw a runner entry with id `0x10` at frame 111 and index `0x75` (the flow after the forced id, not analysed);
+  - ids 9 to `0xC`: `0x167` (359), `lr 0x0206FDB4`, bank 228 group 1 sector 0 flag 1. The index comes from the scenario record `FUN_02070890` with the boot-state scene variables `0x14` and `0x15`; other game states give other indices (not tested);
+  - id `0xD`: `0x71`, no bank load in 300 frames (the `0xD` path sets flags at `0x02070338`–`0x02070340` differently);
+  - id `0xE`: `0x73`, bank 236 group 1 sector 0 flag 1;
+  - id `0xF`: `0x74`, bank 235 group 1 sector 0 flag 1 (matches natural);
+  - id `0x10`: `0x75`, bank 6 group 5 sector 0 flag 1 (matches natural);
+  - id `0x11`: `0x76`, bank 229 group 3 sector 0 flag 1.
+
+  This agrees with the constants in the decompile of `FUN_0206F7EC` (`0x70`, `0x71`, `0x73`, `0x74`, `0x75`, `0x76`, default `0x66`) and with the `0x72` constant (the frame-2380 call, third path).
+- **P1c. The loader table is larger than 56 entries.** [blue-verified runtime, medium-high; the count was not read] `FUN_0214D498` read the entry at index 359 (`0x167`) of the 12-byte table at `0x020DA5D4`, and its fields look valid (script pointer in ARM9 data, `0x020CF1D8`). The table ends at most at the bank table `0x020DB8E0`, so it has at least 360 and at most 406 entries. The #258 walks of "56 loader entries" missed entries; a static recount is open. Only the entry pointer and fields were logged.
+- **P1d. Natural reach of ids 1 to `0xE`.** [not reached; open] The boot input (new game, intro) enters only `0xF`, `0x10` and `0` (runner callers `lr 0x0201F4A0`, `0x0201F4B4`, `0x0201E710`). Ids 1 to `0xE` need the mode dispatcher to call the runner with those ids, which needs game progress or a save; the supported setup has none (see the #260 entry in [`verification.md`](../verification.md)). Scenario ids 9 to `0xC` also depend on scene variables `0x14` and `0x15`.
 
 ### Opcode 9 with map 3 or 4 (#258 P2)
 

@@ -491,3 +491,17 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - Hooks: exec `0x02076B28`, `0x0207D518`, `0x02076328`, `0x02076340`, `0x02185548`; write watches on `0x02135394`, the words `0x021B485C`–`0x021B48AC` and `0x021B3F44`; P5 reads `info+6` at each turn trigger.
 - **Outcome:** answers P1–P5 in [`re/ai.md`](re/ai.md) and [`re/structs.md`](re/structs.md). Limits: one new-game first floor and 3000 frames of "press A"; no item-throwing AI and no sleep or lid event occurred, so the entry values at `0x021B485C` and the walker's execution are unobserved.
 - **Fallback adopted:** none.
+
+---
+
+## #267 P1 — Scene-entry probe
+
+- **Assumption:** the scene runner `0x0206F7EC` picks a loader-script index per scene id and calls `FUN_0214D498` with it; the #258 mapping for ids `0xF`, `0x10` and `0` holds on a repeat, and the runner's selection for the other ids can be run by forcing the id.
+- **Date:** 2026-11-06
+- **Environment:** Linux, py-desmume (DeSmuME 0.9.12), `SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`, a fresh `XDG_CONFIG_HOME` per run, a scratch-named ROM copy. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (not committed). Input `verification/v7-trace/boot_to_dungeon.txt`, SHA-1 `b3f969cec1bb5aeb790c50e62727b5cdc5686d61`.
+- **Evidence:**
+  - Base command: `XDG_CONFIG_HOME=<fresh dir> SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ~/venvs/desmume/bin/python -I verification/v7-trace/scene_entry_probe.py <scratch ROM copy> <OUT.jsonl> 3200 verification/v7-trace/boot_to_dungeon.txt`. Output SHA-1 `87393ba12893f5d586c13ee7811cc547e913f2ad`, identical in two runs.
+  - Forced-id command: the same with `300` frames and `--runner-sid ID` after the input path. The id overwrites `r0` at the first runner entry, so it is **forced, not a natural transition**. Output SHA-1 per id (run 1 = run 2 for all 17, by investigator C); the executor reran ids 5 and 14 twice and reproduced them:
+    id 1 `d0a04962c9f316653f4926f967c455aa16942e30`; id 2 `c3a2c32d25c4951fb5c9a0a531f552b3edb18591`; id 3 `8829d6f3e9c77088287e4af75ac08ad91fe9898e`; id 4 `e5a380d9c36209bb48b3115f6eed75320462bde5`; id 5 `6e995b6dcec0776e821881a576353901db6b93fb`; id 6 `4e6f042a1d22aa6eb381a3762773741a6e08c03c`; id 7 `88f015bf8ebaa8a9645942cda8435336c7a652d2`; id 8 `a55b1378a091569f315c005e0b13810c036608f0`; id 9 `a42bf4bdd9e152a20b643cd9db5e40d0c77138e6`; id 10 `9c0d850ad9eee593110779203a3b9eb1b68e0ed9`; id 11 `b024d7132993707405451eff668409e3fccfd732`; id 12 `b23420432633489d21a2888816e4e19926054dea`; id 13 `e60876e80916236f88b27dbca9bdbd78f183a71f`; id 14 `61fe92e1236f27cf082adb9d5a74b6083a86a047`; id 15 `db9c1dbdf7e63d33f64f2fb1c6c5f6e929c9de5b`; id 16 `d6cc5fbf987d5cb12c63d6471e88cbe991ab9755`; id 17 `5bfa4c8aa5a4f2d55cfe9867a93ff22d3f931215`.
+- **Outcome:** results in [`re/execution-model.md`](re/execution-model.md#runtime-repeat-and-forced-scene-ids-267). The repeat confirms scenes `0`, `0xF`, `0x10` and adds an index `0x72` call at frame 2380; the forced ids give the runner's selection for ids 1 to `0x11`; the loader table has at least 360 entries, not 56. Natural reach of ids 1 to `0xE` is not achieved: it needs game progress or a save.
+- **Fallback adopted:** none.
