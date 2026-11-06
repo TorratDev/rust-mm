@@ -75,7 +75,7 @@ Rules:
 Investigators do nothing until dispatched. Before dispatching:
 1. Give each point to exactly one investigator. Never give two investigators the same point.
 2. Use only the points listed in the sub-issue, or the points you derived under Workflow step 0.
-3. Check that the Ghidra copy for the letter is free. Each investigator uses its own copy, rescue-arm9-a, rescue-arm9-b or rescue-arm9-c, because ghidra-cli allows one opener per project. Never dispatch investigator C while the reviewer is using rescue-arm9-c.
+3. Check that the Ghidra copy for the letter is free. Each investigator uses its own copy, rescue-arm9-a, rescue-arm9-b or rescue-arm9-c, because ghidra-cli allows one opener per project. The reviewer uses its own copy, rescue-arm9-r, so investigators and the reviewer never wait on each other.
 
 The dispatch text, sent as the start command's task or with hc send:
 "Dispatch: you are investigator <A|B|C>. Ghidra copy: rescue-arm9-<a|b|c>. Sub-issue #<n>. Your points: <P1, P2, ...>. Findings file: <scratch path outside the repo>. Start now."
