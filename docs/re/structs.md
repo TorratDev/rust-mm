@@ -359,7 +359,7 @@ The 6-byte move in a roster record (`+0x1E`, four of them) is not the dungeon `M
 
 ### Roster record +6 is the species id (#170 P3b)
 
-Verdict: **[blue-verified]**, high. Roster `+6` (s16) is the species id (Red `Pokemon.speciesNum`, Red `0x08`). The mail record's `+0xC` (`clientSpecies`) therefore copies a species id. The roster is 413 records of `0x40` bytes at `0x020DF484`; record `+0` bit 0 is "in use".
+Verdict: **[blue-verified]**, high. Roster `+6` (s16) is the species id (Red `Pokemon.speciesNum`, Red `0x08`). The mail record's `+0xC` (`clientSpecies`) therefore copies a species id. The roster is 413 records of `0x40` bytes. Its base is not a fixed address: it is read from the cell at `0x020DDF84`, whose boot-time value is `0x020E0F8C` (in `arm9_bss`) **[blue-verified]** for the cell and its readers, static only for the value (literal reads; runtime read not yet run). Record `+0` bit 0 is "in use".
 
 Writers (static, Ghidra copy `rescue-arm9-c`; names are **[hypothesis]**):
 - `FUN_020033A8` (proposed `InitRosterRecord`): builds a fresh record. `+6` takes the species argument verbatim, `+0` is set to 1 and `+3` (level) to 1. Every other derived field is a lookup keyed by the species (for example `FUN_020022C0`, `FUN_0200224C`, `FUN_0200222C`, `FUN_020016B4`, `FUN_020026D0`).
@@ -411,17 +411,17 @@ Literal-pool values [blue-verified]:
 
 | Literal | Value | Used for |
 |---------|-------|----------|
-| `DAT_02002FFC` | `0x020DF484` | roster base |
+| `DAT_02002FFC` | `0x020DDF84` | address of the cell that holds the roster base (not the roster); the cell is `0x020DDF84` and its boot value `0x020E0F8C` is stored by `FUN_02003794` (literal at `0x02003810`, called unconditionally from boot init `FUN_0201F2E4`) and by `FUN_0202A778` via `FUN_02003788` (literal at `0x02003790`) **[blue-verified]** for the stores, static only for the value |
 | `DAT_02003000` | `0x19D` (413) | roster record count |
 | `DAT_020024E0` | `0x02008C0C` | character-copy routine |
 | `DAT_02006420` | `0x0209281B` | `rescuesAllowed` of dungeon record 0 (table base `0x02092818`, stride `0x10`; see [Dungeon data table](#dungeon-data-table-170-p1b)) |
 | `DAT_02008C04` | `0x02091C44` | error text used by the decoder |
 | `DAT_0200D588` | `0x020DF6EC` | mail-record pointer block |
 
-The roster base and count match [`rng.md`](rng.md) and [#161](https://github.com/TorratDev/rust-mm/issues/161) P2 (records of 0x40 bytes, 413 of them).
+The record size and count match [`rng.md`](rng.md) and [#161](https://github.com/TorratDev/rust-mm/issues/161) P2 (records of 0x40 bytes, 413 of them). The base is read through the cell `0x020DDF84` (see the table row above), not stored at a fixed address.
 
 **`FUN_02002F88` at `0x02002F88`: proposed `FindFirstActiveRosterRecord`** [blue-verified behaviour; red-hypothesis name]
-- Scans the 413-entry roster from `0x020DF484` in steps of `0x40`. Returns the first record whose `u16` at `+0` has bit 0 set and whose byte at `+2` is nonzero. Returns 0 if none matches.
+- Loads `*DAT_02002FFC` (the cell `0x020DDF84`, boot value `0x020E0F8C`) and scans the 413-entry roster from that base in steps of `0x40`. Returns the first record whose `u16` at `+0` has bit 0 set and whose byte at `+2` is nonzero. Returns 0 if none matches.
 - Callers: 38 sites in 33 functions (ARM9, overlays 0 and 7). Examples: `FUN_0200D4DC`, `FUN_0201E020`, `FUN_02052AAC`, `FUN_0206A6DC`, `FUN_02069848`.
 - Handling of the 0 return (#170 P1b; blue-verified sites, medium classification by eye):
   - Test for 0: `FUN_0201E020`, `FUN_02067AE0`, `FUN_0206964C`, `FUN_ov_0007__02139054`, `FUN_ov_0007__02139A98`, `FUN_ov_0007__02139F80`; `FUN_ov_0000__02140860` at 2 of its 3 sites.
