@@ -240,10 +240,32 @@ The gate byte is `touchScreen`, the DS touch-screen option. **[blue-verified]** 
 
 - **The gate.** `FUN_0200C354` returns 1 only when the byte at `options + 7` is nonzero and the touch position is not `0xFFFF`. **[blue-verified]**
 - **The pointer.** `0x020DED14` is a global slot that holds the options struct pointer. `DAT_0200C394` = `0x020DED14`. It is zero in the static image, so it is set at run time. **[blue-verified]**
-- **The struct.** `LoadGameOptions` (`0x0200CB30`) stores `0x020E7BA8` into the slot, so the struct base is `0x020E7BA8` (zero-initialised memory). `FUN_0202A778` also writes the slot. **[blue-verified]**
+- **The struct.** `FUN_0200CB28` (`0x0200CB28`; `0x0200CB30` lies inside it) stores `0x020E7BA8` into the slot, so the struct base is `0x020E7BA8` (zero-initialised memory). `FUN_0202A778` also writes the slot. **[blue-verified]**
 - **The name.** The save reader `FUN_0200C6B8` (called from `RestoreAdventureData`, `0x02010F1C`) reads the options bit stream in this order: `+5` (2 bits), `+6` (1 bit), `+7` (1 bit), `+8` (1 bit), `+0`, `+1`, `+2`, `+3` (1 bit each), `+4` (3 bits), `+9` (2 bits). Pmd-red's `ReadGameOptionsBits` (`src/game_options.c`) reads `windowColor` (2), `controls` (1), `touchScreen` (1), `playerGender` (1), `dungeonSpeed`, `FarOffPals`, `damageTurn`, `gridEnable`, `mapOption` (3) and `unkC` (2). The order matches field for field, so `+7` is `touchScreen`. **[blue-verified]** for the order; high for the name.
-- **Other writers.** `InitializeGameOptions` (`0x0200CB14` path) sets `+7 = 1`, and the restore `FUN_0200C6B8` writes it from the stream. Of 89 functions that read the slot, 60 were decompiled and searched for stores to `+7`. **[blue-verified]** for these two. **[open]:** the options menu's writers; 29 readers were not decompiled.
+- **Other writers.** The full list of writers, with the value each one stores, is in [Writers of options+7](#writers-of-options7-176-p3b). The default writer and the restore reader are both there. The earlier note gave the default writer as the path `0x0200CB14`. Resolved: `0x0200CB14` is the literal pool of `FUN_0200CAA4` (READ xrefs), so the function starts at `0x0200CAA4`, with the store near `0x0200CAF0`. The reviewer verified this on `rescue-arm9-c`. **[blue-verified]**
 - **Default mismatch.** Blue's default for `+7` is 1. Pmd-red's `InitializeGameOptions` sets `touchScreen = 0`. Blue's `+6` (`controls`) is also 1, where Red's default `CONTROLS_GBA` is 0. **[open]:** either Blue's defaults differ or the enum values differ.
+
+### Writers of options+7 (#176 P3b)
+
+**[blue-verified]** for the stores, the copy loops and the x-ref coverage, unless a row says otherwise. The source is an investigator's pass over a Ghidra copy (`rescue-arm9-a`), not the repo's `rescue-arm9` project. Nothing was written to a project.
+
+Method: an x-ref to the slot `0x020DED14` (59 functions, each decompiled and searched for stores to `+7`); a byte search for the slot literal `14 ED 0D 02` (61 literal pools, each mapped to a decompiled function except two in unanalysed code, `0x0200C348` and `0x0203CD20`, decoded by hand from the raw bytes); an x-ref to the struct base `0x020E7BA8`; and a decompile of the menu family `0x0203C000` to `0x0203E800`.
+
+| # | Writer | Address | Value written to `+7` | Context | Tag |
+|---|--------|---------|-----------------------|---------|-----|
+| 1 | `FUN_0200CAA4` (`InitializeGameOptions`) | store near `0x0200CAF0` | constant `1` | Also sets `+5 = 0`, `+6 = 1`, `+0 = 0`, `+1` to `+4 = 1`, `+9 = 0`; `+8 = 0` only if the argument is nonzero. Callers: `FUN_0201F2E4` at `0x0201F348` (boot, argument 1; `FUN_0201F2E4` is called from `0x02000D2C`); `FUN_0202A90C` at `0x0202A938` (argument 1; called from `FUN_0202A98C` and `FUN_0202A9C4`); `FUN_ov_0001__02171960` at `ov_0001::02171994` (argument 0, only when `FUN_ov_0001__02153e80(...) == 1`; called from `FUN_ov_0001__02171D00`). | blue-verified |
+| 2 | `FUN_0200C6B8` (save bit-stream reader, called from `RestoreAdventureData` at `0x02010F1C`) | `0x0200C6B8` | one bit from the stream (0 or 1) | Third field read, after `+5` (2 bits) and `+6` (1 bit). | blue-verified |
+| 3 | Options menu commit, in unanalysed code at `0x0203CC6C` (no function is defined there, and no x-ref reaches it, so it is called through a table or a pointer) | `0x0203CCA4` to `0x0203CCC8` | the menu working copy's `+7` (0 or 1), as part of a 10-byte block copy | When the status from `0x0202ADAC` (called at `0x0203CC78`, result on the stack) is **4**, it copies 10 bytes from `(*0x020E0584) + 8` to `*0x020DED14` with a byte loop. Statuses 1 and 5 call `FUN_0203D358(1)` and copy nothing (cancel). | copy loop and status test blue-verified; **[hypothesis]** for the call targets. The identity of `0x0202ADAC`, and what status 4 means, are not traced. |
+| 4 | Menu working-copy edit: `FUN_0203D8B0` (menu input handler) | store sites `*(char*)(*(int*)*DAT_0203dd6c + 7)` in the decompile | `1` or `0`, or a toggle `(old == 0)` | Writes the **working copy**, not the live byte. The row index is `state[10]` (u16 at `+0x28`); row 2 is touchScreen. Touch hit test `FUN_0202B474(state+0x10, DAT_0203DD70)`: hit 6 sets 1, hit 7 sets 0. On row 2, a D-pad left or right (`FUN_0202DB40` returns 9 or 10) toggles `+7 = (+7 == 0)`. | blue-verified |
+| 5 | Menu open: `FUN_0203D00C`, case 6 | `0x0203D00C` | none (reverse direction) | Copies the live options (`*0x020DED14`, 10 bytes) into the menu state at `+8`, then calls `FUN_0203DD74(state+8)`. This seeds the working copy; it does not write the live byte. | blue-verified |
+
+- **State.** The menu state pointer is `*0x020E0584`, set by `FUN_0203D430`, which allocates 0x1B0 bytes. The working copy is the 10 bytes at state `+8`. The inner menu object (allocated by `FUN_0203DD74`, 0xA8 bytes) points to it. **[blue-verified]**
+- **Rows.** The draw routine `FUN_0203D464` shows row 2 (`FUN_0202C488(menu+0x10, 2)`) with value 0 at x `0x50` and nonzero at x `0x88` (left and right choice). Row 1 is `+6`, row 0 is `+5` (3 values), row 3 is `+9` (2 values). **[blue-verified]** for the layout. The menu uses only 0 and 1 for `+7`. Which label is On and which is Off is **not verified** (the string ids in `FUN_0203D464` were not read).
+- **Pointer swaps, not byte stores.** `FUN_0202A778` swaps the pointer in the slot. With a table argument it stores `table[0xB]` (WRITE xrefs `0x0202A8BC` and `0x0202A820`); with null it stores `FUN_0200CB1C()`, which is `0x020E7BA8`. `FUN_020660E4` (called from `FUN_02065CFC`) builds a table of 13 heap buffers, where entry 0xB is a 10-byte options buffer, and calls `FUN_0202A778(table)`; `FUN_02065F88` frees them. During that window the slot points at the 10-byte scratch buffer, not at `0x020E7BA8`. The purpose of that window (a scratch save-data set read by `FUN_0202A1AC`) is **not traced**. **[blue-verified]** for the swap.
+- **Boot store of the struct base.** `FUN_0200CB28` (`0x0200CB28`, called from `FUN_0201F2E4` at `0x0201F310`) stores `0x020E7BA8` into the slot. The struct-base x-refs are only `0x0200CB1C` and `0x0200CB30`, both DATA. The earlier note named `LoadGameOptions` (`0x0200CB30`) as the store. Resolved: `0x0200CB30` lies inside `FUN_0200CB28`, so that function is the store, and the earlier attribution to `LoadGameOptions` was wrong. The reviewer verified this on `rescue-arm9-c`. **[blue-verified]**
+- **Readers that do not use the byte.** No other function stores to `+7` of the slot's struct. Seven readers (`FUN_0201F268`, `FUN_020282FC`, `FUN_02028C60`, `FUN_0202DCD4`, `FUN_ov_0001__0213AC7C`, `FUN_ov_0001__0213AD54`, `FUN_ov_0007__021393B0`) pass the struct to `FUN_02012310`, which is an empty function (it only returns), or test it for the touch gate. **[blue-verified]**
+- **Values.** Default: `+7 = 1` on all three non-user paths (boot, `0x0202A938`, and `ov_0001::02171994` with argument 0); `+6` is also 1. Menu: 0 or 1 only. Restore: whatever the save holds (one bit).
+- **[open]** The call targets in the unanalysed block at `0x0203CC6C` (the function there is undefined), the identity of `0x0202ADAC`, and the purpose of the scratch buffer from `FUN_020660E4`.
 
 ### ARM9 sample decode and the ARM7 side (#176 P4)
 
@@ -471,10 +493,8 @@ Input:
 
 Touch:
 
-- The source of the calibration parameters at `0x0207CB70`.
-- The ARM7 side of channel 6 (not checked).
-- Which features are touch-only and which are touch-optional.
-- The options menu's writers of the `touchScreen` byte (`0x020DED14`, `+7`) are not confirmed (#176 P3); see [Options gate](#options-gate-touchscreen-176-p3).
+- The ARM7 side of channel 6 is out of reach statically. The Ghidra project `rescue-arm9` holds only the ARM9 and the overlays, so the ARM7 code cannot be read from it. It needs an ARM7 import; see [ARM9 sample decode and the ARM7 side](#arm9-sample-decode-and-the-arm7-side-176-p4).
+- The call targets in the unanalysed commit block at `0x0203CC6C`, which hold the options-menu commit, and the identity of `0x0202ADAC`. See [Writers of options+7](#writers-of-options7-176-p3b).
 
 Screens and fades:
 
