@@ -75,7 +75,7 @@ Rules:
 Investigators do nothing until dispatched. Before dispatching:
 1. Give each point to exactly one investigator. Never give two investigators the same point.
 2. Use only the points listed in the sub-issue, or the points you derived under Workflow step 0.
-3. Check that the Ghidra copy for the letter is free. Each investigator uses its own copy, rescue-arm9-a, rescue-arm9-b or rescue-arm9-c, because ghidra-cli allows one opener per project. The reviewer uses its own copy, rescue-arm9-r, so investigators and the reviewer never wait on each other.
+3. Check that the Ghidra copy for the letter is free. Each investigator uses its own copy, rescue-arm9-a, rescue-arm9-b or rescue-arm9-c, because ghidra-cli allows one opener per project. Each reviewer has its own copy too: `reviewer` uses rescue-arm9-r, and reviewer-N uses rescue-arm9-rN. Before you start reviewer-N, create rescue-arm9-rN if it is missing, by copying the .gpr and .rep of a stopped copy in ~/rescue-re/ghidra. Then investigators and reviewers never wait on each other.
 
 The dispatch text, sent as the start command's task or with hc send:
 "Dispatch: you are investigator <A|B|C>. Ghidra copy: rescue-arm9-<a|b|c>. Sub-issue #<n>. Your points: <P1, P2, ...>. Findings file: <scratch path outside the repo>. Start now."
@@ -100,7 +100,7 @@ After dispatch, wait for the executor's DONE or BLOCKED report, then read the se
 
 ## Dispatch to the reviewer
 
-The reviewer handles one review at a time. Send the Objective, the executor's DONE or BLOCKED line, the worktree path and the branch. The reviewer takes the diff itself.
+Each reviewer handles one review at a time. Send the Objective, the executor's DONE or BLOCKED line, the worktree path and the branch. The reviewer takes the diff itself. Send each review to a free reviewer, so reviews do not queue: `reviewer`, or reviewer-2 or reviewer-3 when those are running and free. Before you start reviewer-N, create its Ghidra copy as in Dispatch to investigators, step 3.
 
 ## Workflow
 
@@ -119,7 +119,7 @@ For each sub-issue in the batch:
 1. If the Objective is unclear, or the work needs reverse engineering or a Ghidra check, dispatch its points to the investigators. Split the points across A, B, and C and run them in parallel. Wait for every investigator you dispatched (one or two if there are fewer points), then use their combined findings as the task. Investigators are shared, so investigate one sub-issue at a time.
 2. Dispatch the task to a free executor with the Dispatch to executors format. The task is: issue number, Objective, files it may touch, verification command, the evidence to record, and the worktree and branch.
 3. Wait for the DONE or BLOCKED line, then read the executor output. Do not assume it received the task or finished.
-4. Send the review to the reviewer as described in Dispatch to the reviewer. Queue reviews that arrive together. Wait for its report, then read it.
+4. Send the review to the reviewer as described in Dispatch to the reviewer. Send reviews that arrive together to free reviewers. Wait for its report, then read it.
    - PASS: tell the executor to open a PR. Say which link to use: "Closes #<n>" if the PR finishes the sub-issue, or "Refs #<n>" if it covers only some of its points. For Refs, add: "do not write close, fix or resolve next to any issue number, even negated". When the PR is open, wait for its checks (gh pr checks <PR> --watch). If they pass, merge it yourself: gh pr merge <PR> --squash --delete-branch. Then mark the sub-issue done (Closes) or partial (Refs). After a Refs merge, check with gh issue view <n> that the sub-issue is still open, and reopen it if it is not.
    - REVISE: send the revision to the same executor and increment attempts.
    - SPLIT or ESCALATE: follow the rules below.
