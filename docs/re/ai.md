@@ -63,7 +63,7 @@ Entry point: `ov_0001::0218579C` (`AIDecideUseItem`). Red's counterpart is `AIDe
 - **Item weights (P5.3).** `021473A8(entity, itemPtr, flags)` is a switch on the item ID's low byte (`itemPtr+2`). It returns percentages, for example `0x46`, `0x32`, `0x28`, `0x50`, `0x64`, `0x1E`, `0x14`, `0x0F`, `0x0A` and `0x05`. Flag bit 0 gates some cases. It has the same shape as Red's `GetAIUseItemProbability` (`dungeon_ai_item_weight.c`); the cases are not compared one by one. [blue-verified structure; red-hypothesis for the mapping; medium]
 - **Arc targets (P5.4).** `02185568(entity, item, out, ignoreRoll)` walks all 20 monsters, skips self, and requires `02180994(..., 0, 1) == 1` (target visibility, not read here) and a Chebyshev distance under 11. If `ignoreRoll` is 0, it rolls `DungeonRandOutcome_2(021473A8(target, item, 1))` for each target. Then `DungeonRandInt(count)` picks the target. This matches Red's `GetPossibleAIArcItemTargets` and `GetPossibleAIThrownItemDirections` (`dungeon_ai_items.c:256` and `:297`). [blue-verified structure; red-hypothesis for the mapping; medium-high]
 - **Line targets (P5.5).** `02185690(entity, flagIndex, out, ignoreRoll)` loops over flag 1 (ally) and flag 2 (enemy). For each monster it calls `021853CC(entity, target, out, dir, ignore)`. Then it rolls `DungeonRandOutcome_2(table[i])` over the thrown-probability table, whose pool word is `0x02185C60` and whose address is `0x021B485C`, and calls `DungeonRandInt(count)`. [blue-verified structure; red-hypothesis for the flag mapping; medium]
-- **Tables not in the file (P5.6). Not verified.** `0x021B485C` (thrown probabilities) lies past the end of overlay 1 (`0x021B40A0`), and the count at `0x021B3F44` is zero in the file. Both are set at runtime, so the values cannot be read statically. Red's `gAIThrownItemProbabilities` and `gAIThrowItemActionChoiceCount` are the candidates. See [Open questions](#open-questions).
+- **Tables not in the file (P5.6). Not verified.** The thrown-probability table at `0x021B485C` is in overlay 1's BSS (`0x021B40A0`–`0x021B48FF`), so the file holds no values and no static writer was found. Its values need a runtime write trace; **runtime not run**, open, see #275 and [#194 P2b](#helpers-tables-and-open-items-194). The count at `0x021B3F44` is not a table count: it is a runtime counter of arc-target candidates (P2a in the same section). Red's `gAIThrownItemProbabilities` is the candidate for the table; not verified. The earlier candidate `gAIThrowItemActionChoiceCount` is wrong for `0x021B3F44`.
 - **RNG order (P5.7).** Self-use: one `DungeonRandOutcome_2` per eligible item. Arc: one draw per target in `02185568` when the roll is not ignored, then `DungeonRandInt(count)`. Line: `DungeonRandOutcome_2` per direction, then `DungeonRandInt(count)`. [blue-verified; high] The full list is in [RNG calls](#rng-calls).
 
 ## Movement and pathfinding
@@ -114,6 +114,41 @@ Entry point: `ov_0001::0218579C` (`AIDecideUseItem`). Red's counterpart is `AIDe
 - **Dedicated Traveler order (P4-f). Resolved by #164 P1b.** Investigator C reads Red's `RunMonsterAI` as skipping the move choice when IQ 21 is set, going straight to `AIMovement` (`dungeon_ai.c:101`). Blue's code calls `02192D24` in both IQ branches and calls `021918D4` only after a check. Investigator A found the same structure as Red in both branches. Red's source supports A's reading, and Blue matches it in both branches. This is static evidence only; no runtime check has been run.
 - **Leader item search (P4-g). Reachability open.** The leader's item search in P3-c is reachable in Blue (leader with GO_THE_OTHER_WAY). Red says it is unreachable. Whether a leader ever runs `RunMonsterAI` in Blue is part of P1. [blue-verified code; reachability open; medium that the branch is live]
 
+## Helpers, tables and open items (#194)
+
+Static only. Source: investigator A's read-only reads of overlay 1 and the ARM9 binary (Ghidra copy `rescue-arm9-a`, nothing renamed), and the decompiles and disassembly named below. **No runtime check was run** in this section; each runtime item is marked "runtime not run". Open items are tracked in [#275](https://github.com/TorratDev/rust-mm/issues/275).
+
+**Resolved: no RNG reach (P1a, P1b, P1c call 1). [static]**
+
+- **P1a, `ov_0001::0213A348`.** Tail-jumps through the literal at `0213A374` (`0x0202D240`). That is a field reset: it clears fields at `0x02133C94`, calls `02012314` (a no-op) and `02017D34` (field init). No RNG call is reached. Evidence: disassembly of `ov_0001::0213a348`; literal read at `0213a374`; decompiles of `0202d240`, `02012314` and `02017d34`.
+- **P1b, `02086468` and `02086470`.** Computed jumps into an unrolled ARM divide kernel at `0x020864C4`–`0x0208664C` (`adcs`/`subcc`, `bx`, no `bl`). The `blx` at `0x0208666C` belongs to a separate list walker. No RNG call is reached. Medium-high: the instruction walk stopped at 140 instructions.
+- **P1c, `02076AEC`, call 1.** The literal `0x02076B2C` is `0x0207C94C`, a struct copy with no calls. No RNG call is reached. Call 2 is open (see below).
+
+**Counter and table (P2a, P2b). [static]**
+
+- **P2a, `0x021B3F44`.** Not a table count, and not `gAIThrowItemActionChoiceCount`. It is a runtime counter of arc-target candidates, read through the pointer `DAT_ov_0001__02185688`. `FUN_02185568` resets it (write at `02185588`) and increments it for each valid target (write at `02185670`). It is read in `FUN_0218579C`. The file holds 0 at that address. High confidence. Runtime value: not run.
+- **P2b, table `0x021B485C`.** In overlay 1's BSS (`0x021B40A0`–`0x021B48FF`), so the file holds no values. Static reads: `FUN_0218579C` (`0218581C`, `02185BE8`), and a DATA reference from `FUN_021853CC` (`02185548`). The pointer slot `0x02185C60` holds `0x021B485C`. No static writer found. The values need a runtime write trace: **runtime not run**; open, see #275.
+
+**Helper structures (P3a to P3g). [static]** These are #194's labels, separate from the movement labels P3-a to P3-g above. Field names are not invented here; the offsets are the bytes as read.
+
+- **P3a, `ov_0001::021818A4`.** Returns `(+0xE s16) <= FUN_0208625C(+0x10 s16, 4)`, a signed divide by 4. The field identities are not verified, so there is no "low HP" name yet.
+- **P3b, `ov_0001::021818D0`.** True when the mode byte at `+0x99` is 1, 3 or 5.
+- **P3c, `ov_0001::02181904`.** Returns 1 when `+0x99` is 1, 3 or 4. Otherwise it checks `+0x9B`, `+0xA0` (5 or 0), `+0xAC`, `+0xB3` (1 or 2), `+0xB8` (1), `+0xC4` (2), `+0xDA`, the move slots at `+0xF4 + 6i` (flag bits 0 and 1) and `+0xE9` to `+0xED`. It returns 0 only if all of them fail.
+- **P3d, `ov_0001::02191A30`.** Returns `0x73` when the item ID at `+2` is `0xED`, `param_3 == 0` and `FUN_02180644(entity, 0xE) == 0`. Otherwise it returns `FUN_0200B4EC(param_2, param_3)`.
+- **P3e, `ov_0001::02180644(entity, n)`.** True when `n == 0`, or when `n` equals the AI-struct byte `+0x56` or `+0x57`.
+- **P3f, `ov_0001::0215A2C0` (bide match).** If `FUN_02142AE4` is nonzero, it scans up to 100 four-byte rows at `DAT_0215A340` (a `u16` ID, and a byte at `+2`). It returns 1 when the ID matches a row and the AI-struct byte `+0xAE` matches that row's byte. The row values are not read.
+- **P3g, `ov_0001::02190FEC`, labelled "team-member gate". Label unverified.** It tests AI-struct `+6 == 0` and `+0x117 == 0`. The writer of `+6` was not found, so the label is not confirmed.
+
+**Open, see #275. [static, incomplete]**
+
+- **P1c call 2, `02076AEC`.** Through `*(param+0x3c) - 4`. Runtime only. Open, see #275.
+- **P1d, `020731AC`.** A module loader. `FUN_02073584` calls it when flag `0x1000000` is set. Its entry `*(puVar5+7)` is read from the file header by `FUN_020725DC`. The target is file data, so it needs a runtime check (**runtime not run**). Open, see #275.
+- **P1e, `02076280`.** Dispatches through slots `0x0207635C`–`0x02076368` (pointers in the `0x021353A0` region, set at runtime) and a computed jump at `0x020762E0` (the switch table is not read). Open, see #275.
+- **P1f, `0207D500`.** Walks a linked list, calling `(*node)(node[1])`. Callers: `FUN_0207D704` (two sites), reached from `FUN_02019794`. The callbacks are registered at runtime (**runtime not run**). Open, see #275.
+- **P2b values, table `0x021B485C`.** Needs a runtime write trace (**runtime not run**). Open, see #275.
+- **P3h, stack aliasing in `02192D24` (P2.9).** Unresolved. The locals are `auStack_5c` (8 bytes), `local_50[4]`, `local_4c[4]`, `local_48[7]` and `local_2c`. The stride-8 claim is not checked. Open, see #275.
+- **P2.3 table entries 2 to 4.** Not read. Open, see #275.
+
 ## RNG calls
 
 Every `DungeonRand*` call reached from `RunMonsterAI`, in the order the code runs, with its gate. The walk was static: a closure from `02188030` over direct and pool-resolved calls. It reached 684 functions, and 26 of them call an RNG directly. Only the first parent chain found for each node is recorded, so a site may have other paths. Depths are given only where the walk stated them. The walk left seven indirect call sites unresolved (see P6-g). The walk output is not in the repo.
@@ -122,10 +157,10 @@ Every `DungeonRand*` call reached from `RunMonsterAI`, in the order the code run
 |---|----------------|----------|------|----------------|
 | 1 | `RunMonsterAI`, rescue branch | `DungeonRandInt(8)` | `+0x98 == 1` | `dungeon_ai.c:92`, `DungeonRandInt(NUM_DIRECTIONS)` |
 | 2 | `0218579C` (`AIDecideUseItem`), first or second call | `DungeonRandOutcome_2(pct)` in the loop of `020080A4` and `020082FC` | IQ 22 path with `+0xD9 == 0` | `dungeon_ai_items.c:78`, approximate |
-| 3 | `0218579C` | `DungeonRandInt(*DAT_021B3F44)` | IQ 22 path, `iVar7 == 1`, after `02185568` | `:103` and `:222`, approximate |
+| 3 | `0218579C` | `DungeonRandInt(*DAT_021B3F44)` | IQ 22 path, `iVar7 == 1`, after `02185568`; the cap is the runtime arc-target counter at `0x021B3F44` (P2a), not a table count | `:103` and `:222`, approximate |
 | 4 | `0218579C` | `DungeonRandOutcome_2(table[i])`; the pointer at `0x02185C60` gives the table at `0x021B485C` | loop, `+0xD9 == 0` path | `:180` and `:238`, approximate |
 | 5 | `0218579C` | `DungeonRandOutcome_2(table[i])` | `+0x5A & 1` path | `:331`, approximate |
-| 6 | `0218579C` | `DungeonRandInt(*DAT_021B3F44)` | `+0x5A & 1` path, `iVar4 == 1`, after `02185568` | approximate |
+| 6 | `0218579C` | `DungeonRandInt(*DAT_021B3F44)` | `+0x5A & 1` path, `iVar4 == 1`, after `02185568`; the cap is the arc-target counter at `0x021B3F44` (P2a) | approximate |
 | 7 | `02180048` (`HasStatusThatPreventsActing`) | `DungeonRandInt(8)` | decoy curse (`+0xB3 == 2`) | exact (decoy branch of `status_checks.c`) |
 | 8 | `02180048` | `DungeonRandInt(2)` | blinker (`+0xC9 == 1`), cannot move | exact (blinker branch) |
 | 9 | `02180048` | `DungeonRandInt(8)` | blinker, random direction | exact |
@@ -148,15 +183,15 @@ Notes:
 
 ## Open questions
 
-- **P6-g, unresolved call sites (not verified).** A counts nine functions with indirect calls. Seven are unresolved, listed here:  `020731AC` (depth 11, a stored function pointer), `02076280` and `02076AEC` (depths 8 and 9, a dispatch through a DAT slot), `0207D500` (depth 7), `02086468` and `02086470` (depths 12 and 13), and `0213A348` (depth 7, a stub that jumps through `0213A374` to `0202D240`, which was not followed). `0208625C` (depth 2, a signed-division helper) and `021644B8` (depth 3, a switch predicate) were read by hand and do not call the RNG. Resolve the pointers to finish the list.
+- **P6-g, unresolved call sites.** A counts nine functions with indirect calls. #194 P1 resolved three of the seven sites (`0213A348` (P1a), `02086468` and `02086470` (P1b)) and call 1 of `02076AEC` (P1c), statically, with no RNG reach. Four remain open, see #275: `020731AC` (depth 11, P1d), `02076280` (depth 8, P1e), `0207D500` (depth 7, P1f), and `02076AEC` call 2 (depth 9, P1c). `0208625C` (depth 2, a signed-division helper) and `021644B8` (depth 3, a switch predicate) were read by hand and do not call the RNG. Details are in [Helpers, tables and open items (#194)](#helpers-tables-and-open-items-194).
 - **P6 walk limits.** Only the first parent chain is recorded per node. The closure is static, so calls made through pointers that were not resolved are missing.
-- **P5.6 tables (not verified).** The thrown-probability table at `0x021B485C` and the count at `0x021B3F44` are set at runtime. A trace of the write, or the initialiser, is needed. Red's `gAIThrownItemProbabilities` and `gAIThrowItemActionChoiceCount` are the candidates.
+- **P5.6 tables (not verified).** The thrown-probability table at `0x021B485C` needs a runtime write trace (**runtime not run**). Open, see #275 and [#194 P2b](#helpers-tables-and-open-items-194). The count at `0x021B3F44` is a runtime arc-target counter (P2a), not a table count.
 - **P5 and P6-b count.** Blue's `0218579C` has 5 direct RNG sites; Red's `AIDecideUseItem` has 6 across both item categories. P5 must reconcile this.
 - **P2.7 weighted pick (Blue settled, #193 P3).** The Blue rule is confirmed at runtime (see the P2.7 note above). The Red side is not checked: no Red source was read. Check Red's source before a port copies its rule.
-- **P2.9 decompiler artifact (unverified).** The filter and pick loops in `02192D24` index a local at stride 8 up to entry 4 (the regular attack), but only entries 0 to 3 are written in the visible code. Stack aliasing is likely. Treat the regular-attack flag in those loops as unverified until the stack layout is checked in Ghidra.
-- **P2.2 and P2.6 helpers.** `0215A2C0` (bide match) is not decompiled. The bodies of `021818A4`, `02181904`, `021818D0` and `02191A30` are not verified.
-- **P2.3 table entries 2 to 4.** Not read.
-- **P1-c offsets.** `+0xB3` and `+0xB4` are not checked against [`structs.md`](structs.md).
+- **P2.9 decompiler artifact (unverified).** The filter and pick loops in `02192D24` index a local at stride 8 up to entry 4 (the regular attack), but only entries 0 to 3 are written in the visible code. Stack aliasing is likely. Treat the regular-attack flag in those loops as unverified until the stack layout is checked in Ghidra. Open, see #275 (#194 P3h).
+- **P2.2 and P2.6 helpers.** `0215A2C0` (bide match) is described in [#194 P3f](#helpers-tables-and-open-items-194), but its row values are not read. The bodies of `021818A4`, `02181904`, `021818D0` and `02191A30` are described in P3a to P3d of the same section; the field identities are not verified.
+- **P2.3 table entries 2 to 4.** Not read. Open, see #275.
+- **P1-c offsets.** `+0xB3` and `+0xB4` are not checked against [`structs.md`](structs.md). Open, see #275.
 - **P1-h caller.** How the turn loop reads the action in `+0x42` after `RunMonsterAI` returns. [#49](https://github.com/TorratDev/rust-mm/issues/49)
 - **P3-d `AvoidEnemies`.** The mismatch with Red's source is noted but not checked. The name is not in [`symbols.md`](../symbols.md).
 - **P3-e gate wording.** Investigator C calls the `+6 == 0` gate "non-team-member", which disagrees with its own P3-c and P4-a, where `+6 == 0` is the team-member test. The code test is `+6 == 0`.
