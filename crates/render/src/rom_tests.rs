@@ -6,6 +6,9 @@ use rescue_formats::ground;
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
 
+use rescue_formats::tileset;
+
+use crate::autotile::{GRID_H, GRID_W, autotile};
 use crate::bg::{compose, ground_layer};
 
 rescue_tests::rom_test! {
@@ -52,5 +55,75 @@ rescue_tests::rom_test! {
             }
         }
         assert!(rendered > 0, "no town map layer rendered anything");
+    }
+}
+
+/// Parses `floor_dump.txt` (from a runtime dump of the original's autotile pass): the
+/// tileset, the fixed-room flag, and per cell the terrain word and stored metatile.
+fn parse_floor_dump(text: &str) -> (u16, bool, Vec<u16>, Vec<u8>) {
+    let mut lines = text.lines();
+    let mut field = |name: &str| -> u32 {
+        let l = lines.next().expect("dump header line");
+        l.strip_prefix(name)
+            .unwrap_or_else(|| panic!("expected {name}, got {l}"))
+            .trim()
+            .parse()
+            .unwrap()
+    };
+    let tileset = field("tileset") as u16;
+    let fixed = field("fixed_flag") != 0;
+    // frame, dungeon_ptr, randint_calls_in_pass, the comment line.
+    for _ in 0..4 {
+        lines.next();
+    }
+    let (mut terrain, mut metatile) = (Vec::new(), Vec::new());
+    for line in lines.filter(|l| !l.trim().is_empty()) {
+        for cell in line.split_whitespace() {
+            assert_eq!(cell.len(), 6, "cell {cell}");
+            terrain.push(u16::from_str_radix(&cell[..4], 16).unwrap());
+            metatile.push(u8::from_str_radix(&cell[4..], 16).unwrap());
+        }
+    }
+    (tileset, fixed, terrain, metatile)
+}
+
+rescue_tests::rom_test! {
+    /// Ground truth for the autotile rules: feeds the terrain of a runtime floor dump and
+    /// its logged `RandInt(4)` draws (not a replay of the LCG, which VBlank interrupts
+    /// disturb) to `autotile` with the tileset's `cex` table from the ROM, and requires
+    /// every cell's metatile to match. Needs `RESCUE_FLOOR_DUMP` (a directory holding
+    /// `floor_dump.txt` and `randint.txt`) as well as a ROM; skips without it.
+    fn autotile_matches_runtime_floor_dump(rom) {
+        let Some(dir) = std::env::var_os("RESCUE_FLOOR_DUMP") else {
+            eprintln!("SKIPPED autotile_matches_runtime_floor_dump: RESCUE_FLOOR_DUMP not set");
+            return;
+        };
+        let dir = std::path::PathBuf::from(dir);
+        let dump = std::fs::read_to_string(dir.join("floor_dump.txt")).expect("floor_dump.txt");
+        let draws: Vec<u32> = std::fs::read_to_string(dir.join("randint.txt"))
+            .expect("randint.txt")
+            .lines()
+            .map(|l| l.trim().parse().unwrap())
+            .collect();
+        let (tileset, fixed, terrain, expected) = parse_floor_dump(&dump);
+        assert_eq!(draws.len(), GRID_W * GRID_H);
+
+        let bytes = rom.read();
+        let header = Header::parse(&bytes).expect("header parses");
+        let fs = Filesystem::parse(&bytes, &header).expect("FNT/FAT parse");
+        let f = fs.get("dungeon.sbin").expect("dungeon.sbin present");
+        let data = fs.data(&bytes, f.id).expect("file bytes").to_vec();
+        let arc = Archive::parse(&data).unwrap();
+        let t = tileset::Tileset::load(&arc, &data, tileset as u8).expect("tileset loads");
+        let cex = t.autotile.expect("tileset has an autotile table");
+
+        let mut next = draws.iter().copied();
+        let got = autotile(&terrain, tileset, &cex, &[], fixed, || next.next().unwrap()).unwrap();
+        let bad: Vec<_> = (0..got.len())
+            .filter(|&i| got[i] != expected[i])
+            .map(|i| (i % GRID_W, i / GRID_W))
+            .collect();
+        assert!(bad.is_empty(), "{} cells differ, first at (x, y) {:?}", bad.len(), &bad[..bad.len().min(5)]);
+        assert!(next.next().is_none(), "unused draws");
     }
 }
