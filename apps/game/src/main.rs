@@ -4,25 +4,40 @@
 //! DS screens as placeholders, logs keyboard and gamepad input to stdout, and shows
 //! the held DS buttons on the bottom screen.
 //!
-//! Usage: `rescue [--frames N] [--scale N] [--gap N] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
+//! Usage: `rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
 //! environment variable) stops after N logic ticks, for headless runs in CI.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use rescue_platform::{
     ButtonState, Config, DsButton, Flow, Game, InputEvent, Painter, PlatformError, Rgb, Screen,
 };
+use rescue_render::screens::Arrangement;
 use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
-const USAGE: &str = "usage: rescue [--frames N] [--scale N] [--gap N] [--ff N] [--pause]
+const USAGE: &str =
+    "usage: rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]
   --frames N   stop after N logic ticks (DS rate, ~59.83 per second); also RESCUE_FRAMES=N
   --scale N    initial window scale (default 2)
   --gap N      gap between the two screens in DS pixels, 0..=64 (default 0)
+  --layout L   vertical, side, top, overlay or large (default: saved, else vertical)
+  --settings P settings file (default: the user config dir); --no-settings uses none;
+               --frames implies --no-settings unless --settings is given
   --ff N       fast-forward multiplier 1..=16 (default 1)
   --pause      start paused (with --frames, N counts presented frames)
+Window keys: F11 = fullscreen, F10 = next layout.
 Debug keys: F5 = pause, F6 = step one tick, Tab (held) = fast-forward.
 Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
       Enter = Start, Right Shift/Backspace = Select, Esc = quit.";
+
+/// Where the window settings live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Settings {
+    Default,
+    Path(PathBuf),
+    Off,
+}
 
 /// Command-line options.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +45,8 @@ struct Options {
     frames: Option<u64>,
     scale: u32,
     gap: u32,
+    layout: Option<Arrangement>,
+    settings: Settings,
     speed: u32,
     pause: bool,
     help: bool,
@@ -45,6 +62,8 @@ where
         frames: None,
         scale: 2,
         gap: 0,
+        layout: None,
+        settings: Settings::Default,
         speed: 1,
         pause: false,
         help: false,
@@ -57,6 +76,17 @@ where
         match arg.as_str() {
             "-h" | "--help" => opts.help = true,
             "--pause" => opts.pause = true,
+            "--no-settings" => opts.settings = Settings::Off,
+            "--settings" => {
+                let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
+                opts.settings = Settings::Path(PathBuf::from(value));
+            }
+            "--layout" => {
+                let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
+                opts.layout = Some(Arrangement::from_name(&value).ok_or_else(|| {
+                    format!("--layout must be vertical, side, top, overlay or large, got {value:?}")
+                })?);
+            }
             "--gap" => {
                 let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
                 opts.gap = value
@@ -180,6 +210,14 @@ fn main() -> ExitCode {
         title: String::from("rescue"),
         scale: opts.scale,
         gap: opts.gap,
+        arrangement: opts.layout,
+        settings_path: match opts.settings {
+            // A headless --frames run must not touch the user's settings.
+            Settings::Default if opts.frames.is_some() => None,
+            Settings::Default => rescue_platform::settings::default_path(),
+            Settings::Path(p) => Some(p),
+            Settings::Off => None,
+        },
         tick_limit: opts.frames,
         ds_rate: true,
         speed: opts.speed,
@@ -217,6 +255,8 @@ mod tests {
                 frames: None,
                 scale: 2,
                 gap: 0,
+                layout: None,
+                settings: Settings::Default,
                 speed: 1,
                 pause: false,
                 help: false
@@ -255,6 +295,21 @@ mod tests {
         assert!(parse_args(args(&["--gap", "65"]), None).is_err());
         assert!(parse_args(args(&["--gap", "-1"]), None).is_err());
         assert!(parse_args(args(&["--gap"]), None).is_err());
+    }
+
+    #[test]
+    fn layout_and_settings() {
+        for a in Arrangement::ALL {
+            let o = parse_args(args(&["--layout", a.name()]), None).unwrap();
+            assert_eq!(o.layout, Some(a));
+        }
+        assert!(parse_args(args(&["--layout", "diagonal"]), None).is_err());
+        assert!(parse_args(args(&["--layout"]), None).is_err());
+        let o = parse_args(args(&["--settings", "x.cfg"]), None).unwrap();
+        assert_eq!(o.settings, Settings::Path(PathBuf::from("x.cfg")));
+        let o = parse_args(args(&["--no-settings"]), None).unwrap();
+        assert_eq!(o.settings, Settings::Off);
+        assert!(parse_args(args(&["--settings"]), None).is_err());
     }
 
     #[test]
