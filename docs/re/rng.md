@@ -142,7 +142,7 @@ Source: the #170 P2 and P3 comment by investigator A (static, Ghidra copy `rescu
 
 - Writers of `sub_8011C40`: `FUN_0206C6E4` (`0206C85C`, the test result), `ReadSaveFromPak` (`0202A248`, load from the save), `FUN_0202A954` (`0202A968`, writes -1 after `sub_8011C28(0)`; Red `sub_80122D0`), `FUN_ov_0000__02140860` (`ov_0000::021409D0`).
 - Readers (`sub_8011C34`): `WriteSavetoPak` (`0202A578`, save), `FUN_02066D14`, `FUN_02051AD4`, `FUN_02065224`, `FUN_02062FD0`, `FUN_0200D4DC`, `FUN_ov_0007__021390E8`, `FUN_ov_0000__02140860`.
-- This is the same pattern as Red's `save.c` (saved as `unk418`, restored on load, -1 on reset). What the value is used for is not established.
+- This is the same pattern as Red's `save.c` (saved as `unk418`, restored on load, -1 on reset). What the value is used for is not established. The same global is `unk418` in the save format: see the `0x418` row and the accessors in [`formats/save.md`](../formats/save.md#2-serialized-layout).
 
 #### The 13 words are the per-personality totals (#170 P2b)
 
