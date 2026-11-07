@@ -2810,6 +2810,7 @@ version = "0.0.0"
 dependencies = [
  "rescue-data",
  "rescue-platform",
+ "rescue-render",
  "rescue-sim",
 ]
 
@@ -2824,6 +2825,7 @@ dependencies = [
 name = "rescue-platform"
 version = "0.0.0"
 dependencies = [
+ "rescue-render",
  "sdl3",
 ]
 

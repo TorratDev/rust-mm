@@ -11,4 +11,5 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+rescue-render.workspace = true
 sdl3.workspace = true
