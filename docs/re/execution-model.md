@@ -352,6 +352,7 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   | 9 | enter and clear a dungeon (maintainer's account); the result was not logged | 33624 | `0x167` (f33627) | 5/11, flag 1 | live run only | [blue-verified runtime, single run] |
   | 10 | leave a dungeon early (maintainer's account, "ending a mission"); the result was not logged | 73146 | `0x168` (f73149) | 5/11, flag 1 | live run only | [blue-verified runtime, single run] |
   | 12 | Others, Quicksave or Give Up, Give Up, Yes; the result is -1 | 20493 (runner) | `0x167` (lr `0x0206FDB4`, index frame not logged) | 13/7, flag 1 (savestate run at f912) | B full run, two identical runs; the savestate run confirms result -1 at f908 | [blue-verified runtime] |
+  | 0x11 | boot demo: the boot runner call, taken when var `0x3B` is 0 after the `0x10` call | 933 | not logged (boot call, lr `0x0201F4D0`) | not logged | B full run, both runs (runner at f933); live run (runner at f933, same lr) | [blue-verified runtime] |
 
   - **Index for ids 9 to 0xC depends on the game state.** The live run's id 10 index is `0x168`, but the forced P1b value for ids 9 to `0xC` is `0x167` (boot-state scene variables). Ids 9 (live) and 12 (B) both give `0x167`. So the P1b values for 9 to `0xC` are not fixed, as P1b warned.
   - **Dungeon results seen at runtime.**
@@ -359,7 +360,7 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
     - `3`: quicksave and quit. Quicksave, then Yes, gives result 3 at f1587 with no runner call, and the game returns to the title. Title Continue then shows "Resuming from quicksave"; with Yes, the loop takes argument 1 at f61 and starts the dungeon at f62 with no runner call. Continue from a quicksave does not reach the runner.
     - `1` and `4` (clear, rescue success) and `2` (a successful exit that is not a clear): written as in P3, but not observed. The live run's id 9 and id 10 are consistent with them, but the result was not logged.
     - `5` (a quicksave read failed) and `0` (nothing writes it in the dungeon driver): not observed.
-  - **The dungeon driver calls `FUN_0214D498` with index 0** (`lr 0x0206DBC4`, `r1` = 4) five times at the start of a dungeon. [blue-verified runtime, full run]
+  - **The dungeon driver calls `FUN_0214D498` with index 0** (`lr 0x0206DBC4`, `r1` = 4) at the start of a dungeon. [blue-verified runtime]. The count differs by run. The full run (two identical runs) has one such call, at f18672. Five calls (f357 to f360) are in investigator B's dungeon-start savestate runs, which are exploration runs and not the full run. The maintainer's live run has eight, spread over the dungeon (f12257, f15192, f21813, f21814, f62761, f67816, f68391 and f68876).
   - **Ids not reached in normal play.**
     - 3: nothing assigns mode 3. The value 3 is the quicksave-and-quit result, which returns 1 and never becomes a mode (P3). [blue-verified static; runtime result 3 above]
     - 4: the loop handles it inline and never passes it to the runner (P3). It is not a runner id.
