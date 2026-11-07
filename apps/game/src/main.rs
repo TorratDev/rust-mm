@@ -4,19 +4,20 @@
 //! DS screens as placeholders, logs keyboard and gamepad input to stdout, and shows
 //! the held DS buttons on the bottom screen.
 //!
-//! Usage: `rescue [--frames N] [--scale N] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
+//! Usage: `rescue [--frames N] [--scale N] [--gap N] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
 //! environment variable) stops after N logic ticks, for headless runs in CI.
 
 use std::process::ExitCode;
 
 use rescue_platform::{
-    ButtonState, Config, DsButton, Flow, Game, InputEvent, Painter, PlatformError, Rgb,
-    SCREEN_HEIGHT, SCREEN_WIDTH, Screen,
+    ButtonState, Config, DsButton, Flow, Game, InputEvent, Painter, PlatformError, Rgb, Screen,
 };
+use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
-const USAGE: &str = "usage: rescue [--frames N] [--scale N] [--ff N] [--pause]
+const USAGE: &str = "usage: rescue [--frames N] [--scale N] [--gap N] [--ff N] [--pause]
   --frames N   stop after N logic ticks (DS rate, ~59.83 per second); also RESCUE_FRAMES=N
   --scale N    initial window scale (default 2)
+  --gap N      gap between the two screens in DS pixels, 0..=64 (default 0)
   --ff N       fast-forward multiplier 1..=16 (default 1)
   --pause      start paused (with --frames, N counts presented frames)
 Debug keys: F5 = pause, F6 = step one tick, Tab (held) = fast-forward.
@@ -28,6 +29,7 @@ Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 struct Options {
     frames: Option<u64>,
     scale: u32,
+    gap: u32,
     speed: u32,
     pause: bool,
     help: bool,
@@ -42,6 +44,7 @@ where
     let mut opts = Options {
         frames: None,
         scale: 2,
+        gap: 0,
         speed: 1,
         pause: false,
         help: false,
@@ -54,6 +57,14 @@ where
         match arg.as_str() {
             "-h" | "--help" => opts.help = true,
             "--pause" => opts.pause = true,
+            "--gap" => {
+                let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
+                opts.gap = value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|g| *g <= 64)
+                    .ok_or_else(|| format!("--gap must be 0..=64, got {value:?}"))?;
+            }
             "--frames" | "--scale" | "--ff" => {
                 let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
                 let n = parse_positive(&arg, &value)?;
@@ -168,6 +179,7 @@ fn main() -> ExitCode {
     let config = Config {
         title: String::from("rescue"),
         scale: opts.scale,
+        gap: opts.gap,
         tick_limit: opts.frames,
         ds_rate: true,
         speed: opts.speed,
@@ -204,6 +216,7 @@ mod tests {
             Options {
                 frames: None,
                 scale: 2,
+                gap: 0,
                 speed: 1,
                 pause: false,
                 help: false
@@ -233,6 +246,15 @@ mod tests {
         assert!(parse_args(args(&["--scale", "17"]), None).is_err());
         assert!(parse_args(args(&["--bogus"]), None).is_err());
         assert!(parse_args(args(&[]), Some("abc")).is_err());
+    }
+
+    #[test]
+    fn gap() {
+        assert_eq!(parse_args(args(&["--gap", "8"]), None).unwrap().gap, 8);
+        assert_eq!(parse_args(args(&["--gap", "0"]), None).unwrap().gap, 0);
+        assert!(parse_args(args(&["--gap", "65"]), None).is_err());
+        assert!(parse_args(args(&["--gap", "-1"]), None).is_err());
+        assert!(parse_args(args(&["--gap"]), None).is_err());
     }
 
     #[test]

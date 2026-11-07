@@ -16,13 +16,14 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Instant;
 
+use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenLayout};
 use sdl3::event::Event;
 use sdl3::gamepad::Gamepad;
 use sdl3::pixels::Color;
 use sdl3::render::{FRect, ScaleMode, WindowCanvas};
 
 pub use input::{ButtonState, DsButton, InputEvent};
-pub use layout::{Layout, SCREEN_HEIGHT, SCREEN_WIDTH, Screen};
+pub use layout::Screen;
 pub use timing::{FixedTimestep, TICKS_PER_SECOND};
 
 /// Version of the SDL3 library linked into the binary.
@@ -52,8 +53,11 @@ fn ctx<E: fmt::Display>(what: &'static str) -> impl FnOnce(E) -> PlatformError {
 pub struct Config {
     /// Window title.
     pub title: String,
-    /// Initial integer scale of the window (window is `256*scale` x `384*scale`).
+    /// Initial integer scale of the window (window is `256*scale` wide and
+    /// `(384+gap)*scale` high).
     pub scale: u32,
+    /// Gap between the two screens, in DS pixels (scaled with the screens).
+    pub gap: u32,
     /// Stop after this many logic ticks (for headless runs). `None` runs until quit.
     pub tick_limit: Option<u64>,
     /// Tick at the DS frame rate (about 59.8261 Hz) instead of a flat 60 Hz.
@@ -69,6 +73,7 @@ impl Default for Config {
         Config {
             title: String::from("rescue"),
             scale: 2,
+            gap: 0,
             tick_limit: None,
             ds_rate: false,
             speed: 1,
@@ -143,6 +148,15 @@ pub struct RunStats {
     pub gamepads_at_start: usize,
 }
 
+/// Initial window size in pixels: both screens and the gap at `config.scale`.
+fn initial_window_size(config: &Config) -> (u32, u32) {
+    let scale = config.scale.max(1);
+    (
+        SCREEN_WIDTH * scale,
+        (2 * SCREEN_HEIGHT + config.gap) * scale,
+    )
+}
+
 /// Opens the window and runs the event/tick/draw loop until the window is closed,
 /// Escape is pressed, the game returns [`Flow::Quit`], or `config.tick_limit` ticks
 /// have run (frames, while paused). Debug keys: F5 pause, F6 step, Tab held fast-forward.
@@ -152,13 +166,9 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
     let gamepads = sdl.gamepad().map_err(ctx("gamepad subsystem"))?;
     let gamepads_at_start = gamepads.gamepads().map_err(ctx("list gamepads"))?.len();
 
-    let scale = config.scale.max(1);
+    let (width, height) = initial_window_size(config);
     let window = video
-        .window(
-            &config.title,
-            SCREEN_WIDTH * scale,
-            2 * SCREEN_HEIGHT * scale,
-        )
+        .window(&config.title, width, height)
         .resizable()
         .build()
         .map_err(ctx("create window"))?;
@@ -300,11 +310,14 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
         }
 
         let (w, h) = canvas.output_size().map_err(ctx("output size"))?;
-        let layout = Layout::stacked(w, h);
+        let layout = ScreenLayout::stacked(w, h, config.gap);
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
         for (screen, texture) in [(Screen::Top, &top), (Screen::Bottom, &bottom)] {
-            let r = layout.rect(screen);
+            let r = match screen {
+                Screen::Top => layout.top,
+                Screen::Bottom => layout.bottom,
+            };
             let dst = FRect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32);
             canvas
                 .copy(texture, None, dst)
@@ -385,5 +398,20 @@ mod tests {
             assert_eq!(input::button_for_scancode(sc), None, "{sc:?}");
             assert!(!input::is_quit_scancode(sc), "{sc:?}");
         }
+    }
+
+    #[test]
+    fn window_size_includes_the_gap_at_scale() {
+        let mut c = Config::default();
+        assert_eq!(initial_window_size(&c), (512, 768));
+        c.gap = 8;
+        assert_eq!(initial_window_size(&c), (512, 784));
+        c.scale = 0;
+        assert_eq!(initial_window_size(&c), (256, 392));
+    }
+
+    #[test]
+    fn default_gap_is_zero() {
+        assert_eq!(Config::default().gap, 0);
     }
 }
