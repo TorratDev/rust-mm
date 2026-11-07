@@ -238,7 +238,7 @@ The x-ref counts are from the Ghidra copy. The **subsystem labels are a reading 
 
 The labels for the named callers are medium. `FUN_ov_0001__0217af58` as an animation routine comes from its neighbours' names, not its body.
 
-**Dungeon message display reaches the global LCG** (static, low confidence; see [`ai.md`](ai.md), P6-f). The static walk from the AI code reaches `Rand32Bit` along `02154BF0` (message display) → `02154910` → `0213AFA8` → `0213AD54` → `02142504` → `0217B120`. So a dungeon message can advance `sPRNGState` as well as `gDungeonRngState`. The chain runs through `0213AFA8` and `0217B120`, which [`symbols.md`](../symbols.md) names `DungeonRunFrameActions` and `UpdateMonsterSprite`; those names were not checked against this path. A runtime check is open.
+**Dungeon message display does not reach the global LCG** (runtime-refuted for the forced `RunMonsterAI` step-4 path, #270 P1; see [`ai.md`](ai.md), P6-f). The static walk from the AI code reaches `Rand32Bit` along `02154BF0` (message display) → `02154910` → `0213AFA8` → `0213AD54` → `02142504` → `0217B120`, but that chain is a per-frame call. A forced run called `02154BF0` 623 times (207 drew a message): `sPRNGState` was the same at entry and return every time, with no write inside the call. Caveats: forced preconditions and one string; other message paths (the damage wrappers `02154AE4`, `02154B38`, `02154B8C`) were not checked for LCG writes. The names `0213AFA8` and `0217B120` ([`symbols.md`](../symbols.md): `DungeonRunFrameActions`, `UpdateMonsterSprite`) were not checked against this path.
 
 ## Unnamed global-LCG callers (#168 P3)
 
