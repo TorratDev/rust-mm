@@ -281,7 +281,7 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   - **No code bound.** The reference builder `FUN_02147E6C` (`ov_0000::02147E6C`, overlay 0) reads the entry at `*(PTR + index * 0xC)` with no compare. `FUN_0214D498` only logs the index and passes it on. The other references to the table are at `02145FB0`, `02142FB0` and `02143058`, all in the interpreter `FUN_ov_0000__021421CC`; those uses were not decompiled. [blue-verified static, medium-high]
   - **Runtime.** The index 359 read at runtime (`FUN_0214D498`) matches the static entry: script pointer `0x020CF1D8`, name `GETOUT_M01E02A`. Only the entry pointer and fields were logged, and the layout and the null entries were not confirmed at runtime.
   - **Opcode `0x1E` recount.** [blue-verified static, medium] The earlier note that loader scripts are short (`1E`, wait, `F0`) holds only for some of them. Walking each script from its start to the next start (the method in P2, with the last script bounded at its first `0xF0`) gives **290 `0x1E` commands in 179 of the 398 scripts**, with 74 distinct (word 1, word 2) pairs and 74 distinct bank values. None are in the first 56 entries. The 290 is an upper bound: 12 gaps between consecutive starts are not a multiple of 0x18, so some of the walk is over data between scripts. Not checked: which of the `0x1E` commands are reachable (branch targets), and the bank 3 and 4 folding.
-- **P1d. Natural reach of ids 1 to `0xE`.** [not reached; open] The boot input (new game, intro) enters only `0xF`, `0x10` and `0` (runner callers `lr 0x0201F4A0`, `0x0201F4B4`, `0x0201E710`). Ids 1 to `0xE` need the mode dispatcher to call the runner with those ids, which needs game progress or a save; the supported setup has none (see the #260 entry in [`verification.md`](../verification.md)). Scenario ids 9 to `0xC` also depend on scene variables `0x14` and `0x15`. The static map of ids, callers and conditions is P3 below. Natural ids still unseen at runtime: 2, 5, 9, 10, 11 and 12. Id 1 (title Continue) and id `0x11` (a conditional boot call) are also unseen.
+- **P1d. Natural reach of ids 1 to `0xE`.** [reached in normal play for 1, 2, 5, 9, 10 and 12; id 11 has no natural route; see P4 below] The boot input (new game, intro) enters only `0xF`, `0x10` and `0` (runner callers `lr 0x0201F4A0`, `0x0201F4B4`, `0x0201E710`). Ids 1 to `0xE` need the mode dispatcher to call the runner with those ids, which needs game progress or a save; the supported setup has none (see the #260 entry in [`verification.md`](../verification.md)). Scenario ids 9 to `0xC` also depend on scene variables `0x14` and `0x15`. The static map of ids, callers and conditions is P3 below, and the natural runs are P4.
 
 - **P3. Static map of scene ids and start modes.** [blue-verified, static decompile; the pmd-red names are red-hypothesis, cited by name only from `pret/pmd-red 013475aa src/main_loops.c`]
 
@@ -341,6 +341,37 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   - The reach after a save (the last column) is inferred from the control flow, not run.
 
   Confidence: high for the call sites and the loop's dispatch; medium for the Red names and for the reach after a save.
+
+- **P4. Natural reach of the scene ids (#267).** [blue-verified runtime] Runs of normal play from the maintainer's post-Thunderwave save. Ids 1, 2, 5 and 12 come from investigator B's full input run, which was run twice with identical output. Ids 5, 9 and 10 also come from the maintainer's live run, which is a single run. The index is `FUN_0214D498`'s argument, the bank is the `FUN_0214D420` load with flag 1 that follows it, and the result is the post-dungeon value at `setup+0x60` (P3). Hashes and commands are in [`verification.md`](../verification.md#267-p4--natural-reach-of-the-scene-ids).
+
+  | id | natural action | frame | index | bank | evidence | tag |
+  |---|---|---|---|---|---|---|
+  | 1 | title Continue (`GameLoop` argument 1) | 1652 | `0x66` (lr `0x0206FDC4`) | 13/17 (live run) | B full run (runner at f1652, both runs); live run (index `0x66`) | [blue-verified runtime] |
+  | 2 | leave the Square to the west; destination menu "Pokemon Team Base"; A | 16074 | `0x66` (lr `0x0206FDC4`) | not logged in the full run; bank 9/0 at f585 in a menu-savestate run | B full run, two identical runs | [blue-verified runtime] |
+  | 5 | Dungeons menu on the path south of Team Base; A on Tiny Woods (`lr 0x0201E6BC`) | 18564 (B); 12149 and 62651 (live) | `0x70` (lr `0x0206FDB4`) | not logged in the full run | B full run; live run, index `0x70` at 12152 and 62654 | [blue-verified runtime] |
+  | 9 | enter and clear a dungeon (maintainer's account); the result was not logged | 33624 | `0x167` (f33627) | 5/11, flag 1 | live run only | [blue-verified runtime, single run] |
+  | 10 | leave a dungeon early (maintainer's account, "ending a mission"); the result was not logged | 73146 | `0x168` (f73149) | 5/11, flag 1 | live run only | [blue-verified runtime, single run] |
+  | 12 | Others, Quicksave or Give Up, Give Up, Yes; the result is -1 | 20493 (runner) | `0x167` (lr `0x0206FDB4`, index frame not logged) | 13/7, flag 1 (savestate run at f912) | B full run, two identical runs; the savestate run confirms result -1 at f908 | [blue-verified runtime] |
+
+  - **Index for ids 9 to 0xC depends on the game state.** The live run's id 10 index is `0x168`, but the forced P1b value for ids 9 to `0xC` is `0x167` (boot-state scene variables). Ids 9 (live) and 12 (B) both give `0x167`. So the P1b values for 9 to `0xC` are not fixed, as P1b warned.
+  - **Dungeon results seen at runtime.**
+    - `-1`: Give Up. The savestate run with the result hook shows result -1 at f908, then the runner with id 12 (the static faint path uses the same value).
+    - `3`: quicksave and quit. Quicksave, then Yes, gives result 3 at f1587 with no runner call, and the game returns to the title. Title Continue then shows "Resuming from quicksave"; with Yes, the loop takes argument 1 at f61 and starts the dungeon at f62 with no runner call. Continue from a quicksave does not reach the runner.
+    - `1` and `4` (clear, rescue success) and `2` (a successful exit that is not a clear): written as in P3, but not observed. The live run's id 9 and id 10 are consistent with them, but the result was not logged.
+    - `5` (a quicksave read failed) and `0` (nothing writes it in the dungeon driver): not observed.
+  - **The dungeon driver calls `FUN_0214D498` with index 0** (`lr 0x0206DBC4`, `r1` = 4) five times at the start of a dungeon. [blue-verified runtime, full run]
+  - **Ids not reached in normal play.**
+    - 3: nothing assigns mode 3. The value 3 is the quicksave-and-quit result, which returns 1 and never becomes a mode (P3). [blue-verified static; runtime result 3 above]
+    - 4: the loop handles it inline and never passes it to the runner (P3). It is not a runner id.
+    - 6: nothing assigns mode 6. The value 6 is a runner return code that gives mode 5 (P3).
+    - 7: skips the runner. A quicksave resume reaches dungeon start with no runner call (above).
+    - 8: skips the runner. Its only route is the initial mode (`0x19` = 7 with `GameLoop` argument 2). That route was not run.
+    - 0xD: nothing calls it. Code `0xD` is a dungeon-path return code (P3).
+    - 0xE: nothing in Blue calls it (P3).
+    - 11: no natural route found [static, medium]. Mode 11 comes from result 5 (a failed quicksave read), from result 0 (no writer found), from the initial mode `0xB`, from the title path with argument 3 (which needs a pending quicksave), and from a quicksave marker mismatch. Ordinary play from this save reaches none of them without an invalid quicksave or the title option. Quicksave Continue gives argument 1, not 3 (runtime), so it does not reach 11. Not run.
+  - **Replay of the live run does not match it.** Replaying the live run's key log (`--replay`, 75086 frames) gives the same event log in two runs, but the replay diverges at frame 2167, just after Continue, and reaches only ids 0xF, 0x10, 0x11 and 1. The likely cause is touch input that the key log does not hold: the maintainer clicked the window to take focus, and in that window a click is a DS touchscreen tap. Not verified. The live run is single-run evidence, accepted by the maintainer. Ids 2, 5 and 12 rest on B's full run, which reproduced exactly.
+
+  Confidence: high for ids 1, 2, 5 and 12 (two identical full runs, consistent with P3); medium for ids 9 and 10 (one live run, results not logged); static, medium for id 11.
 
 ### Opcode 9 with map 3 or 4 (#258 P2)
 
