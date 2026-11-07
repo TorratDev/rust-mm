@@ -337,12 +337,22 @@ enum DebugKey {
 /// Fast-forward multiplier while Tab is held (at least the configured speed).
 const HELD_FAST_FORWARD: u32 = 4;
 
+/// Keys reserved for the debug timing controls, in [`DebugKey`] order (pause, step,
+/// fast-forward). The loop handles them before DS input, so key rebinding (#63) must
+/// reject these keys: a binding on one would be swallowed silently.
+pub const DEBUG_SCANCODES: [sdl3::keyboard::Scancode; 3] = [
+    sdl3::keyboard::Scancode::F5,
+    sdl3::keyboard::Scancode::F6,
+    sdl3::keyboard::Scancode::Tab,
+];
+
 /// The debug timing key for `scancode`, if it is one.
 fn debug_key(scancode: sdl3::keyboard::Scancode) -> Option<DebugKey> {
+    let [pause, step, fast_forward] = DEBUG_SCANCODES;
     match scancode {
-        sdl3::keyboard::Scancode::F5 => Some(DebugKey::Pause),
-        sdl3::keyboard::Scancode::F6 => Some(DebugKey::Step),
-        sdl3::keyboard::Scancode::Tab => Some(DebugKey::FastForward),
+        s if s == pause => Some(DebugKey::Pause),
+        s if s == step => Some(DebugKey::Step),
+        s if s == fast_forward => Some(DebugKey::FastForward),
         _ => None,
     }
 }
@@ -361,5 +371,19 @@ fn pad_event(pad: u32, button: sdl3::gamepad::Button, pressed: bool) -> InputEve
         name: button.string(),
         button: input::button_for_gamepad(button),
         pressed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_keys_do_not_collide_with_game_input() {
+        for sc in DEBUG_SCANCODES {
+            assert!(debug_key(sc).is_some());
+            assert_eq!(input::button_for_scancode(sc), None, "{sc:?}");
+            assert!(!input::is_quit_scancode(sc), "{sc:?}");
+        }
     }
 }
