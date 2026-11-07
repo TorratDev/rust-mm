@@ -169,6 +169,22 @@ fn initial_window_size(config: &Config) -> (u32, u32) {
     )
 }
 
+/// Whether a window of `size` at `pos` overlaps any display, given as `(x, y, w, h)` bounds.
+fn position_is_visible(
+    pos: (i32, i32),
+    size: (u32, u32),
+    displays: &[(i32, i32, u32, u32)],
+) -> bool {
+    let (x, y) = (i64::from(pos.0), i64::from(pos.1));
+    displays.iter().any(|&(dx, dy, dw, dh)| {
+        let (dx, dy) = (i64::from(dx), i64::from(dy));
+        x < dx + i64::from(dw)
+            && dx < x + i64::from(size.0)
+            && y < dy + i64::from(dh)
+            && dy < y + i64::from(size.1)
+    })
+}
+
 /// Opens the window and runs the event/tick/draw loop until the window is closed,
 /// Escape is pressed, the game returns [`Flow::Quit`], or `config.tick_limit` ticks
 /// have run (frames, while paused). Debug keys: F5 pause, F6 step, Tab held fast-forward.
@@ -187,10 +203,21 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
     let mut arrangement = config.arrangement.or(saved.arrangement).unwrap_or_default();
     let mut fullscreen = saved.fullscreen;
     let mut windowed_size = (width, height);
-    let mut windowed_pos = saved.position;
+    // A saved position is used only while it still lands on a connected display.
+    let bounds: Vec<(i32, i32, u32, u32)> = video
+        .displays()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|d| d.get_bounds().ok())
+        .map(|r| (r.x(), r.y(), r.width(), r.height()))
+        .collect();
+    let start_pos = saved
+        .position
+        .filter(|&p| position_is_visible(p, (width, height), &bounds));
+    let mut windowed_pos = start_pos;
     let mut builder = video.window(&config.title, width, height);
     builder.resizable();
-    match saved.position {
+    match start_pos {
         Some((x, y)) => builder.position(x, y),
         None => builder.position_centered(),
     };
@@ -469,6 +496,20 @@ mod tests {
             assert!(!input::is_quit_scancode(sc), "{sc:?}");
             assert!(debug_key(sc).is_none(), "{sc:?}");
         }
+    }
+
+    #[test]
+    fn saved_position_must_overlap_a_display() {
+        let displays = [(0, 0, 1920, 1080), (1920, 0, 1280, 1024)];
+        let size = (512, 768);
+        assert!(position_is_visible((100, 100), size, &displays));
+        assert!(position_is_visible((2500, 300), size, &displays));
+        // Partly off the edge still overlaps; fully past it does not.
+        assert!(position_is_visible((-400, 10), size, &displays));
+        assert!(!position_is_visible((-512, 10), size, &displays));
+        assert!(!position_is_visible((50000, -40000), size, &displays));
+        assert!(!position_is_visible((3200, 0), size, &displays));
+        assert!(!position_is_visible((0, 0), size, &[]));
     }
 
     #[test]

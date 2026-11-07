@@ -22,7 +22,8 @@ const USAGE: &str =
   --scale N    initial window scale (default 2)
   --gap N      gap between the two screens in DS pixels, 0..=64 (default 0)
   --layout L   vertical, side, top, overlay or large (default: saved, else vertical)
-  --settings P settings file (default: the user config dir); --no-settings uses none
+  --settings P settings file (default: the user config dir); --no-settings uses none;
+               --frames implies --no-settings unless --settings is given
   --ff N       fast-forward multiplier 1..=16 (default 1)
   --pause      start paused (with --frames, N counts presented frames)
 Window keys: F11 = fullscreen, F10 = next layout.
@@ -211,6 +212,8 @@ fn main() -> ExitCode {
         gap: opts.gap,
         arrangement: opts.layout,
         settings_path: match opts.settings {
+            // A headless --frames run must not touch the user's settings.
+            Settings::Default if opts.frames.is_some() => None,
             Settings::Default => rescue_platform::settings::default_path(),
             Settings::Path(p) => Some(p),
             Settings::Off => None,
