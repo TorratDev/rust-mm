@@ -56,6 +56,12 @@ pub struct Config {
     pub scale: u32,
     /// Stop after this many logic ticks (for headless runs). `None` runs until quit.
     pub tick_limit: Option<u64>,
+    /// Tick at the DS frame rate (about 59.8261 Hz) instead of a flat 60 Hz.
+    pub ds_rate: bool,
+    /// Fast-forward multiplier (1 is normal speed).
+    pub speed: u32,
+    /// Start paused; use the debug keys below to step.
+    pub start_paused: bool,
 }
 
 impl Default for Config {
@@ -64,6 +70,9 @@ impl Default for Config {
             title: String::from("rescue"),
             scale: 2,
             tick_limit: None,
+            ds_rate: false,
+            speed: 1,
+            start_paused: false,
         }
     }
 }
@@ -136,7 +145,7 @@ pub struct RunStats {
 
 /// Opens the window and runs the event/tick/draw loop until the window is closed,
 /// Escape is pressed, the game returns [`Flow::Quit`], or `config.tick_limit` ticks
-/// have run.
+/// have run (frames, while paused). Debug keys: F5 pause, F6 step, Tab held fast-forward.
 pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformError> {
     let sdl = sdl3::init().map_err(ctx("SDL init"))?;
     let video = sdl.video().map_err(ctx("video subsystem"))?;
@@ -169,7 +178,14 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
     // pads already connected at start-up, so this also covers those.
     let mut open_pads: BTreeMap<u32, Gamepad> = BTreeMap::new();
     let mut buttons = ButtonState::default();
-    let mut timestep = FixedTimestep::from_rate(TICKS_PER_SECOND, 5);
+    let mut timestep = if config.ds_rate {
+        FixedTimestep::ds(5)
+    } else {
+        FixedTimestep::from_rate(TICKS_PER_SECOND, 5)
+    };
+    let base_speed = config.speed.max(1);
+    timestep.set_speed(base_speed);
+    timestep.set_paused(config.start_paused);
     let mut stats = RunStats {
         ticks: 0,
         frames: 0,
@@ -186,6 +202,30 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
                     repeat: false,
                     ..
                 } if input::is_quit_scancode(sc) => break 'main,
+                // Reserved debug keys: handled here so the Game trait stays unchanged.
+                Event::KeyDown {
+                    scancode: Some(sc),
+                    repeat: false,
+                    ..
+                } if debug_key(sc).is_some() => {
+                    match debug_key(sc) {
+                        Some(DebugKey::Pause) => {
+                            timestep.set_paused(!timestep.is_paused());
+                        }
+                        Some(DebugKey::Step) => timestep.request_step(),
+                        Some(DebugKey::FastForward) => {
+                            timestep.set_speed(base_speed.max(HELD_FAST_FORWARD));
+                        }
+                        None => {}
+                    }
+                    None
+                }
+                Event::KeyUp {
+                    scancode: Some(sc), ..
+                } if debug_key(sc) == Some(DebugKey::FastForward) => {
+                    timestep.set_speed(base_speed);
+                    None
+                }
                 Event::KeyDown {
                     scancode: Some(sc),
                     repeat: false,
@@ -272,11 +312,39 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
         }
         canvas.present();
         stats.frames += 1;
+        // Paused, no ticks run, so a headless limit counts presented frames instead.
+        if timestep.is_paused() && config.tick_limit.is_some_and(|n| stats.frames >= n) {
+            break 'main;
+        }
 
         std::thread::sleep(timestep.time_until_next());
     }
 
     Ok(stats)
+}
+
+/// Debug timing keys, reserved by the platform loop (never sent to the game).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DebugKey {
+    /// F5: toggle pause.
+    Pause,
+    /// F6: run one tick while paused.
+    Step,
+    /// Tab (held): fast-forward.
+    FastForward,
+}
+
+/// Fast-forward multiplier while Tab is held (at least the configured speed).
+const HELD_FAST_FORWARD: u32 = 4;
+
+/// The debug timing key for `scancode`, if it is one.
+fn debug_key(scancode: sdl3::keyboard::Scancode) -> Option<DebugKey> {
+    match scancode {
+        sdl3::keyboard::Scancode::F5 => Some(DebugKey::Pause),
+        sdl3::keyboard::Scancode::F6 => Some(DebugKey::Step),
+        sdl3::keyboard::Scancode::Tab => Some(DebugKey::FastForward),
+        _ => None,
+    }
 }
 
 fn key_event(scancode: sdl3::keyboard::Scancode, pressed: bool) -> InputEvent {
