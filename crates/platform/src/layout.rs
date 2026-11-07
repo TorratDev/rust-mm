@@ -1,13 +1,3 @@
-//! The two DS screens. Their placement in the window is `rescue_render::ScreenLayout`.
+//! The two DS screens; their placement is `rescue_render::screens`.
 
-/// One of the two DS screens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
-    Top,
-    Bottom,
-}
-
-impl Screen {
-    /// Both screens, top first.
-    pub const ALL: [Screen; 2] = [Screen::Top, Screen::Bottom];
-}
+pub use rescue_render::screens::Screen;

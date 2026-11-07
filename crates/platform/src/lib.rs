@@ -10,20 +10,25 @@
 pub mod audio;
 pub mod input;
 pub mod layout;
+pub mod settings;
 pub mod timing;
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Instant;
 
-use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH, ScreenLayout};
+use rescue_render::screens::{ArrangedLayout, Arrangement};
+use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use sdl3::event::Event;
 use sdl3::gamepad::Gamepad;
 use sdl3::pixels::Color;
 use sdl3::render::{FRect, ScaleMode, WindowCanvas};
+use sdl3::video::FullscreenType;
 
 pub use input::{ButtonState, DsButton, InputEvent};
 pub use layout::Screen;
+pub use settings::WindowSettings;
 pub use timing::{FixedTimestep, TICKS_PER_SECOND};
 
 /// Version of the SDL3 library linked into the binary.
@@ -58,6 +63,11 @@ pub struct Config {
     pub scale: u32,
     /// Gap between the two screens, in DS pixels (scaled with the screens).
     pub gap: u32,
+    /// Screen arrangement. `None` uses the saved one, else [`Arrangement::Vertical`].
+    pub arrangement: Option<Arrangement>,
+    /// Where to load and save the window settings (arrangement, size, position,
+    /// fullscreen). `None` neither reads nor writes any file.
+    pub settings_path: Option<PathBuf>,
     /// Stop after this many logic ticks (for headless runs). `None` runs until quit.
     pub tick_limit: Option<u64>,
     /// Tick at the DS frame rate (about 59.8261 Hz) instead of a flat 60 Hz.
@@ -74,6 +84,8 @@ impl Default for Config {
             title: String::from("rescue"),
             scale: 2,
             gap: 0,
+            arrangement: None,
+            settings_path: None,
             tick_limit: None,
             ds_rate: false,
             speed: 1,
@@ -166,12 +178,26 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
     let gamepads = sdl.gamepad().map_err(ctx("gamepad subsystem"))?;
     let gamepads_at_start = gamepads.gamepads().map_err(ctx("list gamepads"))?.len();
 
-    let (width, height) = initial_window_size(config);
-    let window = video
-        .window(&config.title, width, height)
-        .resizable()
-        .build()
-        .map_err(ctx("create window"))?;
+    let saved = config
+        .settings_path
+        .as_deref()
+        .map(WindowSettings::load)
+        .unwrap_or_default();
+    let (width, height) = saved.size.unwrap_or_else(|| initial_window_size(config));
+    let mut arrangement = config.arrangement.or(saved.arrangement).unwrap_or_default();
+    let mut fullscreen = saved.fullscreen;
+    let mut windowed_size = (width, height);
+    let mut windowed_pos = saved.position;
+    let mut builder = video.window(&config.title, width, height);
+    builder.resizable();
+    match saved.position {
+        Some((x, y)) => builder.position(x, y),
+        None => builder.position_centered(),
+    };
+    if fullscreen {
+        builder.fullscreen();
+    }
+    let window = builder.build().map_err(ctx("create window"))?;
     let mut canvas = window.into_canvas();
     let creator = canvas.texture_creator();
     let mut top = creator
@@ -234,6 +260,23 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
                     scancode: Some(sc), ..
                 } if debug_key(sc) == Some(DebugKey::FastForward) => {
                     timestep.set_speed(base_speed);
+                    None
+                }
+                // Reserved window keys: F11 fullscreen, F10 next arrangement.
+                Event::KeyDown {
+                    scancode: Some(sc),
+                    repeat: false,
+                    ..
+                } if WINDOW_SCANCODES.contains(&sc) => {
+                    if sc == WINDOW_SCANCODES[0] {
+                        fullscreen = !fullscreen;
+                        if let Err(e) = canvas.window_mut().set_fullscreen(fullscreen) {
+                            eprintln!("warning: could not change fullscreen: {e}");
+                            fullscreen = !fullscreen;
+                        }
+                    } else {
+                        arrangement = arrangement.next();
+                    }
                     None
                 }
                 Event::KeyDown {
@@ -310,13 +353,16 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
         }
 
         let (w, h) = canvas.output_size().map_err(ctx("output size"))?;
-        let layout = ScreenLayout::stacked(w, h, config.gap);
+        if !fullscreen && canvas.window().fullscreen_state() == FullscreenType::Off {
+            windowed_size = canvas.window().size();
+            windowed_pos = Some(canvas.window().position());
+        }
+        let layout = ArrangedLayout::new(arrangement, w, h, config.gap);
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
         for (screen, texture) in [(Screen::Top, &top), (Screen::Bottom, &bottom)] {
-            let r = match screen {
-                Screen::Top => layout.top,
-                Screen::Bottom => layout.bottom,
+            let Some(r) = layout.rect(screen) else {
+                continue;
             };
             let dst = FRect::new(r.x as f32, r.y as f32, r.w as f32, r.h as f32);
             canvas
@@ -333,6 +379,17 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
         std::thread::sleep(timestep.time_until_next());
     }
 
+    if let Some(path) = &config.settings_path {
+        let settings = WindowSettings {
+            arrangement: Some(arrangement),
+            size: Some(windowed_size),
+            position: windowed_pos,
+            fullscreen,
+        };
+        if let Err(e) = settings.save(path) {
+            eprintln!("warning: could not save {}: {e}", path.display());
+        }
+    }
     Ok(stats)
 }
 
@@ -358,6 +415,11 @@ pub const DEBUG_SCANCODES: [sdl3::keyboard::Scancode; 3] = [
     sdl3::keyboard::Scancode::F6,
     sdl3::keyboard::Scancode::Tab,
 ];
+
+/// Keys reserved for the window controls: F11 toggles borderless fullscreen, F10 cycles the
+/// screen arrangement. Handled before DS input, so rebinding (#63) must reject them too.
+pub const WINDOW_SCANCODES: [sdl3::keyboard::Scancode; 2] =
+    [sdl3::keyboard::Scancode::F11, sdl3::keyboard::Scancode::F10];
 
 /// The debug timing key for `scancode`, if it is one.
 fn debug_key(scancode: sdl3::keyboard::Scancode) -> Option<DebugKey> {
@@ -397,6 +459,15 @@ mod tests {
             assert!(debug_key(sc).is_some());
             assert_eq!(input::button_for_scancode(sc), None, "{sc:?}");
             assert!(!input::is_quit_scancode(sc), "{sc:?}");
+        }
+    }
+
+    #[test]
+    fn window_keys_do_not_collide_with_game_or_debug_input() {
+        for sc in WINDOW_SCANCODES {
+            assert_eq!(input::button_for_scancode(sc), None, "{sc:?}");
+            assert!(!input::is_quit_scancode(sc), "{sc:?}");
+            assert!(debug_key(sc).is_none(), "{sc:?}");
         }
     }
 
