@@ -281,7 +281,66 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   - **No code bound.** The reference builder `FUN_02147E6C` (`ov_0000::02147E6C`, overlay 0) reads the entry at `*(PTR + index * 0xC)` with no compare. `FUN_0214D498` only logs the index and passes it on. The other references to the table are at `02145FB0`, `02142FB0` and `02143058`, all in the interpreter `FUN_ov_0000__021421CC`; those uses were not decompiled. [blue-verified static, medium-high]
   - **Runtime.** The index 359 read at runtime (`FUN_0214D498`) matches the static entry: script pointer `0x020CF1D8`, name `GETOUT_M01E02A`. Only the entry pointer and fields were logged, and the layout and the null entries were not confirmed at runtime.
   - **Opcode `0x1E` recount.** [blue-verified static, medium] The earlier note that loader scripts are short (`1E`, wait, `F0`) holds only for some of them. Walking each script from its start to the next start (the method in P2, with the last script bounded at its first `0xF0`) gives **290 `0x1E` commands in 179 of the 398 scripts**, with 74 distinct (word 1, word 2) pairs and 74 distinct bank values. None are in the first 56 entries. The 290 is an upper bound: 12 gaps between consecutive starts are not a multiple of 0x18, so some of the walk is over data between scripts. Not checked: which of the `0x1E` commands are reachable (branch targets), and the bank 3 and 4 folding.
-- **P1d. Natural reach of ids 1 to `0xE`.** [not reached; open] The boot input (new game, intro) enters only `0xF`, `0x10` and `0` (runner callers `lr 0x0201F4A0`, `0x0201F4B4`, `0x0201E710`). Ids 1 to `0xE` need the mode dispatcher to call the runner with those ids, which needs game progress or a save; the supported setup has none (see the #260 entry in [`verification.md`](../verification.md)). Scenario ids 9 to `0xC` also depend on scene variables `0x14` and `0x15`.
+- **P1d. Natural reach of ids 1 to `0xE`.** [not reached; open] The boot input (new game, intro) enters only `0xF`, `0x10` and `0` (runner callers `lr 0x0201F4A0`, `0x0201F4B4`, `0x0201E710`). Ids 1 to `0xE` need the mode dispatcher to call the runner with those ids, which needs game progress or a save; the supported setup has none (see the #260 entry in [`verification.md`](../verification.md)). Scenario ids 9 to `0xC` also depend on scene variables `0x14` and `0x15`. The static map of ids, callers and conditions is P3 below. Natural ids still unseen at runtime: 2, 5, 9, 10, 11 and 12. Id 1 (title Continue) and id `0x11` (a conditional boot call) are also unseen.
+
+- **P3. Static map of scene ids and start modes.** [blue-verified, static decompile; the pmd-red names are red-hypothesis, cited by name only from `pret/pmd-red 013475aa src/main_loops.c`]
+
+  Blue's main loop is `FUN_0201E3C8`, the `RunGameMode_Async` of pmd-red. `GameLoop` (`FUN_0201F2E4`) calls it with argument 2 (`0x0201F7A4`), 1 (`0x0201F7B4`), 3 (`0x0201F7C4`) or 0 (`0x0201F7DC`). Calls to the scene runner go through the thunk `0x0201DCA8`, which jumps to `FUN_0206F7EC`. Five `bl` sites reach the thunk:
+
+  - `0x0201E6B8` (lr `0x0201E6BC`), in `FUN_0201E3C8`: `runner(5)`, after the world map confirms a dungeon.
+  - `0x0201E70C` (lr `0x0201E710`), in `FUN_0201E3C8`: `runner(mode)`, the generic call. It is reached for every mode except 4, 5, 7 and 8.
+  - `0x0201F49C` (lr `0x0201F4A0`): `runner(0xF)`, every boot. Seen at runtime at frame 74 (P1a).
+  - `0x0201F4B0` (lr `0x0201F4B4`): `runner(0x10)`, every boot. Seen at runtime at frame 614 (P1a). Between the `0xF` and `0x10` calls the boot code clears `EVENT_LOCAL` (`FUN_020211AC(0, 0x3B)`).
+  - `0x0201F4CC` (lr `0x0201F4D0`): `runner(0x11)`, only if var `0x3B` is 0 after the `0x10` call.
+
+  **Initial mode.** The start mode is script variable `0x19` (read by `FUN_02020F74(0, 0x19)`). It is the same enum as pmd-red's `START_MODE` (0x18), values 0 to 12 [red-hypothesis for the variable's name]. If the value is 7 (a quicksave), `GameLoop` argument 2 gives mode 8, and argument 3 gives mode 0xB and writes `0x19 = 0xB`. Arguments 0 and 1 keep 7. Otherwise a value of 0 stays 0, 0xB stays 0xB, and any other value becomes 1.
+
+  | id | Blue caller and condition | pmd-red STARTMODE | natural action | reaches the runner |
+  |---|---|---|---|---|
+  | 0 | `0x0201E70C`; initial mode when `0x19` is 0; `GameLoop` argument 0 | NEW_GAME | new game at the title | yes; seen at runtime (boot run, frame 2575, `lr 0x0201E710`) |
+  | 1 | `0x0201E70C`; initial mode when `0x19` is not 0, 7 or 0xB; `GameLoop` argument 1 | CONTINUE_GAME | Continue at the title | yes (expected; not run) |
+  | 2 | `0x0201E70C`; set after the friend-areas map (mode 4) and when the world map is cancelled or invalid (mode 5) | GROUND | leave the friend-areas map or cancel the world map without entering | yes |
+  | 3 | none: nothing assigns mode 3 (the value 3 is only a dungeon return code). Argument 3 with `0x19` = 7 gives mode 0xB, not 3 | STARTMODE_3 | none found | no |
+  | 4 | not passed to the runner: the loop handles it inline (friend-areas map, `FUN_0201F960`, `FUN_02027C58`). Entered when the runner returns 5 | FRIEND_AREAS | select HABITAT (runner state 3, return code 5) | no |
+  | 5 | `0x0201E6B8` (lr `0x0201E6BC`), explicit, after the world map confirms a dungeon. Entered when the runner returns 6 | DUNGEON_FROM_WORLD_MAP | select a dungeon on the world map and confirm | yes |
+  | 6 | none: the generic call would pass it, but nothing assigns it (the value 6 is only a runner return code) | STARTMODE_6 | none found | no |
+  | 7 | not passed to the runner. Initial mode only, when `0x19` is 7 and argument is 0 or 1 | CONTINUE_QUICKSAVE | continue a dungeon quicksave (the maintainer's save has none; see [#260](../verification.md)) | no |
+  | 8 | not passed to the runner. Initial mode only, when `0x19` is 7 and argument is 2 (`0x0201F7A4`) | STARTMODE_8 | continue the quicksave; the findings tie it to deleting the first type-7 mail (not run) | no |
+  | 9 | `0x0201E70C`; post-dungeon result 1 or 4; or runner return 7, 8 or 10 with `FUN_0206F034` failing (code 0xD) | DUNGEON_WON | clear the dungeon | yes |
+  | 0xA (10) | `0x0201E70C`; post-dungeon result 2; or the quicksave continue path (code 0xC) | not checked | a dungeon that ends with result 2 (what sets it is not verified) | yes |
+  | 0xB (11) | `0x0201E70C`; post-dungeon result 5, 0 or any other value; argument 3 with `0x19` = 7 (sets `0x19` = 0xB); runner return 0 with the quicksave marker check failing | not checked | a dungeon that ends with another result; quicksave continue | yes |
+  | 0xC (12) | `0x0201E70C`; post-dungeon result -1; or runner return 9 with `FUN_0206F034` failing (code 0xB) | DUNGEON_LOST | fainted | yes |
+  | 0xD (13) | none. Code 0xD is a dungeon-path return code, never a runner id | STARTMODE_13 (DEBUG_SCRIPT) | debug only | no |
+  | 0xE (14) | none. Red calls 14 at boot; Blue has no call with 0xE | STARTMODE_14 (DEMO_01) | boot demo | no |
+  | 0xF (15) | `0x0201F49C` (lr `0x0201F4A0`), every boot | STARTMODE_15 (DEMO_02, see the open name question) | boot demo | yes |
+  | 0x10 (16) | `0x0201F4B0` (lr `0x0201F4B4`), every boot | STARTMODE_16 (DEMO_03, see the open name question) | boot demo | yes |
+  | 0x11 (17) | `0x0201F4CC` (lr `0x0201F4D0`), only if var `0x3B` is 0 after `0x10` | STARTMODE_17 (DEMO_04, see the open name question) | boot demo | yes, conditional; not reached in the 3200-frame boot run |
+
+  The Red names are [red-hypothesis]: the same numeric value in pmd-red. Blue's call sites and the runner's switch are [blue-verified].
+
+  **Runner return codes and the post-dungeon switch** ([blue-verified], `FUN_0201E3C8`):
+
+  - Return `0xE`: the loop returns 0 and leaves to the title.
+  - Return `5`: mode 4. Return `6`: mode 5.
+  - Returns `7`, `8`, `9` and `10` take the dungeon branch. If `FUN_0206F034` (pmd-red `sub_80991E0`) fails, returns 7, 8 and 10 give code `0xD` and mode 9, and return 9 gives code `0xB` and mode 12.
+  - Returns 0 and 2 go through the quicksave resume. Return 0 with the quicksave marker check (`FUN_0202A11C` against `DAT_0201EB78`) failing gives mode 11.
+  - Post-dungeon switch on the result field (`setup+0x60`, `local_60`): 3 or -2 return 1 and leave the loop; 1 or 4 give mode 9 and also write var `0x43` (`FUN_020208E8`); 2 gives mode 10; -1 gives mode 12 (`FUN_0200E3FC`); 5 and other values give mode 11 (`FUN_0200E3FC`).
+  - Mode 11 (0xB) runs `FUN_0201DD60` before its runner call, and mode 12 (0xC) runs `FUN_0201DE24`. The pmd-red names are RemoveAllMoneyAndItems and RemoveMoneyAndRandomItems [red-hypothesis].
+
+  **What this means for P1b.** The loop never passes ids 4, 7 and 8 to the runner (4 is inline; 7 and 8 skip it), and nothing writes 3 or 6. Ids 0xD and 0xE have no caller. So the P1b forced results for ids 3, 4, 6, 7, 8, 0xD and 0xE describe the runner's selection code only, not a natural transition. The P1b results for ids 1, 2, 5, 9 to 0xC and 0x11 can occur naturally, but their runs were forced.
+
+  **Not verified.**
+
+  - Overlay callers of the runner thunk and of `FUN_0206F7EC`. The x-refs were taken from the ARM9 only.
+  - The Red names for 0xF, 0x10 and 0x11 are not settled. One reading gives the same numeric value (Red 15, 16, 17). The other reads Blue's calls as an offset (Red 14 to 0xF, 15 to 0x10, 17 to 0x11), at medium confidence. It also counts four Red calls against Blue's three. Not decided here.
+  - The meaning of argument 3 differs between the readings: title choice 4 in one, the quicksave menu in the other. Both agree that it gives mode 0xB when `0x19` is 7.
+  - The switch for values 0 and 3 conflicts. One reading lists 0 and 3 under mode 0xB, and also 3 under return 1. The other gives 3 and -2 return 1, and 0 with other values mode 11. Not resolved.
+  - Which dungeon code writes the result values 1, 2, 4, 5 and -1 to `setup+0x60` is not verified.
+  - The constants behind the 1 and 2 written to var `0x43` (registers r6 and r7 at `0x0201EB20`) were not read. The flag conditions for ids 0xF and 0x10 (`FUN_02020848(4, ...)`) were not read.
+  - Whether other code writes `0x19` with values that would create mode 3 or 6 was not swept.
+  - The reach after a save (the last column) is inferred from the control flow, not run.
+
+  Confidence: high for the call sites and the loop's dispatch; medium for the Red names and for the reach after a save.
 
 ### Opcode 9 with map 3 or 4 (#258 P2)
 
