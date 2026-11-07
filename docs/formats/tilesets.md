@@ -99,7 +99,7 @@ The ov_0000 copy of the loader (`FUN_ov_0000__0215869C`, ov_0000::0215869c) and 
 
 ## Tileset file remap
 
-For `fon`, `cel`, `cex` and `emap0` the loader uses a file number `byte_table[tileset]` from the table at `0x02090268` (ARM9) [blue-verified, static]. The table is the identity except:
+For `fon`, `cel` and `cex` the loader uses a file number `byte_table[tileset]` from the table at `0x02090268` (ARM9) [blue-verified, static]: the `ldrb` at `ov_0001::0214973c` and `ov_0001::02149798` runs before their `sprintf`. `emap0`, `pal` and `canm` use the raw tileset number: in the `>= 0x40` branch the `ldrsh` of `dungeon+0x34AE` at `ov_0001::02149784` goes unchanged into `sprintf("b%02demap0")` at `ov_0001::021497e4`, and `FUN_ov_0001__0214969C` passes the raw `s16` for `"b%02dpal"` (pool `ov_0001::021498c4`) and `"b%02dcanm"` (`ov_0001::021498e4`) [blue-verified, static]. The table is the identity except:
 
 | Tileset | File |
 |---------|------|
@@ -132,6 +132,5 @@ The content header is a table of pointers, one per animated color slot (0 = not 
 - No emulator run (py-desmume). The stored cell bytes were not compared with a table lookup, and the RNG step count was not traced. A check: hook `ov_0001::0214936c` and read `sPRNGState` before and after.
 - The ov_0000 preview copy was decompiled by one investigator only; the other did not read it.
 - Which game events trigger the per-cell recomputes (callers `FUN_ov_0001__02147AD0`, `02147C38`, `02194BFC`, `021637FC`, `0215277C`, `02194570` are located but not classified).
-- Whether `pal` and `canm` use the raw tileset number rather than the remapped one.
 - Decoded size of every `emap0` file: the 576-byte size was not confirmed for each file.
 - The meaning of the 48 tail bytes.
