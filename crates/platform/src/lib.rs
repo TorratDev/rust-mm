@@ -7,6 +7,7 @@
 //! the two 256x192 DS screens into offscreen textures that are composited into the
 //! window at an integer scale.
 
+pub mod audio;
 pub mod input;
 pub mod layout;
 pub mod timing;
