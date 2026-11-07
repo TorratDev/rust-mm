@@ -2,7 +2,7 @@
 
 Blue's main save: the backup media, how the data is laid out on it, how it is checked, and what is still open. Issue: [#53](https://github.com/TorratDev/rust-mm/issues/53). V4 in [`verification.md`](../verification.md#v4--non-audio-formats-and-save-layout). Function names and addresses are in [`symbols.md`](../symbols.md).
 
-These are research notes. Nothing here has been checked against a real save file; real saves are user data and are never committed ([`legal.md`](../legal.md)).
+These are research notes. Except for the valid-save runs in section 3 ([#260](../verification.md#260--valid-save-load-cases)), nothing here has been checked against a real save file; real saves are user data and are never committed ([`legal.md`](../legal.md)).
 
 ## Tags
 
@@ -36,7 +36,7 @@ These are research notes. Nothing here has been checked against a real save file
 - **[lead]** Sector `0x10` is not erased on load; the load path (`0x0201E204`) writes only the marker.
 - **[blue-verified]** The alternate branch is gated by the word at `0x020E0490`, the **session struct pointer** (not a debug flag). The literal at `0x02029EC8` (in `ReadSaveSector`) and the one at `0x02029F68` (in `WriteSaveSector`) both point at that cell. `FUN_020660E4` allocates the session struct and calls `FUN_0202A778`, which stores the pointer. `FUN_02065F88` clears it. In the boot-to-dungeon run (new game, 24,960 frames) neither fired and the pointer stayed 0. `FUN_02065CFC` is reached only through `FUN_02065E8C` and `FUN_02065EEC`, which the mode-0xB family of the game loop (`FUN_020628BC`) calls. So the pointer is set only there, and only when a device is found (**[blue-verified]** structure; which player-facing scene that is was not read, #239 P7.3). When the pointer is set, `FUN_0201D638` checks the device, and with no device `ReadSaveSector` returns status 1. Otherwise the read goes through `FUN_0201D730` and `FUN_02074780` to the bus window at `0x0A000000`, with bank switching for 0x20000-byte chips. The device is a GBA cartridge in Slot-2, identified by its header cache (maker `01`, game code `B24P`). The window is that cartridge's backup flash (**[blue-verified]** constants and window; "Red cartridge" is **[hypothesis]**, #239 P7.5).
 - **Red cross-check** (`pret/pmd-red` `src/save.c`): marker sector `0x1F` and default `0xF1209` match. Red's quicksave sector was not checked.
-- No local real save was available for a check. Runtime values from the #197 probes (an empty card and injected cases) are in sections 3 and 4.
+- The valid-save runs (#260, section 3) used the maintainer's own save. Runtime values from the #197 probes (an empty card and injected cases) are in sections 3 and 4.
 
 **Quick-save write and buffer (#197 P3; static decompile, no runtime run)**
 
@@ -193,29 +193,67 @@ The sections end at `0x534D`, inside the `0x57D8` block. The restore function fo
 
 | Value | Meaning | Status |
 |-------|---------|--------|
-| 0 | valid | [lead]; the valid-copy runs are not done (#197 P1.5; follow-up [#260](https://github.com/TorratDev/rust-mm/issues/260)) |
+| 0 | valid | [blue-verified runtime] for copy A valid, with copy B skipped (#260, see the valid-save runs below) |
 | 1 | read failed: `ReadFlashData` gave up after 4 tries (its return 3), or the alternate branch failed. Copy B is tried. In normal play this is the four-failure case; with the session pointer set and no device it is immediate (#239 P1.2, P7.7) | [blue-verified] code; a forced status 1 leads to the state-5 stall (section 4); the forced run is not a real flash failure |
-| 2 | checksum mismatch (`ValidateChecksum` returns true on mismatch). Copy B is tried | [blue-verified] |
+| 2 | checksum mismatch (`ValidateChecksum` returns true on mismatch). Copy B is tried | [blue-verified]; the copy B fallback is run at runtime with copy A bad (#260) |
 | 3 | a section's restore result does not match the header | [lead] |
 | 4 | magic mismatch after the copy-A check, with no copy-B fallback; or `VERSION != 30` in `RestoreGlobalScriptVars` (first branch only) | [blue-verified] |
 
 **Blank and zeroed cards**
 
-- **[blue-verified runtime]** Blank card (no save; DeSmuME RAM bytes `FF`): both copies return status 2, the boot read result is 2, and the state machine goes 2 → 4 → 6 at frame 2473 with no message (#197 P1.3). This is DeSmuME's empty backup, not a real card. A second blank-card run (#239 P1.5), with a scratch copy of a local DeSmuME card whose save area is blank (`0xFF` over both copies; only the marker sector differs), gives the same result: both copies return status 2 and the read buffers start with `0xFF`. Its output hash is in [`verification.md`](../verification.md#239--save-format-remaining-findings). The valid-copy cases are not run.
+- **[blue-verified runtime]** Blank card (no save; DeSmuME RAM bytes `FF`): both copies return status 2, the boot read result is 2, and the state machine goes 2 → 4 → 6 at frame 2473 with no message (#197 P1.3). This is DeSmuME's empty backup, not a real card. A second blank-card run (#239 P1.5), with a scratch copy of a local DeSmuME card whose save area is blank (`0xFF` over both copies; only the marker sector differs), gives the same result: both copies return status 2 and the read buffers start with `0xFF`. Its output hash is in [`verification.md`](../verification.md#239--save-format-remaining-findings). The valid-copy cases are in the valid-save runs below (#260).
 - **[blue-verified, injected]** Zeroed copy A (zeros written at the `ReadSaveSector` return, so a fault injection and not a real card): the checksum passes (word 0 = 0 = sum), `ReadSaveFromPak` returns 4 from the magic check, and copy B is not read (#197 P1.4). A real all-zero card is not tested: importing a zeroed backup file did not reach the game in this build.
 - **[open]** Whether a failed copy A followed by a failed copy B is reported as a read failure, and what the game does then.
 
 **Sector read** (`ReadSaveSector` `0x02029E2C`)
 
 - **[blue-verified]** Status 0 is valid. Status 1 is read failed: `ReadFlashData` returned 3 after its 4 tries, or the alternate branch returned 1 with no device. Status 2 is a checksum mismatch (`ValidateChecksum` `0x02029F98`, which returns true on mismatch).
-- Codes 1, 2 and 4 of the `ReadSaveFromPak` table above are tied to addresses. Code 0 stays [lead] until a valid copy is run (#260), and code 3 stays [lead] until its section check is decompiled.
+- Codes 1, 2 and 4 of the `ReadSaveFromPak` table above are tied to addresses. Code 0 is confirmed at runtime for copy A valid (#260), and code 3 stays [lead] until its section check is decompiled.
+
+**Valid-save runs (#260)**
+
+The image is the maintainer's own save. It is maintainer-held: it stays on the maintainer's machine and is not committed ([`legal.md`](../legal.md)).
+
+- Image identity: a DeSmuME `.dsv` of 262,266 bytes, SHA-1 `1fff5c79f4e3344e59ba8b8f9b8fce12a0b8704b`. The raw save is the first `0x40000` bytes (the `InitFlash` size), SHA-1 `435117ec7cd8a8d1876cb5eb7454f8421032ff8a`. The last 122 bytes, from `0x40000`, are DeSmuME's savedata footer and are not part of the save.
+
+**Step 1: the image is a valid save.** Checked on the file before any game run:
+
+- Not a blank card: not all `0xFF` and not all `0x00`. Sectors 0–11 and sector `0x1F` (the status marker) hold data. Sectors 16–20 (the quicksave) are all `0xFF`.
+- Copy A (`0x0000`) and copy B (`0x6000`) are each `0x57D8` bytes and are byte-identical.
+- Checksum: word 0 is `0x30FA86A9` in both copies, equal to the sum of words 1 to N−1 (section 1; `ValidateChecksum` `0x02029F98`).
+- Magic at `+0x414` is `0x06061320`. The internal name at `+0x404` is `POKE_DUNGEON_E01`.
+- Header: `unk418` is `0xEBF3FBFC` (not −1). `unk41C` is 1 (save kind 1, a normal save, not a quicksave). The RNG word at `+0x420` is `0x69E23347`, and the language at `+0x424` is 0. The section results at `+0x428` to `+0x448` are 7, 4, −1, 0, 1, 2, 1, 6, 5.
+
+**Load cases.** [blue-verified runtime]
+
+| Case | Boot read (`GameLoop_Async`) | Second read (`FUN_0202AA14`, about frame 1090) | State machine (`FUN_0202AA14`) |
+|------|------|------|------|
+| A: copy A valid | Copy A status 0 at frame 57; copy B not read; result 0 at frame 64 | Copy A status 0 at frame 1093; result 0 | 1 → 2 → 6, frames 1088–1101 |
+| B: copy A corrupt, copy B valid | Copy A status 2 at frame 57; copy B status 0 at frame 61; result 0 at frame 69 | Copy A status 2 and copy B status 0 (frames 1094–1098); result 0 | 1 → 2 → 6, frames 1089–1107 |
+
+Case B is case A with one byte changed in a scratch copy (`0x00` → `0x01` at `0x500`, inside copy A). Copy B is unchanged. Both cases match the status table above: status 0 skips copy B, and status 2 falls back to copy B. Copy B's read buffer starts `a986fa30 1e000000`, the checksum word and then `0x1E` (VERSION 30) as the first script-variable word.
+
+**Probe command.**
+
+```
+XDG_CONFIG_HOME=<fresh scratch dir> python verification/v7-trace/save_load_probe.py <ROM> <OUT> --frames 3000
+```
+
+- `<ROM>` is a scratch copy of the supported dump under a throwaway file name. The script refuses any other SHA-1. The throwaway name matters because DeSmuME overwrites a same-named `.dsv` in the user's save folder ([#239 notes](../verification.md#239--save-format-remaining-findings)).
+- Before the run, place the image in `<fresh scratch dir>` as the save for that ROM name. For case B, place a copy with the one-byte change. Check the maintainer's image SHA-1 afterwards.
+- `<OUT>` is outside the repository.
+
+**Story point (raw values, not decoded).** The 0x400-byte script-variable block (at `+0x4`) holds `SCENARIO_MAIN` = 3 and `GROUND_MAP` = 13, using Blue's debug names. The save has no quicksave: sectors 16–20 are `0xFF` and `unk41C` is 1. After load, the live block matches the save's block except 2–3 bytes of live scene variables [blue-verified runtime]. The numbers are the stored raw values; what they mean in the game is not decoded.
+
+**Not run.** Both copies bad with real data (the open row in the sector-read notes, #197 P1.5). The scene reached after Continue with this save: that needs a Continue input script (#267 P2). `boot_to_dungeon.txt` starts a new game and does not choose Continue.
 
 ## 4. Open runtime checks
 
-These need a run on Blue with `py-desmume` and the scripts in `verification/v7-trace/`. Outputs go to a scratch directory outside the repository; only the hash and the command are recorded in notes. The runs and their results are in [`verification.md`](../verification.md#197--save-load-and-session-runs) and [`verification.md`](../verification.md#239--save-format-remaining-findings).
+These need a run on Blue with `py-desmume` and the scripts in `verification/v7-trace/`. Outputs go to a scratch directory outside the repository; only the hash and the command are recorded in notes. The runs and their results are in [`verification.md`](../verification.md#197--save-load-and-session-runs), [`verification.md`](../verification.md#239--save-format-remaining-findings) and [`verification.md`](../verification.md#260--valid-save-load-cases).
 
 - **[blue-verified runtime]** Load states from `save_load_probe.py`: a blank card (no save), an injected zeroed copy A, and a forced status 1 on both copies. Section 3 has the results.
-- **[open]** Copy A valid, copy A bad with copy B valid, and both bad, with real data (#197 P1.5). No valid save image is available for these runs; they move to follow-up [#260](https://github.com/TorratDev/rust-mm/issues/260). A real save is user data and stays local.
+- **[blue-verified runtime]** Copy A valid, and copy A bad with copy B valid, with the maintainer's save (#260, section 3).
+- **[open]** Both copies bad, with real data (#197 P1.5). A real save is user data and stays local.
 - **[blue-verified runtime]** The state-5 stall: forced status 1 moves `FUN_0202AA14` from state 2 (mode 1) to state 5 at frame 2459, and state 5 has no exit, so the call repeats (1,543 more calls to frame 4000). In normal play the static trigger of status 1 is four failed DS flash reads (#239 P1.2). A real flash failure was not injected, so that is **[open]** at runtime. The alternate branch failing is the other trigger (P7).
 - **[blue-verified runtime]** Size global `0x020F38B4` = `0x40000` and sector unit `0x020F38B8` = `0x1000` at the title screen.
 - **[open]** Which player-facing scene reaches the alternate read branch (#197 P7.3; the call chain is in section 1, #239 P7.3). The boot-to-dungeon run did not enter it. No cartridge was present in any run, so whether the device is ever present in play is **[open]** (#197 P7.5, P7.7).

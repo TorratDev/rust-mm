@@ -520,3 +520,18 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - The file hashes are of the files as Windows writes them (CRLF line ends in the two multi-line outputs). With line ends normalised to LF, as on Linux, the `ai_rng_probe.py` outputs are observe `a488f88c0fd4766134292cad111ff5cf2f72992f` (the hash the script prints) and force `a54fa8a4ac225b3129487f542cb924e70ac64b37`; `msg_lcg_probe.py`'s is `92e7c68c954e97e4f80df47f0630d0b1048f5388`.
 - **Outcome:** P6-f and row 17 of [`re/ai.md`](re/ai.md) are runtime-refuted for the forced step-4 path; [`re/rng.md`](re/rng.md) matches. The #193 P1/P3 counts are replaced by this probe's; they differ from the lost scratch script's 303-call run, which cannot be reproduced. The `>=` pick rule is reproduced (255/255). Limits: forced preconditions and one string for P1; one floor, behaviour 0 only for P3.
 - **Fallback adopted:** none.
+
+---
+
+## #260 — Valid-save load cases
+
+- **Assumption:** with real save data, `ReadSaveFromPak` takes copy A when it is valid (status 0, copy B skipped), and falls back to copy B when copy A fails its checksum (status 2). Both cases reach the same state path. These are the valid-save rows left open in [`formats/save.md`](formats/save.md#3-corrupt-or-blank-detection).
+- **Date:** 2026-11-07. The findings do not record run dates; the image's file name carries this date.
+- **Environment:** py-desmume (DeSmuME) through `save_load_probe.py`, with a fresh scratch `XDG_CONFIG_HOME` for each case. OS and package versions are not recorded in the findings. ROM: the supported dump, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (not committed; the probe checks it).
+- **Evidence:**
+  - Image: the maintainer's save, `.dsv` SHA-1 `1fff5c79f4e3344e59ba8b8f9b8fce12a0b8704b` (262,266 bytes). Raw save SHA-1 `435117ec7cd8a8d1876cb5eb7454f8421032ff8a` (the first `0x40000` bytes). The image is maintainer-held and was not committed. Its SHA-1 was unchanged after case A; case B used a modified copy.
+  - Case A (copy A valid) and case B (copy A bad by one byte, `0x500` changed `0x00` → `0x01`; copy B unchanged): `python verification/v7-trace/save_load_probe.py <ROM> <OUT> --frames 3000`. Setup and the case table are in [`formats/save.md`](formats/save.md#3-corrupt-or-blank-detection).
+  - Frames and statuses are in the save.md table. Per-frame logs are maintainer-held. The findings give no output hash, so none is recorded here.
+- **Outcome:** confirmed on this image. Copy A valid: status 0, copy B skipped, result 0. Copy A corrupt with copy B valid: copy A status 2, copy B status 0, result 0. Both cases follow the state path 1 → 2 → 6. Confidence: high. [blue-verified runtime]. Not run: both copies bad with real data; the scene reached after Continue (needs a Continue input script, see #267).
+- **Fallback adopted:** none.
+- **Notes:** The story-point values in save.md section 3 are raw values whose meaning is not decoded. Use a throwaway ROM file name: DeSmuME overwrites a same-named `.dsv` in the user's save folder ([#239 notes](#239--save-format-remaining-findings)).
