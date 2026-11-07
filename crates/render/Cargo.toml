@@ -9,3 +9,10 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+rescue-formats.workspace = true
+
+[dev-dependencies]
+rescue-nds.workspace = true
+rescue-tests = { path = "../../tests" }
