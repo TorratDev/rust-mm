@@ -535,3 +535,22 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** confirmed on this image. Copy A valid: status 0, copy B skipped, result 0. Copy A corrupt with copy B valid: copy A status 2, copy B status 0, result 0. Both cases follow the state path 1 → 2 → 6. Confidence: high. [blue-verified runtime]. Not run: both copies bad with real data; the scene reached after Continue (needs a Continue input script, see #267).
 - **Fallback adopted:** none.
 - **Notes:** The story-point values in save.md section 3 are raw values whose meaning is not decoded. Use a throwaway ROM file name: DeSmuME overwrites a same-named `.dsv` in the user's save folder ([#239 notes](#239--save-format-remaining-findings)).
+
+---
+
+## #267 P4 — Natural reach of the scene ids
+
+- **Assumption:** the scene ids that reach the runner in normal play (1, 2, 5, 9, 10 and 12) can be reached from the maintainer's post-Thunderwave save with real input, and the P3 static map (callers, conditions) holds at runtime. Id 11 has no natural route (static reading).
+- **Date:** 2026-11-07 for the maintainer's live run. Investigator B's runs have no date in the findings.
+- **Environment:** py-desmume (DeSmuME). Investigator B's full run used a driver with `SDL_VIDEODRIVER=dummy` and `XDG_CONFIG_HOME` set to a scratch folder inside the driver. The maintainer's live run used a hooked interactive window with SDL keyboard state. ROM copy: SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (live run). Investigator B's ROM copy hash is not recorded.
+- **Evidence:**
+  - Save: the maintainer's save after Thunderwave Cave and the dream (20:04:59). `.dsv` SHA-1 `02260adef6284e8dde8a6bcda497dfdb5b804bd9`. Maintainer-held; investigator B copied it and never wrote it back.
+  - Investigator B, full input run (21,929 frames), run twice with identical output. Command: `SDL_VIDEODRIVER=dummy python play.py --out <DIR> --plan plan_full.txt`. Output `keys.txt` SHA-1 `6046fde1f2e83db628796e60eb4d5ecba600372e`; output `events.jsonl` SHA-1 `3c11f0c2fe6f1aab701973a9480a335c97ca3d78`. The plan file's SHA-1 is not recorded.
+  - Maintainer live run, run 1 (single run, accepted by the maintainer as evidence): output `keys.txt` SHA-1 `7ac69678814bd91156a3d93022a01ea4ce51702d`; output `events.jsonl` SHA-1 `f94ead6757a87792be2afab3456a69429ab387e0`. Ids 5, 9 and 10 with indices `0x70`, `0x167` and `0x168`.
+  - Replay of the live run's key log (input `keys.txt`, SHA-1 `7ac69678814bd91156a3d93022a01ea4ce51702d`; `--replay <run1 keys.txt> --frames 75086`, SDL dummy driver). Output `events.jsonl` SHA-1 `b5fb6f919a8c7550fc5069390316c7075eef57a6` in two identical runs.
+  - **Replay mismatch:** the replay does not match run 1. It diverges at frame 2167, just after Continue, and reaches only ids 0xF, 0x10, 0x11 and 1. The likely cause is touch input the key log does not hold (a click that took window focus is a DS touchscreen tap). Not verified.
+  - Investigator B's savestate runs (the Give Up result hook and the quicksave runs) have no hashes recorded in the findings.
+  - Driver scripts, saves and logs are maintainer-held and not committed.
+- **Outcome:** confirmed by B's full run for ids 1, 2, 5 and 12, run twice with identical output. Confirmed by the single live run for ids 5, 9 and 10. Id 12's result -1 (Give Up) is confirmed in a savestate run. A quicksave writes result 3 with no runner call, and Continue from a quicksave reaches dungeon start with no runner call. Id 11: not reached in normal play (static, medium). The replay of the live run does not reproduce it. Confidence: high for 1, 2, 5 and 12; medium for 9 and 10 (one run, results not logged). [blue-verified runtime]
+- **Fallback adopted:** none.
+- **Notes:** The index for id 10 (`0x168`) differs from the forced P1b value (`0x167`), so the P1b values for ids 9 to `0xC` depend on the game state. The dungeon-result hook was not in the live run's script, so the results for ids 9 and 10 are not logged. Full results and the id table are in [`re/execution-model.md`](re/execution-model.md#runtime-repeat-and-forced-scene-ids-267).
