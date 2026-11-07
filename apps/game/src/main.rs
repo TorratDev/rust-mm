@@ -4,7 +4,7 @@
 //! DS screens as placeholders, logs keyboard and gamepad input to stdout, and shows
 //! the held DS buttons on the bottom screen.
 //!
-//! Usage: `rescue [--frames N] [--scale N]`. `--frames` (or the `RESCUE_FRAMES`
+//! Usage: `rescue [--frames N] [--scale N] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
 //! environment variable) stops after N logic ticks, for headless runs in CI.
 
 use std::process::ExitCode;
@@ -14,9 +14,12 @@ use rescue_platform::{
     SCREEN_HEIGHT, SCREEN_WIDTH, Screen,
 };
 
-const USAGE: &str = "usage: rescue [--frames N] [--scale N]
-  --frames N   stop after N logic ticks (60 per second); also RESCUE_FRAMES=N
+const USAGE: &str = "usage: rescue [--frames N] [--scale N] [--ff N] [--pause]
+  --frames N   stop after N logic ticks (DS rate, ~59.83 per second); also RESCUE_FRAMES=N
   --scale N    initial window scale (default 2)
+  --ff N       fast-forward multiplier 1..=16 (default 1)
+  --pause      start paused (with --frames, N counts presented frames)
+Debug keys: F5 = pause, F6 = step one tick, Tab (held) = fast-forward.
 Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
       Enter = Start, Right Shift/Backspace = Select, Esc = quit.";
 
@@ -25,6 +28,8 @@ Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
 struct Options {
     frames: Option<u64>,
     scale: u32,
+    speed: u32,
+    pause: bool,
     help: bool,
 }
 
@@ -37,6 +42,8 @@ where
     let mut opts = Options {
         frames: None,
         scale: 2,
+        speed: 1,
+        pause: false,
         help: false,
     };
     if let Some(v) = env_frames {
@@ -46,11 +53,17 @@ where
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => opts.help = true,
-            "--frames" | "--scale" => {
+            "--pause" => opts.pause = true,
+            "--frames" | "--scale" | "--ff" => {
                 let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
                 let n = parse_positive(&arg, &value)?;
                 if arg == "--frames" {
                     opts.frames = Some(n);
+                } else if arg == "--ff" {
+                    opts.speed = u32::try_from(n)
+                        .ok()
+                        .filter(|s| *s <= 16)
+                        .ok_or_else(|| format!("--ff must be 1..=16, got {n}"))?;
                 } else {
                     opts.scale = u32::try_from(n)
                         .ok()
@@ -156,6 +169,9 @@ fn main() -> ExitCode {
         title: String::from("rescue"),
         scale: opts.scale,
         tick_limit: opts.frames,
+        ds_rate: true,
+        speed: opts.speed,
+        start_paused: opts.pause,
     };
     match rescue_platform::run(&config, &mut HelloWorld::default()) {
         Ok(stats) => {
@@ -188,6 +204,8 @@ mod tests {
             Options {
                 frames: None,
                 scale: 2,
+                speed: 1,
+                pause: false,
                 help: false
             }
         );
@@ -215,6 +233,15 @@ mod tests {
         assert!(parse_args(args(&["--scale", "17"]), None).is_err());
         assert!(parse_args(args(&["--bogus"]), None).is_err());
         assert!(parse_args(args(&[]), Some("abc")).is_err());
+    }
+
+    #[test]
+    fn ff_and_pause() {
+        let o = parse_args(args(&["--ff", "4", "--pause"]), None).unwrap();
+        assert_eq!((o.speed, o.pause), (4, true));
+        assert!(parse_args(args(&["--ff", "17"]), None).is_err());
+        assert!(parse_args(args(&["--ff", "0"]), None).is_err());
+        assert!(parse_args(args(&["--ff"]), None).is_err());
     }
 
     #[test]
