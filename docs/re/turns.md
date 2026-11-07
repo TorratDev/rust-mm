@@ -125,7 +125,7 @@ Direction tables: `gAdjacentTileOffsets` at `ov_0001::021A98B4` (s16 x, s16 y, s
    - Otherwise IQ skill 13 (super mobile): class 3 for even directions, class 2 for odd ones. Red's comment says Super Mobile cannot break walls diagonally.
 3. The source tile's mask byte at `+6 + class` (regular 0, liquid 1, crevice 2, wall 3), ANDed with `1 << (dir & 7)`, must be nonzero.
 
-Tag blue-verified for the code path, confidence high. Not verified: the body of the IQ test (`021805B0`, bit `1 << id` at info `+0x87`) was taken from its operands, not decompiled. The `+0xC7` writers and values are recorded in [`status.md`](status.md#muzzled-transform-invisible-mobile-blinker-189-p2): 1 INVISIBLE, 2 TRANSFORMED, 3 MOBILE (#189 P2).
+Tag blue-verified for the code path, confidence high. Not verified: the body of the IQ test (`021805B0`, bit `1 << id` at info `+0x87`) was taken from its operands, not decompiled. The `+0xC7` values are recorded in [`status.md`](status.md#muzzled-transform-invisible-mobile-blinker-189-p2) (#189 P2): values 1, 2 and 3 are written by `0218CE68`, `0218BFA8` and `0218BECC` [blue-verified]; the names INVISIBLE, TRANSFORMED and MOBILE are [red-hypothesis].
 
 **Walk branch** (`0218453C`, case `ACTION_WALK` = 2). Tag blue-verified, confidence high for the branch structure and medium for the wall-break helper.
 
@@ -332,7 +332,7 @@ The full map is in [`structs.md`](structs.md).
 - **Speed counters.** Whether Blue applies the same stage-specific counter limit as Red was not verified. The Blue addresses of `BoostSpeed` and `LowerSpeed` were not located; `GetMovementSpeed` is `FUN_020023A8`.
 - **P4.5, water and lava mobility.** Resolved for the mechanism (#184 P1, see [Mobility class source](#mobility-class-source-184-p1)): `GetCrossableTerrain` maps the species byte values 4 and 5 through the 8-byte table at `0x021B4834`, which dungeon setup writes from the tileset type. `DAT_0218269C` is the pool word for that address. Still open: the dungeon-setup caller chain of `0214969C`, and which tileset ids have type 1 (lava).
 - **Edge masks.** The `x < 2` wall byte `0x1F` is written as a value, while the other three edge cases clear bits. Check the disassembly of `02148F50`.
-- **IQ test and `+0xC7`.** The body of `021805B0` was not decompiled. The `+0xC7` writers and values are recorded in [`status.md`](status.md#muzzled-transform-invisible-mobile-blinker-189-p2): 1 INVISIBLE, 2 TRANSFORMED, 3 MOBILE (#189 P2).
+- **IQ test and `+0xC7`.** The body of `021805B0` was not decompiled. The `+0xC7` values are recorded in [`status.md`](status.md#muzzled-transform-invisible-mobile-blinker-189-p2) (#189 P2): values 1, 2 and 3 are written by `0218CE68`, `0218BFA8` and `0218BECC` [blue-verified]; the names INVISIBLE, TRANSFORMED and MOBILE are [red-hypothesis].
 - Closed (#184 P3): the readers and writers of bit `0x4` are in the bit `0x4` paragraph under [Movement](#movement).
 - **P5.1, belly test.** The ceiling reading is settled in Blue, see [Run flag and belly test](#run-flag-and-belly-test-181-p3). Still open: that Red's run check is also a ceiling (Red's run check was not read); that the argument `info+0x10E` matches Red's belly field; and the Red name of the action-index field `+0x46`.
 - **P5.3, run-stop conditions.** The 11 ordered checks are recorded in [Run continuation checks](#run-continuation-checks-181-p1). Still open: the mapping to Red's `CheckLeaderTile` (`dungeon_main.c:928`), the contents of the direction tables, and the return values of `FUN_0218267C`.
