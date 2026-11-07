@@ -325,6 +325,7 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   - Returns `7`, `8`, `9` and `10` take the dungeon branch. If `FUN_0206F034` (pmd-red `sub_80991E0`) fails, returns 7, 8 and 10 give code `0xD` and mode 9, and return 9 gives code `0xB` and mode 12.
   - Returns 0 and 2 go through the quicksave resume. Return 0 with the quicksave marker check (`FUN_0202A11C` against `DAT_0201EB78`) failing gives mode 11.
   - Post-dungeon switch on the result field (`setup+0x60`, `local_60`): 3 or -2 return 1 and leave the loop; 1 or 4 give mode 9 and also write var `0x43` (`FUN_020208E8`); 2 gives mode 10; -1 gives mode 12 (`FUN_0200E3FC`); 5 and other values give mode 11 (`FUN_0200E3FC`).
+  - [blue-verified] In `FUN_0201E3C8`, `local_60 == 3` and `local_60 == -2` return 1 before the switch, so the switch's case 3 is dead. Case 0 breaks to the default: mode 11 with `FUN_0200E3FC`.
   - Mode 11 (0xB) runs `FUN_0201DD60` before its runner call, and mode 12 (0xC) runs `FUN_0201DE24`. The pmd-red names are RemoveAllMoneyAndItems and RemoveMoneyAndRandomItems [red-hypothesis].
 
   **What this means for P1b.** The loop never passes ids 4, 7 and 8 to the runner (4 is inline; 7 and 8 skip it), and nothing writes 3 or 6. Ids 0xD and 0xE have no caller. So the P1b forced results for ids 3, 4, 6, 7, 8, 0xD and 0xE describe the runner's selection code only, not a natural transition. The P1b results for ids 1, 2, 5, 9 to 0xC and 0x11 can occur naturally, but their runs were forced.
@@ -334,7 +335,6 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   - Overlay callers of the runner thunk and of `FUN_0206F7EC`. The x-refs were taken from the ARM9 only.
   - The Red names for 0xF, 0x10 and 0x11 are not settled. One reading gives the same numeric value (Red 15, 16, 17). The other reads Blue's calls as an offset (Red 14 to 0xF, 15 to 0x10, 17 to 0x11), at medium confidence. It also counts four Red calls against Blue's three. Not decided here.
   - The meaning of argument 3 differs between the readings: title choice 4 in one, the quicksave menu in the other. Both agree that it gives mode 0xB when `0x19` is 7.
-  - The switch for values 0 and 3 conflicts. One reading lists 0 and 3 under mode 0xB, and also 3 under return 1. The other gives 3 and -2 return 1, and 0 with other values mode 11. Not resolved.
   - Which dungeon code writes the result values 1, 2, 4, 5 and -1 to `setup+0x60` is not verified.
   - The constants behind the 1 and 2 written to var `0x43` (registers r6 and r7 at `0x0201EB20`) were not read. The flag conditions for ids 0xF and 0x10 (`FUN_02020848(4, ...)`) were not read.
   - Whether other code writes `0x19` with values that would create mode 3 or 6 was not swept.
