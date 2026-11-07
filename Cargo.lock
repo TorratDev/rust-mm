@@ -2832,6 +2832,11 @@ dependencies = [
 [[package]]
 name = "rescue-render"
 version = "0.0.0"
+dependencies = [
+ "rescue-formats",
+ "rescue-nds",
+ "rescue-tests",
+]
 
 [[package]]
 name = "rescue-save"
