@@ -102,7 +102,9 @@ rescue_tests::rom_test! {
             }
         }
 
-        // Draw over the captured screen, so the log box's blend has the floor to blend with.
+        // Draw over the captured screen. The log box fill is already blended in that capture, and
+        // a blend cannot be undone, so the fill is not compared here: `blend_log_fill` is checked
+        // only by its unit test, against the doc's captured values. Only text pixels are compared.
         let shot = std::fs::read(cap.join("screen_bottom.rgb")).expect("screen_bottom.rgb");
         assert_eq!(shot.len(), 256 * 192 * 3, "screen_bottom.rgb is 256x192 RGB");
         let mut frame = Frame::filled([0, 0, 0, 255]);

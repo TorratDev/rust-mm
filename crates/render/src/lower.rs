@@ -245,10 +245,16 @@ pub fn panel_cells() -> Vec<(u32, u32, u16)> {
     cells
 }
 
-/// Blends the fill colour over the pixel below it: `(fill * 8 + below * 8) / 16` per channel,
-/// the alpha of `BLDALPHA` 8/8 (`docs/re/ui-screens.md`, section 6).
-pub fn blend_alpha_8(fill: Rgba, below: Rgba) -> Rgba {
-    let mix = |a: u8, b: u8| ((u16::from(a) * 8 + u16::from(b) * 8) / 16) as u8;
+/// Blends the fill colour over the pixel below it, as the DS does: in 5-bit colour, per channel
+/// `(fill5 * 8 + below5 * 8) / 16` (the alpha of `BLDALPHA` 8/8, `docs/re/ui-screens.md`,
+/// section 6), then widened by a shift. The capture's values are 5-bit colour shifted up, so
+/// the blend must not be done in 8-bit: BG1 (32, 74, 106) over (164, 222, 0) gives (96, 144,
+/// 48), the captured value.
+pub fn blend_log_fill(fill: Rgba, below: Rgba) -> Rgba {
+    let mix = |a: u8, b: u8| {
+        let (a, b) = (u16::from(a >> 3), u16::from(b >> 3));
+        (((a * 8 + b * 8) / 16) << 3) as u8
+    };
     [
         mix(fill[0], below[0]),
         mix(fill[1], below[1]),
@@ -340,7 +346,7 @@ pub fn draw_log_box(frame: &mut Frame, tiles: &LowerTiles, canvas: &Canvas) {
                     continue;
                 };
                 let below = get(frame, x, y);
-                put(frame, x, y, blend_alpha_8(colour, below));
+                put(frame, x, y, blend_log_fill(colour, below));
             }
         }
     }
@@ -515,11 +521,12 @@ mod tests {
     }
 
     #[test]
-    fn blend_is_the_average_at_8_over_16() {
-        // The doc's check: BG1 blue over the floor pixel.
+    fn blend_is_done_in_5_bit_colour() {
+        // The doc's check (docs/re/ui-screens.md, section 6): the 5-bit values average, then
+        // widen, to the captured (96, 144, 48), not the 8-bit average (98, 148, 53).
         assert_eq!(
-            blend_alpha_8([32, 74, 106, 255], [164, 222, 0, 255]),
-            [98, 148, 53, 255]
+            blend_log_fill([32, 74, 106, 255], [164, 222, 0, 255]),
+            [96, 144, 48, 255]
         );
     }
 }
