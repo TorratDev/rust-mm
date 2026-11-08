@@ -45,6 +45,11 @@ pub const FRAME_PALETTE: usize = 15;
 pub const PORTRAIT_PALETTE: usize = 14;
 /// Pixel origin of the text canvas: BG0 col 3, row 17 (`docs/re/ui-screens.md`, section 2).
 pub const TEXT_ORIGIN: (i32, i32) = (24, 136);
+/// Pixel columns and rows where the box fill shows: the WIN0 rectangle x 19 to 236, y 139 to
+/// 172 (`docs/re/ui-screens.md`, section 6). BG1 is seen only through WIN0. The post_accept
+/// capture has the same rectangle in town, with the fill visible only inside it.
+pub const BOX_FILL_X: std::ops::Range<i32> = 19..237;
+pub const BOX_FILL_Y: std::ops::Range<i32> = 139..173;
 /// Colour indices of the box's top edge (canvas rows 0 to 2) and bottom edge (rows 37 to
 /// 39): f, e, d and d, e, f (`docs/re/ui-screens.md`, section 2; the top edge is also in
 /// `findings-b` item 2). The post_accept VRAM has these rows as solid colours across the canvas.
@@ -272,6 +277,30 @@ pub fn draw_fill(frame: &mut Frame, tiles: &TileSet, rect: TileRect) {
     }
 }
 
+/// Draws the box fill over `rect`, clipped to [`BOX_FILL_X`] and [`BOX_FILL_Y`]: the fill
+/// shows only through WIN0 (`docs/re/ui-screens.md`, section 6), so the transparent corner
+/// pixels outside the rectangle show what is behind them.
+fn draw_fill_in_window(frame: &mut Frame, tiles: &TileSet, rect: TileRect) {
+    let Some(tile) = tiles.tile(FILL_TILE) else {
+        return;
+    };
+    let (x0, y0) = (rect.col as i32 * 8, rect.row as i32 * 8);
+    for y in y0..y0 + rect.rows as i32 * 8 {
+        for x in x0..x0 + rect.cols as i32 * 8 {
+            if !BOX_FILL_X.contains(&x) || !BOX_FILL_Y.contains(&y) {
+                continue;
+            }
+            let index = usize::from(tile[((y - y0) % 8 * 8 + (x - x0) % 8) as usize]);
+            if index == 0 {
+                continue;
+            }
+            if let Some(c) = tiles.palette().get(index) {
+                put(frame, x, y, *c);
+            }
+        }
+    }
+}
+
 /// Draws the menu window frame around `rect`: corners, edges and sides with the menu tiles.
 /// The interior (text over the fill) is the caller's.
 pub fn draw_menu_frame(frame: &mut Frame, tiles: &TileSet, rect: TileRect) {
@@ -284,7 +313,7 @@ pub fn draw_menu_frame(frame: &mut Frame, tiles: &TileSet, rect: TileRect) {
 /// them (colour index 0 is transparent, so what is under it shows through), then the corners
 /// and sides.
 pub fn draw_dialogue_box(frame: &mut Frame, tiles: &TileSet, canvas: &Canvas) {
-    draw_fill(frame, tiles, DIALOGUE_BOX);
+    draw_fill_in_window(frame, tiles, DIALOGUE_BOX);
     let edge_rows = BOX_EDGE_TOP
         .iter()
         .enumerate()
@@ -554,6 +583,25 @@ mod tests {
         draw_marker(&mut frame, &sprites, 120, 171);
         assert_eq!(pixel(&frame, 120, 171), grey(30));
         assert_eq!(pixel(&frame, 128, 171), grey(40));
+    }
+
+    #[test]
+    fn box_fill_is_clipped_to_the_win0_rectangle() {
+        // Corner and side tiles transparent, so only the fill and the edge rows are drawn.
+        let mut tiles = vec![[0u8; TILE_PIXELS]; 128];
+        tiles[99] = [1; TILE_PIXELS];
+        let tiles = tileset(tiles);
+        let canvas = Canvas::window();
+        let mut frame = Frame::filled([0, 0, 0, 255]);
+        draw_dialogue_box(&mut frame, &tiles, &canvas);
+        // Inside the rectangle: fill. Outside it (x 16 to 18, x 237 to 239): background.
+        assert_eq!(pixel(&frame, 19, 150), grey(10));
+        assert_eq!(pixel(&frame, 236, 150), grey(10));
+        assert_eq!(pixel(&frame, 18, 150), grey(0));
+        assert_eq!(pixel(&frame, 237, 150), grey(0));
+        // Above the rectangle, the edge row (top canvas row 2) is still drawn.
+        assert_eq!(pixel(&frame, 100, 138), grey(130));
+        assert_eq!(pixel(&frame, 100, 139), grey(10));
     }
 
     #[test]
