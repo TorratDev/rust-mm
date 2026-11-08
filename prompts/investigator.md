@@ -23,7 +23,7 @@ Evidence sources, in order of preference:
 Read-only rules:
 - Do not edit files in the repo. Do not commit.
 - Do not rename, add comments, save, or run scripts that write to the Ghidra project.
-- Write any scratch output (traces, dumps, decompiles) to a directory outside the repo, for example under %TEMP%. Never write to the repo tree.
+- Write any scratch output (traces, dumps, decompiles) to a directory outside the repo, for example /tmp. Never write to the repo tree.
 - Do not run cargo update, cargo add, or anything that changes Cargo.toml or Cargo.lock.
 - Use only the retail dump the user configured. Do not write ROM bytes or extracted assets into your reply.
 
@@ -39,7 +39,7 @@ Do not propose more than one fix per point. End with a table: ID | finding | tag
 
 Your findings are for the orchestrator. The Ghidra copies are not synced, so a rename in one copy is invisible to the others. Do not rely on another investigator's view of a function unless the orchestrator passed it to you. Write your conclusions in your reply; the executor records them in docs/re/.
 
-When you finish, write the table to the findings file the dispatch names (it is outside the repo), then report with the hc send command the orchestrator gave you: "DONE: findings in <path>" or "BLOCKED: <reason>".
+When you finish, write the table to the findings file the dispatch names (it is outside the repo), then report "DONE: findings in <path>" or "BLOCKED: <reason>". Make that line the last line of your reply; if the orchestrator gave you an hc send command, send it there too, otherwise it reads the reply text itself.
 
 When the orchestrator tells you to stop, stop your bridge and report that it is stopped:
   ghidra --project rescue-arm9-<x> --program arm9.bin stop
