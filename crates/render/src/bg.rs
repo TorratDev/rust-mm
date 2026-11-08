@@ -134,6 +134,18 @@ pub fn compose(layers: &[BgLayer], palettes: &[Palette], backdrop: Rgba) -> Fram
 /// followed by frame 0 of each BPA slot (a missing slot is blank), as in VRAM. Palette
 /// numbers are BPL bank indices. `Err` if the layer or a chunk is out of range.
 pub fn ground_layer(bpc: &Bpc, bpa: &[Option<Bpa>], bma: &Bma, layer: usize) -> Result<BgLayer> {
+    ground_layer_at(bpc, bpa, bma, layer, [0; 4])
+}
+
+/// Like [`ground_layer`], with BPA slot `i` showing animation frame `frames[i]` (the frame
+/// the game has copied into VRAM at that moment). A frame the slot lacks is blank.
+pub fn ground_layer_at(
+    bpc: &Bpc,
+    bpa: &[Option<Bpa>],
+    bma: &Bma,
+    layer: usize,
+    frames: [usize; 4],
+) -> Result<BgLayer> {
     let rows = bma
         .layers
         .get(layer)
@@ -141,7 +153,11 @@ pub fn ground_layer(bpc: &Bpc, bpa: &[Option<Bpa>], bma: &Bma, layer: usize) -> 
     let mut chr = bpc.chr.clone();
     for (i, &n) in bpc.bpa_tiles.iter().enumerate() {
         let want = usize::from(n) * 32;
-        match bpa.get(i).and_then(Option::as_ref).and_then(|b| b.frame(0)) {
+        match bpa
+            .get(i)
+            .and_then(Option::as_ref)
+            .and_then(|b| b.frame(frames[i]))
+        {
             Some(f) if f.len() == want => chr.extend_from_slice(f),
             _ => chr.resize(chr.len() + want, 0),
         }
