@@ -148,7 +148,7 @@ Sources: the #62 findings B (window frame, cursor, dialogue box, portrait) and C
 - WINOUT = `0x003D` (BG1 not drawn outside the window). WININ = `0x3F3F`.
 - **Blend:** BLDCNT = `0x1C42` (BG1 first target, alpha mode, second targets BG2, BG3 and OBJ), BLDALPHA = `0x0808`, so out = (BG1 x 8 + below x 8) / 16, where `below` is the floor or sprite pixel.
 - Check: BG1 blue (32, 74, 106) over floor (164, 222, 0) gives (98, 148, 53); the capture has (96, 144, 48). **[blue-verified]** for the formula. The result is close, not exact: the capture is 2 to 5 units lower per channel, and the findings do not explain the gap.
-- **Not verified:** whether the box resizes (not seen; the Rust renderer should use the constant rectangle). The 10 px in `dng1` (minimap dot corner, x 24 to 27, y 92 to 94) and 83 px in `b2` (around the leader and damage number, x 127 to 150, y 132 to 158) that do not match: sprite-animation or alpha related, not examined.
+- **Not verified:** whether the box resizes (not seen; the Rust renderer should use the constant rectangle). The 10 px in `dng1` (minimap dot corner, x 24 to 27, y 92 to 94) are attributed by findings-c2 to the blinking leader OBJ dot (tile 533, palette 15, at (24, 92)); see [Minimap and status line](#minimap-and-status-line). The 83 px in `b2` (around the leader and damage number, x 127 to 150, y 132 to 158) do not match: sprite-animation or alpha related, not examined.
 
 ## 7. BG3 floor scroll
 
@@ -272,7 +272,7 @@ Sources: the #62 findings B (window frame, cursor, dialogue box, portrait) and C
 ## Open questions
 
 - The 12 callers that repaint minimap cells (`FUN_0213c0f8` and others) are known; the upload queue timing is not needed for a static renderer.
-- What the 10 px and 83 px residuals in the two compositor checks are (C 5).
+- What the 83 px residual in the `b2` compositor check is (C 5). The 10 px in `dng1` is attributed to the leader OBJ dot (C2).
 - Whether the marker blinks (the findings do not say).
 
 ## Red comparison
