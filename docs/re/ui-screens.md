@@ -18,7 +18,7 @@ Sources: the #62 findings B (window frame, cursor, dialogue box, portrait) and C
 | The cursor and wait marker are OBJ sprites from `fontsp` at OBJ tile `1008 + i`, palette from `fontsppa` (OBJ palette 15) | OAM entries and VRAM tiles match 16 of 16 (#62 B 4) | [blue-verified] for source and slot, high; the roles of tiles 5 to 15 are low |
 | The dialogue box and the dungeon message log use the same frame tiles (corner `0x297`, side `0x2DA`, fill `0x2DB`) in the same cells | tile map of both frames (#62 B 2, C 3) | [blue-verified], high |
 | The portrait is 25 consecutive BG0 tiles (`0xB8` to `0xD0`) at cols 24 to 28, rows 10 to 14, palette bank 14, with its own 7x7 frame | VRAM and map of post_accept (#62 B 6) | [blue-verified], high for position and palette |
-| The portrait is shown horizontally mirrored from the decoded slot 0 of `kao004` | 1588 of 1600 pixels equal after a pixel hflip; one sample | [blue-verified] for the difference, medium for the rule (one sample; see [portraits.md](../formats/portraits.md)) |
+| The portrait mirror is one flag byte of its descriptor (`param_8+0xD`, not side, speaker or emotion). Script portraits take the flag from a 21-entry position table at ov_0000 `0x02159DA0` | decompile of `FUN_0202ee6c`, `FUN_01ff9010`, `FUN_01ff8f14`; table dump; two runtime samples (Charmander mirrored, Kecleon not) (#62 B follow-up) | [blue-verified], high for the flag and table; medium for the actor-id exceptions and the 12-pixel residual (see [portraits.md](../formats/portraits.md#mirror-rule-62-b-follow-up)) |
 | The dungeon floor scroll is the shadow array at `0x020F38D0` (engine B `0x020F38C0`), copied to the BG scroll registers by `FUN_02019268` | decompile of `FUN_02019268`; shadow bytes in `dng1` and `b2` (#62 C 2) | [blue-verified], high |
 | The translucent log box is BG1 through WIN0, rectangle x 19 to 236, y 139 to 172, alpha 8/16 over BG2, BG3 and OBJ | `FUN_0201966c` decompile, HBlank DMA table at `0x020F2460`, blend arithmetic (#62 C 4) | [blue-verified], high (the box was read once, see Not verified) |
 | The status-digit tiles (`0x2CC` to `0x2D7`) and the minimap drawing rule | not located | not found (#62 C 6) |
@@ -41,6 +41,8 @@ Sources: the #62 findings B (window frame, cursor, dialogue box, portrait) and C
 | `0x04000040` | WIN0H (`0x04000040`) | #62 C 4 |
 | `0x02096FC8` | ARM9 string `panelnn` (sheet name) | #62 B 5 |
 | `0x0208FA28` | ARM9 format string `kao%03d` | #62 B 6 |
+| `0x02159DA0` | ov_0000 position table, 21 × 6 bytes `{s16 x, s16 y, u8 flag}` | #62 B follow-up |
+| `0x0211140C` | `param_8` descriptor of the Kecleon shop portrait (flag 0) | #62 B follow-up |
 
 ## Routines
 
@@ -161,13 +163,14 @@ Sources: the #62 findings B (window frame, cursor, dialogue box, portrait) and C
 
 ## 8. Portrait placement
 
-**[blue-verified]**, high for position and palette; the mirror rule is **medium** (one sample) (#62 B 6, B 7).
+**[blue-verified]**, high for position and palette. The mirror rule is **[blue-verified]**, high for the flag and table, with medium for the actor-id exceptions (#62 B 6, B 7, B follow-up).
 
 - Portrait: 25 consecutive BG0 tiles `0xB8` to `0xD0` (VRAM `0x06001700` onward), placed row-major at BG0 cols 24 to 28, rows 10 to 14 (pixels x 192 to 232, y 80 to 120). Map entries have no flip bits. Palette bank 14.
 - Frame: BG0 cols 23 to 29, rows 9 to 15 (7 x 7 tiles; pixels x 184 to 240, y 72 to 128). Corner `i=100`, edges `i=101` and `102` (see section 3).
 - Placement relative to the box: the frame bottom is at y 128, the box top at y 136 (an 8 px gap). The right edge is x 240, the same as the box.
-- **Mirror:** the displayed image is the horizontal mirror of the decoded slot 0 of `kao004` (1588 of 1600 pixels equal after a pixel hflip; 12 pixels differ in dither rows 6, 7 and 17). The map has no flip bits, so either the game stores mirrored pixels or the emotion or side makes the portrait face that way. Whether the mirror depends on the side (here the portrait is right of the box, Charmander) is **not verified**: one sample. Also: palette index 0 is unused in this image (pixels are 1 to f), so "colour 0 is drawn" is unverified here.
-- What selects the portrait: not a text code (#62 A 7). See [portraits.md](../formats/portraits.md).
+- **Mirror:** one flag byte of the descriptor (`param_8+0xD`) selects the exact hflip. It is not side, speaker or emotion. The full rule, the position table, the two runtime samples and the residual are in [portraits.md](../formats/portraits.md#mirror-rule-62-b-follow-up). The map itself has no flip bits.
+- Palette index 0 is unused in the Charmander image (pixels are 1 to f), so "colour 0 is drawn" is unverified there.
+- What selects the portrait: the script's position id and emotion, not a text code (#62 A 7, B follow-up). See [portraits.md](../formats/portraits.md).
 
 ## 9. Assets
 
@@ -192,7 +195,7 @@ Sources: the #62 findings B (window frame, cursor, dialogue box, portrait) and C
 - Roles of the cursor tiles 5 to 15 (visual only).
 - The `panelnf`, `panelnn` language mapping beyond `n`.
 - Whether the log box resizes. Only one `dng1` table was read.
-- The mirror rule for the portrait (one sample).
+- The portrait mirror for speakers and positions beyond the two observed (position 3, Kecleon shop), and the 12-pixel residual (medium). See [portraits.md](../formats/portraits.md#mirror-rule-62-b-follow-up).
 - BG2 and BG3 use in other dungeon states (stairs and item lists); only the `dng1` and `b2` frames were checked.
 
 ## Open questions
