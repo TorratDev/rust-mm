@@ -13,6 +13,7 @@ pub mod camera;
 pub mod palette;
 pub mod screens;
 pub mod sprite;
+pub mod text;
 
 pub use anim::AnimPlayer;
 pub use autotile::{AutotileError, GRID_H, GRID_W, autotile, cell_key};
@@ -23,8 +24,11 @@ pub use screens::{Rect, SCREEN_HEIGHT, SCREEN_WIDTH, ScreenLayout};
 pub use sprite::{
     PlacedSprite, SpriteImage, compose_with_sprites, render_obj, render_sprite, shadow_origin,
 };
+pub use text::{Canvas, Dialogue, Font, State};
 
 #[cfg(test)]
 mod rom_sprite_tests;
 #[cfg(test)]
 mod rom_tests;
+#[cfg(test)]
+mod rom_text_tests;
