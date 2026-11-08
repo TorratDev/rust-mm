@@ -10,6 +10,7 @@ pub mod anim;
 pub mod autotile;
 pub mod bg;
 pub mod camera;
+pub mod lower;
 pub mod palette;
 pub mod screens;
 pub mod sprite;
@@ -27,6 +28,8 @@ pub use sprite::{
 };
 pub use text::{Canvas, Dialogue, Font, State};
 
+#[cfg(test)]
+mod rom_lower_tests;
 #[cfg(test)]
 mod rom_sprite_tests;
 #[cfg(test)]
