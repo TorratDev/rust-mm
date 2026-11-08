@@ -91,23 +91,79 @@ pub struct Monster {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dungeon {
     /// The floor map.
-    pub floor: Floor,
+    floor: Floor,
     /// The floor's generator (`gDungeonRngState`).
-    pub rng: DungeonRng,
+    rng: DungeonRng,
     /// The team, in slot order; slot 0 is the leader.
-    pub team: Vec<Monster>,
+    team: Vec<Monster>,
     /// The wild monsters, in slot order.
-    pub wild: Vec<Monster>,
+    wild: Vec<Monster>,
     /// The sim's turn counter: one per command that takes a turn.
-    pub turn: u32,
+    turn: u32,
     /// `+0x34AA`: the Kecleon shop pass ran on this floor.
-    pub shop_pass: bool,
+    shop_pass: bool,
     /// `+0x34AC`: the monster-house room, or [`NO_MONSTER_HOUSE`].
-    pub monster_house_room: u8,
+    monster_house_room: u8,
     /// `+0xC0B8`, `+0xC0BA`: the leader's start, `None` when the game stores -1.
-    pub player_spawn: Option<(i16, i16)>,
+    player_spawn: Option<(i16, i16)>,
     /// `+0xC0BC`, `+0xC0BE`: the stairs spawn, `None` when the game stores -1.
-    pub stairs_spawn: Option<(i16, i16)>,
+    stairs_spawn: Option<(i16, i16)>,
+}
+
+impl Dungeon {
+    /// The floor map.
+    #[must_use]
+    pub const fn floor(&self) -> &Floor {
+        &self.floor
+    }
+
+    /// The floor's generator.
+    #[must_use]
+    pub const fn rng(&self) -> &DungeonRng {
+        &self.rng
+    }
+
+    /// The team, slot 0 first (the leader).
+    #[must_use]
+    pub fn team(&self) -> &[Monster] {
+        &self.team
+    }
+
+    /// The wild monsters, in slot order.
+    #[must_use]
+    pub fn wild(&self) -> &[Monster] {
+        &self.wild
+    }
+
+    /// The turn counter.
+    #[must_use]
+    pub const fn turn(&self) -> u32 {
+        self.turn
+    }
+
+    /// Whether the Kecleon shop pass ran on this floor (`+0x34AA`).
+    #[must_use]
+    pub const fn shop_pass(&self) -> bool {
+        self.shop_pass
+    }
+
+    /// The monster-house room, or [`NO_MONSTER_HOUSE`] (`+0x34AC`).
+    #[must_use]
+    pub const fn monster_house_room(&self) -> u8 {
+        self.monster_house_room
+    }
+
+    /// The leader's start (`+0xC0B8`), `None` when unset.
+    #[must_use]
+    pub const fn player_spawn(&self) -> Option<(i16, i16)> {
+        self.player_spawn
+    }
+
+    /// The stairs spawn (`+0xC0BC`), `None` when unset.
+    #[must_use]
+    pub const fn stairs_spawn(&self) -> Option<(i16, i16)> {
+        self.stairs_spawn
+    }
 }
 
 impl Dungeon {
@@ -119,14 +175,19 @@ impl Dungeon {
             .any(|m| m.pos == (x, y))
     }
 
-    /// Moves the leader one tile in `dir`, or refuses with the reason.
+    /// Moves the leader one tile in `dir`, or refuses with the reason. This is the regular
+    /// mobility rule (`docs/re/turns.md`, `CanMoveInDirection` and the walkable-neighbour
+    /// masks): the target must be NORMAL terrain, and a diagonal step needs both orthogonal
+    /// neighbours to be open, so it never cuts a wall corner. Other mobility classes (water,
+    /// lava, crevice) and the status and held-item overrides are not modelled, so the leader
+    /// moves as a regular monster.
     fn move_leader(&mut self, dir: Direction) -> Outcome {
         let Some(leader) = self.team.first() else {
             return Outcome::Blocked(Blocked::NoLeader);
         };
+        let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
         let (dx, dy) = dir.delta();
-        let x = i32::from(leader.pos.0) + dx;
-        let y = i32::from(leader.pos.1) + dy;
+        let (x, y) = (lx + dx, ly + dy);
         let Some(tile) = self.floor.tile(x, y) else {
             return Outcome::Blocked(Blocked::OutOfBounds);
         };
@@ -138,6 +199,21 @@ impl Dungeon {
         if self.occupied(target.0, target.1) {
             return Outcome::Blocked(Blocked::Occupied);
         }
+        if tile.terrain & floor::TERRAIN_TYPE_MASK != TERRAIN_NORMAL {
+            return Outcome::Blocked(Blocked::Terrain);
+        }
+        if dx != 0 && dy != 0 {
+            // A wall (or the map edge) on either side of the diagonal blocks the step.
+            let open = |xx: i32, yy: i32| {
+                self.floor.tile(xx, yy).is_some_and(|t| {
+                    t.terrain & floor::TERRAIN_IMPASSABLE_WALL == 0
+                        && t.terrain & floor::TERRAIN_TYPE_MASK != 0
+                })
+            };
+            if !open(lx + dx, ly) || !open(lx, ly + dy) {
+                return Outcome::Blocked(Blocked::CornerCut);
+            }
+        }
         if let Some(leader) = self.team.first_mut() {
             leader.pos = target;
         }
@@ -146,25 +222,30 @@ impl Dungeon {
     }
 }
 
+/// Terrain type of ordinary ground, the only type a regular monster may stand on.
+const TERRAIN_NORMAL: u16 = floor::TERRAIN_FLOOR;
+
 /// Everything the sim owns for one run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameState {
     /// The global generator (`sPRNGState`).
-    pub global: GlobalRng,
+    global: GlobalRng,
     /// The seed the preseed generator was made from.
-    pub run_seed: u32,
+    run_seed: u32,
     /// How many floors have been entered; each drew one floor seed from the preseed generator.
-    pub floors_entered: u32,
+    floors_entered: u32,
     /// Produces each floor's seed (`gDungeonRngPreseedState`), made from [`Self::run_seed`]
     /// and advanced once per floor entered.
-    pub preseed: DungeonPreseed,
+    preseed: DungeonPreseed,
     /// The current dungeon, if one is loaded.
-    pub dungeon: Option<Dungeon>,
+    dungeon: Option<Dungeon>,
 }
 
 impl GameState {
     /// A run seeded from one value: the global generator takes `seed` as its state, and the
-    /// preseed generator takes the same value. No dungeon is loaded.
+    /// preseed generator takes the same value. Seeding both generators from one value is a
+    /// sim choice, not the game's seeding (the game seeds the global generator from the
+    /// console's six bytes and the preseed from the run). No dungeon is loaded.
     #[must_use]
     pub const fn new(seed: u32) -> Self {
         Self {
@@ -176,9 +257,42 @@ impl GameState {
         }
     }
 
-    /// Loads a floor: the floor's seed comes from the preseed generator, and the floor gets
-    /// its own generator. Fails if the team is too large.
-    pub fn enter_dungeon(&mut self, floor: Floor, team: Vec<Monster>) -> Result<(), StateError> {
+    /// A run with a floor loaded: [`GameState::new`] with `seed`, then the floor. The floor's
+    /// seed comes from the preseed generator, and the floor gets its own generator. Fails if
+    /// the team is too large.
+    pub fn in_dungeon(seed: u32, floor: Floor, team: Vec<Monster>) -> Result<Self, StateError> {
+        let mut state = Self::new(seed);
+        state.enter_dungeon(floor, team)?;
+        Ok(state)
+    }
+
+    /// The global generator.
+    #[must_use]
+    pub const fn global(&self) -> &GlobalRng {
+        &self.global
+    }
+
+    /// The seed the preseed generator was made from.
+    #[must_use]
+    pub const fn run_seed(&self) -> u32 {
+        self.run_seed
+    }
+
+    /// How many floors have been entered.
+    #[must_use]
+    pub const fn floors_entered(&self) -> u32 {
+        self.floors_entered
+    }
+
+    /// The current dungeon, if one is loaded.
+    #[must_use]
+    pub const fn dungeon(&self) -> Option<&Dungeon> {
+        self.dungeon.as_ref()
+    }
+
+    /// Enters a floor (see [`GameState::in_dungeon`]). Private: a floor is entered only by
+    /// the constructor or through the state's own rules.
+    fn enter_dungeon(&mut self, floor: Floor, team: Vec<Monster>) -> Result<(), StateError> {
         if team.len() > TEAM_SLOTS {
             return Err(StateError::TeamTooLarge(team.len()));
         }
@@ -567,6 +681,81 @@ mod tests {
         let first = a.dungeon.as_ref().unwrap().rng.state();
         a.enter_dungeon(open_floor(), Vec::new()).unwrap();
         assert_ne!(a.dungeon.as_ref().unwrap().rng.state(), first);
+    }
+
+    fn set_terrain(g: &mut GameState, x: i32, y: i32, terrain: u16) {
+        let d = g.dungeon.as_mut().unwrap();
+        d.floor.tile_mut(x, y).unwrap().terrain = terrain;
+    }
+
+    #[test]
+    fn a_plain_wall_blocks_ordinary_ground_rules() {
+        // Terrain 0 is an ordinary wall without the 0x10 flag: regular monsters may not enter.
+        let mut g = run_with_leader(1);
+        set_terrain(&mut g, 6, 5, 0);
+        let before = g.clone();
+        assert_eq!(
+            g.step(Command::Move(Direction::Right)),
+            Outcome::Blocked(Blocked::Terrain)
+        );
+        assert_eq!(g, before);
+    }
+
+    #[test]
+    fn water_and_lava_block_a_regular_monster() {
+        // Terrain type 2 (secondary, water or lava) is not NORMAL.
+        let mut g = run_with_leader(1);
+        set_terrain(&mut g, 6, 5, 2);
+        assert_eq!(
+            g.step(Command::Move(Direction::Right)),
+            Outcome::Blocked(Blocked::Terrain)
+        );
+    }
+
+    #[test]
+    fn a_diagonal_cannot_cut_a_wall_corner() {
+        // Leader at (5, 5); the diagonal target (6, 6) is open, but (6, 5) is a wall.
+        let mut g = run_with_leader(1);
+        set_terrain(&mut g, 6, 5, 0);
+        let before = g.clone();
+        assert_eq!(
+            g.step(Command::Move(Direction::DownRight)),
+            Outcome::Blocked(Blocked::CornerCut)
+        );
+        assert_eq!(g, before);
+        // The other orthogonal neighbour blocks too.
+        let mut g = run_with_leader(1);
+        set_terrain(&mut g, 5, 6, 0);
+        assert_eq!(
+            g.step(Command::Move(Direction::DownRight)),
+            Outcome::Blocked(Blocked::CornerCut)
+        );
+    }
+
+    #[test]
+    fn a_diagonal_is_allowed_when_both_sides_are_open() {
+        let mut g = run_with_leader(1);
+        assert_eq!(
+            g.step(Command::Move(Direction::DownRight)),
+            Outcome::Applied
+        );
+        assert_eq!(leader_pos(&g), (6, 6));
+    }
+
+    #[test]
+    fn a_wall_on_the_far_side_blocks_a_diagonal_too() {
+        // Leader at (0, 1) moving up-right to (1, 0): the orthogonal (1, 1) is a wall.
+        let mut g = GameState::in_dungeon(1, open_floor(), {
+            let mut l = monster(0, 1, 8);
+            l.info.is_team_leader = true;
+            vec![l]
+        })
+        .unwrap();
+        set_terrain(&mut g, 1, 1, 0);
+        assert_eq!(
+            g.step(Command::Move(Direction::UpRight)),
+            Outcome::Blocked(Blocked::CornerCut)
+        );
     }
 
     #[test]

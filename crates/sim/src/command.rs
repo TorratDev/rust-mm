@@ -80,10 +80,14 @@ pub enum Blocked {
     NoLeader,
     /// The target tile is off the floor.
     OutOfBounds,
-    /// The target tile is an impassable wall.
+    /// The target tile is an impassable wall (`0x10`).
     Wall,
     /// Another monster stands on the target tile.
     Occupied,
+    /// The target is not ordinary ground (water, lava or a plain wall: `terrain & 3` is not 1).
+    Terrain,
+    /// A diagonal step would cut a wall corner: one of its orthogonal neighbours is a wall.
+    CornerCut,
 }
 
 /// What a command did.
