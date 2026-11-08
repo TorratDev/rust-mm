@@ -29,8 +29,6 @@ pub const PAGE_LAST_Y: i32 = 0x22;
 pub const SCROLL_FRAMES: u32 = 18;
 /// Pixels a page scrolls up: three lines. `[hypothesis]`: the distance is not measured.
 pub const SCROLL_DISTANCE: i32 = 3 * LINE_PITCH;
-/// Colour index of the outline and shadow of glyphs with font flag bit 1.
-pub const OUTLINE_COLOUR: u8 = 3;
 /// Colour index a window starts with (white).
 pub const DEFAULT_COLOUR: u8 = 7;
 
