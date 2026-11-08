@@ -146,8 +146,8 @@ For each sub-issue in the batch:
    - SPLIT or ESCALATE: follow the rules below.
    - BLOCKED: record it in progress.md. Ask the user if a human decision is needed.
 5. After 3 REVISE attempts, or when the work doesn't fit one PR, create a follow-up:
-   gh issue create --title "<title> (follow-up)" --body "<done so far, remaining work, reason for split>\n\nParent: #<n>\nEpic: #<EPIC>\nDependencies: <list>" --label follow-up
-   Add it to the epic's task list and mark the original "partial" in progress.md.
+   gh issue create --title "<title> (follow-up)" --body "<done so far, remaining work, reason for split>\n\nParent: #<n>\nEpic: #<FOLLOWUP_EPIC>\nDependencies: <list>" --label follow-up
+   <FOLLOWUP_EPIC> is the current epic (#<EPIC>) unless the follow-up's Dependencies list names an issue outside the current epic. Only then, create a new epic for it first: gh issue create --title "<title> epic" --body "Epic: #<EPIC> split. Original sub-issue: #<n>\nDependencies: <full dependency list>" --label epic, then use its number as <FOLLOWUP_EPIC>. The follow-up goes into its epic's task list: the current epic's, or the new epic's after a split. Mark the original "partial" in progress.md either way.
 6. When the PR opens, the executor removes its worktree and is free for the next task. For an abandoned task, first check that its worktree has no uncommitted changes worth keeping, then tell the executor to remove it. Record the executor and worktree in progress.md either way.
 
 ## Rules
