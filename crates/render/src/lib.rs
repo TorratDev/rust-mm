@@ -11,7 +11,7 @@ pub mod palette;
 pub mod screens;
 
 pub use autotile::{AutotileError, GRID_H, GRID_W, autotile, cell_key};
-pub use bg::{BgLayer, Frame, compose, ground_layer};
+pub use bg::{BgLayer, Frame, compose, ground_layer, ground_layer_at};
 pub use palette::{Fade, FadeTarget, PaletteAnimator};
 pub use screens::{Rect, SCREEN_HEIGHT, SCREEN_WIDTH, ScreenLayout};
 
