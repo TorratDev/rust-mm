@@ -184,14 +184,13 @@ Other banks of `fontpal` exist (banks 1 to 7). Which bank a window uses is a por
 
 ## Red comparison
 
-Red's `charmap.txt` names `CENTER_ALIGN` (`#+`), `UNK_MACRO_3E` (`#>`) and `UNK_MACRO_5F_*` (`#_`), and lists `#~` as wait frames. Blue's `#+` centres the line, which matches the name. Blue's `#>` sets an absolute x, not an alignment, so the red reading is wrong there. Blue's `#~` waits frames, which matches Red's note. Blue's `#_` pushes a shade from a table, which Red does not describe. `pmd-red` is only read, not copied ([`references.md`](../references.md)).
+Red's `charmap.txt` names `CENTER_ALIGN` (`#+`), `UNK_MACRO_3E` (`#>`) and `UNK_MACRO_5F_*` (`#_`), and lists `#~` as wait frames. Blue's `#+` centres the line, which matches the name. Blue's `#>` sets an absolute x, not an alignment, so the red reading is wrong there. Blue's `#~` waits frames, which matches Red's note. `pmd-red` is only read, not copied ([`references.md`](../references.md)).
 
 ## Open questions
 
 - `#[ … ]` callback: null in every sampled caller, and no message table uses `#[` (#62 RE-a). The portrait is not selected by a text code ([ui-screens.md](ui-screens.md#8-portrait-placement)).
 - `$h`, `$t`, `$m`, `$n`, `$i` table contents (runtime only, overlay RAM).
 - `#1`–`#9`: 1 to 11 uses each in English, all at a string start. **Resolved in #62 RE-a:** the parser returns the pointer unchanged, so the caller draws a literal `#` and the digit.
-- Flag meanings of font glyphs; which font gets which flag.
 - `kanji_b` buffer destination: loader writes `0x06206100`, runtime pointer `0x06616BE4`.
 - Fallback glyph entry at `020938E0`: its +8 word is nonzero, so it may not be a valid entry.
 

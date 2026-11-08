@@ -30,8 +30,8 @@ Each code takes the arguments listed here, so they never show as text. Parser `F
 
 | Code | Arguments | Token | Action |
 |------|-----------|-------|--------|
-| `#C<x>` / `#R` | 1 char / none | `Color`, `ColorEnd` | push text colour `x` (index via `FUN_02013cdc`) / pop |
-| `#c<x>` / `#r` | 1 char / none | `AltColor`, `AltColorEnd` | the same for the alternative slot (names) |
+| `#C<x>` / `#R` | 1 char / none | `Color`, `ColorEnd` | set text colour `x` (index via `FUN_02013cdc`) / restore the one saved slot |
+| `#c<x>` / `#r` | 1 char / none | `AltColor`, `AltColorEnd` | set the colour for names, and restore the one alternative saved slot |
 | `#=<b>` | 1 byte | `SetX` | x = `b` |
 | `#yb` | 1 byte | `SetY` | y = `b` |
 | `#.<b>` | 1 byte | `AddX` | x += `b` |
@@ -64,8 +64,6 @@ Found in #62 RE-a, by decompile and py-desmume run: [re/text-engine.md](../re/te
 4. **`#[ … ]`:** the callback is null in every sampled caller, and `#[` never occurs in the five message tables. The "portrait change" guess is dropped. The portrait is set by the window-open argument of `FUN_0202ee6c` (`param_8`), not by a text code.
 5. **Newline:** `\n` sets x = 4 in the dialogue loop. `#n` sets x to the origin word (0 at run time). They differ, but `#n` is not used in the tables.
 6. **`#_` table:** `#_` reads the table directly at `0x020EA808`, while `#S` writes `0x020EA7D8 + (b & 0x7F)`. So `#S` index `0x30 + k` sets `#_k`.
-
-Also seen, not in that list: `#C` and `#R` keep one saved colour slot, not a stack. `#C a #C b #R` leaves the colour at `a`. The `#C` and `#c` rows above say "push" and "pop"; that wording is wrong.
 
 ## Variables (`$`, typed as `Var` and `Number`)
 
@@ -110,7 +108,6 @@ Not verified; do not treat these as known:
 - `#[ … ]` callback: null in every sampled caller and unused in the message tables. Not a portrait switch (#62 RE-a).
 - Contents of the `$h`, `$t`, `$m`, `$n` and `$i` tables (runtime only).
 - `#1`–`#9`: literal text, as the divergences section says (#62 RE-a). They are used at a string start in the help topic titles.
-- Flag meanings of the font glyphs (`0xFF00`, `0xFF02`, `0xFF03`).
 - `kanji_b` buffer destination: the loader writes to `0x06206100`, but the runtime pointer is `0x06616BE4`.
 - Fallback glyph entry at `0x020938E0` (bitmap `0x020939E0`, code `0x81A1`, width 7): its +8 word is nonzero, so it may not be a valid entry.
 - Two-byte game glyphs (`Token::Glyph`) have no Unicode mapping yet. "Readable UTF-8" holds for the Latin-1 text and the control codes; glyphs stay as codes until their images are matched to characters.
