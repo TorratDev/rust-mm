@@ -4,11 +4,10 @@
 //! flag). Tile numbers here are font indices: the BG tile is [`FONT_BG_TILE`] plus the
 //! index.
 //!
-//! Drawn: the window frame cells, the box fill, the text canvas, the portrait and its
-//! frame, the 16x8 wait marker and the 8x8 cursor. Not drawn: the box's top and bottom
-//! edges (their pixels are baked into the game's canvas tiles and are not recorded in the
-//! notes), and the marker's blink (not recorded). Unverified details are marked `[hypothesis]`
-//! where they are used.
+//! Drawn: the window frame cells, the box fill, the box's top and bottom edge rows, the text
+//! canvas, the portrait and its frame, the 16x8 wait marker and the 8x8 cursor. Not drawn:
+//! the marker's blink (not recorded). Unverified details are marked `[hypothesis]` where
+//! they are used.
 
 use rescue_formats::font;
 use rescue_formats::gfx::{Rgba, TILE_PIXELS};
@@ -46,6 +45,11 @@ pub const FRAME_PALETTE: usize = 15;
 pub const PORTRAIT_PALETTE: usize = 14;
 /// Pixel origin of the text canvas: BG0 col 3, row 17 (`docs/re/ui-screens.md`, section 2).
 pub const TEXT_ORIGIN: (i32, i32) = (24, 136);
+/// Colour indices of the box's top edge (canvas rows 0 to 2) and bottom edge (rows 37 to
+/// 39): f, e, d and d, e, f (`docs/re/ui-screens.md`, section 2; the top edge is also in
+/// `findings-b` item 2). The post_accept VRAM has these rows as solid colours across the canvas.
+pub const BOX_EDGE_TOP: [u8; 3] = [15, 14, 13];
+pub const BOX_EDGE_BOTTOM: [u8; 3] = [13, 14, 15];
 
 /// A rectangle of 8x8 tiles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -275,11 +279,35 @@ pub fn draw_menu_frame(frame: &mut Frame, tiles: &TileSet, rect: TileRect) {
     blit_cells(frame, tiles, &cells);
 }
 
-/// Draws the dialogue box: the box fill, the text canvas over it (colour index 0 is
-/// transparent, so the fill shows through), then the corners and sides. The top and bottom
-/// edge rows are not drawn (see the module notes).
+/// Draws the dialogue box: the box fill, the top and bottom edge rows (3 canvas rows each,
+/// `BOX_EDGE_TOP` and `BOX_EDGE_BOTTOM`, across the canvas width), then the text canvas over
+/// them (colour index 0 is transparent, so what is under it shows through), then the corners
+/// and sides.
 pub fn draw_dialogue_box(frame: &mut Frame, tiles: &TileSet, canvas: &Canvas) {
     draw_fill(frame, tiles, DIALOGUE_BOX);
+    let edge_rows = BOX_EDGE_TOP
+        .iter()
+        .enumerate()
+        .map(|(k, &index)| (k, index))
+        .chain(
+            BOX_EDGE_BOTTOM
+                .iter()
+                .enumerate()
+                .map(|(k, &index)| (canvas.height - 3 + k, index)),
+        );
+    // The edge rows are canvas rows, 208 columns wide from the canvas origin.
+    for (row, index) in edge_rows {
+        if let Some(c) = tiles.palette().get(usize::from(index)) {
+            for x in 0..canvas.width {
+                put(
+                    frame,
+                    TEXT_ORIGIN.0 + x as i32,
+                    TEXT_ORIGIN.1 + row as i32,
+                    *c,
+                );
+            }
+        }
+    }
     for y in 0..canvas.height {
         for x in 0..canvas.width {
             let index = canvas.get(x, y);
@@ -541,9 +569,16 @@ mod tests {
         let mut frame = Frame::filled([0, 0, 0, 255]);
         draw_dialogue_box(&mut frame, &tiles, &canvas);
         assert_eq!(pixel(&frame, 24, 136), grey(70)); // canvas over the fill
-        assert_eq!(pixel(&frame, 25, 136), grey(10)); // fill
+        assert_eq!(pixel(&frame, 25, 144), grey(10)); // fill, below the edge rows
         assert_eq!(pixel(&frame, 16, 136), grey(20)); // top-left corner tile
         assert_eq!(pixel(&frame, 16, 144), grey(30)); // left side tile
         assert_eq!(pixel(&frame, 232, 144), grey(30)); // right side tile
+        // Edge rows: top canvas rows 0 to 2 are colours 15, 14, 13; bottom rows 37 to 39 are
+        // 13, 14, 15 (`BOX_EDGE_TOP`, `BOX_EDGE_BOTTOM`).
+        assert_eq!(pixel(&frame, 100, 136), grey(150));
+        assert_eq!(pixel(&frame, 100, 137), grey(140));
+        assert_eq!(pixel(&frame, 100, 138), grey(130));
+        assert_eq!(pixel(&frame, 100, 173), grey(130));
+        assert_eq!(pixel(&frame, 100, 175), grey(150));
     }
 }

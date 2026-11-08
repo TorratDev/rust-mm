@@ -10,9 +10,6 @@ use crate::bg::Frame;
 use crate::text::{Dialogue, Font, State};
 use crate::ui::{TileSet, draw_dialogue_box, draw_marker, draw_portrait, portrait_slot};
 
-/// Screen rows of the box's top and bottom edges (canvas rows 0 to 2 and 37 to 39). The ui
-/// module does not draw them, so they are left out of the comparison.
-const EDGE_Y: [std::ops::Range<u32>; 2] = [136..140, 173..177];
 /// Pixel rectangles compared with the capture: the box, and the portrait frame and image.
 const BOX: (std::ops::Range<u32>, std::ops::Range<u32>) = (16..240, 136..176);
 const PORTRAIT: (std::ops::Range<u32>, std::ops::Range<u32>) = (184..240, 72..128);
@@ -21,6 +18,18 @@ const UNDRAWN: [u8; 4] = [1, 2, 3, 255];
 /// Pixels of the portrait that may differ: the 12 dithered pixels of the mirrored image
 /// (`docs/formats/portraits.md`, residual).
 const PORTRAIT_RESIDUAL: usize = 12;
+/// Box pixels that may differ inside the corner tiles: the transparent corner pixels, where
+/// the capture shows something the notes do not record (`[hypothesis]`: the scene behind
+/// them). Observed: 24, all in the top and bottom corner rows.
+const CORNER_RESIDUAL: usize = 24;
+
+/// Whether screen pixel (`x`, `y`) lies in one of the four 8x8 corner tiles of the box
+/// (box corners at x 16 and 232, y 136 and 168).
+fn in_box_corner(x: u32, y: u32) -> bool {
+    let col_ok = (16..24).contains(&x) || (232..240).contains(&x);
+    let row_ok = (136..144).contains(&y) || (168..176).contains(&y);
+    col_ok && row_ok
+}
 
 rescue_tests::rom_test! {
     /// Draws the post_accept dialogue box, the Charmander portrait (position 3, mirrored) and
@@ -81,12 +90,10 @@ rescue_tests::rom_test! {
         assert_eq!(shot.len(), 256 * 192 * 3, "screen_bottom.rgb is 256x192 RGB");
         // Compare after dropping the low 3 bits of each channel, with one step of slack
         // (the capture's colours are 5-bit values widened to 8 bits).
+        // Returns (drawn, differing outside the corners, differing in the corners).
         let compare = |(xs, ys): &(std::ops::Range<u32>, std::ops::Range<u32>)| {
-            let (mut drawn, mut bad) = (0usize, 0usize);
+            let (mut drawn, mut bad, mut corner_bad) = (0usize, 0usize, 0usize);
             for y in ys.clone() {
-                if EDGE_Y.iter().any(|r| r.contains(&y)) {
-                    continue;
-                }
                 for x in xs.clone() {
                     let ours = frame.get(x, y);
                     if ours == UNDRAWN {
@@ -97,19 +104,28 @@ rescue_tests::rom_test! {
                     let theirs = &shot[i..i + 3];
                     let same = (0..3).all(|k| (ours[k] >> 3).abs_diff(theirs[k] >> 3) <= 1);
                     if !same {
-                        bad += 1;
+                        if in_box_corner(x, y) {
+                            corner_bad += 1;
+                        } else {
+                            bad += 1;
+                        }
+                        eprintln!("differs at ({x},{y}): ours {ours:?} capture {theirs:?}");
                     }
                 }
             }
-            (drawn, bad)
+            (drawn, bad, corner_bad)
         };
-        let (box_drawn, box_bad) = compare(&BOX);
-        let (por_drawn, por_bad) = compare(&PORTRAIT);
+        let (box_drawn, box_bad, box_corner_bad) = compare(&BOX);
+        let (por_drawn, por_bad, _) = compare(&PORTRAIT);
         eprintln!(
-            "box: {box_bad} of {box_drawn} drawn pixels differ; portrait: {por_bad} of {por_drawn}"
+            "box: {box_bad} outside the corners and {box_corner_bad} in them, of {box_drawn} drawn pixels; portrait: {por_bad} of {por_drawn}"
         );
         assert!(box_drawn > 0 && por_drawn > 0, "nothing was drawn");
-        assert_eq!(box_bad, 0, "dialogue box differs from the capture");
+        assert_eq!(box_bad, 0, "dialogue box differs from the capture outside the corners");
+        assert!(
+            box_corner_bad <= CORNER_RESIDUAL,
+            "box corners differ in {box_corner_bad} pixels (residual is {CORNER_RESIDUAL})"
+        );
         assert!(
             por_bad <= PORTRAIT_RESIDUAL,
             "portrait differs in {por_bad} pixels (residual is {PORTRAIT_RESIDUAL})"
