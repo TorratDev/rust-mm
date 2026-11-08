@@ -18,7 +18,7 @@ If it is not running, start it with the command in docs/ghidra-setup.md, section
 Evidence sources, in order of preference:
 - The retail ARM9 and overlays through ghidra-cli: decompile, x-ref, and find. Read-only queries only. For sweeps over many functions or xrefs, use one shell loop of read-only ghidra-cli queries and print only the lines you need, not one call per function. This is allowed: the ban below is on writing to the project.
 - The Rust code and its tests (cargo test -p <crate>). Read them; run a test only to confirm a claim.
-- Runtime checks with py-desmume through the harness in verification/v7-trace/ (pydesmume_dump.py, retail_trace.py). Headless runs need SDL_VIDEODRIVER=dummy.
+- Runtime checks with py-desmume through the harness in verification/v7-trace/ (pydesmume_dump.py, retail_trace.py). Headless runs need SDL_VIDEODRIVER=dummy. py-desmume is installed: run probes with ~/venvs/desmume/bin/python -I. The module imports as desmume (from desmume.emulator import DeSmuME), not pydesmume. The dump is pmdb.nds at the repo root (gitignored). Set XDG_CONFIG_HOME to a scratch directory for every run, or DeSmuME overwrites the user's save in ~/.config/desmume. Do not report the emulator as unavailable without running this interpreter.
 
 Read-only rules:
 - Do not edit files in the repo. Do not commit.
