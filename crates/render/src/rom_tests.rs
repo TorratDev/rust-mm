@@ -309,6 +309,14 @@ rescue_tests::rom_test! {
                         bg
                     })
                     .collect();
+                // BG2's palette row 13 is excluded below as the overlay; no map cell may use
+                // it, or the exclusion could hide map pixels.
+                for bg in &layers {
+                    assert!(
+                        bg.map.iter().all(|c| c.palette != 13),
+                        "{name}: a map cell uses palette row 13"
+                    );
+                }
                 let backdrop = {
                     let pal = std::fs::read(cap.join("palette.bin")).unwrap();
                     bgr555(le16(&pal, 0))
@@ -332,6 +340,37 @@ rescue_tests::rom_test! {
                      matched {}/{compared} ({pct:.2}%)",
                     compared - bad.len()
                 );
+                // The BPA frame lookup must matter: showing the next frame of an animated slot
+                // has to change at least one compared pixel.
+                for (slot, a) in bpa.iter().enumerate() {
+                    let Some(a) = a.as_ref().filter(|a| a.frame_info.len() > 1) else {
+                        continue;
+                    };
+                    let mut other = frames;
+                    other[slot] = (frames[slot] + 1) % a.frame_info.len();
+                    let layers: Vec<BgLayer> = place
+                        .iter()
+                        .map(|&(l, prio)| {
+                            let mut bg = ground_layer_at(&bpc, &bpa, &bma, l, other).unwrap();
+                            bg.scroll_x = cam_x;
+                            bg.scroll_y = cam_y;
+                            bg.priority = prio;
+                            bg
+                        })
+                        .collect();
+                    let off = compose(&layers, &palettes, backdrop);
+                    let differs = (0..256 * 192)
+                        .filter(|&i| !overlay[i])
+                        .filter(|&i| five(off.get((i % 256) as u32, (i / 256) as u32)) != five(want[i]))
+                        .count();
+                    eprintln!(
+                        "{name} run{run}: animated BPA slot {slot} ({} frames): frame {} instead of {} differs in {differs} pixels",
+                        a.frame_info.len(),
+                        other[slot],
+                        frames[slot]
+                    );
+                    assert!(differs > 0, "{name}: BPA slot {slot} frame does not affect the render");
+                }
                 assert!(
                     bad.is_empty(),
                     "{name} run{run}: {} of {compared} pixels differ, first at (x, y) {:?}",
