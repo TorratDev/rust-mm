@@ -132,14 +132,54 @@ pub fn sprite_origin(origin: (i32, i32), step: &AnimStep) -> (i32, i32) {
     )
 }
 
-/// Screen position of the shadow for an animation step: the origin plus the step's
-/// second offset. `[hypothesis]`: the second offset is probably the shadow (docs/formats/
-/// sprites.md); nothing else uses it, so a different reading only changes this function.
-pub fn shadow_origin(origin: (i32, i32), step: &AnimStep) -> (i32, i32) {
-    (
-        origin.0 + i32::from(step.shadow.0),
-        origin.1 + i32::from(step.shadow.1),
-    )
+/// Offset of a shadow's top-left corner from its entity's screen position. Measured, not
+/// decoded: all five shadows in two captured dungeon frames (leader, partner, wild) sit at
+/// exactly this offset, whatever the animation frame (docs/formats/sprites.md).
+pub const SHADOW_OFFSET: (i32, i32) = (-8, -4);
+
+/// Screen position of an entity's shadow image (see [`SHADOW_OFFSET`]).
+pub fn shadow_origin(entity: (i32, i32)) -> (i32, i32) {
+    (entity.0 + SHADOW_OFFSET.0, entity.1 + SHADOW_OFFSET.1)
+}
+
+/// Draws a `w` x `h` OAM object (1D tile mapping, 4bpp) whose first tile is `tile` in
+/// `tiles` (32 bytes per tile) with `palette`, at priority `priority`. Used for the
+/// non-monster objects (shadows, items). The top-left corner is `left`, `top` relative to
+/// the placement point. A tile or colour that is missing renders transparent.
+pub fn render_obj(
+    tiles: &[u8],
+    tile: usize,
+    (w, h): (usize, usize),
+    palette: &Palette,
+    priority: u8,
+    (left, top): (i32, i32),
+) -> SpriteImage {
+    let mut pixels = vec![None; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let t = tile + (y / 8) * (w / 8) + x / 8;
+            let Some(bytes) = tiles.get(t * TILE_4BPP..(t + 1) * TILE_4BPP) else {
+                continue;
+            };
+            let Ok(decoded) = gfx::decode_4bpp_tile(bytes) else {
+                continue;
+            };
+            let index = decoded[(y % 8) * 8 + x % 8];
+            if let Some(c) = palette
+                .get(usize::from(index))
+                .filter(|c| index != 0 && c[3] != 0)
+            {
+                pixels[y * w + x] = Some((*c, priority));
+            }
+        }
+    }
+    SpriteImage {
+        left,
+        top,
+        width: w,
+        height: h,
+        pixels,
+    }
 }
 
 /// A sprite image placed on the screen.
@@ -166,10 +206,12 @@ fn put(frame: &mut Frame, x: u32, y: u32, c: Rgba) {
     frame.pixels[i..i + 4].copy_from_slice(&c);
 }
 
-/// Like [`crate::bg::compose`], with sprites mixed in by priority. A lower priority
-/// number is in front. At equal priority a sprite is in front of the background, an
-/// earlier layer is in front of a later one and an earlier sprite is in front of a later
-/// one, as on the DS. With no sprites the result equals `compose`.
+/// Like [`crate::bg::compose`], with sprites mixed in by priority. `sprites` are in OAM
+/// order, index 0 first. As on the DS, the sprite pixel is chosen first, by OAM index
+/// alone: the first sprite with an opaque pixel there wins, whatever its priority. Only
+/// that winner is then compared with the backgrounds: a lower priority number is in front,
+/// and at equal priority the sprite is in front of the backgrounds and an earlier layer is
+/// in front of a later one. With no sprites the result equals `compose`.
 pub fn compose_with_sprites(
     layers: &[BgLayer],
     palettes: &[Palette],
@@ -179,8 +221,9 @@ pub fn compose_with_sprites(
     let mut frame = Frame::filled(backdrop);
     for y in 0..SCREEN_HEIGHT {
         for x in 0..SCREEN_WIDTH {
+            let sprite = sprites.iter().find_map(|s| s.pixel(x as i32, y as i32));
             // Back to front: priority 3 down to 0; within a level the backgrounds
-            // (last layer first), then the sprites (last sprite first).
+            // (last layer first), then the sprite.
             for level in (0..=3u8).rev() {
                 for layer in layers.iter().rev() {
                     if layer.visible
@@ -190,12 +233,10 @@ pub fn compose_with_sprites(
                         put(&mut frame, x, y, c);
                     }
                 }
-                for s in sprites.iter().rev() {
-                    if let Some((c, prio)) = s.pixel(x as i32, y as i32)
-                        && prio == level
-                    {
-                        put(&mut frame, x, y, c);
-                    }
+                if let Some((c, prio)) = sprite
+                    && prio == level
+                {
+                    put(&mut frame, x, y, c);
                 }
             }
         }
@@ -357,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn step_offsets_and_shadow_hypothesis() {
+    fn step_offset_and_shadow_origin() {
         let step = AnimStep {
             duration: 1,
             flags: 0,
@@ -366,7 +407,28 @@ mod tests {
             shadow: (-1, 5),
         };
         assert_eq!(sprite_origin((100, 50), &step), (103, 48));
-        assert_eq!(shadow_origin((100, 50), &step), (99, 55));
+        // The shadow ignores the step: measured at the entity position + (-8, -4).
+        assert_eq!(shadow_origin((128, 108)), (120, 104));
+        assert_eq!(shadow_origin((104, 132)), (96, 128));
+    }
+
+    #[test]
+    fn render_obj_uses_1d_tiles_and_palette() {
+        let mut tiles = vec![0u8; 32];
+        tiles.extend([0x21u8; 32]); // tile 1: indices 1 and 2 alternate
+        tiles.extend([0x33u8; 32]); // tile 2: index 3
+        let img = render_obj(&tiles, 1, (16, 8), &palettes()[0], 3, (-8, -4));
+        assert_eq!((img.left, img.top, img.width, img.height), (-8, -4, 16, 8));
+        assert_eq!(img.pixels[0], Some((RED, 3)));
+        assert_eq!(img.pixels[1], Some((GREEN, 3)));
+        assert_eq!(img.pixels[8], Some((BLUE, 3))); // second tile
+        // A tile past the data is transparent.
+        assert!(
+            render_obj(&tiles, 5, (8, 8), &palettes()[0], 3, (0, 0))
+                .pixels
+                .iter()
+                .all(Option::is_none)
+        );
     }
 
     // z-order ---------------------------------------------------------------
@@ -446,6 +508,48 @@ mod tests {
         let layers = [solid_layer(2, 2)];
         let f = compose_with_sprites(&layers, &pal, BACK, &placed);
         assert_eq!(f.get(0, 0), BLUE);
+    }
+
+    #[test]
+    fn sprite_order_follows_oam_index_not_priority() {
+        let pal = palettes();
+        // The earlier sprite has the worse priority (3) but is first in OAM: it still wins
+        // over the later priority 0 sprite, and then loses to a priority 1 layer.
+        let (first, second) = (square(GREEN, 3), square(BLUE, 0));
+        let placed = [
+            PlacedSprite {
+                image: &first,
+                at: (0, 0),
+            },
+            PlacedSprite {
+                image: &second,
+                at: (0, 0),
+            },
+        ];
+        assert_eq!(
+            compose_with_sprites(&[], &pal, BACK, &placed).get(0, 0),
+            GREEN
+        );
+        let layers = [solid_layer(1, 1)];
+        assert_eq!(
+            compose_with_sprites(&layers, &pal, BACK, &placed).get(0, 0),
+            RED
+        );
+        // Where the first is transparent the second shows.
+        let placed = [
+            PlacedSprite {
+                image: &first,
+                at: (1, 0),
+            },
+            PlacedSprite {
+                image: &second,
+                at: (0, 0),
+            },
+        ];
+        assert_eq!(
+            compose_with_sprites(&[], &pal, BACK, &placed).get(0, 0),
+            BLUE
+        );
     }
 
     #[test]
