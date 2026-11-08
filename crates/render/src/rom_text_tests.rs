@@ -11,11 +11,14 @@ use rescue_nds::header::Header;
 const EDGE_ROWS: [std::ops::Range<usize>; 2] = [0..3, 37..40];
 
 rescue_tests::rom_test! {
-    /// Renders the post_accept dialogue line ("Charmander: See? There were jobs listed,
-    /// right?") from `message_e.str` with `kanji_a`, and compares the text canvas with the
-    /// captured BG0 canvas tiles 0x002 to 0x083 (26x5 tiles, BG char base 0). Needs
-    /// `RESCUE_TEXT_CAPTURE`, the `post_accept` capture directory (`vram_a_bg.bin`,
-    /// `palette.bin`).
+    /// Renders the post_accept dialogue line with `kanji_a` and compares the text canvas with
+    /// the captured BG0 canvas tiles 0x002 to 0x083 (26x5 tiles, BG char base 0). The line is
+    /// the speaker prefix plus the body. The body is the message bytes read from game RAM,
+    /// kept in `dialogue_body.bin` in the capture directory, not committed. The speaker prefix
+    /// is inferred. A zero mismatch count checks layout, advance, colours, line pitch and
+    /// shadow; it does not check the prefix format or the scroll distance (both hypotheses).
+    /// Needs `RESCUE_TEXT_CAPTURE`, the `post_accept` capture directory (`vram_a_bg.bin`,
+    /// `palette.bin`, `dialogue_body.bin`).
     fn post_accept_text_matches_capture(rom) {
         use crate::text::{Canvas, Dialogue, Font, State};
         use rescue_formats::{font, graphics, text};
@@ -32,19 +35,16 @@ rescue_tests::rom_test! {
             let f = fs.get(path).unwrap_or_else(|| panic!("{path} missing"));
             fs.data(&bytes, f.id).expect("file bytes").to_vec()
         };
-        let str_file = load("message_e.str");
-        let strings = text::parse_str(&str_file).unwrap();
         let system = load("system.sbin");
         let sarc = Archive::parse(&system).unwrap();
         let font = Font::new(font::parse_font(sarc.get(&system, "kanji_a").unwrap()).unwrap());
 
-        // The line as the script engine draws it. The body (" See?\nThere were jobs listed~2c
-        // right?", with its leading space) was read from the game's RAM in the savestate; it
-        // is not in message_e.str or message_e.bin. The speaker prefix "#C6Charmander#R:" is
-        // inferred from the pixels (yellow name, white colon): the script's format is not
-        // decoded.
-        let line: &[u8] = b"#C6Charmander#R:  See?\nThere were jobs listed~2c right?";
-        let _ = &strings;
+        // The line as the script engine draws it. The body comes from the capture directory
+        // (read from game RAM); the speaker prefix is inferred from the pixels (yellow name,
+        // white colon). The script's format is not decoded.
+        let body = std::fs::read(cap.join("dialogue_body.bin")).expect("dialogue_body.bin");
+        let mut line = b"#C6Charmander#R:".to_vec();
+        line.extend_from_slice(&body);
 
         // The text palette: fontpal bank 0 is BG palette 15 in the capture.
         let fontpal = graphics::rgbx_palettes16(sarc.get(&system, "fontpal").unwrap()).unwrap();
@@ -73,7 +73,7 @@ rescue_tests::rom_test! {
             }
         }
 
-        let tokens = text::decode(line);
+        let tokens = text::decode(&line);
         let mut d = Dialogue::new(&tokens, &font);
         // Type the page: fast-forward until the dialogue is done or waits.
         d.tick(false, true);

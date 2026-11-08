@@ -60,17 +60,10 @@ impl Canvas {
         self.pixels[y * self.width + x]
     }
 
-    fn set(&mut self, x: i32, y: i32, v: u8) {
+    /// ORs `v` into the pixel at (`x`, `y`); pixels outside the canvas are ignored.
+    fn or(&mut self, x: i32, y: i32, v: u8) {
         if (0..self.width as i32).contains(&x) && (0..self.height as i32).contains(&y) {
-            self.pixels[y as usize * self.width + x as usize] = v;
-        }
-    }
-
-    fn at(&self, x: i32, y: i32) -> u8 {
-        if (0..self.width as i32).contains(&x) && (0..self.height as i32).contains(&y) {
-            self.pixels[y as usize * self.width + x as usize]
-        } else {
-            0
+            self.pixels[y as usize * self.width + x as usize] |= v;
         }
     }
 
@@ -133,43 +126,55 @@ fn recolour(p: u8, colour: u8) -> u8 {
     ((p & 1) + (mask & p)) & 15
 }
 
-/// Neighbours of an opaque glyph pixel that get the outline colour: right and below-right
-/// (a drop shadow). Fitted to the captured dialogue (post_accept), where it matches every
-/// pixel; the game's own rule is `[blue-verified]` only as "neighbouring blank pixels".
-const OUTLINE: [(i32, i32); 2] = [(1, 0), (1, 1)];
+/// Shadow mask of `FUN_01ff994c` (`DAT_01ff9f2c` = `0x33333333`, one nibble per pixel): a
+/// shadow takes bits 0 and 1 of a neighbouring pixel, so a solid pixel (15) casts colour 3.
+const SHADOW_MASK: u8 = 3;
 
-/// Draws `glyph` with its top-left at (`x`, `y`) and returns the advance. Font flag bit 0
-/// copies the glyph as it is; bit 1 adds the outline; otherwise a solid pixel (15)
-/// becomes `colour`. Blank glyph pixels leave the canvas alone; the outline only fills
-/// blank canvas pixels.
+/// Draws `glyph` with its top-left at (`x`, `y`) and returns the advance, as `FUN_01ff994c`
+/// does (`01ff994c` in the rescue-arm9-r decompile).
+///
+/// Flag bit 0 set: the pixels are copied as they are, with no shadow. Otherwise each pixel
+/// is recoloured (`(p & 1) + (mask & p)`). With flag bit 1 set, two shadow terms are ORed
+/// into the same pixels: the neighbour to the left in the same row gives the right shadow,
+/// direction (1, 0); the neighbour above-left, in the previous glyph row, gives the
+/// below-right shadow, direction (1, 1). The first row has no previous row, and the last
+/// row's below-right shadow falls outside the glyph. The right shadow of the last column
+/// reaches column 12, one past the glyph. Both directions `[blue-verified]`.
+///
+/// Every value is ORed into the canvas, as the game does: nothing is overwritten, and a
+/// blank canvas pixel is not special. Not modelled: the descender shift, and the advance's
+/// spacing word (0 at run time).
 pub fn draw_glyph(canvas: &mut Canvas, glyph: &Glyph, x: i32, y: i32, colour: u8) -> i32 {
     let raw = glyph.flags & 1 != 0;
-    let at = |gx: usize, gy: usize| glyph.pixels.get(gy * GLYPH + gx).copied().unwrap_or(0);
-    if glyph.flags & 2 != 0 {
-        for gy in 0..GLYPH {
-            for gx in 0..GLYPH {
-                if at(gx, gy) == 0 {
-                    continue;
-                }
-                for (dx, dy) in OUTLINE {
-                    let (nx, ny) = (x + gx as i32 + dx, y + gy as i32 + dy);
-                    let inside = (gx as i32 + dx) < GLYPH as i32 && (gy as i32 + dy) < GLYPH as i32;
-                    if canvas.at(nx, ny) == 0
-                        && (!inside
-                            || at((gx as i32 + dx) as usize, (gy as i32 + dy) as usize) == 0)
-                    {
-                        canvas.set(nx, ny, OUTLINE_COLOUR);
-                    }
+    let shadow = glyph.flags & 2 != 0 && !raw;
+    let px = |gx: i32, gy: i32| -> u8 {
+        if (0..GLYPH as i32).contains(&gx) && (0..GLYPH as i32).contains(&gy) {
+            glyph
+                .pixels
+                .get(gy as usize * GLYPH + gx as usize)
+                .copied()
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    for gy in 0..GLYPH as i32 {
+        // Column GLYPH is blank: it only takes the right shadow of the last column.
+        for gx in 0..=GLYPH as i32 {
+            let v = px(gx, gy);
+            let mut out = match (gx < GLYPH as i32, raw) {
+                (false, _) => 0,
+                (true, true) => v,
+                (true, false) => recolour(v, colour),
+            };
+            if shadow {
+                out |= px(gx - 1, gy) & !v & SHADOW_MASK;
+                if gy > 0 {
+                    out |= px(gx - 1, gy - 1) & !v & SHADOW_MASK;
                 }
             }
-        }
-    }
-    for gy in 0..GLYPH {
-        for gx in 0..GLYPH {
-            let p = at(gx, gy);
-            if p != 0 {
-                let v = if raw { p } else { recolour(p, colour) };
-                canvas.set(x + gx as i32, y + gy as i32, v);
+            if out != 0 {
+                canvas.or(x + gx, y + gy, out);
             }
         }
     }
