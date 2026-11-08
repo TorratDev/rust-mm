@@ -14,6 +14,7 @@ pub mod palette;
 pub mod screens;
 pub mod sprite;
 pub mod text;
+pub mod ui;
 
 pub use anim::AnimPlayer;
 pub use autotile::{AutotileError, GRID_H, GRID_W, autotile, cell_key};
@@ -32,3 +33,5 @@ mod rom_sprite_tests;
 mod rom_tests;
 #[cfg(test)]
 mod rom_text_tests;
+#[cfg(test)]
+mod rom_ui_tests;
