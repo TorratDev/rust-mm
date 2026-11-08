@@ -324,7 +324,7 @@ The ARM9 sample is decoded from `FUN_0207D1E0` (command `0x10` path). **[blue-ve
 
 | Register | Write |
 |----------|-------|
-| BG scroll (`0x04000010` `BG0HOFS` and the following scroll registers) | eight words, written through pointers that resolve to these registers |
+| BG scroll (`0x04000010` `BG0HOFS` and the following scroll registers) | eight words, written through pointers that resolve to these registers. The registers are write-only (they read back 0). The values come from the shadow array at `0x020F38D0` (engine B `0x020F38C0`), copied by `FlushDisplayState`; see [BG3 floor scroll](ui-screens.md#7-bg3-floor-scroll) (#62 RE-c, [blue-verified]) |
 | `BG0CNT` `0x0400000C` and `BG1CNT` `0x0400000E` | priority bits 0 to 1 |
 | `DISPCNT` `0x04000000` | bits 8 to 12 (layer mask), from a value built from the flags at `DAT_02019610` and `DAT_02019614` |
 | `BLDCNT` `0x04000050` | masked with `0x43`, ORed with `0x4200` (or a variable) |
@@ -371,7 +371,7 @@ Named callers of `FUN_0201A110` (from the earlier pass; the full list is above):
 
 **[blue-verified]** for the register values and the counts; **medium** for the occupancy, which counts only the first screen block of each BG; **low** for what each BG draws. The evidence is investigator A's runs (headless DeSmuME 0.9.12, boot-to-dungeon inputs, EUR dump).
 
-- **DISPCNT does not change between scenes.** From frame 20 to the dungeon (frame 25270, 11 change records in all), every sample reads engine A `0x08817F10` and engine B `0x00811F10`. Also constant: POWCNT1 `0x020F`, MASTER_BRIGHT A and B at 0, the BGCNT values, and the BG scroll registers (all 0). Frame 0 differs (DISPCNT 0, POWCNT1 `0x820F`), before the boot display init. **[blue-verified]**
+- **DISPCNT does not change between scenes.** From frame 20 to the dungeon (frame 25270, 11 change records in all), every sample reads engine A `0x08817F10` and engine B `0x00811F10`. Also constant: POWCNT1 `0x020F`, MASTER_BRIGHT A and B at 0, the BGCNT values, and the BG scroll registers, which read back 0 because they are write-only (the live scroll is the shadow copy; see [BG3 floor scroll](ui-screens.md#7-bg3-floor-scroll)). Frame 0 differs (DISPCNT 0, POWCNT1 `0x820F`), before the boot display init. **[blue-verified]**
 - **Decoded.** BG0 to BG3 and OBJ are enabled on both engines (bits 8 to 12). Engine A also enables windows 0 and 1 (bits 13 and 14); engine B does not. BG mode 0. Bit 3 (BG0 3D) is clear, so BG0 is a normal tile layer. Bits 16 and 17 are 1 (normal display). The window bits agree with the WIN0H to WIN1V writes of `0xC0` in [OAM writers](#oam-writers). **[blue-verified]**, decode of the register values.
 - **BGCNT** (the same in every sample). Engine A BG0 to BG3: `0x0000`, `0x0101`, `0x420A`, `0x440B` (priority 0 to 3; screen blocks 0, 1, 10 and 11). Engine B: `0x0C00`, `0x0D01`, `0x0E0A`, `0x0F0B` (priority 0 to 3; screen blocks 12 to 15). Engine A BG2 and BG3 have the size bits set (size 1, 512 by 256), so their second screen block is not counted below.
 

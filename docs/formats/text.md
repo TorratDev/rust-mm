@@ -2,7 +2,7 @@
 
 Issue: [#36](https://github.com/TorratDev/rust-mm/issues/36). Code: `crates/formats/src/text.rs`, `crates/formats/src/font.rs`. Tests: unit tests; `tests/tests/formats_rom.rs` (`messages_decode`, `fonts_decode`). Viewer: `message_X.str`, `system.sbin` → `kanji_a`, `kanji_b`, `font*`. Runtime and code evidence: [`re/text-engine.md`](../re/text-engine.md).
 
-**Verification status:** the byte rules and the `#` and `$` syntax are `blue-verified` from the ARM9 code (2026-10-18, see [`re/text-engine.md`](../re/text-engine.md)). In the earlier check (2026-10-16) all five languages parsed (3336 strings each), `.str` and `.bin` agreed string for string, and every string tokenized. Control code *meanings* are partly `[red-hypothesis]`. The ROM-gated check of the decoder has not been run against a dump yet.
+**Verification status:** the byte rules and the `#` and `$` syntax are `blue-verified` from the ARM9 code (2026-10-18, see [`re/text-engine.md`](../re/text-engine.md)). In the earlier check (2026-10-16) all five languages parsed (3336 strings each), `.str` and `.bin` agreed string for string, and every string tokenized. Control code *meanings* are partly `[red-hypothesis]`. The #62 runtime checks changed several meanings (see [divergences from the runtime](#divergences-from-the-runtime-62)). The ROM-gated check of the decoder has not been run against a dump yet.
 
 ## Message tables (`message_e/f/g/i/s`)
 
@@ -35,23 +35,37 @@ Each code takes the arguments listed here, so they never show as text. Parser `F
 | `#=<b>` | 1 byte | `SetX` | x = `b` |
 | `#yb` | 1 byte | `SetY` | y = `b` |
 | `#.<b>` | 1 byte | `AddX` | x += `b` |
-| `#n` | none | `LineFeed` | x = saved origin, y += 11 |
+| `#n` | none | `LineFeed` | x = origin word `+0x0c` (0 at run time), y += 11. A `\n` in the dialogue loop sets x = 4 instead (see [divergences](#divergences-from-the-runtime-62)) |
 | `#:` | none | `SaveX` | save x |
 | `#;<b>` | 1 byte | `SavedX` | x = saved x + `b` |
 | `#+` | none | `Centre` | centre the line: x = (box width × 8 − text width) / 2 `[blue-verified]` |
 | `#>NNN.` | decimal digits, ending in `.` | `SetXAbs` | x = `NNN`, absolute (`FUN_020143e8`). Not an alignment operator |
-| `#_<b>` | 1 byte | `Shade` | push the shade from table `DAT_020143bc[b]` |
+| `#_<b>` | 1 byte | `Shade` | colour = the byte at `0x020EA808` + b, a raw palette index (run time; see [divergences](#divergences-from-the-runtime-62)) |
 | `#S<b><c>` | 2 bytes | `SetTable` | `DAT_020143c0[b & 0x7F]` = `c & 0x7F` |
 | `#W` | none | `WaitButton` | wait for a button `[blue-verified]` |
-| `#P` | none | `PageBreak` | new page (y reset to `DAT_020143c4`), then wait |
-| `#p` | none | `PageBreakFlagged` | as `#P`, with a flag set (flag meaning open) |
+| `#P` | none | `PageBreak` | sets y to `DAT_020143c4` = `0x270F`, which forces the page-full path: wait for a button, then the page scrolls up over 18 frames, or is cleared at once in windows opened with flag `0x10` |
+| `#p` | none | `PageBreakFlagged` | as `#P`, but the page is cleared at once instead of scrolled |
 | `#~<b>` | 1 byte | `WaitFrames` | wait `b` frames |
-| `#[ … ]` | up to `]` | `Tag` | span passed to a game callback (state + 0x12); the bytes are kept |
-| `#1`–`#9`, other | none | `Code` | not identified; decoded as `Code(c)` |
+| `#[ … ]` | up to `]` | `Tag` | span passed to the callback at window state `+0x24`. The callback is 0 in every sampled caller and no message table uses `#[`; not a portrait switch. The bytes are kept |
+| `#1`–`#9` | none | literal | drawn as the character `#` and the digit (see [divergences](#divergences-from-the-runtime-62)); decoded today as `Code(c)` |
+| other | none | `Code` | not identified; decoded as `Code(c)` |
 
 An optional `.` after the byte of `#=`, `#y` and `#_` is skipped, so `#=@.x` is `SetX(0x40)` then `x` `[blue-verified]`: `decompile 02014098`, `if (pcVar5[3] == '.') param_2 = pcVar5 + 4`. `#.`, `#;` and `#~` do not skip it. `#>NNN.` ends with that dot.
 
 A code with its arguments missing at the end of a string decodes as `Code`. `#>` followed by no digits, or without the closing `.`, also decodes as `Code('>')`.
+
+## Divergences from the runtime (#62)
+
+Found in #62 RE-a, by decompile and py-desmume run: [re/text-engine.md](../re/text-engine.md#runtime-behaviour-62-re-a). The table above is corrected where these apply.
+
+1. **`#P`:** the y "reset" is not a plain reset. y is first set to `0x270F`, which forces the page-full path. The reset to y = 4 happens after the wait, with a scroll or a clear.
+2. **`#p`:** the flag means the page is cleared at once instead of scrolled.
+3. **`#1`–`#9`:** literal text, not codes. The parser returns the string pointer unchanged, so the caller draws `#` and the digit. The decoder emits `Code(c)` for them today; the renderer should draw them as text. This is a P1 code change, not made here.
+4. **`#[ … ]`:** the callback is null in every sampled caller, and `#[` never occurs in the five message tables. The "portrait change" guess is dropped. The portrait is set by the window-open argument of `FUN_0202ee6c` (`param_8`), not by a text code.
+5. **Newline:** `\n` sets x = 4 in the dialogue loop. `#n` sets x to the origin word (0 at run time). They differ, but `#n` is not used in the tables.
+6. **`#_` table:** `#_` reads the table directly at `0x020EA808`, while `#S` writes `0x020EA7D8 + (b & 0x7F)`. So `#S` index `0x30 + k` sets `#_k`.
+
+Also seen, not in that list: `#C` and `#R` keep one saved colour slot, not a stack. `#C a #C b #R` leaves the colour at `a`. The `#C` and `#c` rows above say "push" and "pop"; that wording is wrong.
 
 ## Variables (`$`, typed as `Var` and `Number`)
 
@@ -93,9 +107,9 @@ Loader `FUN_020160a4` opens `kanji_a` and `kanji_b` from `system.sbin`, and the 
 
 Not verified; do not treat these as known:
 
-- `#[ … ]` callback and what it does (portrait change, sub-issue #34 is the likely owner).
+- `#[ … ]` callback: null in every sampled caller and unused in the message tables. Not a portrait switch (#62 RE-a).
 - Contents of the `$h`, `$t`, `$m`, `$n` and `$i` tables (runtime only).
-- `#1`–`#9`: meaning not identified, all used at a string start in the help topic titles.
+- `#1`–`#9`: literal text, as the divergences section says (#62 RE-a). They are used at a string start in the help topic titles.
 - Flag meanings of the font glyphs (`0xFF00`, `0xFF02`, `0xFF03`).
 - `kanji_b` buffer destination: the loader writes to `0x06206100`, but the runtime pointer is `0x06616BE4`.
 - Fallback glyph entry at `0x020938E0` (bitmap `0x020939E0`, code `0x81A1`, width 7): its +8 word is nonzero, so it may not be a valid entry.
