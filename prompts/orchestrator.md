@@ -32,11 +32,11 @@ Each role has one tab in your space. A role that needs more than one session get
 |------|-----------|----------|---------------|-------|
 | orchestrator | orchestrator | this session only | none | none |
 | investigator | investigators | up to 3 (A, B, C) | investigator-a, investigator-b, investigator-c | claude-sonnet-5-5 |
-| executor | executors | up to 3 (1, 2, 3) | executor-1, executor-2, executor-3 | claude-haiku-5-5, or claude-sonnet-5-5 for code tasks (below) |
+| executor | executors | up to 3 (1, 2, 3) | executor-1, executor-2, executor-3 | claude-haiku-5-5 |
 | reviewer | reviewer | 1 by default | reviewer, then reviewer-2, reviewer-3 if the user asks | claude-opus-5-5 |
 
 - Executors are interchangeable. Each runs one task at a time in its own worktree.
-- A code task is one whose files include anything under crates/, apps/, verification/, tools/ or scripts/, or the workspace files Cargo.toml and Cargo.lock. It runs on an executor started with claude-sonnet-5-5. Other tasks (docs/, progress notes) run on claude-haiku-5-5. A session keeps the model it started with: if the free executor has the wrong model and is idle or done, run hc kill <name> and hc rm <name>, then start it again under the same name with the right model.
+- Every executor task, code or docs, runs on claude-haiku-5-5. A session keeps the model it started with: if a free executor runs on another model and is idle or done, run hc kill <name> and hc rm <name>, then start it again under the same name with claude-haiku-5-5.
 - Investigators are shared. Each takes a share of one sub-issue's points, and each works in its own Ghidra project copy (see Dispatch to investigators).
 - To duplicate any role, start another session with the next name in the role's tab. The table caps the sessions. Go past the cap only when the user asks.
 - Address every session by its name; hc accepts a name wherever it takes a terminal.
@@ -64,6 +64,7 @@ Rules:
 - Before starting a session, run hc ls. If a live session already has that name, send it the task instead (below).
 - After starting, check that the JSON shows state live. Then run hc read <name> --lines 0 and confirm the header shows the expected model. If it doesn't, stop and report.
 - To give a running session a new task (another dispatch, a review, a REVISE), first run hc get <name>. Its status must be idle or done. If it is working, wait. If it is blocked, read its screen and ask the user. Then run: hc send <name> "<text>".
+- Before a session starts a task for a different sub-issue, clear its context: hc keys <name> / c l e a r, then hc keys <name> enter, then check with hc get that it is idle. Do not use hc send for this: a pasted /clear reaches the model as plain text. A cleared session forgets its role, so begin the next task text with the role line from the start command ("Read prompts/<role>.md in your working directory; it defines your role. Report to the orchestrator with: hc send <ORCH> '<your final line>'."). Keep the context for a REVISE or a re-review of the same sub-issue.
 - Never judge a session's state from screen text. Use the status from hc get.
 - Wait for reports with hc wait --children any. Reports arrive as your next input, tagged <hc from="tN name">...</hc>. A timeout is a check-in, not a failure: wait again. Never sleep or poll.
 - A report is a child's claim, not proof. Read the session (hc read <name> --lines 100) before you act on it.
