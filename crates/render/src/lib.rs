@@ -17,10 +17,12 @@ pub mod sprite;
 pub use anim::AnimPlayer;
 pub use autotile::{AutotileError, GRID_H, GRID_W, autotile, cell_key};
 pub use bg::{BgLayer, Frame, compose, ground_layer, ground_layer_at};
-pub use camera::{Camera, follow};
+pub use camera::{Camera, entity_pixel, follow};
 pub use palette::{Fade, FadeTarget, PaletteAnimator};
 pub use screens::{Rect, SCREEN_HEIGHT, SCREEN_WIDTH, ScreenLayout};
-pub use sprite::{PlacedSprite, SpriteImage, compose_with_sprites, render_sprite};
+pub use sprite::{
+    PlacedSprite, SpriteImage, compose_with_sprites, render_obj, render_sprite, shadow_origin,
+};
 
 #[cfg(test)]
 mod rom_sprite_tests;

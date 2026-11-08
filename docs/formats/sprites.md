@@ -46,7 +46,19 @@ Rendering: for each piece with an image, copy the image into the frame's VRAM at
 | `+1` | 1 | flags (unknown) |
 | `+2` | 2 | frame index |
 | `+4` | 4 | sprite offset `(i16, i16)` |
-| `+8` | 4 | second offset, probably the shadow `[hypothesis]` |
+| `+8` | 4 | second offset, purpose unknown. Not the shadow position: the captured shadows ignore it (see "Drawing in the dungeon"). It is `(0, 0)` in every step that matches a captured frame `[blue-verified, 2 frames]` |
+
+## Drawing in the dungeon (checked against a capture)
+
+Checked by `dungeon_sprites_match_capture` (`crates/render/src/rom_sprite_tests.rs`, needs `RESCUE_SPRITE_CAPTURE`): two captured dungeon frames (B1F, leader species 104, partner 4, wild 191 / 290, one floor item, five shadows) rebuilt from ROM assets, compared with the emulator's OAM, OBJ VRAM and palette. Result: **0 of 907 and 0 of 1026 object pixels differ** (colours compared within one 5-bit step, because the game's 5-bit truncation differs from `>> 3` by 1 at the top of the range). Tags: `[blue-verified, 2 frames]` unless noted.
+
+- **Camera.** An entity's pixel position is `cell * 24 + (12, 16)` (the entity's 8.8 fixed fields at `+0x0C/+0x10` agree). The camera is the leader's pixel position minus `(128, 108)`, with no clamping at the map edges (leader at cell (4, 23): camera (-20, 460)). Screen position is pixel position minus camera, so the leader is always drawn at `(128, 108)`. The floor is BG3 scrolled by this camera (512x256, wrapping).
+- **Monster pieces.** The decoded frame's own piece offsets give the monster's position relative to its screen position (leader frame 6: top-left at `(-10, -20)`); nothing else is added. The species palette is used, in the palette bank the game allocates per team slot: the bank contents equal `palet[species palette]`.
+- **Hop offset.** The game adds the entity's own `(+0x34, +0x36)` (s16 pair) to the monster's draw position; the entity's draw position is stored at `+0x30/+0x32`. It is `(0, -3)` for the partner in both frames. The shadow does not move with it. Its meaning (walk bob?) is `[hypothesis]`.
+- **Shadow.** A 16x8 object in OBJ palette 0 (`palet` bank 0) at the entity's screen position plus `(-8, -4)`, for all five shadows seen, whatever the animation step. Graphic: `dungeon.sbin` `etcfont` (tile data starts 4 bytes into the entry, loaded at OBJ tile 512): tile 520 for the team members, 513 for the wild monster. Which of the two a monster gets is `[hypothesis]` (size or species based, not determined). This replaces the earlier reading of the step's second offset as the shadow position `[disproved]`.
+- **Floor item.** A 16x16 object, tile 440, with its top-left at `cell * 24 + (4, 4)` (centred in the cell). The graphic is 4 tiles from `dungeon.sbin` `itempat` at `+0x314` (found by byte match; which item it is and how the index is chosen are open). Its palette is OBJ bank 3 in the capture (source not traced).
+- **OAM order.** All dungeon sprites are OAM priority 3, mode 0. On hardware the sprite pixel is chosen by OAM index alone (the lowest index with an opaque pixel wins, whatever its priority), and only that winner is compared with the BG layers. In the capture shadows have higher OAM indices than monsters (125–127 vs 121–123), so a monster is in front of a shadow. The renderer's `compose_with_sprites` takes the sprites in OAM order and works this way.
+- **Not covered.** The animation frame is not read from the entity (the test picks the frame whose picture matches the captured object); the minimap dot and the damage number (HUD sprites); an entity whose object is hidden while it flashes (b2: the hit monster has no OAM entry that frame).
 
 ## Unknown fields
 
