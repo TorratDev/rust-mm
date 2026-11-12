@@ -1,4 +1,4 @@
-# Golden-trace format (schema v1)
+# Golden-trace format (schema v2)
 
 A golden trace is the game's state, read from a scripted retail run, once per turn. `pmd-sim` replays the same inputs, and the harness diffs the two turn by turn. The capture scripts (#55) write these files, and `trace-harness` (#56) reads them. This page is the one format both agree on. The Rust types and the reader are in [`crates/trace`](../crates/trace) (crate `rescue-trace`).
 
@@ -15,7 +15,7 @@ Traces are language-neutral fixtures: the capture side may be Lua or Python, the
 
 | Key | Type | Meaning | Source |
 |-----|------|---------|--------|
-| `schemaVersion` | integer | `1` for this version. | this page |
+| `schemaVersion` | integer | `2` for this version. | this page |
 | `rom.sha1` | string | SHA-1 of the ROM file, 40 lowercase hex digits. The trace is valid only for this dump. | [`supported-dumps.md`](supported-dumps.md) |
 | `emulator.name` | string | Capture emulator, for example `DeSmuME (py-desmume)`. | the capture script |
 | `emulator.version` | string | Emulator version, exactly as it reports itself. | the capture script |
@@ -40,7 +40,8 @@ Traces are language-neutral fixtures: the capture side may be Lua or Python, the
 | `dungeonPreseed` | u32 | Preseed LCG state. | `ov_0001::021B3F5C`, [`re/rng.md`](re/rng.md) (preseed LCG) |
 | `team` | array of 4, each an entity or `null` | Team slots. `null` means the pointer is 0 or the entity is not valid. | dungeon `+0x11314` (4 entity pointers), [`re/structs.md`](re/structs.md#dungeon-struct) |
 | `wild` | array of entities | Set wild slots only (up to 16). Empty slots are left out. | dungeon `+0x11324` (16 entity pointers), [`re/structs.md`](re/structs.md#dungeon-struct) |
-| `tilesSha256` | string | First 16 lowercase hex digits of SHA-256 over the tile grid (35,840 bytes). Stands in for floor state in v1. See the note below. | dungeon `+0x34B8`, `tiles[32][56]`, 0x14 bytes each, [`re/structs.md`](re/structs.md#dungeon-struct) and [`re/structs.md`](re/structs.md#tile) |
+| `tilesSha256` | string | First 16 lowercase hex digits of SHA-256 over the tile grid (35,840 bytes). Stands in for floor state (see Not dumped). See the note below. | dungeon `+0x34B8`, `tiles[32][56]`, 0x14 bytes each, [`re/structs.md`](re/structs.md#dungeon-struct) and [`re/structs.md`](re/structs.md#tile) |
+| `actions` | array of action records | The leader's actions chosen during this turn, in order. Empty when the leader does not act. Required in every row. | leader info, see [Action record](#action-record) |
 
 `gDungeon` (`020E0788`, [`re/structs.md`](re/structs.md#dungeon-struct)) is the dungeon pointer that every dungeon offset above is relative to. The trigger that writes a row is `RunFractionalTurn_Async`, at `ov_0001::021411BC` (`TRIGGER` in [`verification/v7-trace/retail_trace.py`](../verification/v7-trace/retail_trace.py); V7 in [`verification.md`](verification.md#v7--scriptable-ds-emulator-for-ram-and-rng-dumps)).
 
@@ -56,7 +57,20 @@ Traces are language-neutral fixtures: the capture side may be Lua or Python, the
 | `maxHp` | s16 | Max HP stat. | info `+0x10`, [`re/structs.md`](re/structs.md#entity-info) |
 | `speedStage` | u32 | Speed stage. The width is what `retail_trace.py` reads; `re/structs.md` gives no width. | info `+0xE0`, [`re/structs.md`](re/structs.md#entity-info) |
 
-**Floor state.** In v1, floor state is `tilesSha256` only. Other floor fields (stairs, traps, items) are not in the row yet.
+### Action record
+
+Each item of `actions` is one leader action. The game chooses it in `ov_0001::02166B10`, which `ov_0001::02140FAC` (`RunLeaderTurn_Async`) calls. The capture reads the record at `ov_0001::021410D4`, the instruction after that call, from the leader's entity info: team slot 0 (`dungeon+0x11314`), then `entity+0x70`. One leader turn can choose more than one action, so a row can hold several records. The action chooser's behavior is in [`re/turns.md`](re/turns.md) ("For golden traces").
+
+| Key | Type | Meaning | RAM source |
+|-----|------|---------|------------|
+| `id` | u16 | Raw action id. The schema does not name the ids; the mapping to commands is later work ([#333](https://github.com/TorratDev/rust-mm/issues/333)). | info `+0x42`, [`re/turns.md`](re/turns.md) |
+| `direction` | u8, 0 to 7 | The direction the game stored: 0 Down, 1 DownRight, 2 Right, 3 UpRight, 4 Up, 5 UpLeft, 6 Left, 7 DownLeft. It is the game's value, not the held keys. The game can overwrite it during the turn (for example in auto-move), so the raw D-pad does not give it. | info `+0x44`, [`re/io.md`](re/io.md) (Dungeon directions) |
+| `param` | u8 | Parameter byte of the action. Its meaning depends on `id` and is not decoded here. | info `+0x46` |
+| `slot` | u8 | Move slot the action uses. | info `+0x4C` |
+
+**Matching records to rows.** A row is written when `RunFractionalTurn_Async` starts. The leader's action records of that call come after the row and before the next row, so each record belongs to the last row written. No frame or counter key is needed to match them. A record does not copy `fractionalTurn`, because the game can reset that value during the turn.
+
+**Floor state.** In this version, floor state is `tilesSha256` only. Other floor fields (stairs, traps, items) are not in the row yet.
 
 **Inventory.** Not captured in v1. The row has no `inventory` key, because rows reject unknown keys (see below). The layout of the team inventory is not yet a verified struct in [`re/structs.md`](re/structs.md#moves-items-and-inventory). A later schema version adds it.
 
@@ -66,21 +80,23 @@ The name says SHA-256, but `retail_trace.py` writes the first 16 hex digits of t
 
 ## Validation
 
-A reader for version 1 must reject the file if any of these hold:
+A reader for version 2 must reject the file if any of these hold:
 
-- the first non-blank line is not a header, or its `schemaVersion` is not `1`;
+- the first non-blank line is not a header, or its `schemaVersion` is not `2`;
 - `rom.sha1`, `tilesSha256` or `initialSeed.bytes` has the wrong length or is not lower-case hex (for `initialSeed.bytes`, 12 digits);
 - `initialSeed.source` is not 8 hex digits;
 - `wild` has more than 16 entries;
 - an input line has a non-numeric frame, no keys, or an unknown key;
-- a row or header has an unknown key, or a field has the wrong type. Unknown keys are an error, not ignored, so a new field cannot slip past an old reader.
+- a row or header has an unknown key, or a field has the wrong type. Unknown keys are an error, not ignored, so a new field cannot slip past an old reader;
+- a row has no `actions` key;
+- an action record has an unknown key, a field of the wrong type, or a `direction` above 7.
 
 The Rust reader (`rescue_trace::read_trace`) checks all of these. The writer (`write_trace`) checks them before it writes.
 
 ## Versioning
 
 - `schemaVersion` is an integer. Any change to the header or row keys is a new version. Readers reject versions they do not know; they do not guess.
-- Version 1 readers do not accept version 2 files, even if the new keys look harmless. Capture and harness tools move to a new version together.
+- Version 2 readers reject version 1 files. A v1 row has no `actions` key, and v2 requires it. Capture and harness tools move to a new version together.
 - Changing what a field means, or its width, is also a new version. The same name with new meaning is not allowed.
 
 ## Reproducibility
@@ -91,8 +107,9 @@ Byte-for-byte equality of two files needs one writer. The rows are equal as pars
 
 ## Status
 
-- The format is written and the reader is in `crates/trace`. `scripts/capture_golden.py` writes the complete trace: header, rows, and a read-back check with the crate (see [`scripts/README.md`](../scripts/README.md)). `retail_trace.py` still writes rows only, as it did in V7; its rows are the ones the capture script reuses.
-- `inventory` is out of v1.
+- The format is written and the reader is in `crates/trace`. `scripts/capture_golden.py` writes the complete trace: header, rows with `actions`, and a read-back check with the crate (see [`scripts/README.md`](../scripts/README.md)). `retail_trace.py` still writes rows only, as it did in V7; its rows are the ones the capture script reuses, and the script adds `actions` to each.
+- **The action hook is unverified at runtime.** The hook at `ov_0001::021410D4` was written from the static findings in #367. It has not been run, because no emulator was available when the change was made. Check the first capture by hand before relying on its `actions`.
+- `inventory` is out of this version.
 - `initialSeed` is read by `capture_golden.py`, from `027FFCF4` in the power-on run, at the first frame where it is set (frame 15 in the retail run), before any input. `retail_trace.py` does not read it.
 - The field widths for `type` and `speedStage` follow `retail_trace.py`; they are not confirmed against the struct layout.
 
@@ -101,6 +118,7 @@ Byte-for-byte equality of two files needs one writer. The rows are equal as pars
 These fields are not in v1 rows. Each is either out of the schema or not documented in `re/` yet, and a capture does not read it:
 
 - Team inventory, and the floor items, traps and stairs (floor state is `tilesSha256` only).
+- The meaning of each action `id` and `param`. The ids are recorded raw; the schema names none of them.
 - Entity info fields other than `species`, `level`, `hp`, `maxHp` and `speedStage`, including the statuses, moves and types. Their offsets are documented in [`re/structs.md`](re/structs.md#entity-info), but the schema has no key for them yet.
 - The Mersenne Twister state (`sStateArray`, `sStateIndex`) and the 16-bit generator in `other_random.c`, whose use is not known yet ([`re/rng.md`](re/rng.md)).
 - Save data, sound and graphics. Not part of the game state a trace records.

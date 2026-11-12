@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Record a golden trace (schema v1, docs/golden-traces.md) from the retail ROM.
+"""Record a golden trace (schema v2, docs/golden-traces.md) from the retail ROM.
 
 Plays a scripted input sequence in DeSmuME (py-desmume) and writes one JSON Lines
 row each time RunFractionalTurn_Async runs. The emulator and the row reader are the
 ones in verification/v7-trace (pydesmume_dump.py, retail_trace.py); this script adds
-the header, the boot seed and the self-test.
+the header, the boot seed, the leader's action records and the self-test.
+
+Each row's `actions` holds the leader's action records for that turn. They are read
+at ACTION_HOOK (ov_0001::021410D4, after the call that chooses one action) and appended
+to the row written at RunFractionalTurn_Async just before them.
+
+UNVERIFIED AT RUNTIME: the action hook was written from the static findings in #367.
+It has not been run against an emulator. Check the first capture by hand.
 
 Two steps:
 
@@ -37,6 +44,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import struct
 import subprocess
 import sys
 
@@ -48,7 +56,9 @@ sys.path.insert(0, V7)
 import retail_trace as rt  # noqa: E402  (addresses, RAM reader, row snapshot, input parser)
 from desmume.emulator import DeSmuME  # noqa: E402
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+ACTION_HOOK = 0x021410D4  # after the call that chooses one leader action (overlay 1, #367)
+ENTITY_INFO = 0x70  # entity+0x70 is the info pointer
 SUPPORTED_SHA1 = {"6f01887356268de39085df01490347bbcc3aa330": "BlueRescueTeamEur"}
 SEED_SOURCE = 0x027FFCF4  # 6 bytes, the console MAC address copied at boot (docs/re/rng.md)
 SEED_LEN = 6
@@ -102,6 +112,23 @@ def boot_to_dungeon(emu, boot_inputs, start_frame, max_frames):
     sys.exit("no dungeon reached; check the ROM and the boot inputs")
 
 
+def leader_action(ram, dungeon):
+    """The leader's action record (info +0x42 id, +0x44 direction, +0x46 param, +0x4C slot).
+
+    Returns None when the team slot 0 has no entity.
+    """
+    leader = ram.u32(dungeon + rt.TEAM)
+    if leader == 0 or ram.u32(leader) == 0:  # EntityIsValid: type != 0
+        return None
+    info = ram.u32(leader + ENTITY_INFO)
+    return {
+        "id": struct.unpack("<H", ram.bytes(info + 0x42, 2))[0],
+        "direction": ram.u8(info + 0x44),
+        "param": ram.u8(info + 0x46),
+        "slot": ram.u8(info + 0x4C),
+    }
+
+
 def emulator_version():
     return f"py-desmume {importlib.metadata.version('py-desmume')} (libdesmume {LIBDESMUME_VERSION})"
 
@@ -147,7 +174,7 @@ def record(args, sha1):
         boot_to_dungeon(emu, rt.parse_inputs(args.boot_inputs), seed_frame + 1, args.max_boot_frames)
 
     ram = rt.Ram(emu)
-    rows, tiles, frame = [], {}, [0]
+    rows, tiles, frame, problems = [], {}, [0], []
 
     def hook(*_):
         dungeon = ram.u32(rt.G_DUNGEON)
@@ -159,9 +186,21 @@ def record(args, sha1):
             tiles["hash"] = hashlib.sha256(ram.bytes(dungeon + rt.TILES, rt.TILES_LEN)).hexdigest()[:16]
         row["tilesSha256"] = tiles["hash"]
         row["frame"] = frame[0]
+        row["actions"] = []
         rows.append(row)
 
+    def action_hook(*_):
+        dungeon = ram.u32(rt.G_DUNGEON)
+        if dungeon == 0 or not rows:
+            return
+        action = leader_action(ram, dungeon)
+        if action is None:
+            problems.append(f"frame {frame[0]}: action hook found no leader")
+            return
+        rows[-1]["actions"].append(action)
+
     emu.memory.register_exec(rt.TRIGGER, hook)
+    emu.memory.register_exec(ACTION_HOOK, action_hook)
     for f in range(args.frames):
         frame[0] = f
         if f in turns:
@@ -169,6 +208,8 @@ def record(args, sha1):
         emu.cycle(with_joystick=False)
     if not rows:
         sys.exit("no RunFractionalTurn_Async call was seen; check the turn inputs")
+    if problems:
+        sys.exit("leader action capture failed:\n" + "\n".join(problems[:10]))
 
     header = {
         "schemaVersion": SCHEMA_VERSION,
