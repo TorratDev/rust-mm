@@ -20,7 +20,7 @@ Issue: [#341](https://github.com/TorratDev/rust-mm/issues/341), parent [#111](ht
 - Grid size comes from the `GenerateFloor` draw (gx 2 to 6, gy 2 to 4); the function itself makes no RNG call. [blue-verified]
 - Step 1 stepwise bounds, step 2 mode 0. All cells hold a room; interior cells (`x` in `1..gx-2`, `y` in `1..gy-2`) get invalid (`+0x08` = 1). [blue-verified]
 - Step 4 on the ring cells only (invalid cells are skipped). No step 3 and no step 5. [blue-verified]
-- Link bytes by hand: rows `y = 0` and `y = gy-1` give East and West to cells `x = 1..gx-2`; columns `x = 0` and `x = gx-1` give North to `y = 1..gy-2` and South to `y = 0..gy-3`. The pair `(gy-2, gy-1)` in the columns gets none; step 7 joins it. [blue-verified] for the column loop (disassembly), [red-hypothesis] for the row sets (decompile only).
+- Link bytes by hand: rows `y = 0` and `y = gy-1` give East and West to cells `x = 1..gx-2`; columns `x = 0` and `x = gx-1` give North to `y = 1..gy-2` and South to `y = 0..gy-3`. The pair `(gy-2, gy-1)` in the columns gets none; step 7 joins it. [blue-verified] for the column loop (disassembly), [hypothesis] for the row sets (Blue decompile only, medium confidence).
 - Then step 6 (flag 0), steps 7 to 13 in order; the secondary-terrain flag is set. [blue-verified]
 
 ## Rust

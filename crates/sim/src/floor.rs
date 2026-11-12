@@ -3111,7 +3111,7 @@ pub fn outer_rooms_grid(grid_x: usize, grid_y: usize) -> Grid {
 /// the left and right columns give North to the cells `y` in `1..grid_y - 1`
 /// and South to the cells `y` in `0..grid_y - 2`. So the corner cells carry no
 /// row byte, and the last column pair (`grid_y - 2`, `grid_y - 1`) carries none
-/// at all, which step 7 has to join. [red-hypothesis for the row sets]
+/// at all, which step 7 has to join. [hypothesis for the row sets: Blue decompile only, medium confidence]
 pub fn link_outer_rooms(grid: &mut Grid) {
     let (gx, gy) = (grid.grid_x, grid.grid_y);
     for x in 1..gx.saturating_sub(1) {
