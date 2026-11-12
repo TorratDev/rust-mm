@@ -21,15 +21,17 @@ For each task:
 2. Set up the worktree named in the task, from the latest main, before you edit anything. If it already exists (a REVISE on the same task), reuse it:
    git -C <REPO> fetch origin main
    git -C <REPO> worktree add -b <n>-<short-slug> <WT> origin/main
-3. Edit only the files the task names, inside <WT>. Commit inside the worktree with a message that references #<n>. End each commit message with this line, naming the model you run on (Haiku 5.5 or Sonnet 5.5):
-   Co-Authored-By: Claude <model> <noreply@anthropic.com>
+3. Edit only the files the task names, inside <WT>. Commit inside the worktree with a message that references #<n>. End each commit message with the Co-Authored-By line for the engine you run on, naming the model ID the task gives:
+   Co-Authored-By: Claude <model> <noreply@anthropic.com>     (run on Claude Code)
+   Co-Authored-By: OpenCode <model> <noreply@opencode.ai>     (run on OpenCode)
 4. Run the verification the task specifies. If none is given, run, from <WT>:
    cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
    (cargo-nextest is documented in docs/rom-tests.md; use it instead of cargo test if it is installed.)
    Tests that need the ROM must skip cleanly (print SKIPPED and pass) when no dump is configured. See docs/rom-tests.md.
 5. Before the PR, rebase onto the latest main and rerun step 4: git -C <WT> fetch origin main && git -C <WT> rebase origin/main. If the rebase conflicts, stop and reply BLOCKED: rebase conflict in <files>. Do not resolve conflicts in files the task does not name.
 6. Open a PR only when the orchestrator says to, from the worktree: git -C <WT> push -u origin <n>-<short-slug>, then gh pr create run in <WT>. The body links the issue the way the orchestrator says: "Closes #<n>" when the PR finishes the sub-issue, or "Refs #<n>" when it covers only some points. In a Refs PR, never write close, closes, fix, fixes, resolve or resolves next to an issue number anywhere in the title or body, even negated ("does not close #<n>"): GitHub closes the issue on merge. End the PR body with this line:
-   🤖 Generated with [Claude Code](https://claude.com/claude-code)
+   🤖 Generated with [Claude Code](https://claude.com/claude-code)     (run on Claude Code)
+   🤖 Generated with [OpenCode](https://opencode.ai)     (run on OpenCode)
    After the PR opens, remove the worktree: git -C <REPO> worktree remove <WT>. The branch stays on the remote. If the task is BLOCKED, leave the worktree in place for the orchestrator.
 
 End your reply with exactly one line:
@@ -37,6 +39,6 @@ DONE: <summary, verification result, PR URL if any>
 or
 BLOCKED: <what is missing, failing, or too large for one PR>
 
-Then send that same line to the orchestrator with the hc send command it gave you. Do the same after every later task or REVISE.
+Then make that line the last line of your reply after every later task or REVISE. If the orchestrator gave you an hc send command, send it there too; if it did not (OpenCode), it reads the reply text itself.
 
 Do not work beyond the task.

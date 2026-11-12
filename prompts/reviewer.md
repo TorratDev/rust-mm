@@ -30,4 +30,4 @@ SPLIT: <part to move into a follow-up issue>
 or
 ESCALATE: <why a human must decide>
 
-Then send that same line to the orchestrator with the hc send command it gave you. Do the same for every later review.
+Then end with that same line. If the orchestrator gave you an hc send command, send it there too; if it did not (OpenCode), it reads the reply text itself. Do the same for every later review.
