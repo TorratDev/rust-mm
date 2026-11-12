@@ -586,3 +586,20 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** statically confirmed for layouts 4, 6 and 7. Whole-floor oracle match: not verified for any of the three. Layouts lacking a recorded oracle run: **4 (crossroads), 6 (line) and 7 (cross)**, on all seeds. The note's open questions list the runs needed: `floor_oracle.py` on seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D` for layouts 4, 6 and 7. Confidence in the static port: medium-high. [blue-verified static]
 - **Fallback adopted:** none.
 - **Notes:** Issue #339 stays open (PR uses `Refs #339`). Closing it needs the three oracle runs and their rows in `ORACLE_FLOORS`. Earlier notes said layouts 6 and 7 were run on one seed; those runs were per-stage only, not whole-floor.
+---
+
+## #69 — Slice 1 boot and menus: state on main
+
+- **Assumption:** the boot flow in `apps/game` (ROM check, splash, title, main menu, dungeon entry and back) runs headless as its scene graph describes, and the menu matches the fresh-boot evidence: New Game and Adventure Log only, with Continue added only when a save exists ([`re/execution-model.md`](re/execution-model.md#start-up-and-the-title-menu), choice table; [#161 P3](#161-p3--overlay-7-under-fault-injection)).
+- **Date:** 2026-11-12.
+- **Environment:** Rust 1.97.0 on Linux 7.0.0. `RESCUE_ROM` unset and no `rescue.toml`, so no emulator run and no asset-dependent check was made. `cargo-nextest` is not installed, so `cargo test` was used.
+- **Evidence:**
+  - `cargo fmt --all --check`: clean.
+  - `cargo clippy --workspace --all-targets -- -D warnings`: no issues.
+  - `cargo test -p rescue-game`: 23 passed. No ROM-gated test exists in `apps/game`, so nothing was skipped.
+  - The headless tests cover: the splash ends after its ticks or on a press; the title waits for a press; the menu cursor wraps; the two entries open their placeholders and B returns; a held button counts once; a refused ROM quits on a press; boot to menu, menu to dungeon and back, with the floor built on entry and dropped on leaving (`app.rs`); the fixed seed builds the same floor twice and draws each visible cell in its terrain colour (`dungeon.rs`).
+  - **Mismatch with the sub-issue text:** [#69](https://github.com/TorratDev/rust-mm/issues/69) and the brief name the menu as New game / Continue / Options. The evidence above gives New Game and Adventure Log on a fresh boot, Continue only with a save, and no Options entry. The code follows the evidence. Nothing was added for Options.
+- **Outcome:** the placeholder flow, scene machine and headless tests are on `main` (#379, #381). The done-when is not met: the title and menu are not built from original art and text, and no ROM was configured to load them. That part is the follow-up [#380](https://github.com/TorratDev/rust-mm/issues/380). The PR for this entry is `Refs #69`.
+- **Fallback adopted:** none.
+- **Notes:** The menu entries in the code are placeholders (blocks, no text), as `draw.rs` says. The menu wording and Options question need a decision before the follow-up: either the evidence is extended to show an Options entry, or the sub-issue text is corrected.
+>
