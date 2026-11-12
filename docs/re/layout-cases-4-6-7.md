@@ -52,8 +52,14 @@ Cell stride: `x * 0x1C2 + y * 0x1E`. Field offsets used: `+0x08` invalid, `+0x0A
 ## Red comparison
 - [red-hypothesis] pmd-red's `dungeon_generation.c` uses the same grids, bounds, invalid corners and call order, and passes TRUE (disableRoomMerging) to the connection step for these layouts. Not checked against Blue here.
 
+## Port check (#339, 2026-11-12)
+- The Rust ports were compared with this note by reading the code: the three grids and bounds, the invalid corners, the anchor and room draw formulas, the hand-set links (18 and 16 bytes for case 4, 8 for case 7), the hallway flag, and the secondary-terrain flag. No mismatch was found, and the code needed no change.
+- `cargo test -p rescue-sim` passes (93 tests), including the case 4 link and draw-count tests and the case 7 link test. There is no test that checks the case 6 bounds or links beyond the no-panic run.
+- Whole-floor oracle rows: none added. This note records no whole-floor oracle values (steps, layout hash, stairs, rooms, terrain) for layouts 4, 6 or 7, so the table `ORACLE_FLOORS` has no rows for them.
+- **Layouts lacking a whole-floor oracle run: 4 (crossroads), 6 (line) and 7 (cross), on every seed.** Case 4 has per-draw counts from runs on three seeds; cases 6 and 7 have per-stage counts on one seed. None of these are oracle totals.
+
 ## Open questions
-- Layouts 6 and 7 on seeds `0xCAFEBABF` and `0x0BADF00D`, and the oracle hashes for all three layouts on those seeds. Not run.
+- The whole-floor oracle run for layouts 4, 6 and 7 on seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D`: the step count to the return, the layout hash, the stairs, the room count and the terrain counts. Not run. Until it is, #339 stays open.
 - The Rust oracle check (`RESCUE_ROM`) was not run from this worktree: there is no `rescue.toml` here.
 
 ## Links

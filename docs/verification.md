@@ -570,3 +570,19 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** confirmed for the whole floor on seed `0x12345678`. Pending: the per-step RNG checkpoints (the 4 Range / 2 Int order inside the cell loop, and the callees' draw counts for layout 3), which need `floor_stages.py` extended and a ROM.
 - **Fallback adopted:** none.
 - **Notes:** The oracle fixture gives totals only. The other seeds for layout 3 were not run. Scripts and the ROM are not committed.
+
+---
+
+## #339 — Layout cases 4, 6 and 7 (crossroads, line, cross): static port check
+
+- **Assumption:** the Rust ports of `GenerateCrossroadsFloor`, `GenerateLineFloor` and `GenerateCrossFloor` (`floor::place_crossroads_rooms`, `PortedSteps::crossroads`, `line`, `cross`) match the grids, bounds, invalid cells, hand-set links, RNG draw counts and step order recorded in [`re/layout-cases-4-6-7.md`](re/layout-cases-4-6-7.md).
+- **Date:** 2026-11-12.
+- **Environment:** rustc 1.97.0 on Linux 7.0.0. No ROM (`RESCUE_ROM` unset, no `rescue.toml` in the worktree), no emulator run, no Ghidra copy. The static inputs are the note's ghidra-cli decompiles, which are not committed.
+- **Evidence:**
+  - Read-only comparison of the code with the note: `CROSSROADS_XB`/`YB` (`0,11,22,33,44,56` / `1,9,16,23,31`), `LINE_XB`/`YB` (`0,11,22,33,44,56` / `4,15`), `CROSS_XB`/`YB` (`11,22,33,44` / `2,11,20,30`); crossroads corners and anchor range; room and anchor draw formulas; 18 South/North and 16 East/West link bytes for case 4; the 8 cross links; hallway flag 1; secondary-terrain flag set after 4 and 6, not after 7. No mismatch found.
+  - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass.
+  - `cargo test -p rescue-sim`: 93 passed, 0 failed. Covers `crossroads_roles_and_links` (10 rooms, 6 anchors, 34 link bytes), `crossroads_makes_48_draws`, `cross_grid_has_five_rooms_and_eight_links`, `crossroads_line_and_cross_layouts_run_without_panicking`, and `sets_secondary_flag` for 6 and 7.
+  - `whole_floors_match_the_floor_oracle`: no row added. The note records no whole-floor oracle values (step count, layout FNV-1a, stairs, rooms, terrain) for layouts 4, 6 or 7 on any seed. Its per-stage step counts (for example case 6, seed `0x12345678`: std3 129, std4 25, std5 33, std6 14, std11 39) are not oracle totals.
+- **Outcome:** statically confirmed for layouts 4, 6 and 7. Whole-floor oracle match: not verified for any of the three. Layouts lacking a recorded oracle run: **4 (crossroads), 6 (line) and 7 (cross)**, on all seeds. The note's open questions list the runs needed: `floor_oracle.py` on seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D` for layouts 4, 6 and 7. Confidence in the static port: medium-high. [blue-verified static]
+- **Fallback adopted:** none.
+- **Notes:** Issue #339 stays open (PR uses `Refs #339`). Closing it needs the three oracle runs and their rows in `ORACLE_FLOORS`. Earlier notes said layouts 6 and 7 were run on one seed; those runs were per-stage only, not whole-floor.
