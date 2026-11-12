@@ -6651,7 +6651,8 @@ mod tests {
     /// `floor_oracle.py --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts
     /// 0,8,11,2` plus the natural seed with `--layouts 1,0,8,11,2`, on the
     /// first floor of a new game. Layout 1 of the forced seeds is the floor
-    /// the step tests check.
+    /// the step tests check. The layout 3 row (outer ring, seed `0x12345678`)
+    /// comes from the run in `docs/re/outer-ring-floor.md`.
     #[rustfmt::skip]
     const ORACLE_FLOORS: &[OracleFloor] = &[
         OracleFloor { entry: NATURAL_ENTRY, layout: 1, steps: 1780, layout_fnv1a: 0xf56d_01ac_d18e_338a, stairs: (23, 8), rooms: 3, terrain: (1526, 266) },
@@ -6674,6 +6675,7 @@ mod tests {
         OracleFloor { entry: 0x0BAD_F00D, layout: 8, steps: 2440, layout_fnv1a: 0x5dae_48b3_df0d_9138, stairs: (9, 22), rooms: 4, terrain: (1397, 395) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 11, steps: 1308, layout_fnv1a: 0x79a5_ecc5_4df8_d120, stairs: (7, 15), rooms: 4, terrain: (1564, 228) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 2, steps: 18919, layout_fnv1a: 0x9303_2d63_0c77_26fe, stairs: (19, 15), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: 0x1234_5678, layout: 3, steps: 1683, layout_fnv1a: 0xc32e_3bac_3f2c_7b7b, stairs: (32, 20), rooms: 8, terrain: (1357, 435) },
     ];
 
     /// Whole floors against `floor_oracle.py`: from the RNG state at
@@ -6681,7 +6683,7 @@ mod tests {
     /// use the same number of RNG steps and leave the same tiles (by
     /// [`layout_fnv1a`]), stairs, room count and terrain counts as the game at
     /// `GenerateFloor`'s return, for the natural seed and the forced seeds on
-    /// layouts 0, 1, 2, 8 and 11.
+    /// layouts 0, 1, 2, 3, 8 and 11.
     #[test]
     fn whole_floors_match_the_floor_oracle() {
         assert_eq!(natural_entry(), NATURAL_ENTRY);

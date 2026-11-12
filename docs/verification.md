@@ -554,3 +554,19 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** confirmed by B's full run for ids 1, 2, 5 and 12, run twice with identical output. Confirmed by the single live run for ids 5, 9 and 10. Id 12's result -1 (Give Up) is confirmed in a savestate run. A quicksave writes result 3 with no runner call, and Continue from a quicksave reaches dungeon start with no runner call. Id 11: not reached in normal play (static, medium). The replay of the live run does not reproduce it. Confidence: high for 1, 2, 5 and 12; medium for 9 and 10 (one run, results not logged). [blue-verified runtime]
 - **Fallback adopted:** none.
 - **Notes:** The index for id 10 (`0x168`) differs from the forced P1b value (`0x167`), so the P1b values for ids 9 to `0xC` depend on the game state. The dungeon-result hook was not in the live run's script, so the results for ids 9 and 10 are not logged. Full results and the id table are in [`re/execution-model.md`](re/execution-model.md#runtime-repeat-and-forced-scene-ids-267).
+
+---
+
+## #148 — Layout case 3 (outer ring) floor: whole-floor match
+
+- **Assumption:** the Rust port of `GenerateOuterRingFloor` (`floor::place_outer_ring_rooms`, `PortedSteps::outer_ring`) produces the same floor as the retail ROM for layout 3: the same number of RNG steps from `GenerateFloor`'s entry to its return, the same tiles, stairs, room count and terrain counts.
+- **Date:** 2026-11-12 for the Rust test. The emulator run is the one recorded in [`re/outer-ring-floor.md`](re/outer-ring-floor.md#emulator-check-floor-oracle), date 2026-10-18 in that note; it was not repeated.
+- **Environment:** Rust 1.97.0 on Linux 7.0.0. Emulator run from the note: py-desmume 0.0.9, supported dump SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, `floor_oracle.py` SHA-1 `5515cabe4adadb664fd862227ace80e9c0d87acf`. `RESCUE_ROM` was unset in this session, so no emulator run was made here.
+- **Evidence:**
+  - Oracle values (seed `0x12345678`, layout 3, entry `rngAtGenerate` 305419896): 1683 RNG steps to the return, layout FNV-1a 64 `c32e3bac3f2c7b7b`, stairs (32, 20), 8 rooms, terrain type 0: 1357, type 1: 435.
+  - Row added to `ORACLE_FLOORS` in `crates/sim/src/floor.rs`; `cargo test -p rescue-sim whole_floors_match_the_floor_oracle` passes.
+  - `cargo test -p rescue-sim`: 93 tests passed before the row was added (the row adds no test).
+  - Per-step checkpoints: `verification/v7-trace/floor_stages.py` has no option to force layout 3, and no ROM was configured, so no checkpoint run was made.
+- **Outcome:** confirmed for the whole floor on seed `0x12345678`. Pending: the per-step RNG checkpoints (the 4 Range / 2 Int order inside the cell loop, and the callees' draw counts for layout 3), which need `floor_stages.py` extended and a ROM.
+- **Fallback adopted:** none.
+- **Notes:** The oracle fixture gives totals only. The other seeds for layout 3 were not run. Scripts and the ROM are not committed.
