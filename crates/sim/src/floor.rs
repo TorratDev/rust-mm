@@ -3088,6 +3088,79 @@ pub fn link_cross(grid: &mut Grid) {
     }
 }
 
+/// Column boundaries of the two-room grid (`GenerateTwoRoomsWithMonsterHouseFloor`'s
+/// `xb`), 2 columns.
+pub const TWO_ROOMS_XB: [i32; 3] = [2, 0x1C, 0x36];
+
+/// Row boundaries of the two-room grid: one row.
+pub const TWO_ROOMS_YB: [i32; 2] = [2, 0x1E];
+
+/// The chance argument case 5 passes to step 10, so the house is always made
+/// when the other gates allow it.
+pub const TWO_ROOMS_HOUSE_CHANCE: i32 = 999;
+
+/// The first part of `GenerateTwoRoomsWithMonsterHouseFloor` (layout case 5):
+/// the 2 × 1 grid and its two rooms, painted by hand. Each room makes four
+/// draws (width in `10..23`, height in `16..25`, then x and y) and is room
+/// `0` or `1` in order. The rooms are linked by hand. No step 3, 4 or 5 runs
+/// (`docs/re/layout-cases-5-9.md`).
+#[must_use]
+pub fn place_two_rooms(floor: &mut Floor, rng: &mut DungeonRng) -> Grid {
+    let mut grid = Grid::new(2, 1, GridMode::Full);
+    for room in 0..2u8 {
+        let x = usize::from(room);
+        let max_w = TWO_ROOMS_XB[x + 1] - TWO_ROOMS_XB[x] - 3;
+        let max_h = TWO_ROOMS_YB[1] - TWO_ROOMS_YB[0] - 3;
+        let w = rng.range(10, max_w);
+        let h = rng.range(16, max_h);
+        let left = TWO_ROOMS_XB[x] + 1 + rng.int(max_w - w);
+        let top = TWO_ROOMS_YB[0] + 1 + rng.int(max_h - h);
+        set_bounds(grid.cell_mut(x, 0), left, top, left + w, top + h);
+        paint_floor(floor, (left, left + w), (top, top + h), room);
+    }
+    grid.connect(0, 0, Dir::East);
+    grid
+}
+
+/// Column boundaries of the beetle grid (`GenerateBeetleFloor`'s `xb`),
+/// 3 columns.
+pub const BEETLE_XB: [i32; 4] = [5, 15, 35, 50];
+
+/// Row boundaries of the beetle grid, 3 rows.
+pub const BEETLE_YB: [i32; 4] = [2, 11, 20, 30];
+
+/// The 12 link bytes of layout case 9, set by hand after its rooms are
+/// placed: in each row, the cells join east to west (both sides of each
+/// pair).
+pub fn link_beetle(grid: &mut Grid) {
+    for y in 0..3 {
+        grid.connect(0, y, Dir::East);
+        grid.connect(1, y, Dir::East);
+    }
+}
+
+/// `ov_0001::02150CA8` (unnamed in Blue), used twice by layout case 9: cell
+/// `(x, y)` takes the bounds of itself and the cell `dy` rows below it, and
+/// the tiles of that rectangle become floor of the room of `(x, y)`'s start
+/// tile. The lower cell gets its hallway mark cleared and its extra mark set.
+/// Uses no randomness. The two calls on the middle column make one tall room.
+pub fn merge_cells_down(floor: &mut Floor, grid: &mut Grid, x: usize, y: usize, dy: usize) {
+    let a = *grid.cell(x, y);
+    let b = *grid.cell(x, y + dy);
+    let room = room_at_cell_start(floor, &a);
+    let x0 = i32::from(a.start_x).min(i32::from(b.start_x));
+    let x1 = i32::from(a.end_x).max(i32::from(b.end_x));
+    let (y0, y1) = (i32::from(a.start_y), i32::from(b.end_y));
+    paint_floor(floor, (x0, x1), (y0, y1), room);
+    let top = grid.cell_mut(x, y);
+    set_bounds(top, x0, y0, x1, y1);
+    top.extra_linked = true;
+    let bottom = grid.cell_mut(x, y + dy);
+    bottom.extra_linked = true;
+    bottom.hallway_mark = false;
+    bottom.extra_mark = true;
+}
+
 /// Layout attempts (the inner retry loop of `GenerateFloor`) before it falls
 /// back to a one-room monster house.
 pub const MAX_LAYOUT_ATTEMPTS: usize = 10;
@@ -6949,5 +7022,33 @@ mod tests {
         }
         assert_eq!((rooms, total), (5, 8));
         assert_eq!(grid.cell(1, 1).link_count(), 4);
+    }
+
+    #[test]
+    fn beetle_links_join_each_row_as_twelve_bytes() {
+        let mut grid = Grid::new(3, 3, GridMode::Full);
+        link_beetle(&mut grid);
+        let mut total = 0;
+        for y in 0..3 {
+            assert!(grid.cell(0, y).link(Dir::East) && grid.cell(1, y).link(Dir::West));
+            assert!(grid.cell(1, y).link(Dir::East) && grid.cell(2, y).link(Dir::West));
+            total += (0..3).map(|x| grid.cell(x, y).link_count()).sum::<usize>();
+        }
+        assert_eq!(total, 12);
+    }
+
+    #[test]
+    fn two_rooms_stay_in_their_columns_and_link_east() {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(0x1234_5678);
+        let grid = place_two_rooms(&mut floor, &mut rng);
+        for x in 0..2 {
+            let cell = grid.cell(x, 0);
+            assert!(i32::from(cell.start_x) >= TWO_ROOMS_XB[x] + 1);
+            assert!(i32::from(cell.end_x) <= TWO_ROOMS_XB[x + 1] - 2);
+            assert!(i32::from(cell.start_y) >= TWO_ROOMS_YB[0] + 1);
+            assert!(i32::from(cell.end_y) <= TWO_ROOMS_YB[1] - 2);
+        }
+        assert!(grid.cell(0, 0).link(Dir::East) && grid.cell(1, 0).link(Dir::West));
     }
 }
