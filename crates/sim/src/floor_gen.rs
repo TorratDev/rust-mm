@@ -242,13 +242,20 @@ pub trait FloorSteps {
 }
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
-/// fixed-room tile placement is not ported: `place_fixed_room` panics, but the
-/// file lookup behind [`FloorSteps::fixed_room_size`] works.
+/// fixed-room tile placement is ported except the spawns it asks for (kept in
+/// [`Self::fixed_out`]) and the staged rooms; see `docs/re/fixed-rooms.md`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
     /// The bytes of the fixed-room file (`fixedmap` in `dungeon.sbin`); game
     /// data, so the caller supplies it. Empty when no file is loaded.
     pub fixed_map: Vec<u8>,
+    /// The `0x10`-`0xDB` tile-code table (`021AC208`, 220 entries of 16 bytes;
+    /// game data, so the caller supplies it). Only read for those codes.
+    pub fixed_table: Vec<u8>,
+    /// Dungeon `+0x34AE`, the tileset number, read by `0214A0D4`.
+    pub tileset: u8,
+    /// What the last fixed-room placement recorded besides tiles.
+    pub fixed_out: floor::FixedRoomOut,
     /// Dungeon byte `+0x668`, read by `GetFloorType`.
     pub byte_668: u8,
     /// Dungeon byte `+0x641`, read by `GetFloorType`.
@@ -269,6 +276,14 @@ pub struct PortedSteps {
 }
 
 impl PortedSteps {
+    /// Copies what the fixed-room setter recorded into the generation state.
+    fn take_fixed_out(&self, g: &mut GenState) {
+        let out = &self.fixed_out;
+        g.stairs_a = out.stairs.unwrap_or(g.stairs_a);
+        g.stairs_b = out.player_spawn.unwrap_or(g.stairs_b);
+        g.tileset_type2 = out.tileset_flag;
+    }
+
     /// The floor-wide data of steps 8 to 10, as `GenerateFloor` left it in `g`.
     fn features(&self, g: &GenState) -> RoomFeatures {
         let [shop, maze, house] = g.bytes_458c_4594;
@@ -541,21 +556,63 @@ impl FloorSteps for PortedSteps {
         &mut self,
         number: i16,
         _props: &FloorProperties,
-        _floor: &mut Floor,
+        floor: &mut Floor,
         _rng: &mut DungeonRng,
-        _g: &mut GenState,
+        g: &mut GenState,
     ) {
-        panic!("fixed room {number}: the tile setter (02152B20) is not ported")
+        let entry = floor::fixed_map_entry(&self.fixed_map, number)
+            .unwrap_or_else(|| panic!("fixed room {number}: no entry"));
+        self.fixed_out = floor::FixedRoomOut {
+            tileset_flag: g.tileset_type2,
+            ..Default::default()
+        };
+        let (tileset, table) = (self.tileset, &self.fixed_table);
+        floor::place_fixed_room(floor, number, &entry, tileset, table, &mut self.fixed_out);
+        self.take_fixed_out(g);
+        floor::finalize_junctions(floor);
     }
     fn place_fixed_room_large(
         &mut self,
         room: FixedRoom,
-        _props: &FloorProperties,
-        _floor: &mut Floor,
-        _rng: &mut DungeonRng,
-        _g: &mut GenState,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
     ) {
-        panic!("fixed room {}: not ported", room.number)
+        let entry = floor::fixed_map_entry(&self.fixed_map, room.number)
+            .unwrap_or_else(|| panic!("fixed room {}: no entry", room.number));
+        self.fixed_out = floor::FixedRoomOut {
+            tileset_flag: g.tileset_type2,
+            ..Default::default()
+        };
+        let (gx, gy) = room.grid;
+        let (xs, ys) = floor::grid_bounds(gx, gy);
+        let mut grid = Grid::new(gx, gy, GridMode::Full);
+        floor::assign_rooms(&mut grid, props.room_density, rng);
+        // Up to 64 picks for a cell with a room; after 64 misses the last pick
+        // stays [hypothesis: edge case not run].
+        let mut pick = (0, 0);
+        for _ in 0..64 {
+            let x = rng.int(i32::try_from(gx).unwrap_or(i32::MAX));
+            let y = rng.int(i32::try_from(gy).unwrap_or(i32::MAX));
+            pick = (
+                usize::try_from(x).unwrap_or(0),
+                usize::try_from(y).unwrap_or(0),
+            );
+            if grid.cell(pick.0, pick.1).has_room {
+                break;
+            }
+        }
+        let picked = pick.1 * gx + pick.0;
+        floor::place_fixed_grid_rooms(floor, &mut grid, (&xs, &ys), picked, room.size, rng);
+        if (gx, gy) != (1, 1) {
+            floor::connect_from(&mut grid, pick, props.byte_05, props.byte_0b != 0, rng);
+            floor::create_hallways(floor, &mut grid, &xs, &ys, true, rng);
+            floor::ensure_connected_grid(floor, &mut grid, &xs, &ys, rng);
+        }
+        let cell = *grid.cell(pick.0, pick.1);
+        floor::stamp_fixed_room(floor, &cell, &entry, &self.fixed_table, &mut self.fixed_out);
+        self.take_fixed_out(g);
     }
     fn one_room_monster_house(
         &mut self,
