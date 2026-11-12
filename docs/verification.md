@@ -632,3 +632,19 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** the placeholder flow, scene machine and headless tests are on `main` (#379, #381). The done-when is not met: the title and menu are not built from original art and text, and no ROM was configured to load them. That part is the follow-up [#380](https://github.com/TorratDev/rust-mm/issues/380). The PR for this entry is `Refs #69`.
 - **Fallback adopted:** none.
 - **Notes:** The menu entries in the code are placeholders (blocks, no text), as `draw.rs` says. The menu wording and Options question need a decision before the follow-up: either the evidence is extended to show an Options entry, or the sub-issue text is corrected.
+
+---
+
+## #342 — Staged fixed rooms (P1) and the number-4 rectangle (P2): static port check
+
+- **Assumption:** the Rust ports of the staged branch of `02149E80` (`floor::stamp_fixed_room`, entry flags bit 0: the 12 retail entries 50-52, 54-60, 62, 63) and of the number-4 rectangle in `0214A0D4` (`floor::place_fixed_room`, x 2..=4, y 5..=16) match the findings for #342 (investigator A) on the room rectangle, the 8 x 8 code buffer, the scratch copy keeping the room byte, the placeholder (terrain `0x0110`, tile `+0xA = 0xE`) and the rectangle's terrain and type.
+- **Date:** 2026-11-12.
+- **Environment:** rustc 1.97.0 on Linux 7.0.0. No ROM (`RESCUE_ROM` unset), no emulator run, no Ghidra copy in this session. The static and ROM-data inputs are investigator A's findings (`~/rescue-re/scratch/findings/342-a.md`); the flag set was read from the retail `fixedmap` by that investigator and not re-read here.
+- **Evidence:**
+  - New unit tests in `crates/sim/src/floor.rs`: `number_4_rectangle_is_applied_with_or_without_the_tileset_flag` (rectangle type 0 and terrain `0x10`; outside tiles keep type 3 under the code-7 flag; number 3 gets no rectangle; no panic with the flag) and `staged_room_is_a_placeholder` (rectangle `[3, 3, 10, 9]`, buffer entries at `dx * 8 + dy`, room bytes kept, one table monster `0x1A5` recorded at (3, 3) with spawn 0, stairs still written, placeholder exactly on the tiles 2 inside on every side).
+  - Spawn gating, from a review decompile of `02152B20` [blue-verified static]: spawn 0 suppresses only items (the id goes to `+0x67B`) and the table trap. A table monster (`+8 != 0`) and the code-`0x45` trap are recorded whatever the spawn argument is. `fixed_tile_table_path` checks the monster with spawn 0 and no item; `fixed_tile_setter_codes` checks the code-`0x45` trap with spawn 0 and spawn 1. Rooms 0-49 and the unflagged rooms use spawn 1 and are unchanged.
+  - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass. `cargo test -p rescue-sim`: 95 passed, 0 failed (93 before, plus the two new tests; the count is unchanged by the test edits here).
+  - The stamp test that expected a panic for staged rooms is replaced by the staged-room test.
+- **Outcome:** statically and unit-tested only. No emulator run covers P1 or P2: a forced staged room and a forced fixed room 4 with the tileset flag have not been run against the retail dump. The oracle rows are unchanged and do not run here (no ROM). Confidence: high for the flag set and the rectangle (decompile and ROM data, per the findings); medium for the scratch start state and the placeholder's field set, which are marked hypothesis in [`re/fixed-rooms.md`](re/fixed-rooms.md#staged-rooms-p1).
+- **Fallback adopted:** none.
+- **Notes:** P3 (the spawn draw table per setter) and P4 (`0214961C`, `+0xC65C`, cell `+0x1B` are dead stores, not ported) are recorded in [`re/fixed-rooms.md`](re/fixed-rooms.md#spawn-rng-draws-per-setter-p3). The reveal `0215277C` is not ported. Issue #342 stays open (PR uses `Refs #342`); the forcing needed for P5 is separate.
