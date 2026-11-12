@@ -345,6 +345,54 @@ mod tests {
     }
 
     #[test]
+    fn leader_steps_onto_a_floor_neighbour_of_the_generated_floor() {
+        use rescue_sim::command::{Command, Direction, Outcome};
+        use rescue_sim::floor::{TERRAIN_FLOOR, TERRAIN_IMPASSABLE_WALL, TERRAIN_TYPE_MASK};
+        let props = crate::floor::tests::first_floor_properties();
+        let mut row = row_after(0x00FF_80BA, 1, [None; 4], vec![]);
+        let (floor, _) = generate(row.floor_seed, &props).expect("layout 1 is ported");
+        let is_floor = |x: i32, y: i32| {
+            floor.tile(x, y).is_some_and(|t| {
+                t.terrain & (TERRAIN_IMPASSABLE_WALL | TERRAIN_TYPE_MASK) == TERRAIN_FLOOR
+            })
+        };
+        let dirs = [
+            Direction::Down,
+            Direction::Right,
+            Direction::Up,
+            Direction::Left,
+        ];
+        let (x, y, dir) = (0..HEIGHT as i32)
+            .flat_map(|y| (0..WIDTH as i32).map(move |x| (x, y)))
+            .find_map(|(x, y)| {
+                dirs.into_iter()
+                    .find(|d| {
+                        let (dx, dy) = d.delta();
+                        is_floor(x, y) && is_floor(x + dx, y + dy)
+                    })
+                    .map(|d| (x, y, d))
+            })
+            .expect("the generated floor has a floor tile next to another");
+        row.team[0] = Some(Entity {
+            kind: 1,
+            x: x as i16,
+            y: y as i16,
+            species: 2,
+            level: 7,
+            hp: 20,
+            max_hp: 30,
+            speed_stage: 6,
+        });
+        let mut state = state_from_row(&row, Some(&props)).expect("row on the chain");
+        let outcome = state.step(Command::Move(dir));
+        assert_eq!(
+            outcome,
+            Outcome::Applied,
+            "a step from ({x}, {y}) onto its floor neighbour was refused"
+        );
+    }
+
+    #[test]
     fn unported_layout_is_a_row_error() {
         let row = row_after(0x00FF_80BA, 1, [None; 4], vec![]);
         let mut props = crate::floor::tests::first_floor_properties();
