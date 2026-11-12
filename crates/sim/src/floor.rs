@@ -2878,6 +2878,107 @@ fn open_tile(floor: &mut Floor, x: i32, y: i32, room: u8) {
 /// Grid draws allowed before `GenerateFloor` gives up and uses 4 × 4.
 const MAX_GRID_DRAWS: usize = 32;
 
+/// Column boundaries of the outer-ring grid (`GenerateOuterRingFloor`'s `xb`).
+/// Its 6 columns are 5, 11, 12, 11, 12 and 5 tiles wide.
+pub const OUTER_RING_XB: [i32; 7] = [0, 5, 16, 28, 39, 51, 56];
+
+/// Row boundaries of the outer-ring grid (`yb`), 4 rows.
+pub const OUTER_RING_YB: [i32; 5] = [2, 7, 16, 25, 30];
+
+/// The 32 link bytes of the outer ring, as (column, row, side). They close a
+/// ring over the 16 border cells: each border cell links to its two ring
+/// neighbours.
+const OUTER_RING_LINKS: [(usize, usize, Dir); 32] = [
+    (0, 0, Dir::South),
+    (0, 0, Dir::East),
+    (1, 0, Dir::West),
+    (1, 0, Dir::East),
+    (2, 0, Dir::West),
+    (2, 0, Dir::East),
+    (3, 0, Dir::West),
+    (3, 0, Dir::East),
+    (4, 0, Dir::West),
+    (4, 0, Dir::East),
+    (5, 0, Dir::West),
+    (5, 0, Dir::South),
+    (0, 1, Dir::North),
+    (0, 1, Dir::South),
+    (0, 2, Dir::North),
+    (0, 2, Dir::South),
+    (0, 3, Dir::North),
+    (0, 3, Dir::East),
+    (1, 3, Dir::West),
+    (1, 3, Dir::East),
+    (2, 3, Dir::West),
+    (2, 3, Dir::East),
+    (3, 3, Dir::West),
+    (3, 3, Dir::East),
+    (4, 3, Dir::West),
+    (4, 3, Dir::East),
+    (5, 3, Dir::West),
+    (5, 3, Dir::North),
+    (5, 1, Dir::North),
+    (5, 1, Dir::South),
+    (5, 2, Dir::North),
+    (5, 2, Dir::South),
+];
+
+/// The first part of `GenerateOuterRingFloor` (layout case 3): the 6 × 4 grid,
+/// its border and room flags, the 64 cell draws and the 32 link bytes. Returns
+/// the grid for the steps after it (`docs/re/outer-ring-floor.md`).
+///
+/// The border cells (top and bottom rows, left and right columns) lose their
+/// room flag, so they are anchors; the 8 inner cells are rooms, numbered 0 to 7
+/// in row order. Each anchor makes 2 draws (x, then y) and each room 4 (width,
+/// height, x, y). Unlike the standard generator, no rounding, no 3:2 clamp and
+/// no structure draws happen here.
+#[must_use]
+pub fn place_outer_ring_rooms(floor: &mut Floor, rng: &mut DungeonRng) -> Grid {
+    const GRID_X: usize = 6;
+    const GRID_Y: usize = 4;
+    let mut grid = Grid::new(GRID_X, GRID_Y, GridMode::Full);
+    for x in 0..GRID_X {
+        grid.cell_mut(x, 0).has_room = false;
+        grid.cell_mut(x, GRID_Y - 1).has_room = false;
+    }
+    for y in 0..GRID_Y {
+        grid.cell_mut(0, y).has_room = false;
+        grid.cell_mut(GRID_X - 1, y).has_room = false;
+    }
+
+    let mut room_index: u8 = 0;
+    for y in 0..GRID_Y {
+        for x in 0..GRID_X {
+            let (left, right) = (OUTER_RING_XB[x], OUTER_RING_XB[x + 1]);
+            let (top, bottom) = (OUTER_RING_YB[y], OUTER_RING_YB[y + 1]);
+            let (sx, sy) = (right - left, bottom - top);
+            if !grid.cell(x, y).has_room {
+                let ax = rng.range(left + 1, left + 1 + sx - 3);
+                let ay = rng.range(top + 1, top + 1 + sy - 3);
+                set_bounds(grid.cell_mut(x, y), ax, ay, ax + 1, ay + 1);
+                open_tile(floor, ax, ay, NO_ROOM);
+                continue;
+            }
+            let w = rng.range(5, sx - 3);
+            let h = rng.range(4, sy - 3);
+            let rx = left + 2 + rng.int(sx - 3 - w);
+            let ry = top + 2 + rng.int(sy - 3 - h);
+            set_bounds(grid.cell_mut(x, y), rx, ry, rx + w, ry + h);
+            for tx in rx..rx + w {
+                for ty in ry..ry + h {
+                    open_tile(floor, tx, ty, room_index);
+                }
+            }
+            room_index = room_index.wrapping_add(1);
+        }
+    }
+
+    for (x, y, dir) in OUTER_RING_LINKS {
+        grid.cell_mut(x, y).set_link(dir);
+    }
+    grid
+}
+
 /// Layout attempts (the inner retry loop of `GenerateFloor`) before it falls
 /// back to a one-room monster house.
 pub const MAX_LAYOUT_ATTEMPTS: usize = 10;
@@ -6555,5 +6656,122 @@ mod tests {
         let (xs, ys) = grid_bounds(5, 3);
         assert_eq!(xs, [0, 11, 22, 33, 44, 55]);
         assert_eq!(ys, [0, 10, 20, 30]);
+    }
+
+    fn is_border(x: usize, y: usize) -> bool {
+        x == 0 || x == 5 || y == 0 || y == 3
+    }
+
+    #[test]
+    fn outer_ring_border_is_anchors_and_inner_cells_are_rooms() {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(0x1234_5678);
+        let grid = place_outer_ring_rooms(&mut floor, &mut rng);
+        let mut rooms = Vec::new();
+        for y in 0..4 {
+            for x in 0..6 {
+                let cell = grid.cell(x, y);
+                assert_eq!(cell.has_room, !is_border(x, y), "({x}, {y})");
+                if cell.has_room {
+                    rooms.push((x, y));
+                }
+            }
+        }
+        assert_eq!(
+            rooms,
+            [
+                (1, 1),
+                (2, 1),
+                (3, 1),
+                (4, 1),
+                (1, 2),
+                (2, 2),
+                (3, 2),
+                (4, 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn outer_ring_rooms_are_numbered_in_row_order() {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(0x1234_5678);
+        let grid = place_outer_ring_rooms(&mut floor, &mut rng);
+        let mut next_room = 0;
+        for y in 0..4 {
+            for x in 0..6 {
+                let cell = grid.cell(x, y);
+                let (sx, sy) = (i32::from(cell.start_x), i32::from(cell.start_y));
+                let (ex, ey) = (i32::from(cell.end_x), i32::from(cell.end_y));
+                if cell.has_room {
+                    for tx in sx..ex {
+                        for ty in sy..ey {
+                            let tile = floor.tile(tx, ty).unwrap();
+                            assert_eq!(tile.room, next_room);
+                            assert_eq!(tile.terrain & TERRAIN_TYPE_MASK, TERRAIN_FLOOR);
+                        }
+                    }
+                    next_room += 1;
+                } else {
+                    assert_eq!((ex - sx, ey - sy), (1, 1), "({x}, {y})");
+                    let tile = floor.tile(sx, sy).unwrap();
+                    assert_eq!(tile.room, NO_ROOM);
+                    assert_eq!(tile.terrain & TERRAIN_TYPE_MASK, TERRAIN_FLOOR);
+                }
+            }
+        }
+        assert_eq!(next_room, 8);
+    }
+
+    #[test]
+    fn outer_ring_links_form_one_ring_over_the_border() {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(0x1234_5678);
+        let grid = place_outer_ring_rooms(&mut floor, &mut rng);
+        let mut total = 0;
+        for y in 0..4 {
+            for x in 0..6 {
+                let links = grid.cell(x, y).link_count();
+                total += links;
+                assert_eq!(links, if is_border(x, y) { 2 } else { 0 }, "({x}, {y})");
+            }
+        }
+        assert_eq!(total, 32);
+
+        // Every link is reciprocated, and walking the links from (0, 0)
+        // reaches all 16 border cells: one ring, not several loops.
+        let dirs = [Dir::East, Dir::North, Dir::West, Dir::South];
+        let mut seen = vec![(0, 0)];
+        let mut next = 0;
+        while next < seen.len() {
+            let (x, y) = seen[next];
+            next += 1;
+            for dir in dirs {
+                if !grid.cell(x, y).link(dir) {
+                    continue;
+                }
+                let (nx, ny) = grid.neighbour(x, y, dir).expect("link leaves the grid");
+                assert!(grid.cell(nx, ny).link(dir.opposite()));
+                if !seen.contains(&(nx, ny)) {
+                    seen.push((nx, ny));
+                }
+            }
+        }
+        assert_eq!(seen.len(), 16);
+    }
+
+    #[test]
+    fn outer_ring_makes_64_draws() {
+        let seed = 0x0BAD_F00D;
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(seed);
+        let _grid = place_outer_ring_rooms(&mut floor, &mut rng);
+        // 16 anchors of 2 draws and 8 rooms of 4 draws. Each draw advances the
+        // generator once, so the state must equal 64 steps from the seed.
+        let mut expected = DungeonRng::new(seed);
+        for _ in 0..64 {
+            expected.next_u16();
+        }
+        assert_eq!(rng, expected);
     }
 }
