@@ -1,22 +1,30 @@
 //! Replays golden-trace rows against `rescue_sim` snapshots and reports the first row that
 //! differs. The comparison is here, not in `main.rs`, so tests can call it without a process.
 //!
-//! The sim side comes in as one [`Snapshot`] per row (a JSON Lines file, `--sim`). That is the
-//! stub until the start-state and input-mapping issues build the states from the trace.
+//! The sim side is built from the trace: the first row gives the start state ([`start`]), and
+//! each row's leader actions are mapped to commands ([`actions`]) and applied to it. Each row
+//! is compared before its actions are applied, so a row is checked against the sim state that
+//! the game's previous row and actions produced.
 
 #![forbid(unsafe_code)]
 
+pub mod actions;
 pub mod start;
 pub mod tiles;
+
+#[cfg(test)]
+mod replay_tests;
 
 use std::fmt;
 use std::io::{self, BufRead};
 
 use rescue_nds::rom::KnownDump;
+use rescue_sim::command::Outcome;
 use rescue_sim::state::{Monster, Snapshot};
 use rescue_trace::{Entity, Header, TurnRow};
 
-use crate::start::team_index;
+use crate::actions::{ActionError, command_for, command_name};
+use crate::start::{RowError, state_from_row, team_index};
 
 /// Row fields the comparison does not check, with the reason. `render_divergence` does not
 /// print these; the CLI prints the count on a match.
@@ -75,6 +83,14 @@ pub enum HarnessError {
         rows: usize,
         states: usize,
     },
+    /// The first row cannot start a sim state (see [`state_from_row`]).
+    Start(RowError),
+    /// An action record of a row has no command (see [`ActionError`]).
+    Action {
+        row: usize,
+        index: usize,
+        source: ActionError,
+    },
 }
 
 impl fmt::Display for HarnessError {
@@ -90,6 +106,10 @@ impl fmt::Display for HarnessError {
                 f,
                 "trace has {rows} turn rows but the sim-states file has {states} snapshots"
             ),
+            Self::Start(e) => write!(f, "row 1 cannot start the sim: {e}"),
+            Self::Action { row, index, source } => {
+                write!(f, "row {row}, action {index}: {source}")
+            }
         }
     }
 }
@@ -99,6 +119,8 @@ impl std::error::Error for HarnessError {
         match self {
             Self::Io(e) => Some(e),
             Self::BadStates { source, .. } => Some(source),
+            Self::Start(e) => Some(e),
+            Self::Action { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -159,6 +181,56 @@ pub fn compare_row(row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
         );
     }
     diffs
+}
+
+/// The result of [`replay`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Replay {
+    /// Every row matched the sim.
+    Match { rows: usize },
+    /// The first row that differs from the sim.
+    Divergence(Divergence),
+    /// The sim answered `NotModelled` for a command from `row`: a gap in the sim, not a
+    /// difference in the game's state.
+    SimGap { row: usize, command: &'static str },
+}
+
+/// Replays the trace from its first row. Each row is compared with the sim, then its actions
+/// are mapped and applied in order, then the next row is compared. A command the sim refuses
+/// (`Blocked`) changes nothing, so the next comparison reports the difference. A command the
+/// sim does not model (`NotModelled`) stops the replay. Actions of the last row are applied
+/// but nothing compares them.
+pub fn replay(rows: &[TurnRow]) -> Result<Replay, HarnessError> {
+    let Some(first) = rows.first() else {
+        return Ok(Replay::Match { rows: 0 });
+    };
+    let mut state = state_from_row(first).map_err(HarnessError::Start)?;
+    for (index, row) in rows.iter().enumerate() {
+        let number = index + 1;
+        let diffs = compare_row(row, &state.snapshot());
+        if !diffs.is_empty() {
+            return Ok(Replay::Divergence(Divergence {
+                row: number,
+                frame: row.frame,
+                fractional_turn: row.fractional_turn,
+                diffs,
+            }));
+        }
+        for (position, action) in row.actions.iter().enumerate() {
+            let command = command_for(action).map_err(|source| HarnessError::Action {
+                row: number,
+                index: position + 1,
+                source,
+            })?;
+            if state.step(command) == Outcome::NotModelled {
+                return Ok(Replay::SimGap {
+                    row: number,
+                    command: command_name(&command),
+                });
+            }
+        }
+    }
+    Ok(Replay::Match { rows: rows.len() })
 }
 
 /// Compares the rows in order and returns the first divergent one, or `None` on a match.
@@ -232,6 +304,15 @@ pub fn render_divergence(divergence: &Divergence) -> String {
         ));
     }
     out
+}
+
+/// The report for a sim gap: the row and the command the sim does not model.
+#[must_use]
+pub fn render_sim_gap(row: usize, command: &str) -> String {
+    format!(
+        "sim gap at row {row}: {command} is not modelled by the sim yet
+"
+    )
 }
 
 fn compare_monster(
