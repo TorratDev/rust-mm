@@ -599,7 +599,7 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - The first run of `whole_floors_match_the_floor_oracle` failed on layout 4, entry `0x12345678`, tile hash. The port's value `0x2f5338a16f6fb9d7` matched the raw oracle output, so the oracle row was a transcription error: the row read `0x2f5338a16f9fb6d7`. The row is corrected to `0x2f53_38a1_6f6f_b9d7`. The port was not changed.
   - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`: pass. `cargo test -p rescue-sim`: 93 passed, 0 failed, including `whole_floors_match_the_floor_oracle`.
 - **Outcome:** all nine rows pass.
-- **Notes:** #339 stays open for the remaining points of the sub-issue (PR uses `Refs #339`).
+- **Notes:** the three oracle runs and their nine rows are in place and pass, so this PR closes #339 (PR uses `Closes #339`).
 
 ---
 
