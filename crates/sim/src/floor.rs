@@ -3088,6 +3088,48 @@ pub fn link_cross(grid: &mut Grid) {
     }
 }
 
+/// The grid of layout case 10 (`GenerateOuterRoomsFloor`, `ov_0001::02150A10`)
+/// after step 2 in mode 0: the outer ring of cells are rooms and every interior
+/// cell (`x` in `1..grid_x - 1`, `y` in `1..grid_y - 1`) is invalid. Step 3 does
+/// not run. No randomness.
+///
+/// # Panics
+/// If `grid_x` is zero or `grid_y` is larger than [`MAX_GRID_Y`].
+#[must_use]
+pub fn outer_rooms_grid(grid_x: usize, grid_y: usize) -> Grid {
+    let mut grid = Grid::new(grid_x, grid_y, GridMode::Full);
+    for x in 1..grid_x.saturating_sub(1) {
+        for y in 1..grid_y.saturating_sub(1) {
+            grid.cell_mut(x, y).invalid = true;
+        }
+    }
+    grid
+}
+
+/// The link bytes layout case 10 sets by hand (std step 5 does not run). The
+/// top and bottom rows give East and West to the cells `x` in `1..grid_x - 1`;
+/// the left and right columns give North to the cells `y` in `1..grid_y - 1`
+/// and South to the cells `y` in `0..grid_y - 2`. So the corner cells carry no
+/// row byte, and the last column pair (`grid_y - 2`, `grid_y - 1`) carries none
+/// at all, which step 7 has to join. [hypothesis for the row sets: Blue decompile only, medium confidence]
+pub fn link_outer_rooms(grid: &mut Grid) {
+    let (gx, gy) = (grid.grid_x, grid.grid_y);
+    for x in 1..gx.saturating_sub(1) {
+        for y in [0, gy - 1] {
+            grid.cell_mut(x, y).set_link(Dir::East);
+            grid.cell_mut(x, y).set_link(Dir::West);
+        }
+    }
+    for x in [0, gx - 1] {
+        for y in 1..gy.saturating_sub(1) {
+            grid.cell_mut(x, y).set_link(Dir::North);
+        }
+        for y in 0..gy.saturating_sub(2) {
+            grid.cell_mut(x, y).set_link(Dir::South);
+        }
+    }
+}
+
 /// Column boundaries of the two-room grid (`GenerateTwoRoomsWithMonsterHouseFloor`'s
 /// `xb`), 2 columns.
 pub const TWO_ROOMS_XB: [i32; 3] = [2, 0x1C, 0x36];
@@ -7050,6 +7092,30 @@ mod tests {
             assert!(i32::from(cell.end_y) <= TWO_ROOMS_YB[1] - 2);
         }
         assert!(grid.cell(0, 0).link(Dir::East) && grid.cell(1, 0).link(Dir::West));
+    }
+
+    #[test]
+    fn outer_rooms_grid_marks_interior_invalid_and_links_by_hand() {
+        let mut grid = outer_rooms_grid(5, 4);
+        link_outer_rooms(&mut grid);
+        for x in 0..5 {
+            for y in 0..4 {
+                assert_eq!(
+                    grid.cell(x, y).invalid,
+                    (1..4).contains(&x) && (1..3).contains(&y)
+                );
+            }
+        }
+        assert!(grid.cell(1, 0).link(Dir::East) && grid.cell(1, 0).link(Dir::West));
+        assert!(!grid.cell(0, 0).link(Dir::East) && !grid.cell(4, 3).link(Dir::West));
+        assert!(grid.cell(0, 1).link(Dir::North) && grid.cell(0, 0).link(Dir::South));
+        assert!(!grid.cell(0, 2).link(Dir::South) && !grid.cell(0, 3).link(Dir::North));
+        // A 2 x 2 grid has no interior cell and no hand-set link.
+        let mut small = outer_rooms_grid(2, 2);
+        link_outer_rooms(&mut small);
+        assert!((0..2).all(|x| {
+            (0..2).all(|y| !small.cell(x, y).invalid && small.cell(x, y).link_count() == 0)
+        }));
     }
 
     #[test]
