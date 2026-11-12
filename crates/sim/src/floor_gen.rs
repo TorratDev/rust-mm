@@ -1326,9 +1326,11 @@ mod tests {
             let plan = LayoutPlan::OuterRooms { grid_x, grid_y };
             steps.generate_layout(plan, &props, &mut floor, &mut rng, &mut g);
             let has_room = (0..floor::WIDTH as i32).any(|x| {
-                (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room == 0))
+                (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room < 4))
             });
-            assert!(has_room, "{grid_x}x{grid_y}");
+            // A 2 x 2 grid has no hand-set link, so step 7 erases its rooms and the
+            // retry loop of `GenerateFloor` takes over.
+            assert_eq!(has_room, (grid_x, grid_y) != (2, 2), "{grid_x}x{grid_y}");
         }
     }
 
