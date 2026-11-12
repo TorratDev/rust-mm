@@ -7044,11 +7044,31 @@ mod tests {
         let grid = place_two_rooms(&mut floor, &mut rng);
         for x in 0..2 {
             let cell = grid.cell(x, 0);
-            assert!(i32::from(cell.start_x) >= TWO_ROOMS_XB[x] + 1);
+            assert!(i32::from(cell.start_x) > TWO_ROOMS_XB[x]);
             assert!(i32::from(cell.end_x) <= TWO_ROOMS_XB[x + 1] - 2);
-            assert!(i32::from(cell.start_y) >= TWO_ROOMS_YB[0] + 1);
+            assert!(i32::from(cell.start_y) > TWO_ROOMS_YB[0]);
             assert!(i32::from(cell.end_y) <= TWO_ROOMS_YB[1] - 2);
         }
         assert!(grid.cell(0, 0).link(Dir::East) && grid.cell(1, 0).link(Dir::West));
+    }
+
+    #[test]
+    fn two_rooms_make_eight_draws_in_room_order() {
+        let seed = 0x1234_5678;
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(seed);
+        let _ = place_two_rooms(&mut floor, &mut rng);
+        // Replay the draws: per room, width, height, x, then y.
+        let mut replay = DungeonRng::new(seed);
+        for x in 0..2 {
+            let max_w = TWO_ROOMS_XB[x + 1] - TWO_ROOMS_XB[x] - 3;
+            let max_h = TWO_ROOMS_YB[1] - TWO_ROOMS_YB[0] - 3;
+            let w = replay.range(10, max_w);
+            let h = replay.range(16, max_h);
+            replay.int(max_w - w);
+            replay.int(max_h - h);
+        }
+        // Both generators must now be in the same state.
+        assert!((0..4).all(|_| rng.next_u16() == replay.next_u16()));
     }
 }
