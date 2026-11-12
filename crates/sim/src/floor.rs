@@ -3508,7 +3508,9 @@ pub struct FixedRoomOut {
     pub monster_slots: [Option<(i16, i16)>; 8],
     /// Global `021B45A8`: set by code 7 (the caller also passes it in).
     pub tileset_flag: bool,
-    /// Item, trap and monster spawns requested; not run (object system).
+    /// Item, trap and monster spawns requested; not run (object system). A
+    /// spawn 0 call (see [`set_fixed_tile`]) records no item and no table trap,
+    /// but still records a table monster and a code-`0x45` trap.
     pub spawns: Vec<FixedSpawn>,
     /// Set by a staged room (entry flags bit 0), read by the reveal
     /// `0215277C`, which is not ported.
@@ -3538,6 +3540,12 @@ fn set_type(tile: &mut Tile, kind: u16) {
 ///
 /// Not run: the spawns land in [`FixedRoomOut::spawns`]; code 7's call to
 /// `0214961C` (the out-of-bounds tile global) is not modelled.
+///
+/// `spawn_now` is the setter's spawn argument. With `false`, an item is not
+/// recorded (its id goes to [`FixedRoomOut::item_67b`]) and a table trap is not
+/// recorded. A table monster and the code-`0x45` trap are recorded either way:
+/// `02152B20` calls `02153018` and `02152FAC` for them outside the spawn test
+/// [blue-verified static: `docs/re/fixed-rooms.md`].
 ///
 /// # Panics
 /// If a code in [`FIXED_TILE_CODES`] needs an entry that `table` lacks.
@@ -3606,14 +3614,12 @@ pub fn set_fixed_tile(
         }
         0x45 => {
             out.trap_pos = Some((x, y));
-            if spawn_now {
-                out.spawns.push(FixedSpawn::Trap {
-                    id: 0xB,
-                    x,
-                    y,
-                    param: 0,
-                });
-            }
+            out.spawns.push(FixedSpawn::Trap {
+                id: 0xB,
+                x,
+                y,
+                param: 0,
+            });
             set_type(tile, 1);
         }
         c if FIXED_TILE_CODES.contains(&c) => {
@@ -3660,7 +3666,7 @@ fn fixed_table_tile(
     } else {
         out.item_67b = item;
     }
-    if word(8) != 0 && spawn_now {
+    if word(8) != 0 {
         let (id, tag) = (word(8), e[0xA]);
         out.spawns.push(FixedSpawn::Monster {
             id,
@@ -3826,7 +3832,9 @@ pub fn stamp_fixed_room(
 /// The staged branch of `02149E80` (entry flags bit 0; the revealed rooms of
 /// the retail file, entries 50-52, 54-60, 62, 63). Stores the room rectangle
 /// and the 8 by 8 code buffer in `out.staged`. Each tile is set into a scratch
-/// tile with spawn 0, so the room spawns nothing now, and the scratch tile is
+/// tile with spawn 0: its items and table traps are not recorded now (they
+/// wait for the reveal), but its table monsters and code-`0x45` traps are
+/// recorded at generation, as [`set_fixed_tile`] describes. The scratch tile is
 /// copied into the map tile, keeping the map tile's room byte. Tiles at least
 /// 2 inside the rectangle on every side then become a hidden placeholder:
 /// terrain `0x0110` and the low byte of [`Tile::unk_e`] (tile `+0xA`) set to
@@ -7720,20 +7728,20 @@ mod tests {
         assert_eq!(setter(0x43, &[], true).1.player_spawn, Some((3, 4)));
         let (t, out) = setter(7, &[], true);
         assert!(out.tileset_flag && t.terrain == 0x113);
-        // Spawn 0 records the trap position but no trap.
-        let (_, out) = setter(0x45, &[], false);
-        assert_eq!(out.trap_pos, Some((3, 4)));
-        assert!(out.spawns.is_empty());
-        let (_, out) = setter(0x45, &[], true);
-        assert_eq!(
-            out.spawns,
-            [FixedSpawn::Trap {
-                id: 0xB,
-                x: 3,
-                y: 4,
-                param: 0
-            }]
-        );
+        // The code-0x45 trap is recorded whatever the spawn argument is.
+        for spawn_now in [false, true] {
+            let (_, out) = setter(0x45, &[], spawn_now);
+            assert_eq!(out.trap_pos, Some((3, 4)));
+            assert_eq!(
+                out.spawns,
+                [FixedSpawn::Trap {
+                    id: 0xB,
+                    x: 3,
+                    y: 4,
+                    param: 0
+                }]
+            );
+        }
     }
 
     #[test]
@@ -7771,10 +7779,19 @@ mod tests {
                 },
             ]
         );
-        // Not spawning now: the item id is only kept in +0x67B, and the monster is not spawned.
+        // Not spawning now: the item id is only kept in +0x67B, but the monster is still spawned.
         let out = setter(0x11, &table, false).1;
         assert_eq!(out.item_67b, 5);
-        assert!(out.spawns.is_empty());
+        assert_eq!(
+            out.spawns,
+            [FixedSpawn::Monster {
+                id: 0x1A5,
+                x: 3,
+                y: 4,
+                tag: 0x21,
+                code: 0x11
+            }]
+        );
         // Item 0 with slot 2 records a position; a type-2 flag overrides floor; a trap fires.
         let e = &mut table[..FIXED_TILE_ENTRY_SIZE];
         (e[4], e[0xB], e[0xD], e[0xE]) = (2, 9, 6, 1);
@@ -7909,7 +7926,7 @@ mod tests {
     }
 
     #[test]
-    fn staged_room_is_a_placeholder_with_no_spawns() {
+    fn staged_room_is_a_placeholder() {
         // Cell 7 x 6 at (3, 3). Code 0x11 (table entry 1: monster 0x1A5, no trap) at
         // the first tile, stairs (code 4) at offset (2, 1). Everything else is code 0.
         let mut stream = vec![0x0E, 0x11];
@@ -7949,8 +7966,17 @@ mod tests {
         assert_eq!(staged.rect, [3, 3, 10, 9]);
         assert_eq!((staged.codes[0], staged.codes[2 * 8 + 1]), (0x11, 4));
         assert_eq!(staged.codes.iter().filter(|&&c| c != 0).count(), 2);
-        // Spawn 0: no monster spawn, but the stairs are still written.
-        assert!(out.spawns.is_empty());
+        // Spawn 0 still records the table monster at generation; the stairs are written.
+        assert_eq!(
+            out.spawns,
+            [FixedSpawn::Monster {
+                id: 0x1A5,
+                x: 3,
+                y: 3,
+                tag: 0,
+                code: 0x11
+            }]
+        );
         assert_eq!(out.stairs, Some((5, 4)));
         // Every tile keeps its room byte.
         for y in 3..9 {

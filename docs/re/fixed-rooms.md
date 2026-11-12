@@ -34,7 +34,7 @@ Sources: `~/rescue-re/scratch/findings-342.md` and `findings-342b.md` (ghidra-cl
 | `02149E80` | stamp of the stream into the picked cell, keeping each tile's room byte (flags bit 0 clear); flags bit 0 set: the staged branch (P1 below) | `floor::stamp_fixed_room` |
 
 Not ported, with the reason:
-- Item, trap and monster spawns of the setter (`02153190`, `02152FAC`, `02153018`) need the object system. They are recorded in `FixedRoomOut::spawns`, in setter order, and nothing runs them. A staged room's setter runs with spawn 0, so it records none (P1). Their own RNG draws are not traced in the port; see the draw table (P3).
+- Item, trap and monster spawns of the setter (`02153190`, `02152FAC`, `02153018`) need the object system. They are recorded in `FixedRoomOut::spawns`, in setter order, and nothing runs them. A staged room's setter runs with spawn 0: it records no item and no table trap (those wait for the reveal), but it does record a table monster and a code-`0x45` trap at generation (P1). Their own RNG draws are not traced in the port; see the draw table (P3).
 - Code 7's call to `0214961C` (out-of-bounds tile global): the flag `021B45A8` is kept, the call is not. Dead for this port (P4).
 - The staged reveal `0215277C`: runs the setter again with spawn 1 from the stored buffer, and it is a runtime event. Stays unported; the buffer it reads is recorded in `FixedRoomOut::staged`.
 - Dungeon `+0xC65C` (room byte of the last stamped tile, written by `02149E80`): not recorded; a dead store (P4).
@@ -47,15 +47,15 @@ Not ported, with the reason:
 **Retail data** [blue-verified ROM data]: the flags byte (entry byte 2) is 1 for entries 50, 51, 52, 54, 55, 56, 57, 58, 59, 60, 62 and 63 (12 entries). No other entry has bit 0 set. The earlier hypothesis that no retail room is staged is false. Their sizes are 5 x 5 to 7 x 8, all within the 8 x 8 buffer, and each contains tile code `0xC` (sets terrain `0x1000`, which the reveal tests).
 
 **Stamp** [blue-verified static, `02149E80`, staged branch]: the room rectangle `(x0, y0, x1, y1)` (ends exclusive, from the grid cell) is stored at dungeon `+0xC0F0..+0xC0FC`. For each stream tile (rows outer, columns inner):
-- the code goes into the 8 x 8 buffer at `+0xC61C + col * 8 + row` (`StagedRoom::codes[dx * 8 + dy]` here: [hypothesis] that `col` is the x offset);
-- the setter wrapper runs into a 20-byte scratch tile at `+0xC11C + col * 0xA0 + row * 0x14` with spawn 0, so no spawn is recorded at generation;
+- the code goes into the 8 x 8 buffer at `+0xC61C + col * 8 + row` (`StagedRoom::codes[dx * 8 + dy]` here: `col` is the inner, x, counter of `02149E80` [blue-verified static]);
+- the setter wrapper runs into a 20-byte scratch tile at `+0xC11C + col * 0xA0 + row * 0x14` with spawn 0, so its items and table traps are not recorded at generation (its table monsters and code-`0x45` trap are; see Port decisions);
 - the scratch tile is copied into the map tile, keeping the map tile's room byte (`+5`);
 - for tiles with `x0 + 2 <= x < x1 - 2` and `y0 + 2 <= y < y1 - 2` the map tile is overwritten with terrain word `0x0110` and tile byte `+0xA = 0xE`.
 
-The reveal `0215277C` (not ported) reads the buffer and runs the setter with spawn 1 when the player is next to the tile with flag `0x1000`; it clears `+0x34A9` and redraws. Its details are read, not run; confidence medium.
+The reveal `0215277C` (not ported) reads the buffer and runs the setter with spawn 1 when an entity whose tile `(x, y-1)` has flag `0x1000` calls it. It runs only while `+0x34A9` is clear; then it clears terrain flag `0x1000`, sets `+0x34A9` to 1 and redraws. Its details are read, not run; confidence medium.
 
 Port decisions and their status:
-- The spawn gating follows the spawn argument: with spawn 0 the setter records no monster (`0x59`-`0x8C` and the table's monster id), and no trap for code `0x45`. The earlier port recorded these with spawn 0. The findings state "no spawns at generation" for staged rooms [blue-verified static]; the gating itself is the port's model of the spawn argument.
+- The spawn gating, from a review decompile of `02152B20` [blue-verified static]: the spawn argument `param_5` gates only the item call `02153190` (with spawn 0 the id goes to `+0x67B` instead) and the table trap `02152FAC` when `+0xB != 0x14`. The table monster `02153018` is called whenever `+8 != 0`, whatever `param_5` is, and the code-`0x45` trap `02152FAC(0xB, x, y, 0)` is called whatever `param_5` is. Neither callee checks a spawn flag. So with spawn 0 the port still records a table monster and a code-`0x45` trap. The findings' "no spawns at generation" is true only for items and table traps.
 - Items with spawn 0 still set the item id in `+0x67B` (the setter's own write).
 - [hypothesis] The scratch tile starts cleared (`Tile::EMPTY`); the game's scratch contents before the first tile are not run.
 - [hypothesis] The placeholder sets the terrain word and the low byte of `Tile::unk_e` (tile `+0xA`, the high byte kept) and nothing else; the findings name only these two fields.
@@ -82,7 +82,7 @@ Per tile code, from the 220-entry table `021AC208` (read from the program) and a
 
 Every retail table row has trap `+0xB == 0x14` (none), so `02152FAC` is called only by code `0x45` (rooms 17, 18, 19).
 
-Staged rooms (P1) run their setters with spawn 0, so they draw nothing at generation; only rooms 0-49 and the unflagged 53, 61, 64-66 spawn during generation.
+Staged rooms (P1) run their setters with spawn 0, so their table monsters and code-`0x45` traps are still spawned, and their monster draws happen, at generation. Only their items and table traps wait for the reveal [blue-verified static, as in Port decisions of P1].
 
 Open: room 5 (one unattributed draw in the earlier run). It holds exactly one setter code, `0x22` (monster 144, tag 13), so it is a monster spawn: `RandInt(10)` and `RandInt(18)` x k. The one draw is most likely one of the conditional `DInt` calls [hypothesis, not isolated]. A trace hook on `0219D058` (record `LR`) over a forced room 5 would settle it.
 
@@ -93,7 +93,7 @@ Open: room 5 (one unattributed draw in the earlier run). It holds exactly one se
 
 ## Evidence and verification status
 - Sources: investigator A's findings for #342 (`~/rescue-re/scratch/findings/342-a.md`): ROM data read from `fixedmap` in `dungeon.sbin` (`pmdb.nds`), static decompiles from a ghidra-cli copy, and one py-desmume probe for the `021B3ED0` value. Tags: ROM-data and static claims are [blue-verified]; the reveal details are read, not run.
-- Unit tests in `crates/sim/src/floor.rs` check the shapes and values stated above: the number-4 rectangle with and without the tileset flag and for number 3 (`number_4_rectangle_is_applied_with_or_without_the_tileset_flag`); the staged stamp's rectangle, buffer, placeholder, room bytes and empty spawns (`staged_room_is_a_placeholder_with_no_spawns`).
+- Unit tests in `crates/sim/src/floor.rs` check the shapes and values stated above: the number-4 rectangle with and without the tileset flag and for number 3 (`number_4_rectangle_is_applied_with_or_without_the_tileset_flag`); the staged stamp's rectangle, buffer, placeholder, room bytes and the table monster recorded with spawn 0 (`staged_room_is_a_placeholder`).
 - **No emulator run covers P1 or P2 yet.** Neither a forced staged room nor a forced fixed room 4 with the tileset flag has been run against the retail dump (P5 of the findings needs the forcing). The unit tests check the port against the findings, not the game.
 
 Rust: `floor::fixed_map_entry`, `floor::TileStream`, `floor::FixedRoomOut` (with `staged: Option<StagedRoom>`), `PortedSteps::{fixed_map, fixed_table, tileset, fixed_out}`.
