@@ -1,12 +1,12 @@
 # Layout cases 5 and 9: two rooms with a monster house, and the beetle floor
 
 **Date:** 2026-11-12
-**Status:** blue-verified (static decompile and stage runs on seeds `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`); the oracle hashes were not checked here
+**Status:** blue-verified (static decompile and stage runs on seeds `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`); whole-floor oracle rows for layouts 5 and 9 match on all three seeds (see [Emulator check](#emulator-check-floor-oracle))
 **Subsystem:** dungeon floor generation (layout cases 5, 9)
 
 Issue: [#340](https://github.com/TorratDev/rust-mm/issues/340), parent [#111](https://github.com/TorratDev/rust-mm/issues/111). Parent notes: [`dungeon-generation.md`](dungeon-generation.md), [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md) (the tail these share).
 
-Evidence: ghidra-cli decompiles in the `rescue-arm9-c` project (not committed). Stage checkpoints from the investigator's floor-stage runs. The oracle rows (layoutFnv1a, rngSteps, stairs) are in the investigator's scratch notes, not in the repository.
+Evidence: ghidra-cli decompiles in the `rescue-arm9-c` project (not committed). Stage checkpoints from the investigator's floor-stage runs. The oracle rows (steps, layoutFnv1a, stairs, rooms, terrain) are in `ORACLE_FLOORS` in `crates/sim/src/floor.rs`; the raw output is not in the repository.
 
 ## Addresses
 | Address | Name | Source |
@@ -42,6 +42,13 @@ Cell stride `x * 0x1C2 + y * 0x1E`. Cell shorts `+0`, `+2`, `+4`, `+6` are `x0`,
 - The secondary-terrain flag is not set, and `+0x34A8` is not set by this function. [blue-verified]
 - [run] Steps 7, 9 and 10 draw nothing on the first floor (chances 0); step 11 to step 12 is 39, 32 or 31 steps for the three seeds; the reset after step 12 is 0.
 
+## Emulator check (floor oracle)
+- **Command:** `floor_oracle.py ROM OUT.jsonl --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts 5,9,10`, run from `verification/v7-trace/` with py-desmume (DeSmuME 0.9.12). `OUT.jsonl` is not committed. The same run covers layout 10 ([`layout-case-10.md`](layout-case-10.md#emulator-check-floor-oracle)).
+- **ROM:** the probe copy of the supported dump, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- **Date:** 2026-11-12, values taken from the `generateEnd` record of each run (steps = `rngSteps` at `GenerateFloor`'s return; entry = the forced seed).
+- **What is recorded:** hashes and counts only (step count, FNV-1a 64 of the tiles, stairs, room count, terrain counts). No grid, no raw output (see [`docs/legal.md`](../legal.md)).
+- **Rows added** to `ORACLE_FLOORS` (`crates/sim/src/floor.rs`): layouts 5 and 9 on each of the three seeds, six rows here. They were copied from the generated row file by command, not retyped. `whole_floors_match_the_floor_oracle` passes on all of them with no change to any row value.
+
 ## Red comparison
 - [red-hypothesis] The pmd-red layout for a two-room monster house and the beetle floor are not checked against this note. Only the Blue values above are used.
 
@@ -49,7 +56,7 @@ Cell stride `x * 0x1C2 + y * 0x1E`. Cell shorts `+0`, `+2`, `+4`, `+6` are `x0`,
 - The meaning of cell `+0x0B`, `+0x11` and `+0x12` written by `02150CA8`.
 - Whether hallway flag 0 turns on the random pass in case 5 (not traced).
 - The per-draw order inside `CreateRoomsAndAnchors` for case 9 (the port reuses the step-4 function, so this is not decomposed here).
-- The oracle check for layouts 5 and 9 (`verification/v7-trace/floor_oracle.py --layouts 5,9`, `floor_stages.py` with a forced layout byte) was not run from this worktree: there is no `RESCUE_ROM` here.
+- The whole-floor oracle check for layouts 5 and 9 is done (see Emulator check). The per-stage `floor_stages.py` runs with a forced layout byte are not repeated here.
 - Retail floors: no retail floor uses layout 5. Layout 9 is used by 28 floors (mapparam scan, see the investigator notes).
 
 ## Links

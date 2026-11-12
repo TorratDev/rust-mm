@@ -1,7 +1,7 @@
 # Layout case 10: GenerateOuterRoomsFloor
 
 **Date:** 2026-11-12
-**Status:** [blue-verified] static (decompile and disassembly); the row link-byte sets are medium confidence; no emulator hash or RNG count was run for this layout
+**Status:** [blue-verified] static (decompile and disassembly); the row link-byte sets are medium confidence; whole-floor oracle rows for layout 10 match on all three seeds (see [Emulator check](#emulator-check-floor-oracle))
 **Subsystem:** dungeon floor generation (layout case 10)
 
 Issue: [#341](https://github.com/TorratDev/rust-mm/issues/341), parent [#111](https://github.com/TorratDev/rust-mm/issues/111). Parent notes: [`dungeon-generation.md`](dungeon-generation.md), [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md).
@@ -24,4 +24,11 @@ Issue: [#341](https://github.com/TorratDev/rust-mm/issues/341), parent [#111](ht
 - Then step 6 (flag 0), steps 7 to 13 in order; the secondary-terrain flag is set. [blue-verified]
 
 ## Rust
-`floor::outer_rooms_grid`, `floor::link_outer_rooms`, `PortedSteps::outer_rooms` (shares `standard_tail` with the standard path). Not run against the oracle. The trace-harness `PORTED_LAYOUTS` list still holds only layout 1 and needs layout 10 added before a scenario can use it.
+`floor::outer_rooms_grid`, `floor::link_outer_rooms`, `PortedSteps::outer_rooms` (shares `standard_tail` with the standard path). The whole-floor oracle rows are in `ORACLE_FLOORS` (see below). The trace-harness `PORTED_LAYOUTS` list still holds only layout 1 and needs layout 10 added before a scenario can use it.
+
+## Emulator check (floor oracle)
+- **Command:** `floor_oracle.py ROM OUT.jsonl --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts 5,9,10`, run from `verification/v7-trace/` with py-desmume (DeSmuME 0.9.12). `OUT.jsonl` is not committed. The same run covers layouts 5 and 9 ([`layout-cases-5-9.md`](layout-cases-5-9.md#emulator-check-floor-oracle)).
+- **ROM:** the probe copy of the supported dump, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- **Date:** 2026-11-12, values taken from the `generateEnd` record of each run.
+- **What is recorded:** hashes and counts only (steps, FNV-1a 64 of the tiles, stairs, room count, terrain counts). No grid, no raw output.
+- **Rows added** to `ORACLE_FLOORS` (`crates/sim/src/floor.rs`): layout 10 on each of the three seeds, three rows here. `whole_floors_match_the_floor_oracle` passes on all of them with no change to any row value. Step counts are 17037, 7223 and 8078.
