@@ -1,7 +1,5 @@
 //! Main game executable.
 //!
-//! Main game executable.
-//!
 //! Boot flow (#69): the ROM check (`boot`), then splash, title and the main menu (`scene`),
 //! driven by `app`. Drawing is placeholder blocks for now (`draw`); the original art and
 //! text are not loaded yet. Logs keyboard and gamepad input to stdout.

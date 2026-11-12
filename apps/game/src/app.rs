@@ -71,11 +71,11 @@ mod tests {
         tap(&mut app, DsButton::Start);
         assert_eq!(app.scene, Scene::Menu { cursor: 0 });
         tap(&mut app, DsButton::Down);
-        assert_eq!(app.scene, Scene::Menu { cursor: 2 });
+        assert_eq!(app.scene, Scene::Menu { cursor: 1 });
         tap(&mut app, DsButton::A);
-        assert_eq!(app.scene, Scene::Options);
+        assert_eq!(app.scene, Scene::AdventureLog);
         tap(&mut app, DsButton::B);
-        assert_eq!(app.scene, Scene::Menu { cursor: 2 });
+        assert_eq!(app.scene, Scene::Menu { cursor: 1 });
         tap(&mut app, DsButton::Up);
         tap(&mut app, DsButton::A);
         assert_eq!(app.scene, Scene::NewGame);

@@ -2,8 +2,9 @@
 //! scenes behind the menu entries. Pure logic: one [`Scene::step`] per logic tick.
 //!
 //! Order (from the title loop in `docs/re/execution-model.md`, "Start-up and the title
-//! menu"): splash, then title, then the menu. The menu entries and the placeholder
-//! scenes are ours; the original choice numbers are not mapped yet.
+//! menu"): splash, then title, then the menu. A fresh boot shows New Game and Adventure
+//! Log only (`docs/verification.md`, overlay 7 entry). Continue is added to the menu when a
+//! save exists, which needs the save crate (#77).
 
 use rescue_platform::{ButtonState, DsButton};
 
@@ -14,19 +15,11 @@ pub const SPLASH_TICKS: u32 = 90;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuItem {
     NewGame,
-    Continue,
-    Options,
+    AdventureLog,
 }
 
 impl MenuItem {
-    pub const ALL: [MenuItem; 3] = [MenuItem::NewGame, MenuItem::Continue, MenuItem::Options];
-
-    /// Continue needs a save, and saving is not implemented yet (#77), so it is shown
-    /// greyed out and the cursor skips it.
-    // shortcut: Continue is always disabled, upgrade when the save crate reads a save (#77)
-    pub fn enabled(self) -> bool {
-        self != MenuItem::Continue
-    }
+    pub const ALL: [MenuItem; 2] = [MenuItem::NewGame, MenuItem::AdventureLog];
 }
 
 /// The screen the game is on.
@@ -42,8 +35,8 @@ pub enum Scene {
     Menu {
         cursor: usize,
     },
-    /// Placeholder until the options screen exists.
-    Options,
+    /// Placeholder until the adventure log exists.
+    AdventureLog,
     /// Placeholder until the first dungeon (slice 2, #70).
     NewGame,
 }
@@ -71,39 +64,22 @@ impl Scene {
                 }
             }
             Scene::Menu { cursor } => {
-                if pressed.is_held(DsButton::Up) {
+                if pressed.is_held(DsButton::Up) || pressed.is_held(DsButton::Down) {
                     Scene::Menu {
-                        cursor: move_cursor(cursor, true),
-                    }
-                } else if pressed.is_held(DsButton::Down) {
-                    Scene::Menu {
-                        cursor: move_cursor(cursor, false),
+                        cursor: (cursor + 1) % MenuItem::ALL.len(),
                     }
                 } else if confirm {
                     match MenuItem::ALL[cursor] {
                         MenuItem::NewGame => Scene::NewGame,
-                        MenuItem::Options => Scene::Options,
-                        MenuItem::Continue => self,
+                        MenuItem::AdventureLog => Scene::AdventureLog,
                     }
                 } else {
                     self
                 }
             }
-            Scene::Options if back => Scene::Menu { cursor: 2 },
+            Scene::AdventureLog if back => Scene::Menu { cursor: 1 },
             Scene::NewGame if back => Scene::Menu { cursor: 0 },
             _ => self,
-        }
-    }
-}
-
-/// The next enabled menu entry above or below `cursor`, wrapping around.
-fn move_cursor(cursor: usize, up: bool) -> usize {
-    let n = MenuItem::ALL.len();
-    let mut c = cursor;
-    loop {
-        c = if up { (c + n - 1) % n } else { (c + 1) % n };
-        if c == cursor || MenuItem::ALL[c].enabled() {
-            return c;
         }
     }
 }
@@ -142,21 +118,20 @@ mod tests {
     }
 
     #[test]
-    fn cursor_skips_disabled_entries_and_wraps() {
-        assert_eq!(move_cursor(0, false), 2);
-        assert_eq!(move_cursor(2, false), 0);
-        assert_eq!(move_cursor(0, true), 2);
-        assert_eq!(move_cursor(2, true), 0);
-        let down = Scene::Menu { cursor: 0 }.step(press(DsButton::Down));
-        assert_eq!(down, Scene::Menu { cursor: 2 });
+    fn fresh_boot_menu_has_only_new_game_and_adventure_log() {
+        assert_eq!(MenuItem::ALL, [MenuItem::NewGame, MenuItem::AdventureLog]);
     }
 
     #[test]
-    fn continue_is_never_selected() {
-        assert!(!MenuItem::Continue.enabled());
-        // Only reachable if the cursor sits on it, which move_cursor never does.
-        let s = Scene::Menu { cursor: 1 };
-        assert_eq!(s.step(press(DsButton::A)), s);
+    fn cursor_moves_between_the_two_entries() {
+        let down = Scene::Menu { cursor: 0 }.step(press(DsButton::Down));
+        assert_eq!(down, Scene::Menu { cursor: 1 });
+        let wrapped = down.step(press(DsButton::Down));
+        assert_eq!(wrapped, Scene::Menu { cursor: 0 });
+        assert_eq!(
+            Scene::Menu { cursor: 0 }.step(press(DsButton::Up)),
+            Scene::Menu { cursor: 1 }
+        );
     }
 
     #[test]
@@ -166,18 +141,21 @@ mod tests {
             Scene::NewGame
         );
         assert_eq!(
-            Scene::Menu { cursor: 2 }.step(press(DsButton::Start)),
-            Scene::Options
+            Scene::Menu { cursor: 1 }.step(press(DsButton::Start)),
+            Scene::AdventureLog
         );
         assert_eq!(
             Scene::NewGame.step(press(DsButton::B)),
             Scene::Menu { cursor: 0 }
         );
         assert_eq!(
-            Scene::Options.step(press(DsButton::B)),
-            Scene::Menu { cursor: 2 }
+            Scene::AdventureLog.step(press(DsButton::B)),
+            Scene::Menu { cursor: 1 }
         );
-        assert_eq!(Scene::Options.step(press(DsButton::A)), Scene::Options);
+        assert_eq!(
+            Scene::AdventureLog.step(press(DsButton::A)),
+            Scene::AdventureLog
+        );
     }
 
     #[test]
