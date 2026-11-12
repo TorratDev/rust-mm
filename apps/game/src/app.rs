@@ -3,13 +3,16 @@
 use rescue_platform::{ButtonState, Flow};
 
 use crate::boot::RomCheck;
+use crate::dungeon::{self, Dungeon};
 use crate::scene::Scene;
 
-/// The running game: the current scene and last tick's held buttons.
+/// The running game: the current scene, last tick's held buttons, and the floor while the
+/// dungeon scene is up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct App {
     pub scene: Scene,
     held: ButtonState,
+    dungeon: Option<Dungeon>,
 }
 
 impl App {
@@ -21,7 +24,13 @@ impl App {
         App {
             scene,
             held: ButtonState::default(),
+            dungeon: None,
         }
+    }
+
+    /// The floor the dungeon scene shows, while it is on screen.
+    pub fn dungeon(&self) -> Option<&Dungeon> {
+        self.dungeon.as_ref()
     }
 
     /// One logic tick with the buttons held now.
@@ -39,6 +48,16 @@ impl App {
             };
         }
         self.scene = self.scene.step(pressed);
+        if self.scene == Scene::Dungeon && self.dungeon.is_none() {
+            // The floor is built on entry and dropped on leaving, so each visit starts from
+            // the same seed. If it cannot be built, the menu stays up.
+            match dungeon::build(dungeon::SEED) {
+                Some(d) => self.dungeon = Some(d),
+                None => self.scene = Scene::Menu { cursor: 0 },
+            }
+        } else if self.scene != Scene::Dungeon {
+            self.dungeon = None;
+        }
         Flow::Continue
     }
 }
@@ -78,7 +97,11 @@ mod tests {
         assert_eq!(app.scene, Scene::Menu { cursor: 1 });
         tap(&mut app, DsButton::Up);
         tap(&mut app, DsButton::A);
-        assert_eq!(app.scene, Scene::NewGame);
+        assert_eq!(app.scene, Scene::Dungeon);
+        assert!(app.dungeon().is_some(), "entering builds the floor");
+        tap(&mut app, DsButton::B);
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        assert!(app.dungeon().is_none(), "leaving drops the floor");
     }
 
     #[test]

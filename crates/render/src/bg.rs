@@ -130,6 +130,23 @@ pub fn compose(layers: &[BgLayer], palettes: &[Palette], backdrop: Rgba) -> Fram
     frame
 }
 
+/// A layer that paints each cell of `cells` (row-major, `cols` x `rows`) as one solid 8x8
+/// tile in palette index `cells[i]` of bank 0. A stand-in for a tileset until the ROM's
+/// tiles are loaded (#60). `None` if the map is empty or `cells` is not `cols * rows`.
+pub fn solid_cells_layer(cells: &[u8], cols: usize, rows: usize) -> Option<BgLayer> {
+    let tiles = (0..=u8::MAX).map(|v| [v; TILE_PIXELS]).collect();
+    let map = cells
+        .iter()
+        .map(|&v| MapEntry {
+            tile: u16::from(v),
+            hflip: false,
+            vflip: false,
+            palette: 0,
+        })
+        .collect();
+    BgLayer::new(tiles, map, cols, rows)
+}
+
 /// Builds a layer from ground-map data: layer `layer` of `bma`, with the BPC tiles
 /// followed by frame 0 of each BPA slot (a missing slot is blank), as in VRAM. Palette
 /// numbers are BPL bank indices. `Err` if the layer or a chunk is out of range.

@@ -10,6 +10,7 @@
 mod app;
 mod boot;
 mod draw;
+mod dungeon;
 mod scene;
 
 use std::path::{Path, PathBuf};
@@ -168,7 +169,7 @@ impl Game for App {
     }
 
     fn draw(&mut self, screen: Screen, p: &mut Painter<'_>) -> Result<(), PlatformError> {
-        draw::screen(self.scene, screen, p)
+        draw::screen(self.scene, self.dungeon(), screen, p)
     }
 }
 

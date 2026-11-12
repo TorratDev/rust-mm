@@ -37,8 +37,8 @@ pub enum Scene {
     },
     /// Placeholder until the adventure log exists.
     AdventureLog,
-    /// Placeholder until the first dungeon (slice 2, #70).
-    NewGame,
+    /// The dungeon: one generated floor (`dungeon`, built by `app` on entry; #70).
+    Dungeon,
 }
 
 impl Scene {
@@ -70,7 +70,7 @@ impl Scene {
                     }
                 } else if confirm {
                     match MenuItem::ALL[cursor] {
-                        MenuItem::NewGame => Scene::NewGame,
+                        MenuItem::NewGame => Scene::Dungeon,
                         MenuItem::AdventureLog => Scene::AdventureLog,
                     }
                 } else {
@@ -78,7 +78,7 @@ impl Scene {
                 }
             }
             Scene::AdventureLog if back => Scene::Menu { cursor: 1 },
-            Scene::NewGame if back => Scene::Menu { cursor: 0 },
+            Scene::Dungeon if back => Scene::Menu { cursor: 0 },
             _ => self,
         }
     }
@@ -138,14 +138,14 @@ mod tests {
     fn menu_entries_open_placeholders_and_b_returns() {
         assert_eq!(
             Scene::Menu { cursor: 0 }.step(press(DsButton::A)),
-            Scene::NewGame
+            Scene::Dungeon
         );
         assert_eq!(
             Scene::Menu { cursor: 1 }.step(press(DsButton::Start)),
             Scene::AdventureLog
         );
         assert_eq!(
-            Scene::NewGame.step(press(DsButton::B)),
+            Scene::Dungeon.step(press(DsButton::B)),
             Scene::Menu { cursor: 0 }
         );
         assert_eq!(
