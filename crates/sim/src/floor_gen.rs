@@ -5,7 +5,7 @@
 //! The steps this function calls are behind [`FloorSteps`]; this module
 //! decides when each runs and which RNG draws happen around it.
 //! [`PortedSteps`] implements them with the ported functions of
-//! [`crate::floor`]; the fixed rooms and layout cases 4 to 7, 9 and 10 are not
+//! [`crate::floor`]; the fixed rooms and layout cases 5, 9 and 10 are not
 //! ported yet.
 
 use crate::floor::{
@@ -244,7 +244,7 @@ pub trait FloorSteps {
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
 /// fixed rooms (they read the fixed-room file, game data) and the layouts of
-/// cases 4 to 7, 9 and 10 (#109) are not ported: they panic.
+/// cases 5, 9 and 10 (#109) are not ported: they panic.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
     /// Dungeon byte `+0x668`, read by `GetFloorType`.
@@ -331,6 +331,83 @@ impl PortedSteps {
         floor::generate_room_imperfections(floor, &grid, rng);
         floor::generate_secondary_structures(floor, &mut grid, &mut g.props_byte_c, &mut f, rng);
         self.store(&f, g);
+    }
+
+    /// Steps 6, 7, 9, 10, 11 and 12 as layout cases 4, 6 and 7 run them. The
+    /// hallway flag is 1, so the random pass of step 6 is skipped. Neither the
+    /// maze step nor step 13 runs.
+    fn after_links(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        grid: &mut Grid,
+        bounds: (&[i32], &[i32]),
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let (xs, ys) = bounds;
+        floor::create_hallways(floor, grid, xs, ys, true, rng);
+        floor::ensure_connected_grid(floor, grid, xs, ys, rng);
+        let ty = self.floor_type(g);
+        let mut f = self.features(g);
+        let shop = i32::from(g.props_copy_07);
+        floor::generate_shop(floor, grid, shop, ty, &mut f, rng);
+        let house = i32::from(g.props_copy_08);
+        let blocked = self.word_678 != 0;
+        floor::generate_monster_house(floor, grid, house, ty, blocked, &mut f, rng);
+        floor::generate_extra_hallways(floor, grid, GridMode::Full, i32::from(props.byte_13), rng);
+        floor::generate_room_imperfections(floor, grid, rng);
+        self.store(&f, g);
+    }
+
+    /// `GenerateCrossroadsFloor` (layout case 4): the grid, rooms and hand-set
+    /// links of [`floor::place_crossroads_rooms`], then [`Self::after_links`].
+    fn crossroads(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let mut grid = floor::place_crossroads_rooms(floor, rng);
+        let bounds = (&floor::CROSSROADS_XB[..], &floor::CROSSROADS_YB[..]);
+        self.after_links(props, floor, &mut grid, bounds, rng, g);
+    }
+
+    /// `GenerateLineFloor` (layout case 6): steps 3, 4 and 5 of the standard
+    /// path on a 5 × 1 grid, then [`Self::after_links`]. Step 3's count is not
+    /// checked, as the game does not check it here.
+    fn line(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let mut grid = Grid::new(5, 1, GridMode::Full);
+        let _rooms = floor::assign_rooms(&mut grid, props.room_density, rng);
+        let byte_c = g.props_byte_c != 0;
+        let (xs, ys) = (&floor::LINE_XB[..], &floor::LINE_YB[..]);
+        floor::place_rooms(floor, &mut grid, xs, ys, props.byte_0d, byte_c, rng);
+        floor::assign_connections(&mut grid, props.byte_05, props.byte_0b != 0, rng);
+        self.after_links(props, floor, &mut grid, (xs, ys), rng, g);
+    }
+
+    /// `GenerateCrossFloor` (layout case 7): step 4 on the 3 × 3 cross grid,
+    /// the 8 hand-set links, then [`Self::after_links`]. No step 3 or 5.
+    fn cross(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let mut grid = floor::cross_grid();
+        let byte_c = g.props_byte_c != 0;
+        let (xs, ys) = (&floor::CROSS_XB[..], &floor::CROSS_YB[..]);
+        floor::place_rooms(floor, &mut grid, xs, ys, props.byte_0d, byte_c, rng);
+        floor::link_cross(&mut grid);
+        self.after_links(props, floor, &mut grid, (xs, ys), rng, g);
     }
 
     /// `GenerateOuterRingFloor` (layout case 3): the grid setup of
@@ -422,6 +499,9 @@ impl FloorSteps for PortedSteps {
                 self.one_room_monster_house(floor, rng, g);
             }
             LayoutPlan::Other(Layout::OuterRing) => self.outer_ring(props, floor, rng, g),
+            LayoutPlan::Other(Layout::Crossroads) => self.crossroads(props, floor, rng, g),
+            LayoutPlan::Other(Layout::Line) => self.line(props, floor, rng, g),
+            LayoutPlan::Other(Layout::Cross) => self.cross(props, floor, rng, g),
             _ => panic!("layout {plan:?}: not ported (#109)"),
         }
     }
@@ -1083,6 +1163,38 @@ mod tests {
             (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room == 7))
         });
         assert!(has_last_room);
+    }
+
+    #[test]
+    fn crossroads_line_and_cross_layouts_run_without_panicking() {
+        for layout in [Layout::Crossroads, Layout::Line, Layout::Cross] {
+            let mut steps = PortedSteps::default();
+            let mut floor = Floor::new();
+            let mut rng = DungeonRng::new(0x1234_5678);
+            let mut g = GenState::default();
+            let props = FloorProperties {
+                byte_05: 10,
+                ..FloorProperties::default()
+            };
+            steps.generate_layout(
+                LayoutPlan::Other(layout),
+                &props,
+                &mut floor,
+                &mut rng,
+                &mut g,
+            );
+            let has_room = |n: u8| {
+                (0..floor::WIDTH as i32).any(|x| {
+                    (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room == n))
+                })
+            };
+            // Crossroads places 10 rooms and cross places 5 whatever the draws.
+            match layout {
+                Layout::Crossroads => assert!(has_room(9)),
+                Layout::Cross => assert!(has_room(4)),
+                _ => assert!(has_room(0)),
+            }
+        }
     }
 
     #[test]
