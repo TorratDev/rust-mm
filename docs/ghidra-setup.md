@@ -230,6 +230,43 @@ Then read `/path/outside/repo/words.txt`. Notes:
 - To cross-check a word, use `ghidra --project ... --program arm9.bin x-ref to ov_0001::ADDRESS`. It lists the loads of each pool word.
 - `disasm` at a pool word fails with "No instruction", because the word is data.
 
+## 7. Text export for read-only questions
+
+Most questions about the binary are read-only: what a function does, who refers to an address. [`RescueExport.java`](../tools/ghidra/RescueExport.java) dumps the whole project to text once, so those are answered with a text search and no bridge has to run. Several sessions can read the export at the same time, which the one-opener rule above does not allow for a project.
+
+```sh
+ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueExport.java -- ~/rescue-re/export
+```
+```powershell
+ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueExport.java -- C:\Users\you\rescue-re\export
+```
+
+Any project that holds the analysed `arm9.bin` works, for example a copy such as `rescue-arm9-a`; "Requested project program file(s) not found: arm9.bin" means the project you named holds no program. It decompiles every function, so expect it to take about as long as the analysis did. If the bridge call times out, run the script headless instead, with the bridge and the GUI closed:
+
+```sh
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" ~/rescue-re/ghidra rescue-arm9 -process arm9.bin -noanalysis -readOnly \
+  -scriptPath tools/ghidra -postScript RescueExport.java ~/rescue-re/export
+```
+
+What it writes:
+
+| File | Content |
+|---|---|
+| `ram/<address>_<name>.c`, `ov_NNNN/<address>_<name>.c` | one decompiled function each |
+| `functions.tsv` | address, name, signature, file |
+| `xrefs.tsv` | every reference to a memory address: from, from_function, type, to, to_name |
+| `FAILED` | functions that did not decompile, with the reason |
+| `STAMP` | date, program and counts, written last |
+
+Using it:
+
+- Find a function by name or address: `grep -i dungeonrand ~/rescue-re/export/functions.tsv`, then read the file it names.
+- Find references: `grep 0219d058 ~/rescue-re/export/xrefs.tsv`. Search for the bare offset, not `ov_0001::0219d058`: calls into an overlay from outside it land on the `ram` address, and the bare offset matches both.
+- No `STAMP` means the export did not finish. Do not use it.
+- The export is a snapshot. Rerun it (into an empty directory; the script refuses a non-empty one) after anything that renames or adds functions: `RescueApplySymbols.java`, `RescueRngLabels.java`, `RescueOverlayDiscover.java`.
+- It is derived from the retail ROM. Keep it outside the repository and never commit any of it ([`legal.md`](legal.md)).
+- It does not replace the bridge for memory words (see "Reading overlay memory"), disassembly, addresses outside any function, or functions listed in `FAILED`.
+
 ## Tested so far
 
 - **2026-10-14, Linux, sandbox, no retail dump.** Ghidra 11.4.3 (`ghidra_11.4.3_PUBLIC_20251203.zip`), OpenJDK 21.0.12. Synthetic ROM from [`tools/tests/synth_nds.py`](../tools/tests/synth_nds.py) (`--compress-arm9`: BLZ-compressed ARM9, two autoloads, three overlays, two of them BLZ-compressed, two sharing `0x02100000`). `import.sh` mapped 12 blocks. Analysis found the overlay functions from their static-initialiser entries. Calls from all three overlays to `0x02000020` resolved to the ARM9, and each overlay's literal-pool pointer resolved inside its own overlay space. `import.ps1` was not run (the test session could not run PowerShell).

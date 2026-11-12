@@ -9,5 +9,9 @@ decompiling from it gives correct addresses.
 
 - Tool: [ghidra-cli](https://github.com/akiselev/ghidra-cli) (v0.2.2 is the tested version).
 - Setup and the commands: [`docs/ghidra-setup.md`](docs/ghidra-setup.md#6-ghidra-cli).
+- For read-only questions (what a function does, who refers to an address), search the text
+  export in `~/rescue-re/export` first, if its `STAMP` file exists. It is ghidra-cli output
+  from the same project: [`docs/ghidra-setup.md`](docs/ghidra-setup.md#7-text-export-for-read-only-questions).
+  Start a bridge only for what the export cannot answer.
 - Record what you find as evidence in `docs/re/` (addresses, xrefs, and emulator checks marked
   apart from guesses), as described in [`docs/roadmap.md`](docs/roadmap.md).
