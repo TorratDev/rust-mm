@@ -55,6 +55,11 @@ fn row(actions: Vec<Action>) -> TurnRow {
 
 /// Writes a v2 trace with `rows` into the test temp dir and runs the CLI on it.
 fn run_cli(name: &str, rows: &[TurnRow]) -> Output {
+    run_cli_with(name, rows, &[])
+}
+
+/// As `run_cli`, with extra arguments after the trace path.
+fn run_cli_with(name: &str, rows: &[TurnRow], extra: &[&str]) -> Output {
     let header = Header {
         schema_version: SCHEMA_VERSION,
         rom: Rom {
@@ -84,8 +89,16 @@ fn run_cli(name: &str, rows: &[TurnRow]) -> Output {
     fs::write(&path, text).expect("write trace");
     Command::new(env!("CARGO_BIN_EXE_rescue-trace-harness"))
         .arg(&path)
+        .args(extra)
         .output()
         .expect("run cli")
+}
+
+/// Writes a scenario file with `text` into the test temp dir and returns its path.
+fn scenario_file(name: &str, text: &str) -> String {
+    let path: PathBuf = [env!("CARGO_TARGET_TMPDIR"), name].iter().collect();
+    fs::write(&path, text).expect("write scenario");
+    path.to_string_lossy().into_owned()
 }
 
 #[test]
@@ -112,4 +125,59 @@ fn an_unmapped_action_exits_two() {
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("row 1, action 1"), "{stderr}");
+}
+
+#[test]
+fn a_scenario_file_is_accepted_with_a_trace() {
+    let scenario = scenario_file("ok.scenario.json", r#"{"dungeonId": 3, "floorId": 1}"#);
+    let out = run_cli_with(
+        "with-scenario.jsonl",
+        &[row(vec![action(1, 0, 0, 0)]), row(vec![])],
+        &["--scenario", &scenario],
+    );
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+#[test]
+fn a_bad_scenario_exits_two_with_a_message() {
+    let cases = [
+        (
+            "missing.scenario.json",
+            r#"{"dungeonId": 3}"#,
+            "missing \"floorId\"",
+        ),
+        (
+            "float.scenario.json",
+            r#"{"dungeonId": 1.5, "floorId": 0}"#,
+            "\"dungeonId\" must be",
+        ),
+        (
+            "big.scenario.json",
+            r#"{"dungeonId": 0, "floorId": 256}"#,
+            "got 256",
+        ),
+    ];
+    for (name, text, message) in cases {
+        let scenario = scenario_file(name, text);
+        let out = run_cli_with(
+            "bad-scenario.jsonl",
+            &[row(vec![])],
+            &["--scenario", &scenario],
+        );
+        assert_eq!(out.status.code(), Some(2), "{name}: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(message), "{name}: {stderr}");
+    }
+}
+
+#[test]
+fn a_missing_scenario_file_or_flag_value_exits_two() {
+    let out = run_cli_with(
+        "no-file.jsonl",
+        &[row(vec![])],
+        &["--scenario", "no-such-dir/none.json"],
+    );
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let out = run_cli_with("no-value.jsonl", &[row(vec![])], &["--scenario"]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
 }
