@@ -5,7 +5,7 @@
 //! The steps this function calls are behind [`FloorSteps`]; this module
 //! decides when each runs and which RNG draws happen around it.
 //! [`PortedSteps`] implements them with the ported functions of
-//! [`crate::floor`]; the fixed rooms and layout case 10 are not ported yet.
+//! [`crate::floor`]; the fixed rooms are not ported yet.
 
 use crate::floor::{
     self, EnemySpawn, Floor, Grid, GridMode, Layout, LayoutPlan, MAX_LAYOUT_ATTEMPTS,
@@ -242,8 +242,8 @@ pub trait FloorSteps {
 }
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
-/// fixed rooms (they read the fixed-room file, game data) and the outer-rooms
-/// layout (case 10, #109) are not ported: they panic.
+/// fixed rooms (they read the fixed-room file, game data) are not ported: they
+/// panic.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
     /// Dungeon byte `+0x668`, read by `GetFloorType`.
@@ -315,20 +315,35 @@ impl PortedSteps {
         let byte_c = g.props_byte_c != 0;
         floor::place_rooms(floor, &mut grid, &xs, &ys, props.byte_0d, byte_c, rng);
         floor::assign_connections(&mut grid, props.byte_05, props.byte_0b != 0, rng);
-        floor::create_hallways(floor, &mut grid, &xs, &ys, false, rng);
-        floor::ensure_connected_grid(floor, &mut grid, &xs, &ys, rng);
+        self.standard_tail(props, floor, &mut grid, (&xs, &ys), mode, rng, g);
+    }
+
+    /// Steps 6 to 13 of the standard path, which case 10 runs too.
+    #[allow(clippy::too_many_arguments)]
+    fn standard_tail(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        grid: &mut Grid,
+        (xs, ys): (&[i32], &[i32]),
+        mode: GridMode,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        floor::create_hallways(floor, grid, xs, ys, false, rng);
+        floor::ensure_connected_grid(floor, grid, xs, ys, rng);
         let ty = self.floor_type(g);
         let mut f = self.features(g);
         let maze = i32::from(props.byte_09);
-        floor::generate_maze_room(floor, &mut grid, maze, g.attempt < 0, &mut f, rng);
+        floor::generate_maze_room(floor, grid, maze, g.attempt < 0, &mut f, rng);
         let shop = i32::from(g.props_copy_07);
-        floor::generate_shop(floor, &mut grid, shop, ty, &mut f, rng);
+        floor::generate_shop(floor, grid, shop, ty, &mut f, rng);
         let house = i32::from(g.props_copy_08);
         let blocked = self.word_678 != 0;
-        floor::generate_monster_house(floor, &mut grid, house, ty, blocked, &mut f, rng);
-        floor::generate_extra_hallways(floor, &grid, mode, i32::from(props.byte_13), rng);
-        floor::generate_room_imperfections(floor, &grid, rng);
-        floor::generate_secondary_structures(floor, &mut grid, &mut g.props_byte_c, &mut f, rng);
+        floor::generate_monster_house(floor, grid, house, ty, blocked, &mut f, rng);
+        floor::generate_extra_hallways(floor, grid, mode, i32::from(props.byte_13), rng);
+        floor::generate_room_imperfections(floor, grid, rng);
+        floor::generate_secondary_structures(floor, grid, &mut g.props_byte_c, &mut f, rng);
         self.store(&f, g);
     }
 
@@ -456,6 +471,27 @@ impl PortedSteps {
         self.after_links(props, floor, &mut grid, (xs, ys), rng, g);
     }
 
+    /// `GenerateOuterRoomsFloor` (layout case 10): step 2 with the interior
+    /// cells invalid, step 4 on the ring cells, the hand-set links of
+    /// [`floor::link_outer_rooms`], then steps 6 to 13 as the standard path runs
+    /// them. No step 3 or 5.
+    fn outer_rooms(
+        &mut self,
+        (grid_x, grid_y): (usize, usize),
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let (xs, ys) = floor::grid_bounds(grid_x, grid_y);
+        let mut grid = floor::outer_rooms_grid(grid_x, grid_y);
+        let byte_c = g.props_byte_c != 0;
+        floor::place_rooms(floor, &mut grid, &xs, &ys, props.byte_0d, byte_c, rng);
+        floor::link_outer_rooms(&mut grid);
+        let mode = GridMode::Full;
+        self.standard_tail(props, floor, &mut grid, (&xs, &ys), mode, rng, g);
+    }
+
     /// `GenerateOuterRingFloor` (layout case 3): the grid setup of
     /// [`floor::place_outer_ring_rooms`], then steps 5, 6, 7, 9, 10, 11 and 12 of
     /// the standard path with the outer-ring boundaries. Neither the maze step
@@ -550,7 +586,9 @@ impl FloorSteps for PortedSteps {
             LayoutPlan::Other(Layout::Cross) => self.cross(props, floor, rng, g),
             LayoutPlan::Other(Layout::TwoRoomsMonsterHouse) => self.two_rooms(floor, rng, g),
             LayoutPlan::Other(Layout::Beetle) => self.beetle(props, floor, rng, g),
-            _ => panic!("layout {plan:?}: not ported (#109)"),
+            LayoutPlan::OuterRooms { grid_x, grid_y } => {
+                self.outer_rooms((grid_x, grid_y), props, floor, rng, g);
+            }
         }
     }
     fn reset_inner_boundary(&mut self, floor: &mut Floor) {
@@ -1274,6 +1312,23 @@ mod tests {
                 // cell 1, so only rooms 0 to 3, 5, 6 and 8 keep their own number.
                 _ => assert!(has_room(1) && has_room(8) && !has_room(4) && !has_room(7)),
             }
+        }
+    }
+
+    #[test]
+    fn outer_rooms_layout_runs_on_every_grid_size() {
+        for (grid_x, grid_y) in [(2, 2), (3, 2), (2, 4), (4, 4), (5, 3), (6, 4)] {
+            let mut steps = PortedSteps::default();
+            let mut floor = Floor::new();
+            let mut rng = DungeonRng::new(0x1234_5678);
+            let mut g = GenState::default();
+            let props = FloorProperties::default();
+            let plan = LayoutPlan::OuterRooms { grid_x, grid_y };
+            steps.generate_layout(plan, &props, &mut floor, &mut rng, &mut g);
+            let has_room = (0..floor::WIDTH as i32).any(|x| {
+                (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room == 0))
+            });
+            assert!(has_room, "{grid_x}x{grid_y}");
         }
     }
 
