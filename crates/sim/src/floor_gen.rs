@@ -5,8 +5,7 @@
 //! The steps this function calls are behind [`FloorSteps`]; this module
 //! decides when each runs and which RNG draws happen around it.
 //! [`PortedSteps`] implements them with the ported functions of
-//! [`crate::floor`]; the fixed rooms and layout cases 5, 9 and 10 are not
-//! ported yet.
+//! [`crate::floor`]; the fixed rooms and layout case 10 are not ported yet.
 
 use crate::floor::{
     self, EnemySpawn, Floor, Grid, GridMode, Layout, LayoutPlan, MAX_LAYOUT_ATTEMPTS,
@@ -243,8 +242,8 @@ pub trait FloorSteps {
 }
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
-/// fixed rooms (they read the fixed-room file, game data) and the layouts of
-/// cases 5, 9 and 10 (#109) are not ported: they panic.
+/// fixed rooms (they read the fixed-room file, game data) and the outer-rooms
+/// layout (case 10, #109) are not ported: they panic.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
     /// Dungeon byte `+0x668`, read by `GetFloorType`.
@@ -357,6 +356,53 @@ impl PortedSteps {
         floor::generate_monster_house(floor, grid, house, ty, blocked, &mut f, rng);
         floor::generate_extra_hallways(floor, grid, GridMode::Full, i32::from(props.byte_13), rng);
         floor::generate_room_imperfections(floor, grid, rng);
+        self.store(&f, g);
+    }
+
+    /// `GenerateTwoRoomsWithMonsterHouseFloor` (layout case 5): the two rooms
+    /// and their link of [`floor::place_two_rooms`], step 6 with hallway flag
+    /// 0, then step 10 with chance 999. No other step runs.
+    fn two_rooms(&mut self, floor: &mut Floor, rng: &mut DungeonRng, g: &mut GenState) {
+        let mut grid = floor::place_two_rooms(floor, rng);
+        let (xs, ys) = (&floor::TWO_ROOMS_XB[..], &floor::TWO_ROOMS_YB[..]);
+        floor::create_hallways(floor, &mut grid, xs, ys, false, rng);
+        let ty = self.floor_type(g);
+        let mut f = self.features(g);
+        let blocked = self.word_678 != 0;
+        let chance = floor::TWO_ROOMS_HOUSE_CHANCE;
+        floor::generate_monster_house(floor, &mut grid, chance, ty, blocked, &mut f, rng);
+        self.store(&f, g);
+    }
+
+    /// `GenerateBeetleFloor` (layout case 9): step 4 on the 3 × 3 grid, the 12
+    /// hand-set links, step 6 with hallway flag 1, the two merges of
+    /// [`floor::merge_cells_down`] on the middle column, then steps 7, 9, 10,
+    /// 11 and 12 as [`Self::after_links`] runs them. No step 3, 5 or 13.
+    fn beetle(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let mut grid = Grid::new(3, 3, GridMode::Full);
+        let (xs, ys) = (&floor::BEETLE_XB[..], &floor::BEETLE_YB[..]);
+        let byte_c = g.props_byte_c != 0;
+        floor::place_rooms(floor, &mut grid, xs, ys, props.byte_0d, byte_c, rng);
+        floor::link_beetle(&mut grid);
+        floor::create_hallways(floor, &mut grid, xs, ys, true, rng);
+        floor::merge_cells_down(floor, &mut grid, 1, 0, 1);
+        floor::merge_cells_down(floor, &mut grid, 1, 0, 2);
+        floor::ensure_connected_grid(floor, &mut grid, xs, ys, rng);
+        let ty = self.floor_type(g);
+        let mut f = self.features(g);
+        let shop = i32::from(g.props_copy_07);
+        floor::generate_shop(floor, &mut grid, shop, ty, &mut f, rng);
+        let house = i32::from(g.props_copy_08);
+        let blocked = self.word_678 != 0;
+        floor::generate_monster_house(floor, &mut grid, house, ty, blocked, &mut f, rng);
+        floor::generate_extra_hallways(floor, &grid, GridMode::Full, i32::from(props.byte_13), rng);
+        floor::generate_room_imperfections(floor, &grid, rng);
         self.store(&f, g);
     }
 
@@ -502,6 +548,8 @@ impl FloorSteps for PortedSteps {
             LayoutPlan::Other(Layout::Crossroads) => self.crossroads(props, floor, rng, g),
             LayoutPlan::Other(Layout::Line) => self.line(props, floor, rng, g),
             LayoutPlan::Other(Layout::Cross) => self.cross(props, floor, rng, g),
+            LayoutPlan::Other(Layout::TwoRoomsMonsterHouse) => self.two_rooms(floor, rng, g),
+            LayoutPlan::Other(Layout::Beetle) => self.beetle(props, floor, rng, g),
             _ => panic!("layout {plan:?}: not ported (#109)"),
         }
     }
@@ -1193,6 +1241,38 @@ mod tests {
                 Layout::Crossroads => assert!(has_room(9)),
                 Layout::Cross => assert!(has_room(4)),
                 _ => assert!(has_room(0)),
+            }
+        }
+    }
+
+    #[test]
+    fn two_rooms_and_beetle_layouts_run_without_panicking() {
+        for layout in [Layout::TwoRoomsMonsterHouse, Layout::Beetle] {
+            let mut steps = PortedSteps::default();
+            let mut floor = Floor::new();
+            let mut rng = DungeonRng::new(0x1234_5678);
+            let mut g = GenState::default();
+            let props = FloorProperties {
+                byte_05: 10,
+                ..FloorProperties::default()
+            };
+            steps.generate_layout(
+                LayoutPlan::Other(layout),
+                &props,
+                &mut floor,
+                &mut rng,
+                &mut g,
+            );
+            let has_room = |n: u8| {
+                (0..floor::WIDTH as i32).any(|x| {
+                    (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room == n))
+                })
+            };
+            match layout {
+                Layout::TwoRoomsMonsterHouse => assert!(has_room(0) && has_room(1)),
+                // The merges give the middle column's rooms 4 and 7 the room of
+                // cell 1, so only rooms 0 to 3, 5, 6 and 8 keep their own number.
+                _ => assert!(has_room(1) && has_room(8) && !has_room(4) && !has_room(7)),
             }
         }
     }
