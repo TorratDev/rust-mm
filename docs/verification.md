@@ -589,6 +589,20 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 
 ---
 
+## #339 — Whole-floor oracle rows for layouts 4, 6 and 7
+
+- **Assumption:** the Rust ports of cases 4, 6 and 7 generate the same floors as the game for the forced seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D`, checked against `floor_oracle.py` totals and hashes (RNG steps, layout FNV-1a, stairs, rooms, terrain).
+- **Date:** 2026-11-12.
+- **Environment:** rustc 1.97.0 on Linux 7.0.0. Oracle values from the `floor_oracle.py` run recorded in [`re/layout-cases-4-6-7.md`](re/layout-cases-4-6-7.md#emulator-check-floor-oracle); probe ROM SHA-1 `6f01887356268de39085df01490347bbcc3aa330`. This session did not run the emulator (no ROM here). The values are hashes and counts only.
+- **Evidence:**
+  - Nine rows added to `ORACLE_FLOORS` in `crates/sim/src/floor.rs`.
+  - `whole_floors_match_the_floor_oracle`: fails on the first row, entry `0x12345678`, layout 4, tile hash (port `0x2f5338a16f6fb9d7`, oracle `0x2f5338a16f9fb6d7`). A temporary logging copy of the test showed the other eight rows match on every check. The temporary copy was reverted.
+  - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`: pass. `cargo test -p rescue-sim`: 92 passed, 1 failed (the oracle test above).
+- **Outcome:** 8 of 9 rows pass. Layout 4 on seed `0x12345678` fails. Layouts 6 and 7 pass on all three seeds. The failing value was not changed.
+- **Notes:** #339 stays open (PR uses `Refs #339`). Next step: re-run the oracle for layout 4 on seed `0x12345678` to rule out a transcription error, then diff the tiles if the hash still differs.
+
+---
+
 ## #69 — Slice 1 boot and menus: state on main
 
 - **Assumption:** the boot flow in `apps/game` (ROM check, splash, title, main menu, dungeon entry and back) runs headless as its scene graph describes, and the menu matches the fresh-boot evidence: New Game and Adventure Log only, with Continue added only when a save exists ([`re/execution-model.md`](re/execution-model.md#start-up-and-the-title-menu), choice table; [#161 P3](#161-p3--overlay-7-under-fault-injection)).
