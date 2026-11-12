@@ -2946,13 +2946,37 @@ pub fn place_outer_ring_rooms(floor: &mut Floor, rng: &mut DungeonRng) -> Grid {
         grid.cell_mut(GRID_X - 1, y).has_room = false;
     }
 
+    place_flagged_cells(floor, &mut grid, &OUTER_RING_XB, &OUTER_RING_YB, rng);
+
+    for (x, y, dir) in OUTER_RING_LINKS {
+        grid.cell_mut(x, y).set_link(dir);
+    }
+    grid
+}
+
+/// The cell loop of layout cases 3 and 4, in row order. An invalid cell is
+/// skipped. A cell without its room flag is an anchor: two draws (x, then y),
+/// and its tile is open floor with room `0xFF`. A room makes four draws
+/// (width, height, x, y) and takes the next room index from 0. `xb` and `yb`
+/// are the cell boundaries.
+fn place_flagged_cells(
+    floor: &mut Floor,
+    grid: &mut Grid,
+    xb: &[i32],
+    yb: &[i32],
+    rng: &mut DungeonRng,
+) {
     let mut room_index: u8 = 0;
-    for y in 0..GRID_Y {
-        for x in 0..GRID_X {
-            let (left, right) = (OUTER_RING_XB[x], OUTER_RING_XB[x + 1]);
-            let (top, bottom) = (OUTER_RING_YB[y], OUTER_RING_YB[y + 1]);
+    for y in 0..grid.grid_y {
+        for x in 0..grid.grid_x {
+            let cell = *grid.cell(x, y);
+            if cell.invalid {
+                continue;
+            }
+            let (left, right) = (xb[x], xb[x + 1]);
+            let (top, bottom) = (yb[y], yb[y + 1]);
             let (sx, sy) = (right - left, bottom - top);
-            if !grid.cell(x, y).has_room {
+            if !cell.has_room {
                 let ax = rng.range(left + 1, left + 1 + sx - 3);
                 let ay = rng.range(top + 1, top + 1 + sy - 3);
                 set_bounds(grid.cell_mut(x, y), ax, ay, ax + 1, ay + 1);
@@ -2972,11 +2996,96 @@ pub fn place_outer_ring_rooms(floor: &mut Floor, rng: &mut DungeonRng) -> Grid {
             room_index = room_index.wrapping_add(1);
         }
     }
+}
 
-    for (x, y, dir) in OUTER_RING_LINKS {
-        grid.cell_mut(x, y).set_link(dir);
+/// Column boundaries of the crossroads grid (`GenerateCrossroadsFloor`'s `xb`),
+/// 5 columns.
+pub const CROSSROADS_XB: [i32; 6] = [0, 11, 22, 33, 44, 56];
+
+/// Row boundaries of the crossroads grid, 4 rows.
+pub const CROSSROADS_YB: [i32; 5] = [1, 9, 16, 23, 31];
+
+/// Column boundaries of the line grid (`GenerateLineFloor`), 5 columns.
+pub const LINE_XB: [i32; 6] = [0, 11, 22, 33, 44, 56];
+
+/// Row boundaries of the line grid: one row.
+pub const LINE_YB: [i32; 2] = [4, 15];
+
+/// Column boundaries of the cross grid (`GenerateCrossFloor`), 3 columns.
+pub const CROSS_XB: [i32; 4] = [11, 22, 33, 44];
+
+/// Row boundaries of the cross grid, 3 rows.
+pub const CROSS_YB: [i32; 4] = [2, 11, 20, 30];
+
+/// The first part of `GenerateCrossroadsFloor` (layout case 4): the 5 × 4
+/// grid, its four invalid corners, the 6 inner anchors, the 10 border rooms
+/// and the 34 link bytes set by hand (`docs/re/layout-cases-4-6-7.md`). No
+/// connection step runs before the links.
+#[must_use]
+pub fn place_crossroads_rooms(floor: &mut Floor, rng: &mut DungeonRng) -> Grid {
+    const GRID_X: usize = 5;
+    const GRID_Y: usize = 4;
+    let mut grid = Grid::new(GRID_X, GRID_Y, GridMode::Full);
+    for (x, y) in [
+        (0, 0),
+        (GRID_X - 1, 0),
+        (0, GRID_Y - 1),
+        (GRID_X - 1, GRID_Y - 1),
+    ] {
+        grid.cell_mut(x, y).invalid = true;
+    }
+    for x in 1..GRID_X - 1 {
+        for y in 1..GRID_Y - 1 {
+            grid.cell_mut(x, y).has_room = false;
+        }
+    }
+    place_flagged_cells(floor, &mut grid, &CROSSROADS_XB, &CROSSROADS_YB, rng);
+
+    // Inner columns link vertically; the two middle rows link horizontally.
+    for x in 1..GRID_X - 1 {
+        for y in 0..GRID_Y - 1 {
+            grid.cell_mut(x, y).set_link(Dir::South);
+            grid.cell_mut(x, y + 1).set_link(Dir::North);
+        }
+    }
+    for y in 1..GRID_Y - 1 {
+        for x in 0..GRID_X - 1 {
+            grid.cell_mut(x, y).set_link(Dir::East);
+            grid.cell_mut(x + 1, y).set_link(Dir::West);
+        }
     }
     grid
+}
+
+/// The 3 × 3 grid of layout case 7 before its rooms are placed: the four
+/// corners are invalid and every other cell holds a room.
+#[must_use]
+pub fn cross_grid() -> Grid {
+    let mut grid = Grid::new(3, 3, GridMode::Full);
+    for (x, y) in [(0, 0), (2, 0), (0, 2), (2, 2)] {
+        grid.cell_mut(x, y).invalid = true;
+    }
+    grid
+}
+
+/// The 8 link bytes of layout case 7, set by hand after its rooms are placed.
+/// They join the centre cell to its four neighbours; each link is set on both
+/// cells. The middle column adds the top and bottom links, and the middle row
+/// the left and right links.
+pub fn link_cross(grid: &mut Grid) {
+    const LINKS: [(usize, usize, Dir); 8] = [
+        (0, 1, Dir::East),
+        (1, 1, Dir::West),
+        (1, 1, Dir::East),
+        (2, 1, Dir::West),
+        (1, 0, Dir::South),
+        (1, 1, Dir::North),
+        (1, 1, Dir::South),
+        (1, 2, Dir::North),
+    ];
+    for (x, y, dir) in LINKS {
+        grid.cell_mut(x, y).set_link(dir);
+    }
 }
 
 /// Layout attempts (the inner retry loop of `GenerateFloor`) before it falls
@@ -6773,5 +6882,72 @@ mod tests {
             expected.next_u16();
         }
         assert_eq!(rng, expected);
+    }
+
+    fn steps_from(seed: u32, n: usize) -> DungeonRng {
+        let mut expected = DungeonRng::new(seed);
+        for _ in 0..n {
+            expected.next_u16();
+        }
+        expected
+    }
+
+    #[test]
+    fn crossroads_roles_and_links() {
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(0x1234_5678);
+        let grid = place_crossroads_rooms(&mut floor, &mut rng);
+        let corners = [(0, 0), (4, 0), (0, 3), (4, 3)];
+        let (mut rooms, mut anchors, mut links) = (0, 0, 0);
+        for y in 0..4 {
+            for x in 0..5 {
+                let cell = grid.cell(x, y);
+                assert_eq!(cell.invalid, corners.contains(&(x, y)), "({x}, {y})");
+                if cell.invalid {
+                    continue;
+                }
+                if cell.has_room {
+                    rooms += 1;
+                } else {
+                    anchors += 1;
+                    assert!((1..=3).contains(&x) && (1..=2).contains(&y), "({x}, {y})");
+                }
+                links += cell.link_count();
+            }
+        }
+        assert_eq!((rooms, anchors), (10, 6));
+        assert_eq!(links, 34);
+    }
+
+    #[test]
+    fn crossroads_makes_48_draws() {
+        let seed = 0x1234_5678;
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(seed);
+        let _grid = place_crossroads_rooms(&mut floor, &mut rng);
+        // 6 anchors of 2 draws, 10 rooms of 3 or 4 draws: the height draw of
+        // the middle rows' rooms is Range(4, 4), which draws nothing.
+        assert_eq!(rng, steps_from(seed, 48));
+    }
+
+    #[test]
+    fn cross_grid_has_five_rooms_and_eight_links() {
+        let mut grid = cross_grid();
+        link_cross(&mut grid);
+        let corners = [(0, 0), (2, 0), (0, 2), (2, 2)];
+        let mut rooms = 0;
+        let mut total = 0;
+        for y in 0..3 {
+            for x in 0..3 {
+                let cell = grid.cell(x, y);
+                assert_eq!(cell.invalid, corners.contains(&(x, y)));
+                if !cell.invalid && cell.has_room {
+                    rooms += 1;
+                }
+                total += cell.link_count();
+            }
+        }
+        assert_eq!((rooms, total), (5, 8));
+        assert_eq!(grid.cell(1, 1).link_count(), 4);
     }
 }
