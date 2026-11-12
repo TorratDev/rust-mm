@@ -3,9 +3,10 @@
 //! Only this crate and `apps/*` may depend on SDL3 (see scripts/check-deps.sh).
 //!
 //! [`run`] opens a window, pumps events, translates keyboard and gamepad input
-//! into [`InputEvent`]s and DS buttons, advances the game in fixed ticks and draws
-//! the two 256x192 DS screens into offscreen textures that are composited into the
-//! window at an integer scale.
+//! into [`InputEvent`]s and DS buttons (with the bindings from the settings file),
+//! turns a left click on the bottom screen into DS touch coordinates, advances the
+//! game in fixed ticks and draws the two 256x192 DS screens into offscreen textures
+//! that are composited into the window at an integer scale.
 
 pub mod audio;
 pub mod input;
@@ -22,6 +23,7 @@ use rescue_render::screens::{ArrangedLayout, Arrangement};
 use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use sdl3::event::Event;
 use sdl3::gamepad::Gamepad;
+use sdl3::mouse::MouseButton;
 use sdl3::pixels::Color;
 use sdl3::render::{FRect, ScaleMode, WindowCanvas};
 use sdl3::video::FullscreenType;
@@ -143,6 +145,9 @@ impl Painter<'_> {
 pub trait Game {
     /// Called for every translated input event, before the tick that sees it.
     fn on_input(&mut self, event: &InputEvent);
+    /// Called for a left press on the bottom screen, as DS pixel coordinates (`x` 0..=255,
+    /// `y` 0..=191). Presses elsewhere are not reported. Default: ignored.
+    fn on_touch(&mut self, _x: u8, _y: u8) {}
     /// Advances the game by one fixed tick, with the DS buttons currently held.
     fn tick(&mut self, buttons: ButtonState) -> Flow;
     /// Draws one screen.
@@ -188,6 +193,7 @@ fn position_is_visible(
 /// Opens the window and runs the event/tick/draw loop until the window is closed,
 /// Escape is pressed, the game returns [`Flow::Quit`], or `config.tick_limit` ticks
 /// have run (frames, while paused). Debug keys: F5 pause, F6 step, Tab held fast-forward.
+/// Key and pad bindings are read from `config.settings_path` once, at start-up.
 pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformError> {
     let sdl = sdl3::init().map_err(ctx("SDL init"))?;
     let video = sdl.video().map_err(ctx("video subsystem"))?;
@@ -241,6 +247,11 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
     // pads already connected at start-up, so this also covers those.
     let mut open_pads: BTreeMap<u32, Gamepad> = BTreeMap::new();
     let mut buttons = ButtonState::default();
+    let bindings = config
+        .settings_path
+        .as_deref()
+        .map(settings::load_bindings)
+        .unwrap_or_default();
     let mut timestep = if config.ds_rate {
         FixedTimestep::ds(5)
     } else {
@@ -258,6 +269,19 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
 
     'main: loop {
         for event in events.poll_iter() {
+            // A left press on the bottom screen is a DS touch, not an InputEvent.
+            if let Event::MouseButtonDown {
+                mouse_btn: MouseButton::Left,
+                x,
+                y,
+                ..
+            } = event
+            {
+                if let Some((tx, ty)) = touch_point(&canvas, arrangement, config.gap, x, y) {
+                    game.on_touch(tx, ty);
+                }
+                continue;
+            }
             let translated = match event {
                 Event::Quit { .. } => break 'main,
                 Event::KeyDown {
@@ -310,15 +334,15 @@ pub fn run(config: &Config, game: &mut dyn Game) -> Result<RunStats, PlatformErr
                     scancode: Some(sc),
                     repeat: false,
                     ..
-                } => Some(key_event(sc, true)),
+                } => Some(key_event(&bindings, sc, true)),
                 Event::KeyUp {
                     scancode: Some(sc), ..
-                } => Some(key_event(sc, false)),
+                } => Some(key_event(&bindings, sc, false)),
                 Event::GamepadButtonDown { which, button, .. } => {
-                    Some(pad_event(which.raw(), button, true))
+                    Some(pad_event(&bindings, which.raw(), button, true))
                 }
                 Event::GamepadButtonUp { which, button, .. } => {
-                    Some(pad_event(which.raw(), button, false))
+                    Some(pad_event(&bindings, which.raw(), button, false))
                 }
                 Event::GamepadAdded { which, .. } => match gamepads.open(which) {
                     Ok(pad) => {
@@ -459,21 +483,54 @@ fn debug_key(scancode: sdl3::keyboard::Scancode) -> Option<DebugKey> {
     }
 }
 
-fn key_event(scancode: sdl3::keyboard::Scancode, pressed: bool) -> InputEvent {
+fn key_event(
+    bindings: &input::Bindings,
+    scancode: sdl3::keyboard::Scancode,
+    pressed: bool,
+) -> InputEvent {
     InputEvent::Key {
         key: scancode.name().to_owned(),
-        button: input::button_for_scancode(scancode),
+        button: bindings.button_for_scancode(scancode),
         pressed,
     }
 }
 
-fn pad_event(pad: u32, button: sdl3::gamepad::Button, pressed: bool) -> InputEvent {
+fn pad_event(
+    bindings: &input::Bindings,
+    pad: u32,
+    button: sdl3::gamepad::Button,
+    pressed: bool,
+) -> InputEvent {
     InputEvent::GamepadButton {
         pad,
         name: button.string(),
-        button: input::button_for_gamepad(button),
+        button: bindings.button_for_gamepad(button),
         pressed,
     }
+}
+
+/// The DS pixel under a left click at window point (`x`, `y`), if it is on the bottom screen.
+fn touch_point(
+    canvas: &WindowCanvas,
+    arrangement: Arrangement,
+    gap: u32,
+    x: f32,
+    y: f32,
+) -> Option<(u8, u8)> {
+    let (ww, wh) = canvas.window().size();
+    let (dw, dh) = canvas.output_size().ok()?;
+    if ww == 0 || wh == 0 {
+        return None;
+    }
+    let px = window_to_drawable(x, ww, dw);
+    let py = window_to_drawable(y, wh, dh);
+    layout::bottom_touch(arrangement, dw, dh, gap, px, py)
+}
+
+/// Converts a window coordinate (points) to a drawable pixel. The two differ on high-DPI
+/// displays, and the layout is drawn in drawable pixels.
+fn window_to_drawable(p: f32, window: u32, drawable: u32) -> i32 {
+    (f64::from(p) * f64::from(drawable) / f64::from(window)).floor() as i32
 }
 
 #[cfg(test)]
@@ -481,18 +538,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn window_points_scale_to_drawable_pixels() {
+        assert_eq!(window_to_drawable(10.0, 512, 512), 10);
+        assert_eq!(window_to_drawable(10.5, 512, 512), 10);
+        // A 2x display: one point is two pixels.
+        assert_eq!(window_to_drawable(10.5, 512, 1024), 21);
+        assert_eq!(window_to_drawable(-1.0, 512, 512), -1);
+    }
+
+    #[test]
     fn debug_keys_do_not_collide_with_game_input() {
+        let bindings = input::Bindings::default();
         for sc in DEBUG_SCANCODES {
             assert!(debug_key(sc).is_some());
-            assert_eq!(input::button_for_scancode(sc), None, "{sc:?}");
+            assert_eq!(bindings.button_for_scancode(sc), None, "{sc:?}");
             assert!(!input::is_quit_scancode(sc), "{sc:?}");
         }
     }
 
     #[test]
     fn window_keys_do_not_collide_with_game_or_debug_input() {
+        let bindings = input::Bindings::default();
         for sc in WINDOW_SCANCODES {
-            assert_eq!(input::button_for_scancode(sc), None, "{sc:?}");
+            assert_eq!(bindings.button_for_scancode(sc), None, "{sc:?}");
             assert!(!input::is_quit_scancode(sc), "{sc:?}");
             assert!(debug_key(sc).is_none(), "{sc:?}");
         }
