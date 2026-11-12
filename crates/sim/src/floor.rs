@@ -7058,17 +7058,7 @@ mod tests {
         let mut floor = Floor::new();
         let mut rng = DungeonRng::new(seed);
         let _ = place_two_rooms(&mut floor, &mut rng);
-        // Replay the draws: per room, width, height, x, then y.
-        let mut replay = DungeonRng::new(seed);
-        for x in 0..2 {
-            let max_w = TWO_ROOMS_XB[x + 1] - TWO_ROOMS_XB[x] - 3;
-            let max_h = TWO_ROOMS_YB[1] - TWO_ROOMS_YB[0] - 3;
-            let w = replay.range(10, max_w);
-            let h = replay.range(16, max_h);
-            replay.int(max_w - w);
-            replay.int(max_h - h);
-        }
-        // Both generators must now be in the same state.
-        assert!((0..4).all(|_| rng.next_u16() == replay.next_u16()));
+        // Four draws per room (width, height, x, y), eight in all: one RNG step each.
+        assert_eq!(rng, steps_from(seed, 8));
     }
 }
