@@ -18,7 +18,7 @@ use crate::scenario::Scenario;
 
 /// Layout cases the port generates (#111). The sim panics on the others, so they are refused
 /// before generation, by name.
-pub const PORTED_LAYOUTS: &[u8] = &[1];
+pub const PORTED_LAYOUTS: &[u8] = &[1, 10];
 
 /// LCG steps from `floorSeed | 1` to the entry of `GenerateFloor`.
 // shortcut: 10 steps checked by arithmetic on floor 1 only (#332 P2), upgrade when another
@@ -271,6 +271,14 @@ pub(crate) mod tests {
             written,
             "the interior of a generated floor is not the empty floor"
         );
+    }
+
+    #[test]
+    fn outer_rooms_layout_is_accepted() {
+        let mut props = first_floor_properties();
+        props.layout = 10;
+        let (_, layout) = generate(0x1234_5678, &props).expect("layout 10 is ported");
+        assert_eq!(layout, 10);
     }
 
     #[test]
