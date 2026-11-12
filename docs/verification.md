@@ -586,6 +586,7 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** statically confirmed for layouts 4, 6 and 7. Whole-floor oracle match: not verified for any of the three. Layouts lacking a recorded oracle run: **4 (crossroads), 6 (line) and 7 (cross)**, on all seeds. The note's open questions list the runs needed: `floor_oracle.py` on seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D` for layouts 4, 6 and 7. Confidence in the static port: medium-high. [blue-verified static]
 - **Fallback adopted:** none.
 - **Notes:** Issue #339 stays open (PR uses `Refs #339`). Closing it needs the three oracle runs and their rows in `ORACLE_FLOORS`. Earlier notes said layouts 6 and 7 were run on one seed; those runs were per-stage only, not whole-floor.
+
 ---
 
 ## #69 — Slice 1 boot and menus: state on main
@@ -602,4 +603,3 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** the placeholder flow, scene machine and headless tests are on `main` (#379, #381). The done-when is not met: the title and menu are not built from original art and text, and no ROM was configured to load them. That part is the follow-up [#380](https://github.com/TorratDev/rust-mm/issues/380). The PR for this entry is `Refs #69`.
 - **Fallback adopted:** none.
 - **Notes:** The menu entries in the code are placeholders (blocks, no text), as `draw.rs` says. The menu wording and Options question need a decision before the follow-up: either the evidence is extended to show an Options entry, or the sub-issue text is corrected.
->
