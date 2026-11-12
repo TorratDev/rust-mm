@@ -3130,6 +3130,89 @@ pub fn link_outer_rooms(grid: &mut Grid) {
     }
 }
 
+/// One entry of the fixed-room file (`fixedmap`, a SIR0 container inside
+/// `dungeon.sbin`): byte 0 width, byte 1 height, byte 2 flags, then the tile
+/// stream from byte 3. [blue-verified static: `ProcessFixedRoom`, `0214A0D4`,
+/// `02149E80`; see `docs/re/fixed-rooms.md`]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedMapEntry<'a> {
+    pub width: u8,
+    pub height: u8,
+    /// Bit 0 is read by the stamp of rooms numbered 50 and up (`02149E80`).
+    pub flags: u8,
+    /// Everything from byte 3 on, to the end of the file: the entry's own
+    /// length is not recorded, so the stream is read until the room is filled.
+    pub stream: &'a [u8],
+}
+
+/// Entry `number` of the fixed-room file `file`. The table is a `u32` array at
+/// the SIR0 content pointer (header word at `+4`); entry `number` is the file
+/// offset at index `number`. [hypothesis: the table base is the content
+/// pointer, not run; the game reads it through the file handle's `+0xC`.]
+/// `None` when the file is too short, the index is outside the table, or the
+/// entry has no header.
+#[must_use]
+pub fn fixed_map_entry(file: &[u8], number: i16) -> Option<FixedMapEntry<'_>> {
+    let word = |at: usize| -> Option<usize> {
+        let b = file.get(at..at.checked_add(4)?)?;
+        usize::try_from(u32::from_le_bytes([b[0], b[1], b[2], b[3]])).ok()
+    };
+    let table = word(4)?;
+    let at = table.checked_add(usize::try_from(number).ok()?.checked_mul(4)?)?;
+    let start = word(at)?;
+    let header = file.get(start..start.checked_add(3)?)?;
+    Some(FixedMapEntry {
+        width: header[0],
+        height: header[1],
+        flags: header[2],
+        stream: file.get(start + 3..)?,
+    })
+}
+
+/// The tile-stream decoder (`0214A348`): one tile code per call, row by row.
+/// A byte `0x0E` is an escape: the next byte is a literal code. Any other byte
+/// `b` is the code `b >> 4` repeated `(b & 0xF) + 1` times. [blue-verified
+/// static; the escape resets the repeat count: hypothesis]
+#[derive(Clone, Debug)]
+pub struct TileStream<'a> {
+    data: &'a [u8],
+    pos: usize,
+    repeat: u8,
+    code: u8,
+}
+
+impl<'a> TileStream<'a> {
+    #[must_use]
+    pub fn new(data: &'a [u8]) -> Self {
+        Self {
+            data,
+            pos: 0,
+            repeat: 0,
+            code: 0,
+        }
+    }
+
+    /// The next tile code; past the end of the data, code 0.
+    pub fn next_code(&mut self) -> u8 {
+        if self.repeat > 0 {
+            self.repeat -= 1;
+            return self.code;
+        }
+        let Some(&b) = self.data.get(self.pos) else {
+            return 0;
+        };
+        if b == 0x0E {
+            self.code = self.data.get(self.pos + 1).copied().unwrap_or(0);
+            self.pos += 2;
+        } else {
+            self.code = b >> 4;
+            self.repeat = b & 0xF;
+            self.pos += 1;
+        }
+        self.code
+    }
+}
+
 /// Column boundaries of the two-room grid (`GenerateTwoRoomsWithMonsterHouseFloor`'s
 /// `xb`), 2 columns.
 pub const TWO_ROOMS_XB: [i32; 3] = [2, 0x1C, 0x36];
@@ -7116,6 +7199,35 @@ mod tests {
         assert!((0..2).all(|x| {
             (0..2).all(|y| !small.cell(x, y).invalid && small.cell(x, y).link_count() == 0)
         }));
+    }
+
+    #[test]
+    fn fixed_map_entry_reads_header_and_stream_and_bounds_checks() {
+        // SIR0-like: table pointer at +4 = 8, entries 0 and 1 at 16 and 20.
+        let mut file = vec![0u8; 24];
+        file[4] = 8;
+        file[8] = 16;
+        file[12] = 20;
+        file[16..19].copy_from_slice(&[7, 5, 1]);
+        file[19] = 0x32;
+        file[20..23].copy_from_slice(&[0, 0, 0]);
+        let e = fixed_map_entry(&file, 0).unwrap();
+        assert_eq!((e.width, e.height, e.flags, e.stream[0]), (7, 5, 1, 0x32));
+        let e = fixed_map_entry(&file, 1).unwrap();
+        assert_eq!((e.width, e.height), (0, 0));
+        // Index 2 reads the entry bytes as a pointer, far outside the file.
+        assert!(fixed_map_entry(&file, 2).is_none());
+        assert!(fixed_map_entry(&file, -1).is_none());
+        assert!(fixed_map_entry(&file, 1000).is_none());
+        assert!(fixed_map_entry(&[1, 2], 0).is_none());
+    }
+
+    #[test]
+    fn tile_stream_runs_escapes_and_ends() {
+        // 0x21: code 2 three times; 0x0E 0x43: literal 0x43; 0x90: code 9 once.
+        let mut s = TileStream::new(&[0x21, 0x0E, 0x43, 0x90]);
+        let got: Vec<u8> = (0..7).map(|_| s.next_code()).collect();
+        assert_eq!(got, [2, 2, 0x43, 9, 0, 0, 0]);
     }
 
     #[test]
