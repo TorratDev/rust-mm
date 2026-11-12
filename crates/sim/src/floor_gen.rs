@@ -5,7 +5,7 @@
 //! The steps this function calls are behind [`FloorSteps`]; this module
 //! decides when each runs and which RNG draws happen around it.
 //! [`PortedSteps`] implements them with the ported functions of
-//! [`crate::floor`]; the fixed rooms and layout cases 3 to 7, 9 and 10 are not
+//! [`crate::floor`]; the fixed rooms and layout cases 4 to 7, 9 and 10 are not
 //! ported yet.
 
 use crate::floor::{
@@ -244,7 +244,7 @@ pub trait FloorSteps {
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
 /// fixed rooms (they read the fixed-room file, game data) and the layouts of
-/// cases 3 to 7, 9 and 10 (#109) are not ported: they panic.
+/// cases 4 to 7, 9 and 10 (#109) are not ported: they panic.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
     /// Dungeon byte `+0x668`, read by `GetFloorType`.
@@ -332,6 +332,34 @@ impl PortedSteps {
         floor::generate_secondary_structures(floor, &mut grid, &mut g.props_byte_c, &mut f, rng);
         self.store(&f, g);
     }
+
+    /// `GenerateOuterRingFloor` (layout case 3): the grid setup of
+    /// [`floor::place_outer_ring_rooms`], then steps 5, 6, 7, 9, 10, 11 and 12 of
+    /// the standard path with the outer-ring boundaries. Neither the maze step
+    /// nor step 13 runs.
+    fn outer_ring(
+        &mut self,
+        props: &FloorProperties,
+        floor: &mut Floor,
+        rng: &mut DungeonRng,
+        g: &mut GenState,
+    ) {
+        let mut grid = floor::place_outer_ring_rooms(floor, rng);
+        let (xs, ys) = (&floor::OUTER_RING_XB, &floor::OUTER_RING_YB);
+        floor::assign_connections(&mut grid, props.byte_05, props.byte_0b != 0, rng);
+        floor::create_hallways(floor, &mut grid, xs, ys, false, rng);
+        floor::ensure_connected_grid(floor, &mut grid, xs, ys, rng);
+        let ty = self.floor_type(g);
+        let mut f = self.features(g);
+        let shop = i32::from(g.props_copy_07);
+        floor::generate_shop(floor, &mut grid, shop, ty, &mut f, rng);
+        let house = i32::from(g.props_copy_08);
+        let blocked = self.word_678 != 0;
+        floor::generate_monster_house(floor, &mut grid, house, ty, blocked, &mut f, rng);
+        floor::generate_extra_hallways(floor, &grid, GridMode::Full, i32::from(props.byte_13), rng);
+        floor::generate_room_imperfections(floor, &grid, rng);
+        self.store(&f, g);
+    }
 }
 
 impl FloorSteps for PortedSteps {
@@ -393,6 +421,7 @@ impl FloorSteps for PortedSteps {
             LayoutPlan::Other(Layout::OneRoomMonsterHouse) => {
                 self.one_room_monster_house(floor, rng, g);
             }
+            LayoutPlan::Other(Layout::OuterRing) => self.outer_ring(props, floor, rng, g),
             _ => panic!("layout {plan:?}: not ported (#109)"),
         }
     }
@@ -1030,6 +1059,30 @@ mod tests {
         assert_eq!(g.props_byte_c, 1);
         assert_eq!(g.layout_byte, 0);
         assert_eq!(g.fixed_room, 0);
+    }
+
+    #[test]
+    fn outer_ring_layout_runs_without_panicking() {
+        let mut steps = PortedSteps::default();
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::new(0x1234_5678);
+        let mut g = GenState::default();
+        let props = FloorProperties {
+            byte_05: 10,
+            ..FloorProperties::default()
+        };
+        steps.generate_layout(
+            LayoutPlan::Other(Layout::OuterRing),
+            &props,
+            &mut floor,
+            &mut rng,
+            &mut g,
+        );
+        // Room 7 is the last inner room; it is only placed by the outer-ring grid.
+        let has_last_room = (0..floor::WIDTH as i32).any(|x| {
+            (0..floor::HEIGHT as i32).any(|y| floor.tile(x, y).is_some_and(|t| t.room == 7))
+        });
+        assert!(has_last_room);
     }
 
     #[test]
