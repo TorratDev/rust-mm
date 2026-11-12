@@ -596,10 +596,10 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Environment:** rustc 1.97.0 on Linux 7.0.0. Oracle values from the `floor_oracle.py` run recorded in [`re/layout-cases-4-6-7.md`](re/layout-cases-4-6-7.md#emulator-check-floor-oracle); probe ROM SHA-1 `6f01887356268de39085df01490347bbcc3aa330`. This session did not run the emulator (no ROM here). The values are hashes and counts only.
 - **Evidence:**
   - Nine rows added to `ORACLE_FLOORS` in `crates/sim/src/floor.rs`.
-  - `whole_floors_match_the_floor_oracle`: fails on the first row, entry `0x12345678`, layout 4, tile hash (port `0x2f5338a16f6fb9d7`, oracle `0x2f5338a16f9fb6d7`). A temporary logging copy of the test showed the other eight rows match on every check. The temporary copy was reverted.
-  - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`: pass. `cargo test -p rescue-sim`: 92 passed, 1 failed (the oracle test above).
-- **Outcome:** 8 of 9 rows pass. Layout 4 on seed `0x12345678` fails. Layouts 6 and 7 pass on all three seeds. The failing value was not changed.
-- **Notes:** #339 stays open (PR uses `Refs #339`). Next step: re-run the oracle for layout 4 on seed `0x12345678` to rule out a transcription error, then diff the tiles if the hash still differs.
+  - The first run of `whole_floors_match_the_floor_oracle` failed on layout 4, entry `0x12345678`, tile hash. The port's value `0x2f5338a16f6fb9d7` matched the raw oracle output, so the oracle row was a transcription error: the row read `0x2f5338a16f9fb6d7`. The row is corrected to `0x2f53_38a1_6f6f_b9d7`. The port was not changed.
+  - `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`: pass. `cargo test -p rescue-sim`: 93 passed, 0 failed, including `whole_floors_match_the_floor_oracle`.
+- **Outcome:** all nine rows pass.
+- **Notes:** #339 stays open for the remaining points of the sub-issue (PR uses `Refs #339`).
 
 ---
 

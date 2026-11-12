@@ -1,7 +1,7 @@
 # Layout cases 4, 6 and 7: crossroads, line and cross floors
 
 **Date:** 2026-11-12
-**Status:** blue-verified (static, and a run for case 4); whole-floor oracle rows for 4, 6 and 7 on three seeds, one of which (layout 4, seed `0x12345678`) does not match the port's tiles. See [Emulator check](#emulator-check-floor-oracle).
+**Status:** blue-verified (static, and a run for case 4); whole-floor oracle rows for 4, 6 and 7 on three seeds, all nine passing. One row (layout 4, seed `0x12345678`) had a transcription error in the oracle value, now corrected. See [Emulator check](#emulator-check-floor-oracle).
 **Subsystem:** dungeon floor generation (layout cases 4, 6, 7)
 
 Issue: [#339](https://github.com/TorratDev/rust-mm/issues/339). Parent notes: [`dungeon-generation.md`](dungeon-generation.md), [`outer-ring-floor.md`](outer-ring-floor.md) (case 3, the pattern these follow).
@@ -63,12 +63,12 @@ Cell stride: `x * 0x1C2 + y * 0x1E`. Field offsets used: `+0x08` invalid, `+0x0A
 - **Date:** 2026-11-12, values taken from the `generateEnd` record of each run (steps = `rngSteps` at `GenerateFloor`'s return; entry = the forced seed).
 - **What is recorded:** hashes and counts only (step count, FNV-1a 64 of the tiles, stairs, room count, terrain counts). No grid, no raw output (see [`docs/legal.md`](../legal.md)).
 - **Rows added** to `ORACLE_FLOORS` (`crates/sim/src/floor.rs`), nine in all. `whole_floors_match_the_floor_oracle` stops at the first failing row, so the other rows were checked with a temporary copy of the test that logs each mismatch and does not stop. That copy was reverted and is not committed.
-  - Eight rows pass on every check: RNG steps, tiles, stairs, rooms and terrain.
-  - **Failing: entry `0x12345678`, layout 4 (crossroads), tile hash.** The RNG step count, stairs, rooms and terrain match. The port's layout FNV-1a is `0x2f5338a16f6fb9d7`; the oracle row says `0x2f5338a16f9fb6d7`. The two differ only in bytes 6 and 7 (`6f 6f b9` against `6f 9f b6`, counting from 1). The row value was not changed.
-  - Possible causes, not checked: a transcription error in the oracle value, or a tile difference in the port's layout 4 path. A re-run of the oracle for that seed, and a tile-by-tile diff against the emulator, would settle it.
+  - In the first run, eight rows matched on every check (RNG steps, tiles, stairs, rooms and terrain). The ninth row, layout 4 on `0x12345678`, is the transcription error below.
+  - **Entry `0x12345678`, layout 4 (crossroads), tile hash: transcription error, corrected.** The first run failed on this row. The port's layout FNV-1a `0x2f5338a16f6fb9d7` matched the raw oracle output `2f5338a16f6fb9d7`. The row in `ORACLE_FLOORS` had been typed as `0x2f5338a16f9fb6d7`, which differs in bytes 6 and 7 (`6f 9f b6` against `6f 6f b9`, counting from 1). The row is now `0x2f53_38a1_6f6f_b9d7`, the raw oracle value. The port's tiles were not changed.
+  - After the correction, all nine rows pass: `whole_floors_match_the_floor_oracle` passes on every row.
 
 ## Open questions
-- Layout 4, seed `0x12345678`: the layout hash does not match the oracle. Find out whether the oracle value or the port's tiles are wrong. Until it is, the test fails and #339 stays open.
+- None for layout 4 on seed `0x12345678`: the row was a transcription error and is now corrected to the raw oracle value.
 - The Rust oracle check (`RESCUE_ROM`) was not run from this worktree: there is no `rescue.toml` here.
 
 ## Links

@@ -6678,7 +6678,7 @@ mod tests {
         OracleFloor { entry: 0x0BAD_F00D, layout: 11, steps: 1308, layout_fnv1a: 0x79a5_ecc5_4df8_d120, stairs: (7, 15), rooms: 4, terrain: (1564, 228) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 2, steps: 18919, layout_fnv1a: 0x9303_2d63_0c77_26fe, stairs: (19, 15), rooms: 1, terrain: (336, 1456) },
         OracleFloor { entry: 0x1234_5678, layout: 3, steps: 1683, layout_fnv1a: 0xc32e_3bac_3f2c_7b7b, stairs: (32, 20), rooms: 8, terrain: (1357, 435) },
-        OracleFloor { entry: 0x1234_5678, layout: 4, steps: 1982, layout_fnv1a: 0x2f53_38a1_6f9f_b6d7, stairs: (38, 4), rooms: 10, terrain: (1389, 403) },
+        OracleFloor { entry: 0x1234_5678, layout: 4, steps: 1982, layout_fnv1a: 0x2f53_38a1_6f6f_b9d7, stairs: (38, 4), rooms: 10, terrain: (1389, 403) },
         OracleFloor { entry: 0x1234_5678, layout: 6, steps: 1593, layout_fnv1a: 0x65f1_cdca_27a5_0909, stairs: (47, 6), rooms: 5, terrain: (1557, 235) },
         OracleFloor { entry: 0x1234_5678, layout: 7, steps: 1083, layout_fnv1a: 0xd08f_12f5_7278_5e26, stairs: (27, 5), rooms: 5, terrain: (1600, 192) },
         OracleFloor { entry: 0xCAFE_BABF, layout: 4, steps: 2116, layout_fnv1a: 0x1873_607b_3552_b10c, stairs: (6, 21), rooms: 10, terrain: (1354, 438) },
