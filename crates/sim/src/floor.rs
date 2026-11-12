@@ -3510,6 +3510,21 @@ pub struct FixedRoomOut {
     pub tileset_flag: bool,
     /// Item, trap and monster spawns requested; not run (object system).
     pub spawns: Vec<FixedSpawn>,
+    /// Set by a staged room (entry flags bit 0), read by the reveal
+    /// `0215277C`, which is not ported.
+    pub staged: Option<StagedRoom>,
+}
+
+/// What the stamp of a staged room (`02149E80`, entry flags bit 0) keeps for
+/// the reveal. [blue-verified static: `docs/re/fixed-rooms.md`]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StagedRoom {
+    /// Dungeon `+0xC0F0..=+0xC0FC`: the room rectangle `(x0, y0, x1, y1)`, ends exclusive.
+    pub rect: [i32; 4],
+    /// Dungeon `+0xC61C + dx * 8 + dy`: the tile code at offset `(dx, dy)` from
+    /// `(x0, y0)`. Only the first 8 by 8 offsets are kept; the staged rooms
+    /// are all at most 8 by 8 in the retail file.
+    pub codes: [u8; 64],
 }
 
 fn set_type(tile: &mut Tile, kind: u16) {
@@ -3591,12 +3606,14 @@ pub fn set_fixed_tile(
         }
         0x45 => {
             out.trap_pos = Some((x, y));
-            out.spawns.push(FixedSpawn::Trap {
-                id: 0xB,
-                x,
-                y,
-                param: 0,
-            });
+            if spawn_now {
+                out.spawns.push(FixedSpawn::Trap {
+                    id: 0xB,
+                    x,
+                    y,
+                    param: 0,
+                });
+            }
             set_type(tile, 1);
         }
         c if FIXED_TILE_CODES.contains(&c) => {
@@ -3643,7 +3660,7 @@ fn fixed_table_tile(
     } else {
         out.item_67b = item;
     }
-    if word(8) != 0 {
+    if word(8) != 0 && spawn_now {
         let (id, tag) = (word(8), e[0xA]);
         out.spawns.push(FixedSpawn::Monster {
             id,
@@ -3667,9 +3684,9 @@ fn fixed_table_tile(
 /// a wall (type 3 when [`FixedRoomOut::tileset_flag`] is set by then). `tileset`
 /// is dungeon `+0x34AE`. No RNG. The caller then runs `FinalizeJunctions`.
 ///
-/// # Panics
-/// For number 4 when the tileset flag is set: the exact bounds of the extra
-/// rectangle (x 2..4, y 5..16) are not known. See also [`set_fixed_tile`].
+/// For number 4 the rectangle x 2..=4, y 5..=16 gets terrain `0x10` and type 0
+/// after the wall pass, whatever the tileset flag (`0214A0D4`, decompiled;
+/// [blue-verified static]).
 pub fn place_fixed_room(
     floor: &mut Floor,
     number: i16,
@@ -3689,10 +3706,6 @@ pub fn place_fixed_room(
             }
         }
     }
-    assert!(
-        number != 4 || !out.tileset_flag,
-        "fixed room 4 with the tileset flag: rectangle bounds unknown"
-    );
     let outside = if out.tileset_flag { 3 } else { 0 };
     for y in 0..HEIGHT as i32 {
         for x in 0..WIDTH as i32 {
@@ -3701,6 +3714,11 @@ pub fn place_fixed_room(
                 if !in_block {
                     t.terrain |= 0x10;
                     set_type(t, outside);
+                }
+                // Number 4 only; after the wall pass, before the tileset pass.
+                if number == 4 && (2..5).contains(&x) && (5..17).contains(&y) {
+                    t.terrain |= 0x10;
+                    set_type(t, 0);
                 }
                 if tileset > 0x3F && t.terrain & TERRAIN_TYPE_MASK == 0 {
                     t.terrain |= 0x10;
@@ -3779,9 +3797,7 @@ pub fn place_fixed_grid_rooms(
 /// `02149E80`: stamps the fixed room's tile stream into `cell`'s bounds, row by
 /// row, keeping each tile's room byte. No RNG.
 ///
-/// # Panics
-/// If the entry's flags have bit 0 set: that staged room (revealed later by
-/// `0215277C`) is not ported.
+/// An entry with flags bit 0 set is a staged room: see [`stage_fixed_room`].
 pub fn stamp_fixed_room(
     floor: &mut Floor,
     cell: &GridCell,
@@ -3789,10 +3805,10 @@ pub fn stamp_fixed_room(
     table: &[u8],
     out: &mut FixedRoomOut,
 ) {
-    assert!(
-        entry.flags & 1 == 0,
-        "staged fixed room (flags bit 0): not ported"
-    );
+    if entry.flags & 1 != 0 {
+        stage_fixed_room(floor, cell, entry, table, out);
+        return;
+    }
     let mut stream = TileStream::new(entry.stream);
     for y in i32::from(cell.start_y)..i32::from(cell.end_y) {
         for x in i32::from(cell.start_x)..i32::from(cell.end_x) {
@@ -3805,6 +3821,60 @@ pub fn stamp_fixed_room(
             }
         }
     }
+}
+
+/// The staged branch of `02149E80` (entry flags bit 0; the revealed rooms of
+/// the retail file, entries 50-52, 54-60, 62, 63). Stores the room rectangle
+/// and the 8 by 8 code buffer in `out.staged`. Each tile is set into a scratch
+/// tile with spawn 0, so the room spawns nothing now, and the scratch tile is
+/// copied into the map tile, keeping the map tile's room byte. Tiles at least
+/// 2 inside the rectangle on every side then become a hidden placeholder:
+/// terrain `0x0110` and the low byte of [`Tile::unk_e`] (tile `+0xA`) set to
+/// `0xE`. The reveal `0215277C` is not ported. No RNG.
+///
+/// [blue-verified static, ROM data: `docs/re/fixed-rooms.md`]. The scratch
+/// tile starts cleared: [hypothesis, the game's scratch contents before the
+/// first tile are not run].
+fn stage_fixed_room(
+    floor: &mut Floor,
+    cell: &GridCell,
+    entry: &FixedMapEntry<'_>,
+    table: &[u8],
+    out: &mut FixedRoomOut,
+) {
+    let [x0, y0, x1, y1] = [cell.start_x, cell.start_y, cell.end_x, cell.end_y].map(i32::from);
+    let mut staged = StagedRoom {
+        rect: [x0, y0, x1, y1],
+        codes: [0; 64],
+    };
+    let mut stream = TileStream::new(entry.stream);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let code = stream.next_code();
+            let (dx, dy) = (x - x0, y - y0);
+            if (0..8).contains(&dx) && (0..8).contains(&dy) {
+                // In range by the test above, so the index is below 64.
+                staged.codes[usize::try_from(dx * 8 + dy).unwrap_or(0)] = code;
+            }
+            if let Some(t) = floor.tile_mut(x, y) {
+                let room = t.room;
+                let pos = (i16::try_from(x).unwrap_or(0), i16::try_from(y).unwrap_or(0));
+                let mut scratch = Tile::EMPTY;
+                set_fixed_tile(&mut scratch, code, pos, false, table, out);
+                *t = scratch;
+                t.room = room;
+            }
+        }
+    }
+    for y in (y0 + 2)..(y1 - 2) {
+        for x in (x0 + 2)..(x1 - 2) {
+            if let Some(t) = floor.tile_mut(x, y) {
+                t.terrain = 0x0110;
+                t.unk_e = (t.unk_e & 0xFF00) | 0x0E;
+            }
+        }
+    }
+    out.staged = Some(staged);
 }
 
 #[cfg(test)]
@@ -7650,8 +7720,11 @@ mod tests {
         assert_eq!(setter(0x43, &[], true).1.player_spawn, Some((3, 4)));
         let (t, out) = setter(7, &[], true);
         assert!(out.tileset_flag && t.terrain == 0x113);
+        // Spawn 0 records the trap position but no trap.
         let (_, out) = setter(0x45, &[], false);
         assert_eq!(out.trap_pos, Some((3, 4)));
+        assert!(out.spawns.is_empty());
+        let (_, out) = setter(0x45, &[], true);
         assert_eq!(
             out.spawns,
             [FixedSpawn::Trap {
@@ -7698,10 +7771,10 @@ mod tests {
                 },
             ]
         );
-        // Not spawning now: the item id is only kept in +0x67B.
+        // Not spawning now: the item id is only kept in +0x67B, and the monster is not spawned.
         let out = setter(0x11, &table, false).1;
         assert_eq!(out.item_67b, 5);
-        assert_eq!(out.spawns.len(), 1);
+        assert!(out.spawns.is_empty());
         // Item 0 with slot 2 records a position; a type-2 flag overrides floor; a trap fires.
         let e = &mut table[..FIXED_TILE_ENTRY_SIZE];
         (e[4], e[0xB], e[0xD], e[0xE]) = (2, 9, 6, 1);
@@ -7804,7 +7877,7 @@ mod tests {
     }
 
     #[test]
-    fn stamp_keeps_the_room_byte_and_rejects_staged_rooms() {
+    fn stamp_keeps_the_room_byte() {
         let mut floor = Floor::new();
         let cell = GridCell {
             start_x: 4,
@@ -7832,17 +7905,132 @@ mod tests {
             (3, 1)
         );
         assert_eq!(out.stairs, Some((5, 4)));
-        let staged = FixedMapEntry { flags: 1, ..entry };
-        let r = std::panic::catch_unwind(|| {
-            stamp_fixed_room(
-                &mut Floor::new(),
-                &cell,
-                &staged,
-                &[],
-                &mut FixedRoomOut::default(),
-            );
-        });
-        assert!(r.is_err());
+        assert!(out.staged.is_none());
+    }
+
+    #[test]
+    fn staged_room_is_a_placeholder_with_no_spawns() {
+        // Cell 7 x 6 at (3, 3). Code 0x11 (table entry 1: monster 0x1A5, no trap) at
+        // the first tile, stairs (code 4) at offset (2, 1). Everything else is code 0.
+        let mut stream = vec![0x0E, 0x11];
+        stream.resize(2 + 41, 0x00);
+        stream[2 + 8] = 0x40;
+        let entry = FixedMapEntry {
+            width: 7,
+            height: 6,
+            flags: 1,
+            stream: &stream,
+        };
+        let mut table = vec![0u8; 2 * FIXED_TILE_ENTRY_SIZE];
+        for e in table.chunks_mut(FIXED_TILE_ENTRY_SIZE) {
+            e[0xB] = 0x14;
+        }
+        table[FIXED_TILE_ENTRY_SIZE + 8..FIXED_TILE_ENTRY_SIZE + 10]
+            .copy_from_slice(&0x1A5i16.to_le_bytes());
+        let cell = GridCell {
+            start_x: 3,
+            start_y: 3,
+            end_x: 10,
+            end_y: 9,
+            has_room: true,
+            ..GridCell::default()
+        };
+        let mut floor = Floor::new();
+        for y in 3..9 {
+            for x in 3..10 {
+                floor.tile_mut(x, y).unwrap().room = 7;
+            }
+        }
+        let mut out = FixedRoomOut::default();
+        stamp_fixed_room(&mut floor, &cell, &entry, &table, &mut out);
+
+        // The rectangle and the 8 by 8 buffer (offset (dx, dy) at dx * 8 + dy).
+        let staged = out.staged.as_ref().expect("staged room recorded");
+        assert_eq!(staged.rect, [3, 3, 10, 9]);
+        assert_eq!((staged.codes[0], staged.codes[2 * 8 + 1]), (0x11, 4));
+        assert_eq!(staged.codes.iter().filter(|&&c| c != 0).count(), 2);
+        // Spawn 0: no monster spawn, but the stairs are still written.
+        assert!(out.spawns.is_empty());
+        assert_eq!(out.stairs, Some((5, 4)));
+        // Every tile keeps its room byte.
+        for y in 3..9 {
+            for x in 3..10 {
+                assert_eq!(floor.tile(x, y).unwrap().room, 7, "({x}, {y})");
+            }
+        }
+        // The copied scratch tile is the setter's result: the table path's type 1 at (3, 3).
+        assert_eq!(floor.tile(3, 3).unwrap().terrain & 3, 1);
+        // Tiles at least 2 inside on every side: x in 5..8, y in 5..7 (exclusive ends).
+        for y in 3..9 {
+            for x in 3..10 {
+                let t = floor.tile(x, y).unwrap();
+                let inside = (5..8).contains(&x) && (5..7).contains(&y);
+                if inside {
+                    assert_eq!((t.terrain, t.unk_e), (0x0110, 0xE), "({x}, {y})");
+                } else {
+                    assert_ne!(t.terrain, 0x0110, "({x}, {y})");
+                    assert_eq!(t.unk_e, 0, "({x}, {y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn number_4_rectangle_is_applied_with_or_without_the_tileset_flag() {
+        // One tile of code 7 at (5, 5) sets the tileset flag, so the walls are type 3.
+        let stream = [0x70];
+        let one = FixedMapEntry {
+            width: 1,
+            height: 1,
+            flags: 0,
+            stream: &stream,
+        };
+        let mut floor = Floor::new();
+        let mut out = FixedRoomOut::default();
+        place_fixed_room(&mut floor, 4, &one, 0, &[], &mut out);
+        assert!(out.tileset_flag);
+        // The rectangle x 2..=4, y 5..=16: impassable, type 0.
+        for y in 5..=16 {
+            for x in 2..=4 {
+                let t = floor.tile(x, y).unwrap();
+                assert_eq!(t.terrain & 0x13, 0x10, "({x}, {y})");
+            }
+        }
+        // Just outside the rectangle, the wall type of the flag stays (3).
+        for (x, y) in [(1, 10), (2, 4), (2, 17), (5, 16), (4, 17), (5, 17)] {
+            assert_eq!(floor.tile(x, y).unwrap().terrain & 3, 3, "({x}, {y})");
+        }
+        // The tileset pass after the rectangle: a tileset above 0x3F gives the same tiles.
+        let mut walled = Floor::new();
+        place_fixed_room(
+            &mut walled,
+            4,
+            &one,
+            0x40,
+            &[],
+            &mut FixedRoomOut::default(),
+        );
+        assert_eq!(walled.tile(4, 16).unwrap().terrain & 0x13, 0x10);
+        // Without the flag, number 4 still runs (its rectangle is type 0 either way).
+        let floor_stream = [0x00];
+        let plain = FixedMapEntry {
+            stream: &floor_stream,
+            ..one
+        };
+        let mut plain_floor = Floor::new();
+        place_fixed_room(
+            &mut plain_floor,
+            4,
+            &plain,
+            0,
+            &[],
+            &mut FixedRoomOut::default(),
+        );
+        assert_eq!(plain_floor.tile(2, 5).unwrap().terrain & 0x13, 0x10);
+        // Number 3 with the same flag gets no rectangle: (2, 5) stays a wall of type 3.
+        let mut other = Floor::new();
+        place_fixed_room(&mut other, 3, &one, 0, &[], &mut FixedRoomOut::default());
+        assert_eq!(other.tile(2, 5).unwrap().terrain & 3, 3);
     }
 
     #[test]

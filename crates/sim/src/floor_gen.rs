@@ -243,7 +243,9 @@ pub trait FloorSteps {
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
 /// fixed-room tile placement is ported except the spawns it asks for (kept in
-/// [`Self::fixed_out`]) and the staged rooms; see `docs/re/fixed-rooms.md`.
+/// [`Self::fixed_out`]) and the reveal of staged rooms (their stamp is ported,
+/// the staged record is in [`floor::FixedRoomOut::staged`]); see
+/// `docs/re/fixed-rooms.md`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
     /// The bytes of the fixed-room file (`fixedmap` in `dungeon.sbin`); game
