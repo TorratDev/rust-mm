@@ -6,12 +6,17 @@
 
 #![forbid(unsafe_code)]
 
+pub mod start;
+pub mod tiles;
+
 use std::fmt;
 use std::io::{self, BufRead};
 
 use rescue_nds::rom::KnownDump;
-use rescue_sim::state::{Monster, Snapshot, TEAM_SLOTS};
+use rescue_sim::state::{Monster, Snapshot};
 use rescue_trace::{Entity, Header, TurnRow};
+
+use crate::start::team_index;
 
 /// Row fields the comparison does not check, with the reason. `render_divergence` does not
 /// print these; the CLI prints the count on a match.
@@ -134,14 +139,15 @@ pub fn compare_row(row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
         i64::from(row.dungeon_rng),
         i64::from(dungeon.rng),
     );
-    for slot in 0..dungeon.team.len().max(TEAM_SLOTS) {
-        let expected = row.team.get(slot).copied().flatten();
-        compare_monster(
-            &mut diffs,
-            &format!("team[{slot}]"),
-            expected,
-            dungeon.team.get(slot),
-        );
+    // The sim's team has no empty slots, so each trace slot is looked up at its own index.
+    let index = team_index(&row.team);
+    for (slot, expected) in row.team.iter().enumerate() {
+        let actual = index[slot].and_then(|i| dungeon.team.get(i));
+        compare_monster(&mut diffs, &format!("team[{slot}]"), *expected, actual);
+    }
+    let mapped = index.iter().flatten().count();
+    for extra in dungeon.team.len().min(mapped)..dungeon.team.len() {
+        push(&mut diffs, &format!("team[{extra}]"), "absent", "present");
     }
     for index in 0..dungeon.wild.len().max(row.wild.len()) {
         let expected = row.wild.get(index).copied();
