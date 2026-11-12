@@ -1,20 +1,28 @@
 //! Main game executable.
 //!
-//! For now this is the platform hello-world (#26): it opens a window with the two
-//! DS screens as placeholders, logs keyboard and gamepad input to stdout, and shows
-//! the held DS buttons on the bottom screen.
+//! Boot flow (#69): the ROM check (`boot`), then splash, title and the main menu (`scene`),
+//! driven by `app`. Drawing is placeholder blocks for now (`draw`); the original art and
+//! text are not loaded yet. Logs keyboard and gamepad input to stdout.
 //!
 //! Usage: `rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
 //! environment variable) stops after N logic ticks, for headless runs in CI.
 
-use std::path::PathBuf;
+mod app;
+mod boot;
+mod draw;
+mod scene;
+
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use rescue_nds::rom::{CONFIG_FILE_NAME, ROM_PATH_ENV, SUPPORTED_DUMPS_DOC};
 use rescue_platform::{
-    ButtonState, Config, DsButton, Flow, Game, InputEvent, Painter, PlatformError, Rgb, Screen,
+    ButtonState, Config, DsButton, Flow, Game, InputEvent, Painter, PlatformError, Screen,
 };
 use rescue_render::screens::Arrangement;
-use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
+
+use crate::app::App;
+use crate::boot::RomCheck;
 
 const USAGE: &str =
     "usage: rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]
@@ -29,7 +37,8 @@ const USAGE: &str =
 Window keys: F11 = fullscreen, F10 = next layout.
 Debug keys: F5 = pause, F6 = step one tick, Tab (held) = fast-forward.
 Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
-      Enter = Start, Right Shift/Backspace = Select, Esc = quit.";
+      Enter = Start, Right Shift/Backspace = Select, Esc = quit.
+ROM: set RESCUE_ROM to a supported dump, or rom_path in rescue.toml (see docs/supported-dumps.md).";
 
 /// Where the window settings live.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,45 +158,17 @@ fn describe(event: &InputEvent) -> String {
     }
 }
 
-/// Placeholder game: a moving bar on the top screen, held buttons on the bottom.
-#[derive(Default)]
-struct HelloWorld {
-    tick: u64,
-    buttons: ButtonState,
-}
-
-impl Game for HelloWorld {
+impl Game for App {
     fn on_input(&mut self, event: &InputEvent) {
         println!("input: {}", describe(event));
     }
 
     fn tick(&mut self, buttons: ButtonState) -> Flow {
-        self.tick += 1;
-        self.buttons = buttons;
-        Flow::Continue
+        App::tick(self, buttons)
     }
 
     fn draw(&mut self, screen: Screen, p: &mut Painter<'_>) -> Result<(), PlatformError> {
-        match screen {
-            Screen::Top => {
-                p.clear(Rgb(24, 32, 72));
-                let x = (self.tick % u64::from(SCREEN_WIDTH)) as i32;
-                p.fill_rect(x, 0, 8, SCREEN_HEIGHT, Rgb(240, 200, 64))?;
-            }
-            Screen::Bottom => {
-                p.clear(Rgb(16, 56, 32));
-                // One 16x16 cell per DS button, lit while held.
-                for (i, b) in DsButton::ALL.into_iter().enumerate() {
-                    let colour = if self.buttons.is_held(b) {
-                        Rgb(250, 250, 250)
-                    } else {
-                        Rgb(40, 90, 56)
-                    };
-                    p.fill_rect(8 + 20 * i as i32, 88, 16, 16, colour)?;
-                }
-            }
-        }
-        Ok(())
+        draw::screen(self.scene, screen, p)
     }
 }
 
@@ -206,6 +187,17 @@ fn main() -> ExitCode {
     }
 
     println!("rescue: SDL {}", rescue_platform::sdl_version());
+    let rom = boot::check(
+        std::env::var_os(ROM_PATH_ENV),
+        Some(Path::new(CONFIG_FILE_NAME)),
+    );
+    match &rom {
+        RomCheck::Ready(id) => println!("rescue: ROM {}", id.dump().title),
+        RomCheck::NotConfigured => eprintln!(
+            "rescue: no ROM configured: set {ROM_PATH_ENV} or rom_path in {CONFIG_FILE_NAME} (see {SUPPORTED_DUMPS_DOC})"
+        ),
+        RomCheck::Refused(why) => eprintln!("rescue: {why}"),
+    }
     let config = Config {
         title: String::from("rescue"),
         scale: opts.scale,
@@ -223,7 +215,7 @@ fn main() -> ExitCode {
         speed: opts.speed,
         start_paused: opts.pause,
     };
-    match rescue_platform::run(&config, &mut HelloWorld::default()) {
+    match rescue_platform::run(&config, &mut App::new(&rom)) {
         Ok(stats) => {
             println!(
                 "rescue: ran {} ticks, presented {} frames, gamepads at start: {}",
