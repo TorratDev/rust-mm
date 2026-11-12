@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use rescue_nds::rom::SUPPORTED_DUMPS;
+use rescue_nds::rom::{ROM_PATH_ENV, SUPPORTED_DUMPS};
 use rescue_sim::rng::DungeonPreseed;
 use rescue_trace::{
     Action, Emulator, Entity, Header, InitialSeed, Inputs, Rom, SCHEMA_VERSION, TurnRow,
@@ -87,7 +87,9 @@ fn run_cli_with(name: &str, rows: &[TurnRow], extra: &[&str]) -> Output {
     }
     let path: PathBuf = [env!("CARGO_TARGET_TMPDIR"), name].iter().collect();
     fs::write(&path, text).expect("write trace");
+    // A developer's ROM setting must not change what these tests see.
     Command::new(env!("CARGO_BIN_EXE_rescue-trace-harness"))
+        .env_remove(ROM_PATH_ENV)
         .arg(&path)
         .args(extra)
         .output()
@@ -128,14 +130,16 @@ fn an_unmapped_action_exits_two() {
 }
 
 #[test]
-fn a_scenario_file_is_accepted_with_a_trace() {
+fn a_scenario_without_a_rom_exits_two_and_names_the_setting() {
     let scenario = scenario_file("ok.scenario.json", r#"{"dungeonId": 3, "floorId": 1}"#);
     let out = run_cli_with(
         "with-scenario.jsonl",
         &[row(vec![action(1, 0, 0, 0)]), row(vec![])],
         &["--scenario", &scenario],
     );
-    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("RESCUE_ROM"), "{stderr}");
 }
 
 #[test]

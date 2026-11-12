@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod actions;
+pub mod floor;
 pub mod scenario;
 pub mod start;
 pub mod tiles;
@@ -21,6 +22,7 @@ use std::io::{self, BufRead};
 
 use rescue_nds::rom::KnownDump;
 use rescue_sim::command::Outcome;
+use rescue_sim::floor_gen::FloorProperties;
 use rescue_sim::state::{Monster, Snapshot};
 use rescue_trace::{Entity, Header, TurnRow};
 
@@ -200,12 +202,16 @@ pub enum Replay {
 /// are mapped and applied in order, then the next row is compared. A command the sim refuses
 /// (`Blocked`) changes nothing, so the next comparison reports the difference. A command the
 /// sim does not model (`NotModelled`) stops the replay. Actions of the last row are applied
-/// but nothing compares them.
-pub fn replay(rows: &[TurnRow]) -> Result<Replay, HarnessError> {
+/// but nothing compares them. `properties` gives the first floor (see [`floor`]); `None`
+/// leaves it empty.
+pub fn replay(
+    rows: &[TurnRow],
+    properties: Option<&FloorProperties>,
+) -> Result<Replay, HarnessError> {
     let Some(first) = rows.first() else {
         return Ok(Replay::Match { rows: 0 });
     };
-    let mut state = state_from_row(first).map_err(HarnessError::Start)?;
+    let mut state = state_from_row(first, properties).map_err(HarnessError::Start)?;
     for (index, row) in rows.iter().enumerate() {
         let number = index + 1;
         let diffs = compare_row(row, &state.snapshot());

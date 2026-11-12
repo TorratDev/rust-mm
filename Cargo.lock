@@ -2877,6 +2877,8 @@ dependencies = [
 name = "rescue-trace-harness"
 version = "0.0.0"
 dependencies = [
+ "rescue-data",
+ "rescue-formats",
  "rescue-nds",
  "rescue-sim",
  "rescue-trace",

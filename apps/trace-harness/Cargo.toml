@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 rescue-sim.workspace = true
+rescue-data.workspace = true
+rescue-formats.workspace = true
 rescue-nds = { path = "../../crates/nds" }
 rescue-trace = { path = "../../crates/trace" }
 serde_json.workspace = true
