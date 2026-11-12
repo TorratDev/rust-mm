@@ -242,10 +242,13 @@ pub trait FloorSteps {
 }
 
 /// The [`FloorSteps`] made of the ported functions of [`crate::floor`]. The
-/// fixed rooms (they read the fixed-room file, game data) are not ported: they
-/// panic.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// fixed-room tile placement is not ported: `place_fixed_room` panics, but the
+/// file lookup behind [`FloorSteps::fixed_room_size`] works.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PortedSteps {
+    /// The bytes of the fixed-room file (`fixedmap` in `dungeon.sbin`); game
+    /// data, so the caller supplies it. Empty when no file is loaded.
+    pub fixed_map: Vec<u8>,
     /// Dungeon byte `+0x668`, read by `GetFloorType`.
     pub byte_668: u8,
     /// Dungeon byte `+0x641`, read by `GetFloorType`.
@@ -527,7 +530,12 @@ impl FloorSteps for PortedSteps {
         g.stairs_b = UNSET;
     }
     fn fixed_room_size(&mut self, number: i16) -> (u8, u8) {
-        panic!("fixed room {number}: the fixed-room file is not ported")
+        assert!(
+            !self.fixed_map.is_empty(),
+            "fixed room {number}: no fixed-room file loaded"
+        );
+        // An absent entry reads as no room, like a zero width or height.
+        floor::fixed_map_entry(&self.fixed_map, number).map_or((0, 0), |e| (e.width, e.height))
     }
     fn place_fixed_room(
         &mut self,
@@ -537,7 +545,7 @@ impl FloorSteps for PortedSteps {
         _rng: &mut DungeonRng,
         _g: &mut GenState,
     ) {
-        panic!("fixed room {number}: not ported")
+        panic!("fixed room {number}: the tile setter (02152B20) is not ported")
     }
     fn place_fixed_room_large(
         &mut self,
