@@ -7,13 +7,16 @@
 
 use std::fmt;
 
-use rescue_sim::floor::{HEIGHT, Tile, WIDTH};
+use rescue_sim::floor::{Floor, HEIGHT, Tile, WIDTH};
+use rescue_sim::floor_gen::FloorProperties;
 use rescue_sim::rng::DungeonPreseed;
 use rescue_sim::state::{
     DungeonSnapshot, EntityInfo, FloorSnapshot, GameState, MAX_RESTORED_FLOORS, Monster,
     NO_MONSTER_HOUSE, Snapshot, StateError, TEAM_SLOTS, TileSnapshot,
 };
 use rescue_trace::{Entity, TurnRow};
+
+use crate::floor::{FloorError, generate};
 
 /// Row fields [`state_from_row`] does not carry, so no comparison can check them. The
 /// trace's `tilesSha256` is deferred (see the sub-issue); `type` and `speedStage` have no
@@ -41,6 +44,8 @@ pub enum RowError {
     Unrepresentable { field: String, value: i64 },
     /// The sim refused the state built from the row.
     State(StateError),
+    /// The row's floor cannot be generated (see [`FloorError`]).
+    Floor(FloorError),
 }
 
 impl fmt::Display for RowError {
@@ -57,11 +62,19 @@ impl fmt::Display for RowError {
                 write!(f, "{field} = {value} cannot be represented in the sim")
             }
             Self::State(e) => write!(f, "sim refused the state: {e:?}"),
+            Self::Floor(e) => write!(f, "the floor cannot be generated: {e}"),
         }
     }
 }
 
-impl std::error::Error for RowError {}
+impl std::error::Error for RowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Floor(e) => Some(e),
+            _ => None,
+        }
+    }
+}
 
 /// Where each trace team slot sits in the sim's team list. The sim keeps only the occupied
 /// slots, in slot order, so a slot's index is the number of occupied slots before it.
@@ -79,9 +92,12 @@ pub fn team_index(team: &[Option<Entity>; TEAM_SLOTS]) -> [Option<usize>; TEAM_S
 }
 
 /// The sim state at the row's turn: the generators from the row, the floor count found on
-/// the preseed chain, and the monsters. The floor's tiles are left empty (see the shortcut
-/// in the body).
-pub fn state_from_row(row: &TurnRow) -> Result<GameState, RowError> {
+/// the preseed chain, the monsters, and the floor. With `properties`, the floor is generated
+/// from the row's `floorSeed`; without them (no scenario) it is left empty.
+pub fn state_from_row(
+    row: &TurnRow,
+    properties: Option<&FloorProperties>,
+) -> Result<GameState, RowError> {
     let floors_entered = floors_on_chain(row)?;
     let mut team = Vec::new();
     for (slot, entity) in row.team.iter().enumerate() {
@@ -96,21 +112,23 @@ pub fn state_from_row(row: &TurnRow) -> Result<GameState, RowError> {
         .enumerate()
         .map(|(index, entity)| monster(entity, &format!("wild[{index}]"), true, false))
         .collect::<Result<Vec<_>, _>>()?;
-    // shortcut: the floor is left empty, so the floor-dependent fields (tilesSha256, the
-    // walkable masks) are not reproduced; the floor is generated from floorSeed with the
-    // dungeon's FloorProperties later (P2 of #332, needs the dungeon and floor ids in the
-    // trace or scenario). Upgrade when a captured row is compared with a generated floor.
-    let tiles = vec![TileSnapshot::from(Tile::EMPTY); WIDTH * HEIGHT];
+    let (tiles, stairs) = match properties {
+        Some(props) => {
+            let (floor, _layout) = generate(row.floor_seed, props).map_err(RowError::Floor)?;
+            (floor_tiles(&floor), floor.stairs)
+        }
+        None => (vec![TileSnapshot::from(Tile::EMPTY); WIDTH * HEIGHT], None),
+    };
+    // shortcut: the generated tiles are not checked against the row's tilesSha256 (deferred
+    // to #366), and the walkable masks and graphics variants are not set, so a move can still
+    // differ from the game. Upgrade with the tile-hash check.
     let snapshot = Snapshot {
         global: row.s_prng_state,
         run_seed: row.run_seed,
         floors_entered,
         dungeon: Some(DungeonSnapshot {
             rng: row.dungeon_rng,
-            floor: FloorSnapshot {
-                tiles,
-                stairs: None,
-            },
+            floor: FloorSnapshot { tiles, stairs },
             team,
             wild,
             turn: 0,
@@ -121,6 +139,15 @@ pub fn state_from_row(row: &TurnRow) -> Result<GameState, RowError> {
         }),
     };
     GameState::restore(&snapshot).map_err(RowError::State)
+}
+
+/// The floor's tiles row by row, as the snapshot holds them.
+fn floor_tiles(floor: &Floor) -> Vec<TileSnapshot> {
+    (0..HEIGHT)
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .filter_map(|(x, y)| floor.tile(x as i32, y as i32))
+        .map(|t| TileSnapshot::from(*t))
+        .collect()
 }
 
 /// The floor count `n` such that `n` steps of the preseed chain from `runSeed` give the row's
@@ -226,7 +253,7 @@ mod tests {
             [Some(entity(1, 2, 20)), None, None, None],
             vec![],
         );
-        let state = state_from_row(&row).expect("row 3 is on the chain");
+        let state = state_from_row(&row, None).expect("row 3 is on the chain");
         assert_eq!(state.floors_entered(), 3);
         assert_eq!(state.run_seed(), 0x00FF_80BA);
         assert_eq!(state.global().state(), 0x1234);
@@ -240,7 +267,7 @@ mod tests {
             [Some(entity(10, 2, 20)), None, Some(entity(11, 3, 9)), None],
             vec![entity(4, 5, 8)],
         );
-        let state = state_from_row(&row).expect("row on the chain");
+        let state = state_from_row(&row, None).expect("row on the chain");
         let snapshot = state.snapshot();
         // Every field the start state carries; tilesSha256 is deferred and not checked.
         assert_eq!(snapshot.global, row.s_prng_state);
@@ -261,7 +288,9 @@ mod tests {
             [Some(entity(10, 2, 20)), None, Some(entity(12, 3, 9)), None],
             vec![],
         );
-        let snapshot = state_from_row(&row).expect("row on the chain").snapshot();
+        let snapshot = state_from_row(&row, None)
+            .expect("row on the chain")
+            .snapshot();
         let team = &snapshot.dungeon.as_ref().expect("dungeon").team;
         assert_eq!(team.len(), 2);
         assert_eq!(team[1].pos, (12, 4));
@@ -273,13 +302,15 @@ mod tests {
         let mut row = row_after(0x00FF_80BA, 2, [None; 4], vec![]);
         row.dungeon_preseed ^= 2;
         assert_eq!(
-            state_from_row(&row),
+            state_from_row(&row, None),
             Err(RowError::NotOnSeedChain {
                 floor_seed: row.floor_seed,
                 dungeon_preseed: row.dungeon_preseed,
             })
         );
-        let message = state_from_row(&row).expect_err("off chain").to_string();
+        let message = state_from_row(&row, None)
+            .expect_err("off chain")
+            .to_string();
         assert!(message.contains("dungeonPreseed"), "{message}");
     }
 
@@ -287,7 +318,7 @@ mod tests {
     fn a_species_the_sim_cannot_hold_is_named() {
         let row = row_after(0x00FF_80BA, 1, [None; 4], vec![entity(4, -1, 5)]);
         assert_eq!(
-            state_from_row(&row),
+            state_from_row(&row, None),
             Err(RowError::Unrepresentable {
                 field: "wild[0].species".to_owned(),
                 value: -1,
@@ -296,11 +327,40 @@ mod tests {
     }
 
     #[test]
+    fn scenario_floor_is_generated_into_the_start_state() {
+        let row = row_after(0x00FF_80BA, 1, [None; 4], vec![]);
+        let props = crate::floor::tests::first_floor_properties();
+        let snapshot = state_from_row(&row, Some(&props))
+            .expect("row on the chain")
+            .snapshot();
+        let floor = &snapshot.dungeon.as_ref().expect("dungeon").floor;
+        assert!(
+            floor
+                .tiles
+                .iter()
+                .any(|t| *t != TileSnapshot::from(Tile::EMPTY)),
+            "the generated floor is not empty"
+        );
+        assert_eq!(compare_row(&row, &snapshot), Vec::new());
+    }
+
+    #[test]
+    fn unported_layout_is_a_row_error() {
+        let row = row_after(0x00FF_80BA, 1, [None; 4], vec![]);
+        let mut props = crate::floor::tests::first_floor_properties();
+        props.layout = 3;
+        assert_eq!(
+            state_from_row(&row, Some(&props)).map(|_| ()),
+            Err(RowError::Floor(FloorError::UnportedLayout { layout: 3 }))
+        );
+    }
+
+    #[test]
     fn too_many_wild_monsters_is_refused() {
         let wild = vec![entity(1, 2, 3); 17];
         let row = row_after(0x00FF_80BA, 1, [None; 4], wild);
         assert_eq!(
-            state_from_row(&row),
+            state_from_row(&row, None),
             Err(RowError::State(StateError::WildTooLarge(17)))
         );
     }

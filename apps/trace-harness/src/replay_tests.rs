@@ -9,7 +9,7 @@ const RUN_SEED: u32 = 0x00FF_80BA;
 
 /// The replay of `rows`, which must not fail.
 fn ok(rows: &[TurnRow]) -> Replay {
-    replay(rows).expect("replay")
+    replay(rows, None).expect("replay")
 }
 
 fn action(id: u16, direction: u8, param: u8, slot: u8) -> Action {
@@ -68,7 +68,7 @@ fn a_wait_leaves_the_rows_matching() {
 #[test]
 fn a_refused_move_is_a_divergence_at_the_next_row() {
     let rows = vec![row(10, 1, vec![action(2, 2, 1, 0)]), row(11, 2, vec![])];
-    match replay(&rows) {
+    match replay(&rows, None) {
         Ok(Replay::Divergence(d)) => {
             assert_eq!(d.row, 2);
             assert_eq!(d.frame, 2);
@@ -86,7 +86,7 @@ fn a_run_of_records_is_applied_before_the_next_row() {
     // x 10 and the next row's expected x 13 is the divergence.
     let run = vec![action(2, 2, 1, 0), action(2, 2, 0, 0), action(2, 2, 0, 0)];
     let rows = vec![row(10, 1, run), row(13, 2, vec![])];
-    match replay(&rows) {
+    match replay(&rows, None) {
         Ok(Replay::Divergence(d)) => {
             assert_eq!(d.row, 2);
             assert_eq!(d.diffs[0].expected, "13");
@@ -115,7 +115,7 @@ fn a_not_modelled_command_is_a_sim_gap_with_its_row() {
 #[test]
 fn an_unmapped_action_is_a_typed_error_with_its_position() {
     let rows = vec![row(10, 1, vec![action(1, 0, 0, 0), action(0x13, 0, 0, 0)])];
-    match replay(&rows) {
+    match replay(&rows, None) {
         Err(HarnessError::Action { row, index, source }) => {
             assert_eq!((row, index), (1, 2));
             assert!(matches!(source, ActionError::NoCommand { id: 0x13, .. }));
