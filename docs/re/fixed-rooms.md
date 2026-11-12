@@ -13,12 +13,14 @@ Issue: [#342](https://github.com/TorratDev/rust-mm/issues/342), parent [#111](ht
 | `ov_0001::0214A0D4` | places a fixed room below 50 (a w x h block of decoded tiles, wall elsewhere) | [blue-verified] static |
 | `ov_0001::02150788`, `0214A3D0`, `02149E80` | rooms 50 and up: grid placement, std4 variant, stamp | [blue-verified] static |
 | `ov_0001::0214A348` | tile-stream decoder | [blue-verified] static |
-| `ov_0001::02152B20` | per-tile setter for a tile code | [blue-verified] static, codes `0x10`+ not decoded |
+| `ov_0001::02152B20` | per-tile setter for a tile code | [blue-verified] static; codes `0x10`-`0xDB` go through the 16-byte table (see Placement) |
 | `0201A54C` | `OpenFileAndGetFileDataPtr("fixedmap")` | [blue-verified] |
 
 ## File and decoder (ported)
 - `fixedmap`: SIR0 container in `dungeon.sbin`. Entry `N` is the file offset at index `N` of a `u32` array; entry = width, height, flags, tile stream. [blue-verified] for the entry; [hypothesis] that the array starts at the SIR0 content pointer (header word `+4`); the game reaches it through the file handle's `+0xC`. Not run.
-- Decoder: byte `0x0E` then a literal code; otherwise code `b >> 4` repeated `(b & 0xF) + 1` times, row by row. [blue-verified] static; [hypothesis] that the escape ## Placement (ported)
+- Decoder: byte `0x0E` then a literal code; otherwise code `b >> 4` repeated `(b & 0xF) + 1` times, row by row. [blue-verified] static; The escape is read only when the repeat count is 0 and leaves it 0, so a literal is one tile. [blue-verified] static (findings-342b).
+
+## Placement (ported)
 Sources: `~/rescue-re/scratch/findings-342.md` and `findings-342b.md` (ghidra-cli decompile and disassembly). All [blue-verified] static unless marked; no emulator run in this port.
 
 | Address | What | Rust |
@@ -35,6 +37,7 @@ Not ported, with the reason:
 - Code 7's call to `0214961C` (out-of-bounds tile global): the flag `021B45A8` is kept, the call is not.
 - Staged rooms (entry flags bit 0, revealed by `0215277C`): `stamp_fixed_room` panics. [hypothesis] that no retail room sets the bit; not checked.
 - Number 4 together with the tileset flag: the rectangle x 2..4, y 5..16 has unknown bounds, so `place_fixed_room` panics.
+- Dungeon `+0xC65C` (room byte of the last stamped tile, written by `02149E80`) is not recorded.
 - Cell byte `+0x1B` (set to 1 by `02150788`, meaning unknown) is not modelled.
 - [hypothesis] `0214A3D0` differs from `place_rooms` (height margin 4 against 3, anchors 0xFF against 0xFE, no 80 % flag draw). Taken as the findings give it; no run compares the RNG count (the earlier run for number 60: std3 to std6 = 192 steps).
 - [hypothesis] After 64 missed picks the last pick's cell is stamped.

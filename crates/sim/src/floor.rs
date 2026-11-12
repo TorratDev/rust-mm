@@ -7721,6 +7721,21 @@ mod tests {
         };
         place_fixed_room(&mut floor, 1, &entry, 0x40, &[], &mut out);
         assert_eq!(floor.tile(7, 5).unwrap().terrain & 0x13, 0x13);
+        // Tileset 0x40 walls a type-0 tile; 0x3F leaves it. The block holds a wall code (1).
+        let walled = |tileset| {
+            let stream = [0x10];
+            let one = FixedMapEntry {
+                width: 1,
+                height: 1,
+                flags: 0,
+                stream: &stream,
+            };
+            let mut f = Floor::new();
+            let mut o = FixedRoomOut::default();
+            place_fixed_room(&mut f, 1, &one, tileset, &[], &mut o);
+            f.tile(5, 5).unwrap().terrain & 0x10 != 0
+        };
+        assert!(walled(0x40) && !walled(0x3F));
     }
 
     #[test]
@@ -7750,6 +7765,8 @@ mod tests {
         let mut rng = DungeonRng::new(7);
         place_fixed_grid_rooms(&mut floor, &mut grid, (&xs, &ys), 0, (9, 7), &mut rng);
         assert!(!grid.cell(0, 0).structure && grid.cell(1, 0).structure);
+        // Picked cell: none. Room cell 1: width, height, dx, dy. Anchor: x, y. Six in all.
+        assert_eq!(rng, steps_from(7, 6));
         let a = grid.cell(2, 0);
         assert_eq!(
             floor
