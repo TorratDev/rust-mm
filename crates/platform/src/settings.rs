@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use rescue_render::screens::Arrangement;
 
+use crate::input::Bindings;
+
 /// Smallest and largest window dimension accepted from a file, in pixels.
 const MIN_SIZE: u32 = 64;
 const MAX_SIZE: u32 = 16_384;
@@ -79,13 +81,34 @@ impl WindowSettings {
             .unwrap_or_default()
     }
 
-    /// Writes `path`, creating its directory.
+    /// Writes `path`, creating its directory. Lines this struct does not own (key bindings,
+    /// anything hand-added) are kept, so saving the window does not drop them.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(path, self.to_text())
+        let kept: String = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| {
+                let key = line.split_once('=').map_or("", |(k, _)| k.trim());
+                !WINDOW_KEYS.contains(&key)
+            })
+            .map(|line| format!("{line}\n"))
+            .collect();
+        std::fs::write(path, self.to_text() + &kept)
     }
+}
+
+/// Keys [`WindowSettings`] writes; any other line in the file belongs to someone else.
+const WINDOW_KEYS: [&str; 6] = ["arrangement", "width", "height", "x", "y", "fullscreen"];
+
+/// Reads the key and pad bindings from the settings file at `path`. A missing or unreadable
+/// file gives the defaults.
+pub fn load_bindings(path: &Path) -> Bindings {
+    std::fs::read_to_string(path)
+        .map(|t| Bindings::parse(&t))
+        .unwrap_or_default()
 }
 
 /// Default settings file: `<config dir>/rescue/window.cfg`, where the config dir is
@@ -105,6 +128,9 @@ pub fn default_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::DsButton;
+    use sdl3::gamepad::Button as PadButton;
+    use sdl3::keyboard::Scancode;
 
     #[test]
     fn round_trips() {
@@ -152,5 +178,37 @@ mod tests {
             WindowSettings::default()
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_keeps_binding_lines() {
+        let dir = std::env::temp_dir().join(format!("rescue-bindings-{}", std::process::id()));
+        let path = dir.join("window.cfg");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "key.X=B\npad.a=Y\nwidth=800\nheight=600\n").unwrap();
+        let s = WindowSettings {
+            arrangement: None,
+            size: Some((1024, 768)),
+            position: None,
+            fullscreen: true,
+        };
+        s.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("width=").count(), 1);
+        assert!(
+            text.contains("key.X=B\n") && text.contains("pad.a=Y\n"),
+            "{text}"
+        );
+        assert_eq!(WindowSettings::load(&path), s);
+        let b = load_bindings(&path);
+        assert_eq!(b.button_for_scancode(Scancode::X), Some(DsButton::B));
+        assert_eq!(b.button_for_gamepad(PadButton::South), Some(DsButton::Y));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_file_gives_default_bindings() {
+        let path = std::env::temp_dir().join("rescue-no-such-window.cfg");
+        assert_eq!(load_bindings(&path), Bindings::default());
     }
 }
