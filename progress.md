@@ -14,14 +14,19 @@ Phase: 3 (Reverse engineer the original game), Epic: #5
 | #51 RE status effects | done (closed) | — | — | — | — | #189–#191 |
 | #52 RE AI | done (closed) | — | — | — | — | #193, #194 |
 | #53 RE save format | done (closed) | — | — | — | — | #197 |
-| #54 golden-trace spec | waiting: spec merged (#153); done when #56 uses it | 0 | — | — | #153 | — |
+| #54 golden-trace spec | done (closed with #56; spec #153) | 0 | — | — | #153 | — |
 | #55 trace capture scripts | done (closed) | — | — | — | — | — |
-| #56 trace-harness CLI | in progress: split into #331, #332, #333 (#68 sim core is closed) | 0 | — | — | — | — |
+| #56 trace-harness CLI | done (closed): runs on a captured trace, prints the first divergence, exits 1 | 0 | — | — | — | — |
 | #331 harness CLI, loader, diff engine | done (closed); reviewer PASS; PR #364 squash-merged (no CI checks on the repo) | 0 | executor-1 | removed | #364 | — |
-| #332 starting state from first row | partial: PR #365 merged (Refs); reviewer PASS; #332 stays open | 0 | executor-1 | removed | #365 | #366 (row-0 ROM test, tilesSha256 equality) |
-| #366 row-0 equality and tilesSha256 (follow-up of #332) | queued: needs captured trace and sim work (#111, entity model) | 0 | — | — | — | — |
-| #367 schema v2: record decoded leader action (follow-up of #333; user approved) | done (reviewer PASS); PR #368 squash-merged; #367 stays open (runtime capture unverified: no emulator) | 0 | executor-1 | removed | #368 | — |
-| #333 key inputs to sim commands | partial: option A (static). PR #369 squash-merged (Refs); reviewer PASS; #333 stays open until a captured trace runs | 0 | executor-1 | removed | #369 | captured-trace run (needs emulator) |
+| #332 starting state from first row | partial: PR #365 merged (Refs); #332 stays open; hash equality moved to #366 | 0 | executor-1 | removed | #365 | #366 |
+| #366 row-0 equality and tilesSha256 | moved to Phase 5 (#7): needs sim walkable masks and entity model | 0 | — | — | — | — |
+| #367 schema v2: record decoded leader action | done (closed): PR #368 merged; runtime capture verified | 0 | executor-1 | removed | #368 | — |
+| #333 key inputs to sim commands | done (closed): option A; PR #369 merged; movement trace steps end to end | 0 | executor-1 | removed | #369 | — |
+| #370 scenario file for dungeon and floor ids | done (issue open; PR #374 merged, Refs) | 0 | executor-1 | removed | #374 | — |
+| #371 replay floor from floorSeed and FloorProperties | done (issue open; PR #375 merged, Refs) | 0 | executor-1 | removed | #375 | — |
+| #372 movement-only trace inputs | done (closed): PR #376 merged; recording has walk actions only | 0 | executor-1 | removed | #376 | — |
+| #373 movement trace triage | done (closed): leader matches; RNG to #351, wild AI to #73 | 0 | — | — | — | #351, #73 |
+| #348 movement-only replay with no divergence | moved to Phase 5 (#7): blocked by #351 and #73 | 0 | — | — | — | — |
 | #57 REA workflow | done (closed) | — | — | — | — | — |
 | #58 blue-vs-red log | done (closed) | 1 | executor-1 | removed | #237 | — |
 | #151 glossary immune | done (closed) | — | — | — | #155 | — |
@@ -58,4 +63,6 @@ Phase: 3 (Reverse engineer the original game), Epic: #5
 | #270 message LCG check | done (closed; P1 refuted, P2 rng.md, P3 probes committed) | 1 | executor-1 | removed | #291 | — |
 | #289 docs leftovers | done (closed) | 1 | executor-2 | removed | #292, #293 | — |
 
-Platform: Windows, hc + herdr-app. Space epic-5 (sp58d5182bab871b6a812ae2d56bd07eb2), orchestrator tab tb2be6a5e9bff2db29f1adbaa5b26acd11 (t2c). Restarted 2026-11-07; resumed 2026-11-12: #56 was stale (#68 closed), now split into #331–#333. Tabs: executors (tbf330bdbaf7bfacdd7cd1d7ae8ad8f782), investigators (tbed9917e3456682367777a42a57305ab3). Ghidra copies a/b/c/r in rust-mm/rescue-re/ghidra (gitignored). Blocked on a human: #260 and #267 P2 (save image, maintainer). #54 closes with #56.
+Platform: Windows, hc + herdr-app. Space epic-5 (sp58d5182bab871b6a812ae2d56bd07eb2), orchestrator tab tb2be6a5e9bff2db29f1adbaa5b26acd11 (t2c). Restarted 2026-11-07; resumed 2026-11-12: #56 was stale (#68 closed), now split into #331–#333. Tabs: executors (tbf330bdbaf7bfacdd7cd1d7ae8ad8f782), investigators (tbed9917e3456682367777a42a57305ab3). Ghidra copies a/b/c/r in rust-mm/rescue-re/ghidra (gitignored). Blocked on a human: #260 and #267 P2 (save image, maintainer).
+
+Final status (2026-11-12): epic #5 closed. Trace harness done (#54, #56, #333, #367, #370–#373 closed or merged). Open items moved to Phase 5 (#7): #348 and #366, blocked by #351 (per-turn RNG draws) and #73 (enemy AI, wild movement). Sessions killed; no Ghidra bridges running; no executor worktrees left. Scratch captures (state.sav, golden-*.jsonl, scenario.json) are outside the repo.
