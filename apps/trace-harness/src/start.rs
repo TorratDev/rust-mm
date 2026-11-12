@@ -201,6 +201,7 @@ mod tests {
             wild,
             tiles_sha256: "0123456789abcdef".to_owned(),
             frame: 99,
+            actions: Vec::new(),
         }
     }
 

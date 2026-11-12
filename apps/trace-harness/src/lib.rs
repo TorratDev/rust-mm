@@ -355,6 +355,7 @@ mod tests {
             wild: vec![entity(4, 9)],
             tiles_sha256: "0123456789abcdef".to_owned(),
             frame,
+            actions: Vec::new(),
         }
     }
 
@@ -478,13 +479,13 @@ mod tests {
         let mut known = header();
         known.rom.sha1 = SUPPORTED_DUMPS[0].sha1.to_string();
         assert!(check_rom(&known, SUPPORTED_DUMPS).is_ok());
-        // Wrong schema version.
+        // Wrong schema version (v1 is refused now that v2 is the version read).
         let mut value = serde_json::to_value(header()).expect("to_value");
-        value["schemaVersion"] = serde_json::json!(2);
+        value["schemaVersion"] = serde_json::json!(1);
         let text = format!("{value}\n");
         assert!(matches!(
             rescue_trace::read_trace(text.as_bytes()),
-            Err(rescue_trace::TraceError::UnsupportedSchema(2))
+            Err(rescue_trace::TraceError::UnsupportedSchema(1))
         ));
     }
 

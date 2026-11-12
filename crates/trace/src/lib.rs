@@ -1,9 +1,10 @@
-//! Golden-trace format, schema version 1. The spec is `docs/golden-traces.md`.
+//! Golden-trace format, schema version 2. The spec is `docs/golden-traces.md`.
 //!
 //! A trace is JSON Lines: one header object, then one object per
-//! `RunFractionalTurn_Async` call. The row shape is the one
-//! `verification/v7-trace/retail_trace.py` writes. This crate reads and writes
-//! the format and checks the values the spec states. It holds no game data.
+//! `RunFractionalTurn_Async` call. Each row carries the leader's action records
+//! for that turn. The row shape is the one `verification/v7-trace/retail_trace.py`
+//! writes, plus `actions` (added by `scripts/capture_golden.py`). This crate reads
+//! and writes the format and checks the values the spec states. It holds no game data.
 
 #![forbid(unsafe_code)]
 
@@ -13,7 +14,7 @@ use std::io::{self, BufRead, Write};
 use serde::{Deserialize, Serialize};
 
 /// The schema version this crate reads and writes.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Input key names, as they appear in the `FRAME KEY ...` lines.
 pub const KEYS: [&str; 12] = [
@@ -82,6 +83,24 @@ pub struct TurnRow {
     pub tiles_sha256: String,
     /// Frame counter of the capture run.
     pub frame: u64,
+    /// The leader's action records for this turn, in the order the game chose them.
+    /// Empty when the leader does not act. Each record is written after its row.
+    pub actions: Vec<Action>,
+}
+
+/// One leader action, from the leader's entity info when the game chooses it.
+/// The field meanings are in the spec (`docs/golden-traces.md`, "Action record").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Action {
+    /// Raw action id, not named here (info `+0x42`).
+    pub id: u16,
+    /// The direction the game stored, 0 to 7 (info `+0x44`).
+    pub direction: u8,
+    /// Action parameter byte (info `+0x46`).
+    pub param: u8,
+    /// Move slot (info `+0x4C`).
+    pub slot: u8,
 }
 
 /// One monster, item or trap, read through its entity pointer.
@@ -274,6 +293,9 @@ fn validate(trace: &Trace) -> Result<(), TraceError> {
         if row.wild.len() > 16 {
             return invalid("wild has more than 16 entries");
         }
+        if row.actions.iter().any(|a| a.direction > 7) {
+            return invalid("action direction must be 0 to 7");
+        }
     }
     Ok(())
 }
@@ -339,14 +361,26 @@ mod tests {
             wild: vec![entity(2)],
             tiles_sha256: "0123456789abcdef".to_owned(),
             frame,
+            actions: Vec::new(),
+        }
+    }
+
+    fn action(direction: u8) -> Action {
+        Action {
+            id: 0x14,
+            direction,
+            param: 1,
+            slot: 2,
         }
     }
 
     #[test]
     fn round_trip_header_and_two_rows() {
+        let mut second = row(43, 2);
+        second.actions = vec![action(4)];
         let trace = Trace {
             header: header(),
-            rows: vec![row(42, 1), row(43, 2)],
+            rows: vec![row(42, 1), second],
         };
         let mut bytes = Vec::new();
         write_trace(&mut bytes, &trace).expect("write");
@@ -356,7 +390,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_schema_version() {
-        for version in [0_u64, 2] {
+        for version in [0_u64, 1, 3] {
             let mut value = serde_json::to_value(header()).expect("to_value");
             value["schemaVersion"] = serde_json::json!(version);
             let text = format!("{value}\n");
@@ -370,22 +404,53 @@ mod tests {
     }
 
     #[test]
-    fn accepts_row_exactly_as_retail_trace_py_emits_it() {
-        // `json.dumps(row, sort_keys=True)` from retail_trace.py, for a synthetic row
-        // with one team member and no wild Pokemon.
-        let line = r#"{"dungeonPreseed": 1431655765, "dungeonRng": 2863311531, "floorSeed": 654321, "fractionalTurn": 0, "frame": 42, "runSeed": 123456, "sPRNGState": 3735928559, "team": [{"hp": 20, "level": 5, "maxHp": 25, "species": 1, "speedStage": 6, "type": 1, "x": 10, "y": 12}, null, null, null], "tilesSha256": "0123456789abcdef", "wild": []}"#;
-        let parsed: TurnRow = serde_json::from_str(line).expect("retail row");
+    fn accepts_row_with_one_action_as_capture_writes_it() {
+        // `json.dumps(row, sort_keys=True)` as capture_golden.py writes it: retail_trace.py's
+        // row plus `actions`. One team member, no wild Pokemon, one leader action.
+        let line = r#"{"actions": [{"direction": 4, "id": 20, "param": 1, "slot": 0}], "dungeonPreseed": 1431655765, "dungeonRng": 2863311531, "floorSeed": 654321, "fractionalTurn": 0, "frame": 42, "runSeed": 123456, "sPRNGState": 3735928559, "team": [{"hp": 20, "level": 5, "maxHp": 25, "species": 1, "speedStage": 6, "type": 1, "x": 10, "y": 12}, null, null, null], "tilesSha256": "0123456789abcdef", "wild": []}"#;
+        let parsed: TurnRow = serde_json::from_str(line).expect("v2 row");
         assert_eq!(parsed.s_prng_state, 3_735_928_559);
         assert_eq!(parsed.frame, 42);
         assert_eq!(parsed.team[0].map(|e| e.max_hp), Some(25));
         assert!(parsed.team[1].is_none());
         assert!(parsed.wild.is_empty());
+        let expected = Action {
+            id: 20,
+            direction: 4,
+            param: 1,
+            slot: 0,
+        };
+        assert_eq!(parsed.actions, vec![expected]);
+    }
+
+    #[test]
+    fn row_without_actions_key_is_rejected() {
+        // A v1-shaped row: the key is required in v2, so a missing key is an error.
+        let line = r#"{"dungeonPreseed": 1, "dungeonRng": 2, "floorSeed": 3, "fractionalTurn": 0, "frame": 4, "runSeed": 5, "sPRNGState": 6, "team": [null, null, null, null], "tilesSha256": "0123456789abcdef", "wild": []}"#;
+        assert!(serde_json::from_str::<TurnRow>(line).is_err());
     }
 
     #[test]
     fn rejects_unknown_row_field_such_as_inventory() {
-        let line = r#"{"dungeonPreseed": 1, "dungeonRng": 2, "floorSeed": 3, "fractionalTurn": 0, "frame": 4, "inventory": [], "runSeed": 5, "sPRNGState": 6, "team": [null, null, null, null], "tilesSha256": "0123456789abcdef", "wild": []}"#;
+        let line = r#"{"actions": [], "dungeonPreseed": 1, "dungeonRng": 2, "floorSeed": 3, "fractionalTurn": 0, "frame": 4, "inventory": [], "runSeed": 5, "sPRNGState": 6, "team": [null, null, null, null], "tilesSha256": "0123456789abcdef", "wild": []}"#;
         assert!(serde_json::from_str::<TurnRow>(line).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_action_field() {
+        let line = r#"{"direction": 4, "id": 20, "kind": "move", "param": 1, "slot": 0}"#;
+        assert!(serde_json::from_str::<Action>(line).is_err());
+    }
+
+    #[test]
+    fn rejects_action_direction_above_seven() {
+        let mut bad = row(1, 1);
+        bad.actions = vec![action(8)];
+        let trace = Trace {
+            header: header(),
+            rows: vec![bad],
+        };
+        assert!(matches!(validate(&trace), Err(TraceError::Invalid(_))));
     }
 
     #[test]
