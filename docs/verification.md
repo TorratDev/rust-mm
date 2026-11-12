@@ -603,6 +603,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 
 ---
 
+## #340 — Whole-floor oracle rows for layouts 5, 9 and 10
+
+- **Assumption:** the Rust ports of cases 5 (two rooms with a monster house), 9 (beetle) and 10 (outer rooms) generate the same floors as the game for the forced seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D`, checked against `floor_oracle.py` totals and hashes (RNG steps, layout FNV-1a, stairs, rooms, terrain).
+- **Date:** 2026-11-12.
+- **Environment:** rustc 1.97.0 on Linux 7.0.0. Oracle values from the `floor_oracle.py` run recorded in [`re/layout-cases-5-9.md`](re/layout-cases-5-9.md#emulator-check-floor-oracle) and [`re/layout-case-10.md`](re/layout-case-10.md#emulator-check-floor-oracle). Command: `floor_oracle.py ROM OUT.jsonl --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts 5,9,10`, run with py-desmume (DeSmuME 0.9.12). Probe ROM SHA-1 `6f01887356268de39085df01490347bbcc3aa330`. The values are hashes and counts only; the raw output is not committed.
+- **Evidence:**
+  - Nine rows added to `ORACLE_FLOORS` in `crates/sim/src/floor.rs`, copied from the generated row file by command.
+  - `whole_floors_match_the_floor_oracle` passes with all nine rows, with no row value changed.
+  - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass. `cargo test -p rescue-sim`: 93 passed, 0 failed.
+- **Outcome:** all nine rows pass, so the PR closes #340 and #341 (`Closes #340`, `Closes #341`).
+- **Notes:** the port was not changed. The emulator run was made outside this worktree (its raw output stays in the scratch area); this session did not run the emulator, and checked the rows against the port with the test.
+- **Fallback adopted:** none.
+
+---
+
 ## #69 — Slice 1 boot and menus: state on main
 
 - **Assumption:** the boot flow in `apps/game` (ROM check, splash, title, main menu, dungeon entry and back) runs headless as its scene graph describes, and the menu matches the fresh-boot evidence: New Game and Adventure Log only, with Continue added only when a save exists ([`re/execution-model.md`](re/execution-model.md#start-up-and-the-title-menu), choice table; [#161 P3](#161-p3--overlay-7-under-fault-injection)).
