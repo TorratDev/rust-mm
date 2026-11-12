@@ -12,3 +12,6 @@ workspace = true
 
 [dependencies]
 rescue-sim.workspace = true
+rescue-nds = { path = "../../crates/nds" }
+rescue-trace = { path = "../../crates/trace" }
+serde_json.workspace = true
