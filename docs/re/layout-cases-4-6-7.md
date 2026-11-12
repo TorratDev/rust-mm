@@ -1,7 +1,7 @@
 # Layout cases 4, 6 and 7: crossroads, line and cross floors
 
 **Date:** 2026-11-12
-**Status:** blue-verified (static, and a run for case 4)
+**Status:** blue-verified (static, and a run for case 4); whole-floor oracle rows for 4, 6 and 7 on three seeds, all nine passing. One row (layout 4, seed `0x12345678`) had a transcription error in the oracle value, now corrected. See [Emulator check](#emulator-check-floor-oracle).
 **Subsystem:** dungeon floor generation (layout cases 4, 6, 7)
 
 Issue: [#339](https://github.com/TorratDev/rust-mm/issues/339). Parent notes: [`dungeon-generation.md`](dungeon-generation.md), [`outer-ring-floor.md`](outer-ring-floor.md) (case 3, the pattern these follow).
@@ -55,11 +55,20 @@ Cell stride: `x * 0x1C2 + y * 0x1E`. Field offsets used: `+0x08` invalid, `+0x0A
 ## Port check (#339, 2026-11-12)
 - The Rust ports were compared with this note by reading the code: the three grids and bounds, the invalid corners, the anchor and room draw formulas, the hand-set links (18 and 16 bytes for case 4, 8 for case 7), the hallway flag, and the secondary-terrain flag. No mismatch was found, and the code needed no change.
 - `cargo test -p rescue-sim` passes (93 tests), including the case 4 link and draw-count tests and the case 7 link test. There is no test that checks the case 6 bounds or links beyond the no-panic run.
-- Whole-floor oracle rows: none added. This note records no whole-floor oracle values (steps, layout hash, stairs, rooms, terrain) for layouts 4, 6 or 7, so the table `ORACLE_FLOORS` has no rows for them.
-- **Layouts lacking a whole-floor oracle run: 4 (crossroads), 6 (line) and 7 (cross), on every seed.** Case 4 has per-draw counts from runs on three seeds; cases 6 and 7 have per-stage counts on one seed. None of these are oracle totals.
+- Whole-floor oracle rows: none in this check. They were added later, from the emulator run in [Emulator check](#emulator-check-floor-oracle).
+
+## Emulator check (floor oracle)
+- **Command:** `floor_oracle.py ROM OUT.jsonl --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts 4,6,7`, run from `verification/v7-trace/` with py-desmume 0.0.9. `OUT.jsonl` is not committed.
+- **ROM:** the probe copy of the supported dump, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`. Script: `floor_oracle.py`, SHA-1 `5515cabe4adadb664fd862227ace80e9c0d87acf`.
+- **Date:** 2026-11-12, values taken from the `generateEnd` record of each run (steps = `rngSteps` at `GenerateFloor`'s return; entry = the forced seed).
+- **What is recorded:** hashes and counts only (step count, FNV-1a 64 of the tiles, stairs, room count, terrain counts). No grid, no raw output (see [`docs/legal.md`](../legal.md)).
+- **Rows added** to `ORACLE_FLOORS` (`crates/sim/src/floor.rs`), nine in all. `whole_floors_match_the_floor_oracle` stops at the first failing row, so the other rows were checked with a temporary copy of the test that logs each mismatch and does not stop. That copy was reverted and is not committed.
+  - In the first run, eight rows matched on every check (RNG steps, tiles, stairs, rooms and terrain). The ninth row, layout 4 on `0x12345678`, is the transcription error below.
+  - **Entry `0x12345678`, layout 4 (crossroads), tile hash: transcription error, corrected.** The first run failed on this row. The port's layout FNV-1a `0x2f5338a16f6fb9d7` matched the raw oracle output `2f5338a16f6fb9d7`. The row in `ORACLE_FLOORS` had been typed as `0x2f5338a16f9fb6d7`, which differs in bytes 6 and 7 (`6f 9f b6` against `6f 6f b9`, counting from 1). The row is now `0x2f53_38a1_6f6f_b9d7`, the raw oracle value. The port's tiles were not changed.
+  - After the correction, all nine rows pass: `whole_floors_match_the_floor_oracle` passes on every row.
 
 ## Open questions
-- The whole-floor oracle run for layouts 4, 6 and 7 on seeds `0x12345678`, `0xCAFEBABF` and `0x0BADF00D`: the step count to the return, the layout hash, the stairs, the room count and the terrain counts. Not run. Until it is, #339 stays open.
+- None for layout 4 on seed `0x12345678`: the row was a transcription error and is now corrected to the raw oracle value.
 - The Rust oracle check (`RESCUE_ROM`) was not run from this worktree: there is no `rescue.toml` here.
 
 ## Links
