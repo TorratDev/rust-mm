@@ -138,7 +138,7 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::021B45BC | gNumRoomsAssigned | int | tentative | Rooms counted by `AssignRooms`' first pass |
 | ov_0001::021B45C0 | gFloorPropsByteC | int | tentative | Floor-properties byte `+0x0C`, copied by `GenerateFloor` and cleared after its first attempt; gates a room flag in `CreateRoomsAndAnchors` |
 | ov_0001::021506B0 | GenerateOneRoomMonsterHouseFloor | void GenerateOneRoomMonsterHouseFloor(void) | blue-verified | Layout case 2 |
-| ov_0001::0215174C | GenerateOuterRingFloor | void GenerateOuterRingFloor(void * a0) | blue-verified | Layout case 3; 4 / 2 RNG calls like `pmd-red` |
+| ov_0001::0215174C | GenerateOuterRingFloor | void GenerateOuterRingFloor(void * a0) | blue-verified | Layout case 3; 4 / 2 RNG calls like `pmd-red`; ported as `floor::place_outer_ring_rooms`, whole floor matches the oracle (#148) |
 | ov_0001::021512B4 | GenerateCrossroadsFloor | void GenerateCrossroadsFloor(void * a0) | blue-verified | Layout case 4; 4 / 2 RNG calls like `pmd-red` |
 | ov_0001::021504F4 | GenerateTwoRoomsWithMonsterHouseFloor | void GenerateTwoRoomsWithMonsterHouseFloor(void) | blue-verified | Layout case 5; 2 / 2 RNG calls like `pmd-red` |
 | ov_0001::02151160 | GenerateLineFloor | void GenerateLineFloor(void * a0) | blue-verified | Layout case 6 |

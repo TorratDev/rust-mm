@@ -1,10 +1,10 @@
 # Layout case 3: outer ring floor
 
 **Date:** 2026-10-18
-**Status:** hypothesis
+**Status:** partly confirmed (whole-floor match on the retail-ROM oracle run; per-step checkpoints not run)
 **Subsystem:** dungeon floor generation (layout case 3)
 
-Issue: [#148](https://github.com/TorratDev/rust-mm/issues/148). Parent notes: [`dungeon-generation.md`](dungeon-generation.md). Status is `hypothesis` because the RNG draw count and the room placements have not been checked on the retail ROM (`RESCUE_ROM` was unset, so no emulator run was possible).
+Issue: [#148](https://github.com/TorratDev/rust-mm/issues/148). Parent notes: [`dungeon-generation.md`](dungeon-generation.md). The whole floor matches the oracle run in [Emulator check](#emulator-check-floor-oracle): the RNG step count to the return, the tile hash, the stairs, the room count and the terrain counts. The per-step RNG draw counts are not checked on the retail ROM (`RESCUE_ROM` was unset in the port session, so no emulator run was possible there).
 
 Evidence: ghidra-cli decompile of `ov_0001::0215174C` and its callees, in the `rescue-arm9` project. The decompiler output is not committed here.
 
@@ -44,6 +44,8 @@ No maze step (std 8) and no step 13 (secondary structures) run here. No finalisi
 
 The port (`crates/sim/src/floor.rs`, `place_outer_ring_rooms`, and `PortedSteps::outer_ring` in `floor_gen.rs`) follows steps 1 to 10. The static evidence came from an investigator's ghidra-cli read of the decompile, not from a second read here.
 
+The shop and monster-house steps (8) use the `props` chances that `GenerateFloor` copies into the globals, as the port's `g.props_copy_07` and `g.props_copy_08` do.
+
 ## Counts
 - Static call sites in the body: 4 `DungeonRandRange`, 2 `DungeonRandInt`. This matches the "4 / 2" in [`dungeon-generation.md`](dungeon-generation.md).
 - Loop draws: 16 anchors × 2 + 8 rooms × 4 = 64. The count is from the cell-type table above, not from a trace.
@@ -61,13 +63,15 @@ The port (`crates/sim/src/floor.rs`, `place_outer_ring_rooms`, and `PortedSteps:
 
 What this run confirms: the floor builds with 8 rooms on the 6 × 4 grid, and it gives a whole-floor fixture for a reimplementation. What it does not confirm: the per-step draw count (4 Range / 2 Int static, and the dynamic count per cell). The oracle reports totals only; `floor_stages.py` has no option to force a layout, so per-step checkpoints for case 3 need that script extended.
 
+Port check (#148, 2026-11-12): the row for layout 3, seed `0x12345678`, is in `ORACLE_FLOORS` (`crates/sim/src/floor.rs`, `whole_floors_match_the_floor_oracle`). Its values are the ones above: 1683 steps to the return, layout FNV-1a `c32e3bac3f2c7b7b`, stairs (32, 20), 8 rooms, terrain (1357, 435). The Rust port passes it. The check reuses the recorded values; the emulator was not run again in that session.
+
 ## Red comparison
 `pmd-red` names this layout "outer ring" [red-hypothesis]. Blue's code uses the same 4 / 2 static call count (as the table says), but the emulator check that would confirm the layout and the draw count is not done.
 
 ## Open questions
-- Per-step RNG checkpoints for layout 3: extend `floor_stages.py` to force the layout byte, then compare the RNG state after the cell loop and after each callee. Not run: this machine has no `RESCUE_ROM`. The whole-floor oracle run is done (see above).
-- Check that the 64-draw count and the cell order match the emulator. The Rust unit tests check the structure and the count against a state comparison only.
-- Check what follows this function: the finalising passes, and whether `GenerateFloor` runs them for this layout.
+- Per-step RNG checkpoints for layout 3: extend `floor_stages.py` to force the layout byte, then compare the RNG state after the cell loop and after each callee. Not run: this machine has no `RESCUE_ROM`. The whole-floor oracle run is done and the port matches it (see above).
+- Check that the 64-draw count and the cell order match the emulator. The Rust unit tests check the structure and the count against a state comparison only. The whole-floor total (1683 steps) matches, which fits the 64 draws but does not check their order.
+- Finalising passes: the whole-floor match covers the tail of `generate_floor` for this layout, so the port runs the passes the oracle run ran. Which pass runs in which order for case 3 is not checked on the emulator.
 - The mask constant `0x0219D078` = `0xFFFF` and the cell stride `0x1C2` were read from the pool words, per the investigator's notes (`[blue-verified static read]`).
 
 ## Links
