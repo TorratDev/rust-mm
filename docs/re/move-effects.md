@@ -101,7 +101,7 @@ Legend: **HDM** = `ov_0001::0215675C` (HandleDamagingMove). "Draws" are in order
 
 - **Dispatch miss (accuracy slot 0).** The handler is not called. No draw follows the accuracy draw, and the target's `info+0x12A` is not written. **blue-verified** (runtime: forced miss on `09A` and `0D9`, by forcing the call's return to 0).
 - **Second accuracy miss (slot 1), damaging moves.** `ov_0001::0215652C` calls `AccuracyCalc` again with slot 1 (return address `02156550`) and draws one more Int(100). On a miss it prints the miss text, sets the damage struct's byte at `+0xF`, and HP does not change. The three `CalcDamage` draws are already spent, so the draw sequence matches a hit up to the second accuracy draw. The target's `info+0x12A` is set to 1. **blue-verified** (runtime: forced second miss on `09A` and `0BC`).
-  - A natural second miss after a first hit is **lead**: the two accuracy draws are independent, but no natural case was seen.
+  - A natural second miss after a first hit is **blue-verified** (runtime). At frame 3411 of the #356 probe run `6b21d775` (which patches only the crit odds), move 260: the slot-0 draw rolled 44 (hit), the three `CalcDamage` draws followed, and the slot-1 draw rolled 91 against accuracy byte 90 (miss). See [#356 P1](combat.md#p1-hit-check-accuracycalc).
 - **Secondary gate miss.** On `0BC`, `106`, `010` and `03F` the gate draws one Int(100) after the damage. If it fails, the status or stat call is skipped. **blue-verified** (static order; the run's gate failed and no status was set).
 - **Absorb and Struggle** use `02159F10(user, 0)`, which is a validity test: chance 0 draws nothing. **blue-verified** (see [roll wrapper](#roll-wrapper-per-move-id-p3-186)).
 

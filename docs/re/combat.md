@@ -176,7 +176,7 @@ The hit check is `AccuracyCalc`, at `ov_0001::0215A928`. It is the Blue counterp
 - Penalties: a target holding the Detect Band (item 35) takes −30. A target with the Quick Dodger IQ skill (IQ bit 5) takes −30. For move `0x163` (Regular Attack), an attacker with IQ bit 4 (Sure Hit) is a sure-hit case.
 - Stage tables: accuracy at `ov_0001::021AA8C4` (pointer slot `ov_0001::0215AB2C`) and evasion at `ov_0001::021AA918` (pointer slot `ov_0001::0215AB30`). Both have 21 entries and match Red's `gAccEvsStatStageMultipliers` entry by entry. Blue stores integers where Red's table holds s24.8 values. The stage is clamped to 0 to 20, and the multiplier to a cap of `0x6400`.
 - `IqSkillIsEnabled` at `ov_0001::021805B0` tests bit `n` of the info's 24-bit IQ bitfield, at `+0x87` to `+0x89`. It calls the helper `02004250` (`IsIQSkillSet`) through the pointer `PTR_FUN_021805C8` (blue-verified). The bit numbers 4, 5 and 8 match Red's IQ skill indices.
-- Callers of the random outcome functions and their chance sources are in [P4](#p4-outcome-wrappers-and-ai-chance-sources). The move callers pass a literal 0, so the wrappers draw nothing there. The AI chance sources are open.
+- Callers of the random outcome functions and their chance sources are in [P4](#p4-outcome-wrappers-and-ai-chance-sources). Of the 63 move-side wrapper calls in overlay 1, 19 pass a literal 0 and draw nothing, and 44 draw. The AI chance sources are open.
 
 ## Basic attack at runtime (#356)
 
@@ -187,7 +187,7 @@ Runtime evidence in this section comes from investigator a's scratch probes. The
 - **Draw order.** `AccuracyCalc` (`ov_0001::0215A928`) draws `DungeonRandInt(100)` first, at `0215A950`, before every early return. It then returns `roll < effective accuracy`. **blue-verified** (static).
 - **Two checks per damaging attack.** Slot 0 is called from the dispatcher `02156824` (return address `021571B8`). Slot 1 is called from `DamageAccuracyCheck` (`ov_0001::0215652C`, return address `02156550`), which the damage path reaches after `CalcDamage`. A slot-0 miss ends the attack: forced misses showed no `CalcDamage` and no second check. A slot-1 miss comes after `CalcDamage` has drawn its rolls. **blue-verified** (static call sites, and the runtime points below).
 - **Slot-1 result.** Result 0 prints the missed message, sets the damage struct `+0xF` to 1 and skips `HandleDealingDamage_Async`. Result 1 calls `HandleDealingDamage_Async`. **blue-verified** (static, medium: an `AbilityIsActive(target, 0x2E)` branch before the call writes `gDungeon+0x652`, not traced).
-- **Accuracy source.** `FUN_0200B3C4` (`0200B3C4`) reads the move-data table at `move ID × 0x24 + table base + 0xE + slot`. It is the entry for the move ID, not the move instance. **blue-verified** (static).
+- **Accuracy source.** `FUN_0200B3C4` (`0200B3C4`) reads the move-data table at `*(u16 *)(move + 2) × 0x24 + table base + 0xE + slot`. Its first argument is a move pointer, and the entry is the move ID's, not the move instance's. **blue-verified** (static).
 - **Runtime, hit.** All 29 calls in the 9000-frame base run (`cf15b0ff`) returned a hit, including accuracy values above 100, which return a hit after the draw. Example: frame 1433, move 154, roll 39, hit. **blue-verified** (runtime, scratch probe).
 - **Runtime, natural slot-1 miss.** Frame 3411, move 260, slot 1: roll 91 against the move's accuracy value, miss. No patch. Run `6b21d775` changes only the crit argument, not this path. **blue-verified** (runtime).
 - **Runtime, forced slot-0 miss.** The move's accuracy byte in the move-data table was set to 1 at `AccuracyCalc` entry (a 32-bit memory write; a byte write did not stick). 101 calls in run `25f4c5ac`. Frame 1433, roll 39, miss, and no `CalcDamage` after it. **blue-verified** (runtime, patched memory).
@@ -217,12 +217,12 @@ Each ability was forced by writing its ID to the attacker's ability byte `info+0
 
 ### P4. Outcome wrappers and AI chance sources
 
-- **Move callers draw nothing.** `DungeonRandOutcome` (`ov_0001::0219CFCC`) is reached only through the wrappers `ov_0001::02159F10` and `ov_0001::02159F6C`. `02159F10` returns true at once when its chance argument is 0, and `02159F6C` when its third argument is 0. The 20 callers in overlay 1 pass the literal 0 (examples: dispatcher `02156824`, `0215C44C`, `0215C890`, `0215CA10`, `0215D524`, `02163080`). So the chance doubling for ability `0x26` and the ability `0x4C` hook are not reached from these callers. **blue-verified** (static). At runtime no extra draw appears in the attack sequences of [P6](#p6-rng-order-for-a-basic-attack).
+- **Move callers.** `DungeonRandOutcome` (`ov_0001::0219CFCC`) is reached only through the wrappers `ov_0001::02159F10` and `ov_0001::02159F6C`. Each returns true at once when its chance argument is 0, with no draw: `02159F10` tests its second argument and `02159F6C` its third. The overlay 1 export has 63 call sites: 14 to `02159F10` and 49 to `02159F6C`. Of these, 19 pass the literal 0 (13 and 6), so they draw nothing. Examples: dispatcher `02156824` (`02159F10(param_2, 0)`, a validity test), `0215C44C`, `0215E298` and `021629D0`. The other 44 pass a constant read from the overlay: 1 to `02159F10` and 43 to `02159F6C`. For example, `0215DD2C` (Thundershock) passes `(int)*(short *)PTR_DAT_ov_0001__021aa0a4`. For these, the wrapper's entity checks run first, then one `DungeonRandInt(100)` through `DungeonRandOutcome` when they pass (the secondary gate in [move-effects.md](move-effects.md#miss-paths-357-p2)). So the chance doubling for ability `0x26` and the ability `0x4C` hook are reachable through these 44 calls. A basic attack (`0x163`) calls `HandleDamagingMove` directly, with no wrapper, so [P6](#p6-rng-order-for-a-basic-attack) does not change. **blue-verified** (static: a multi-line count of the `ov_0001` export).
 - **AI chance sources.** `DungeonRandOutcome_2` (`ov_0001::0219CFF0`) is called with these chances. Call sites are **blue-verified** (static):
   - `02185568`: chance from `FUN_021473A8(entity, param, 1)`.
   - `0218579C`, call at `02185820`: chance from `FUN_021473A8(param_1, item, 2)`.
   - `02185AB8` and `02185BEC`: chance from the table at `02185C60`, index `i` below a count read at `021B3F44`. The count was 0 at dungeon start, so the table was not read.
-  - `02192D24`, call at `02192D80`: chance is the value at `021AA184`, which is **70** at runtime (run `cf15b0ff`). The call is gated by `info+0xAC == 2`. This is the confusion roll of `ChooseAIMove`. The value is **blue-verified** (runtime, scratch probe).
+  - `02192D24`, call at `02192D80`: chance is the value at `021AA184`, which is **70** at runtime (run `cf15b0ff`). The call is gated by `info+0xAC == 2`. The value is **blue-verified** (runtime, scratch probe). That the roll is the confusion roll of `ChooseAIMove` is a **hypothesis**, which the findings do not show. Test: an exec hook on `02192D80` in a turn where the monster has `info+0xAC == 2`, comparing the roll with the move chosen. The meaning of `info+0xAC` is open.
 - **Open.** `FUN_021473A8` beyond its first cases, the values at `02185C60`, and the meaning of `info+0xAC`. These are leads for a later trace and are not traced here. **open**.
 
 ### P5. Static leftovers
@@ -235,7 +235,7 @@ Each ability was forced by writing its ID to the attacker's ability byte `info+0
 
 ### P6. RNG order for a basic attack
 
-These are the dungeon-RNG draws of one basic attack, in order. Observed on move 355 (Regular Attack, ID `0x163`), 154 and 260 (base run `cf15b0ff`, and the crit path in `6b21d775`). **blue-verified** (static call sites, runtime sequence).
+These are the dungeon-RNG draws of one basic attack, in order. Each address is the **return site** of its `DungeonRandInt` call; the call instruction is 4 bytes earlier (for the `AccuracyCalc` draw, the call is at `0215A94C`). Observed on move 355 (Regular Attack, ID `0x163`), 154 and 260 (base run `cf15b0ff`, and the crit path in `6b21d775`). **blue-verified** (static call sites, runtime sequence).
 
 - **Hit, or a slot-1 miss: five draws.**
   1. `rand(100)` at `0215A950`: `AccuracyCalc` slot 0, return address `021571B8`.
@@ -247,7 +247,7 @@ These are the dungeon-RNG draws of one basic attack, in order. Observed on move 
   Draw 5 decides a slot-1 miss. A hit and a slot-1 miss draw the same five values; only the last comparison differs.
 - **Slot-0 miss: one draw.** `rand(100)` at `0215A950`, then the attack ends. No `CalcDamage`.
 - **Critical hit.** The same five draws as a hit. Only the critical comparison differs.
-- **Non-damaging moves** (217 and 135 seen): only the slot-0 draw.
+- **Non-damaging moves** (only 217 and 135 were seen): only the slot-0 draw. Other non-damaging handlers draw more: Hypnosis calls `CalculateStatusTurns`, and Leech Seed and Water Sport call `DungeonRandRange(10, 12)` ([move-effects.md](move-effects.md)).
 - **Not covered.** Targets with Battle or Shell Armor (the static gate), Thunder and weather, sure-shot, and kills. After the hits, extra draws were seen in the crit run only and are not attributed: `rand(10000)` at `021388E8`, `rand(56)` at `0219C038`, `rand(32)` at `0219C044`, `rand(112)` at `0219C1E4`, `rand(100)` at `021828A4`, `rand(2)` and `rand(3)` at `02190A10`, and `rand(100)` at `02179DF0`. **open**.
 
 Anything that simulates a basic attack needs this five-draw order.
@@ -366,7 +366,7 @@ Investigator A's findings. Tag: **blue-verified** (decompile of `ov_0001::021568
 
 - `FUN_02156824(param_1 = entity list, param_2 = user, param_3 = move, param_4, param_5)` loops over up to `0x40` target slots. Its only `switch` is `switch(uVar17)`, where `uVar17` is the move ID (the `u16` at `move + 2`). It has 413 case labels and the default label `switchD_ov_0001__02157544_default`. Several cases are `goto switchD_..._default`. Those gotos are the only other occurrences of the switch label, so the "8 other switches" may be those.
 - Each case sets `local_114`, the per-target result. The case callees take `(user, target, move, param_4)`. Most return a bool. The case for `CalcDamage` (`FUN_0215675C`) calls `CalcDamage` directly.
-- There is no accuracy roll in the dispatch. Rolls are inside the case callees, through the wrappers in [`move-effects.md`](move-effects.md#roll-wrapper-per-move-id-p3-186).
+- The dispatch makes one accuracy call, earlier in `02156824` (export line 246, before the switch): slot 0 through `AccuracyCalc`, return address `021571B8` ([P1](#p1-hit-check-accuracycalc)). Rolls inside the case callees go through the wrappers in [`move-effects.md`](move-effects.md#roll-wrapper-per-move-id-p3-186).
 - Earlier in the loop, `info + 0x12A` is set to 1 for the target, and `info + 0xD8` is set to 1 or 2 depending on `param_5`.
 - After the switch:
   - **Miss** (`local_114 == 0`): if the user and target are both valid and `target.info + 6 != 0` (not a team member), the saved value `cVar1` is written back to `target.info + 0xD8`.
