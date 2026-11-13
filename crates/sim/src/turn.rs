@@ -7,6 +7,7 @@
 //! lists it, and the fractional turns it runs through first only run the other monsters' steps.
 //! Integer math only.
 
+use crate::floor;
 use crate::state::Dungeon;
 
 /// Fractional turns in one dungeon turn (`fractionalTurn` cycles 0 to 23).
@@ -75,11 +76,39 @@ impl Dungeon {
             self.regenerate_leader();
         }
         act(self);
+        // The stairs check runs right after the leader's step (`DisplayActions_Async`, which
+        // sets `dungeon+1` on a 0x200 tile). The stairs action waits for the leader's next input.
+        if self.leader_on_stairs() {
+            self.stairs_pending = true;
+        }
         self.pending_end_of_turns = self.pending_end_of_turns.saturating_add(1);
         self.run_other_monsters(k);
         self.weather_step(k);
         self.fractional_turn = self.run_to_leader_gate(next(k));
         self.turn = self.turn.saturating_add(1);
+    }
+
+    /// Whether the leader stands on a stairs tile (terrain `0x200`).
+    fn leader_on_stairs(&self) -> bool {
+        self.team.first().is_some_and(|leader| {
+            self.floor
+                .tile(i32::from(leader.pos.0), i32::from(leader.pos.1))
+                .is_some_and(|t| t.terrain & floor::TERRAIN_STAIRS != 0)
+        })
+    }
+
+    /// The leader's stairs action, at its next input (`0218453C`, case `0x26`; menus not
+    /// modelled, so confirm is given). It runs the regeneration tick and the end-of-turns the
+    /// last step left pending, then the floor is over: no other monster, weather or fractional
+    /// turn runs for this turn (`IsFloorOver` returns from `RunLeaderTurn_Async`;
+    /// `docs/re/turns.md`, "Stairs").
+    pub(crate) fn leave_floor_by_stairs(&mut self) {
+        self.stairs_pending = false;
+        self.regenerate_leader();
+        while self.pending_end_of_turns > 0 {
+            self.pending_end_of_turns -= 1;
+            self.leader_end_of_turn();
+        }
     }
 
     /// Runs the steps of fractional turns from `k` on, up to the leader's next gate, and returns

@@ -14,8 +14,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam};
+
 use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Tile, WIDTH};
+use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
 
@@ -37,6 +40,33 @@ pub enum StateError {
     BadTileCount(usize),
     /// A snapshot records more floors than [`MAX_RESTORED_FLOORS`] to replay.
     TooManyFloors(u32),
+}
+
+/// The generator steps the game takes between a floor's seed and `GenerateFloor`'s entry
+/// (`docs/re/rng.md`, "Per-floor seed"): 1 draw in `RunDungeon_Async` and 9 in the spawn list
+/// `0217AA14`. The 9 are not ported, so the count is fixed; the trace harness uses the same 10.
+// shortcut: the 10 draws are counted, not modelled; the spawn-list draws (9 on floors 1 to 3)
+// need their own port before a floor's layout matches a retail floor past the first.
+pub const FLOOR_ENTRY_STEPS: u32 = 10;
+
+/// One floor's properties record as `mapparam` stores it (`FLOOR_PROPERTIES` bytes). Raw bytes
+/// keep the state serializable; [`properties_from_record`] reads the fields.
+pub type FloorRecord = [u8; FLOOR_PROPERTIES];
+
+/// The floor records of dungeon `dungeon` in `map`, indexed by the floor number the game uses
+/// (the `mapparam` floor index). Entry 0 is the placeholder Red keeps there, so the length is
+/// the floor count the loop compares against (`docs/re/turns.md`, "Floor loop exit").
+#[must_use]
+pub fn floor_records(map: &MapParam, dungeon: u8) -> Option<Vec<FloorRecord>> {
+    map.dungeons
+        .get(usize::from(dungeon))?
+        .iter()
+        .map(|entry| {
+            map.floor_properties
+                .get(usize::from(entry.properties))
+                .copied()
+        })
+        .collect()
 }
 
 /// The most floors a snapshot may record. Restoring the preseed generator replays one step
@@ -110,7 +140,7 @@ pub struct Monster {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dungeon {
     /// The floor map.
-    floor: Floor,
+    pub(crate) floor: Floor,
     /// The floor's generator (`gDungeonRngState`).
     pub(crate) rng: DungeonRng,
     /// The team, in slot order; slot 0 is the leader.
@@ -138,6 +168,9 @@ pub struct Dungeon {
     player_spawn: Option<(i16, i16)>,
     /// `+0xC0BC`, `+0xC0BE`: the stairs spawn, `None` when the game stores -1.
     stairs_spawn: Option<(i16, i16)>,
+    /// `dungeon+1`: the leader stands on stairs and its next input takes them (see
+    /// [`crate::turn`]).
+    pub(crate) stairs_pending: bool,
 }
 
 impl Dungeon {
@@ -206,6 +239,12 @@ impl Dungeon {
     #[must_use]
     pub const fn stairs_spawn(&self) -> Option<(i16, i16)> {
         self.stairs_spawn
+    }
+
+    /// Whether the leader's next input takes the stairs it stands on (`dungeon+1`).
+    #[must_use]
+    pub const fn stairs_pending(&self) -> bool {
+        self.stairs_pending
     }
 }
 
@@ -307,6 +346,38 @@ impl Dungeon {
 /// Terrain type of ordinary ground, the only type a regular monster may stand on.
 const TERRAIN_NORMAL: u16 = floor::TERRAIN_FLOOR;
 
+/// A spawn position as the game stores it: `None` for the unset `(-1, -1)`.
+fn spawn_or_none(pos: (i16, i16)) -> Option<(i16, i16)> {
+    (pos != UNSET).then_some(pos)
+}
+
+/// Places a team on a new floor: the leader on the floor's start (pair A), and each other member
+/// on the first open tile in map order that no member stands on.
+// shortcut: the game's placement of the other members is not ported, so the first free open tile
+// stands in for it.
+fn place_team(team: &mut [Monster], floor: &Floor, start: (i16, i16)) {
+    let mut taken = Vec::with_capacity(team.len());
+    if let Some(leader) = team.first_mut() {
+        leader.pos = start;
+        taken.push(start);
+    }
+    for member in team.iter_mut().skip(1) {
+        let free = (0..HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| (x as i16, y as i16)))
+            .find(|&(x, y)| {
+                !taken.contains(&(x, y))
+                    && floor.tile(i32::from(x), i32::from(y)).is_some_and(|t| {
+                        t.terrain & floor::TERRAIN_IMPASSABLE_WALL == 0
+                            && t.terrain & floor::TERRAIN_TYPE_MASK == TERRAIN_NORMAL
+                    })
+            });
+        if let Some(spot) = free {
+            member.pos = spot;
+            taken.push(spot);
+        }
+    }
+}
+
 /// Everything the sim owns for one run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameState {
@@ -321,6 +392,13 @@ pub struct GameState {
     preseed: DungeonPreseed,
     /// The current dungeon, if one is loaded.
     dungeon: Option<Dungeon>,
+    /// The run's dungeon, one record per floor number, placeholder first (see
+    /// [`floor_records`]). Set at construction with [`GameState::with_floors`]. Its length is the
+    /// floor count: the stairs of the last floor clear the dungeon.
+    // shortcut: the count is the length of the mapparam floor list, not the ARM9 count from
+    // `FUN_020061D8` (`docs/re/turns.md`, hypothesis). The two are compared on the byte table at
+    // `DAT_02006200` before the count is trusted.
+    floors: Vec<FloorRecord>,
 }
 
 impl GameState {
@@ -336,7 +414,22 @@ impl GameState {
             floors_entered: 0,
             preseed: DungeonPreseed::new(seed),
             dungeon: None,
+            floors: Vec::new(),
         }
+    }
+
+    /// The run with its dungeon's floor records (see [`floor_records`]), given before any
+    /// command. Without them the floor count is 0, so the first stairs clear the dungeon.
+    #[must_use]
+    pub fn with_floors(mut self, floors: Vec<FloorRecord>) -> Self {
+        self.floors = floors;
+        self
+    }
+
+    /// The floor records of the run's dungeon.
+    #[must_use]
+    pub fn floors(&self) -> &[FloorRecord] {
+        &self.floors
     }
 
     /// A run with a floor loaded: [`GameState::new`] with `seed`, then the floor. The floor's
@@ -405,6 +498,7 @@ impl GameState {
             monster_house_room: NO_MONSTER_HOUSE,
             player_spawn: None,
             stairs_spawn: None,
+            stairs_pending: false,
         });
         Ok(())
     }
@@ -423,9 +517,16 @@ impl GameState {
     ///
     /// Movement and waiting take the leader's turn: the clock runs fractional turns until the
     /// leader's speed stage gives it one, then the command takes effect (see [`crate::turn`]).
-    /// A refused move changes nothing and takes no time. Attack, moves, items and menus are
-    /// valid input and return [`Outcome::NotModelled`].
+    /// A refused move changes nothing and takes no time. While the leader's stairs flag is set,
+    /// the command is the answer to the stairs menu: the floor changes ([`Outcome::NextFloor`],
+    /// or [`Outcome::DungeonCleared`] on the last floor). Otherwise attack, moves, items and
+    /// menus are valid input and return [`Outcome::NotModelled`].
     pub fn step(&mut self, command: Command) -> Outcome {
+        // The stairs menu answers the leader's next input: confirm is given, so any command
+        // takes the stairs (menus are not modelled).
+        if self.dungeon.as_ref().is_some_and(|d| d.stairs_pending) {
+            return self.take_stairs();
+        }
         let Some(dungeon) = self.dungeon.as_mut() else {
             return Outcome::Blocked(Blocked::NoDungeon);
         };
@@ -452,6 +553,72 @@ impl GameState {
         }
     }
 
+    /// The stairs action: the next floor is loaded, or the dungeon is cleared when the next floor
+    /// number is not below the floor count. Nothing changes unless the next floor is placed.
+    fn take_stairs(&mut self) -> Outcome {
+        let Some(mut leaving) = self.dungeon.clone() else {
+            return Outcome::Blocked(Blocked::NoDungeon);
+        };
+        // Floor numbers are 1-based and the list holds the placeholder at index 0, so floor
+        // `floors_entered + 1` is the next one (`docs/re/turns.md`, "Floor loop exit").
+        let next = self.floors_entered.saturating_add(1);
+        let Some(record) = usize::try_from(next)
+            .ok()
+            .and_then(|index| self.floors.get(index))
+        else {
+            self.dungeon = None;
+            return Outcome::DungeonCleared;
+        };
+        // The leaving floor's end effects come first: they are part of the stairs turn, and the
+        // team carries their result.
+        leaving.leave_floor_by_stairs();
+
+        // The next floor's seed is the next step of the run's preseed chain. Its generator takes
+        // the fixed draws before `GenerateFloor` (`FLOOR_ENTRY_STEPS`).
+        let mut preseed = self.preseed;
+        let mut rng = DungeonRng::new(preseed.next_floor_seed());
+        for _ in 0..FLOOR_ENTRY_STEPS {
+            rng.next_u16();
+        }
+        let mut floor = Floor::new();
+        let mut g = GenState::default();
+        // shortcut: fixed rooms need the fixed-room file, which is not loaded, so the floor is
+        // generated without one (as the trace harness does).
+        // stop_at_standard is off, so generate_floor cannot return its Err.
+        let _ = generate_floor(
+            &properties_from_record(record),
+            false,
+            &mut floor,
+            &mut rng,
+            &mut g,
+            &mut PortedSteps::default(),
+            false,
+        );
+        if g.stairs_a == UNSET {
+            return Outcome::NotModelled;
+        }
+        place_team(&mut leaving.team, &floor, g.stairs_a);
+        self.preseed = preseed;
+        self.floors_entered = next;
+        self.dungeon = Some(Dungeon {
+            floor,
+            rng,
+            team: leaving.team,
+            wild: Vec::new(),
+            turn: 0,
+            fractional_turn: 0,
+            pending_end_of_turns: 0,
+            leader_speed: leaving.leader_speed,
+            speed_stage: leaving.speed_stage,
+            shop_pass: false,
+            monster_house_room: NO_MONSTER_HOUSE,
+            player_spawn: spawn_or_none(g.stairs_a),
+            stairs_spawn: spawn_or_none(g.stairs_b),
+            stairs_pending: false,
+        });
+        Outcome::NextFloor
+    }
+
     /// A serde snapshot of the whole state.
     #[must_use]
     pub fn snapshot(&self) -> Snapshot {
@@ -459,6 +626,7 @@ impl GameState {
             global: self.global.state(),
             run_seed: self.run_seed,
             floors_entered: self.floors_entered,
+            floors: self.floors.clone(),
             dungeon: self.dungeon.as_ref().map(|d| DungeonSnapshot {
                 rng: d.rng.state(),
                 floor: FloorSnapshot::capture(&d.floor),
@@ -473,6 +641,7 @@ impl GameState {
                 monster_house_room: d.monster_house_room,
                 player_spawn: d.player_spawn,
                 stairs_spawn: d.stairs_spawn,
+                stairs_pending: d.stairs_pending,
             }),
         }
     }
@@ -514,6 +683,7 @@ impl GameState {
                     monster_house_room: d.monster_house_room,
                     player_spawn: d.player_spawn,
                     stairs_spawn: d.stairs_spawn,
+                    stairs_pending: d.stairs_pending,
                 })
             }
         };
@@ -523,6 +693,7 @@ impl GameState {
             floors_entered: snapshot.floors_entered,
             preseed,
             dungeon,
+            floors: snapshot.floors.clone(),
         })
     }
 }
@@ -625,6 +796,9 @@ pub struct DungeonSnapshot {
     pub monster_house_room: u8,
     pub player_spawn: Option<(i16, i16)>,
     pub stairs_spawn: Option<(i16, i16)>,
+    /// `dungeon+1`: the leader's next input takes the stairs. Absent in older snapshots: false.
+    #[serde(default)]
+    pub stairs_pending: bool,
 }
 
 /// A whole run as a snapshot: the generator states and the dungeon, if any.
@@ -634,6 +808,9 @@ pub struct Snapshot {
     pub run_seed: u32,
     pub floors_entered: u32,
     pub dungeon: Option<DungeonSnapshot>,
+    /// The run's floor records (see [`GameState::with_floors`]). Absent in older snapshots: none.
+    #[serde(default)]
+    pub floors: Vec<FloorRecord>,
 }
 
 #[cfg(test)]
@@ -932,6 +1109,230 @@ mod tests {
         let first = a.dungeon.as_ref().unwrap().rng.state();
         a.enter_dungeon(open_floor(), Vec::new(), 0).unwrap();
         assert_ne!(a.dungeon.as_ref().unwrap().rng.state(), first);
+    }
+
+    /// `n` floors of layout 1 with no items or monsters, after the placeholder at index 0: the
+    /// floor count is `n + 1`.
+    fn records(n: usize) -> Vec<FloorRecord> {
+        let mut floor = [0u8; FLOOR_PROPERTIES];
+        floor[0] = 1;
+        let mut out = vec![[0u8; FLOOR_PROPERTIES]];
+        out.extend(std::iter::repeat_n(floor, n));
+        out
+    }
+
+    /// Floor `n` of the run `seed`, built the way the stairs build it: the chain's `n`th seed,
+    /// the fixed draws, then `GenerateFloor`. Returns the floor, the generator after it, and the
+    /// generator's stairs.
+    fn chained_floor(seed: u32, recs: &[FloorRecord], n: usize) -> (Floor, DungeonRng, GenState) {
+        let mut preseed = DungeonPreseed::new(seed);
+        let mut floor_seed = 0;
+        for _ in 0..n {
+            floor_seed = preseed.next_floor_seed();
+        }
+        let mut rng = DungeonRng::new(floor_seed);
+        for _ in 0..FLOOR_ENTRY_STEPS {
+            rng.next_u16();
+        }
+        let mut floor = Floor::new();
+        let mut g = GenState::default();
+        generate_floor(
+            &properties_from_record(&recs[n]),
+            false,
+            &mut floor,
+            &mut rng,
+            &mut g,
+            &mut PortedSteps::default(),
+            false,
+        )
+        .unwrap();
+        (floor, rng, g)
+    }
+
+    /// A run on floor 1 of `seed`, with the leader on the floor's start.
+    fn first_floor_run(seed: u32, recs: Vec<FloorRecord>) -> GameState {
+        let (floor, _, g) = chained_floor(seed, &recs, 1);
+        let mut leader = monster(g.stairs_a.0, g.stairs_a.1, 8);
+        leader.info.is_team_leader = true;
+        let mut st = GameState::new(seed).with_floors(recs);
+        st.enter_dungeon(floor, vec![leader], 0).unwrap();
+        st.set_speed_stage(MAX_SPEED_STAGE);
+        st
+    }
+
+    /// Makes the leader's next input take the stairs it is standing on. The walk test below
+    /// does this by walking; the others skip the walk.
+    fn stand_on_stairs(st: &mut GameState) {
+        st.dungeon.as_mut().unwrap().stairs_pending = true;
+    }
+
+    /// The moves from `from` to `to` over ordinary ground, by breadth-first search with the
+    /// corner rule. Test-only: the moves are then checked by `step`.
+    fn walk_path(floor: &Floor, from: (i32, i32), to: (i32, i32)) -> Vec<Direction> {
+        const DIRS: [Direction; 8] = [
+            Direction::Down,
+            Direction::DownRight,
+            Direction::Right,
+            Direction::UpRight,
+            Direction::Up,
+            Direction::UpLeft,
+            Direction::Left,
+            Direction::DownLeft,
+        ];
+        let open = |x: i32, y: i32| {
+            floor.tile(x, y).is_some_and(|t| {
+                t.terrain & floor::TERRAIN_IMPASSABLE_WALL == 0
+                    && t.terrain & floor::TERRAIN_TYPE_MASK == TERRAIN_NORMAL
+            })
+        };
+        let mut came_from: std::collections::BTreeMap<(i32, i32), ((i32, i32), Direction)> =
+            std::collections::BTreeMap::new();
+        let mut seen = std::collections::BTreeSet::from([from]);
+        let mut queue = std::collections::VecDeque::from([from]);
+        while let Some(p) = queue.pop_front() {
+            for dir in DIRS {
+                let (dx, dy) = dir.delta();
+                let q = (p.0 + dx, p.1 + dy);
+                let corner_ok = dx == 0 || dy == 0 || (open(p.0 + dx, p.1) && open(p.0, p.1 + dy));
+                if open(q.0, q.1) && corner_ok && seen.insert(q) {
+                    came_from.insert(q, (p, dir));
+                    queue.push_back(q);
+                }
+            }
+        }
+        let mut path = Vec::new();
+        let mut at = to;
+        while at != from {
+            let (prev, dir) = *came_from.get(&at).expect("the stairs are reachable");
+            path.push(dir);
+            at = prev;
+        }
+        path.reverse();
+        path
+    }
+
+    #[test]
+    fn a_scripted_walk_to_the_stairs_takes_them_to_floor_2() {
+        let seed = 0x0055_5557;
+        let recs = records(3);
+        let (_, _, g1) = chained_floor(seed, &recs, 1);
+        let mut st = first_floor_run(seed, recs.clone());
+        let from = g1.stairs_a;
+        let to = g1.stairs_b;
+        let path = walk_path(
+            st.dungeon().unwrap().floor(),
+            (from.0.into(), from.1.into()),
+            (to.0.into(), to.1.into()),
+        );
+        assert!(!path.is_empty(), "the stairs are not on the leader's start");
+        for dir in path {
+            assert_eq!(st.step(Command::Move(dir)), Outcome::Applied);
+        }
+        let d = st.dungeon().unwrap();
+        assert_eq!(d.team()[0].pos, to, "the leader stands on the stairs");
+        assert!(d.stairs_pending(), "the step set the stairs flag");
+        assert_eq!(
+            d.floor()
+                .tile(i32::from(to.0), i32::from(to.1))
+                .map(|t| t.terrain & floor::TERRAIN_STAIRS),
+            Some(floor::TERRAIN_STAIRS)
+        );
+
+        // The leader's next input is the stairs action.
+        assert_eq!(st.step(Command::Wait), Outcome::NextFloor);
+        assert_eq!(st.floors_entered(), 2);
+        let (floor2, rng2, g2) = chained_floor(seed, &recs, 2);
+        let d = st.dungeon().unwrap();
+        assert_eq!(
+            d.floor(),
+            &floor2,
+            "floor 2 is generated from the chain's second seed"
+        );
+        assert_eq!(
+            d.rng(),
+            &rng2,
+            "the floor generator is left where generation left it"
+        );
+        assert_eq!(
+            d.team()[0].pos,
+            g2.stairs_a,
+            "the leader starts on floor 2's start"
+        );
+        assert_eq!(
+            (d.turn(), d.fractional_turn(), d.stairs_pending()),
+            (0, 0, false)
+        );
+    }
+
+    #[test]
+    fn two_floors_in_a_row_match_separate_generation_and_the_last_floor_clears() {
+        let seed = 0x0031_4159;
+        let recs = records(3);
+        let mut st = first_floor_run(seed, recs.clone());
+        for n in [2, 3] {
+            stand_on_stairs(&mut st);
+            assert_eq!(st.step(Command::Wait), Outcome::NextFloor, "to floor {n}");
+            let (floor, rng, _) = chained_floor(seed, &recs, n);
+            let d = st.dungeon().unwrap();
+            assert_eq!(d.floor(), &floor, "floor {n}");
+            assert_eq!(d.rng(), &rng, "floor {n} generator");
+        }
+        // Floor 3 is the last: its stairs clear the dungeon.
+        stand_on_stairs(&mut st);
+        assert_eq!(st.step(Command::Wait), Outcome::DungeonCleared);
+        assert!(st.dungeon().is_none());
+        assert_eq!(st.floors_entered(), 3);
+        assert_eq!(st.step(Command::Wait), Outcome::Blocked(Blocked::NoDungeon));
+    }
+
+    #[test]
+    fn the_leader_and_the_team_carry_their_stats_to_the_next_floor() {
+        let seed = 0x0042_4243;
+        let recs = records(2);
+        let mut st = first_floor_run(seed, recs);
+        let mut ally = monster(1, 1, 6);
+        ally.info.hp = 9;
+        st.dungeon.as_mut().unwrap().team.push(ally);
+        {
+            let leader = &mut st.dungeon.as_mut().unwrap().team[0].info;
+            leader.hp = 17;
+            leader.belly = 42_000;
+            leader.level = 9;
+            leader.regen_speed = 200;
+        }
+        stand_on_stairs(&mut st);
+        assert_eq!(st.step(Command::Wait), Outcome::NextFloor);
+        let team = st.dungeon().unwrap().team();
+        assert_eq!(team.len(), 2);
+        // No step is pending (the flag was set by hand), so the stairs turn ticks no end-of-turn
+        // and the regeneration accumulator stays under its speed: HP and belly carry unchanged.
+        assert_eq!((team[0].info.hp, team[0].info.level), (17, 9));
+        assert_eq!(team[0].info.belly, 42_000);
+        assert_eq!((team[1].info.hp, team[1].info.level), (9, 6));
+        assert_ne!(team[1].pos, team[0].pos, "the members do not share a tile");
+    }
+
+    #[test]
+    fn a_run_with_no_floor_data_clears_at_its_first_stairs() {
+        let mut leader = monster(5, 5, 8);
+        leader.info.is_team_leader = true;
+        let mut st = GameState::new(0x0007_0007);
+        st.enter_dungeon(open_floor(), vec![leader], 0).unwrap();
+        stand_on_stairs(&mut st);
+        assert_eq!(st.step(Command::Wait), Outcome::DungeonCleared);
+    }
+
+    #[test]
+    fn the_floors_and_the_stairs_flag_survive_a_snapshot() {
+        let seed = 0x0008_1111;
+        let mut st = first_floor_run(seed, records(2));
+        stand_on_stairs(&mut st);
+        let text = serde_json::to_string(&st.snapshot()).unwrap();
+        let back: Snapshot = serde_json::from_str(&text).unwrap();
+        let mut restored = GameState::restore(&back).unwrap();
+        assert_eq!(restored, st);
+        assert_eq!(restored.step(Command::Wait), st.step(Command::Wait));
+        assert_eq!(restored, st);
     }
 
     fn set_terrain(g: &mut GameState, x: i32, y: i32, terrain: u16) {

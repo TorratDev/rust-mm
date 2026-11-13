@@ -143,6 +143,7 @@ pub fn state_from_row(
         global: row.s_prng_state,
         run_seed: row.run_seed,
         floors_entered,
+        floors: Vec::new(),
         dungeon: Some(DungeonSnapshot {
             rng: row.dungeon_rng,
             floor: FloorSnapshot { tiles, stairs },
@@ -160,6 +161,7 @@ pub fn state_from_row(
             monster_house_room: NO_MONSTER_HOUSE,
             player_spawn: None,
             stairs_spawn: None,
+            stairs_pending: false,
         }),
     };
     GameState::restore(&snapshot).map_err(RowError::State)

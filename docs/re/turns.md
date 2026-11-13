@@ -387,6 +387,53 @@ What `crates/sim` does for a status-free leader that walks or waits (`turn.rs`, 
   - The leader's end-of-turn effects do not run in its own turn. At stage 1 they run inside the `DisplayActions_Async` call from the weather step (return address `02140754`), in turn `k+3` (turn 6 for an action in turn 3). The weather step runs in turns where `gSpeedTurns[1][ft+1]` is nonzero (2, 6, 10, ...). The effects therefore first show in row `k+4`. Other stages are not checked.
   - For one row per player action, keep the TRUE returns of `RunLeaderTurn_Async` (above). That row is taken before the end-of-turn effects, so read the end-of-turn state at row `k+4`.
 
+## Stairs and the floor loop exit (#345 P1, P3)
+
+Sources: decompiles from the text export of the `rescue-arm9` project (STAMP 2026-11-12, 5392 functions, 0 failed), read for [#345](https://github.com/TorratDev/rust-mm/issues/345) (investigator a, comment on the issue). No emulator run covers this section. The chain is [blue-verified] from the decompiles, not reproduced in a trace. Confidence: high for the chain and the exit compare; medium for the exact moment the prompt opens.
+
+### The stairs chain
+
+1. **The tile check, after the leader's step.** In `DisplayActions_Async` (`ov_0001::02187b20`), `FUN_ov_0001__02165b00` reads the leader's tile (`FUN_ov_0001__02142a9c`). If the terrain has bit `0x200` (stairs), it sets `dungeon+1 = 1`. This is a plain terrain-bit test, not a comparison with stairs pair B. Sim: `leader_on_stairs` in [`turn.rs`](../../crates/sim/src/turn.rs), after the leader's act.
+2. **The prompt, at the leader's next input.** `FUN_ov_0001__02166b10` begins with: if `dungeon+1 != 0`, clear it, and unless `FUN_02180b68(leader, 1)` skips the menu (forced-action states), open the stairs menu (`0216fda0`). Choosing the entry with action `0x26` copies that action into the leader's action field; B closes the menu and leaves the leader on the stairs. Sim: menus are not modelled, so any command is the confirm and takes the stairs.
+3. **The action.** `FUN_ov_0001__0218453C`, case `0x26`: if `dungeon+0x63C == 0x15` and `dungeon+0x335E == 0`, it prints a message only (the meaning of `0x335E` is not traced). Otherwise it calls a sound or message routine by floor type and writes `dungeon+2 = 1`.
+4. **The exit.** `IsFloorOver` (`0214067C`) is true when `dungeon+2` is 1 or 2, and it then sets `dungeon+0x648 = 2`. `RunLeaderTurn_Async` returns TRUE right after the action, so the later steps of that fractional turn do not run (each step of [One fractional turn](#one-fractional-turn) is gated by `IsFloorOver`), and the loop in `RunDungeon_Async` (`0206DC20`) ends.
+
+Sim, [#345](https://github.com/TorratDev/rust-mm/issues/345): the stairs turn is the leader's next input, at its gate. It runs the regeneration tick and the end-of-turns the step left pending (the step's own effects, which the game runs in its turn), then the floor is over. No other monster, weather or fractional turn runs in that turn. The outcome is `Outcome::NextFloor` (`DungeonCleared` on the last floor).
+
+Not modelled: the B path of the menu; the `0x335E` gate; a partner next to the leader (not checked in the game); the trap and move-effect writers of `dungeon+2` (`02197684` and about 30 `FUN_ov_0001__021axxxx` functions write the same exit; they belong to their own issues).
+
+### Floor loop exit
+
+After the loop, `RunDungeon_Async` (`0206DC20`) does, for a normal run (`+0x648 != 1`, `+0x11 == 0`, not a type-2 mission floor):
+
+```
+floor = dungeon+0x63D + 1
+if (floor >= dungeon+0x1AC48) break     // the dungeon is cleared
+dungeon+0x63D = floor                   // next floor: the floor setup runs again
+```
+
+[blue-verified] for the loop, the compare and the writer of `+0x1AC48` (`FUN_ov_0001__02138ccc`, which reads `FUN_020061D8(dungeon id)`).
+
+- `+0x63D` is the floor number and it is **1-based**: 1 on the first floor (probe, [#345](https://github.com/TorratDev/rust-mm/issues/345) P2).
+- The count in `+0x1AC48` was 4 for dungeon 0. The probe entered floors 1, 2 and 3 and never floor 4, which the compare above gives. [blue-verified, dungeon 0 only.]
+- [hypothesis] The count is the length of dungeon 0's floor list in `mapparam`, which keeps a placeholder at index 0 (`rescue_data::dungeon::MapParam`). Four entries give floors 1 to 3. Check: read the byte table at `DAT_02006200` and compare `len(dungeons[d])` for every dungeon.
+- The break calls `FUN_0219c898(DAT_0206ec48, 0, leader)`, then the common exit `LAB_0206eb18`, which writes the result code the caller reads (1 for cleared, 4 for a rescue-type run, 2 otherwise; -1 and -2 for defeat and abandon). The conditions behind `func_0x0219c81c` and `func_0x0219c868` were not read. [low confidence]
+- Other exits from the same code, not modelled: `+0x648 == 1` (the leader is gone), `+0x11` 1 to 4 (special ends), `+3 != 0`, and type-2 floors during a rescue.
+
+Sim mapping: the run's floor list is the `mapparam` list of the dungeon, placeholder included, given with `GameState::with_floors` ([`state.rs`](../../crates/sim/src/state.rs)). Its length is the count. With `next = floors_entered + 1`, the stairs load floor `next` while `next < len` and clear the dungeon otherwise.
+
+**Floor index convention.** The sim reads a floor's record at its 1-based floor number, the `mapparam` index, which is the convention the game and the trace harness use (`FIRST_FLOOR = 1` in `apps/game` and `apps/trace-harness`, checked against the retail first-floor hashes by their ROM tests). The earlier reading in [#345](https://github.com/TorratDev/rust-mm/issues/345) P2 was `properties_for(map, dungeon, +0x63D - 1)`, with the `+0x63E`/`+0x63F` pair as the index. That reading would give floor 2 the first floor's record. The pair's values (0, 1, 2 for floors 1 to 3) look 0-based, so they are one below the `mapparam` index [hypothesis; the pair's writer is not found].
+
+### Dungeon struct offsets for the floor exit
+
+| Blue offset | Name | Notes |
+|-------------|------|-------|
+| `+0x1` | stairs flag (`dungeon+1`) | set by the tile check, cleared by the prompt; [The stairs chain](#the-stairs-chain) |
+| `+0x2` | floor-over request (`dungeon+2`) | 1 from the stairs action; `IsFloorOver` reads 1 or 2 |
+| `+0x63C` | dungeon id | 0 for the first dungeon |
+| `+0x63D` | floor number | 1-based; [Floor loop exit](#floor-loop-exit) |
+| `+0x1AC48` | floor count | `FUN_020061D8(dungeon id)`; [hypothesis] the `mapparam` list length |
+
 ## Dungeon struct offsets seen so far
 
 | Blue offset | Red field | Red offset | Notes |
@@ -419,6 +466,8 @@ What `crates/sim` does for a status-free leader that walks or waits (`turn.rs`, 
 The full map is in [`structs.md`](structs.md).
 
 ## Open questions
+
+- **Stairs (#345 P1, P3).** Open: the stairs menu labels and the `0xC` entry (not read); the `0x335E` gate and dungeon id `0x15`; the source of the floor count (the byte table at `DAT_02006200`); the result-code conditions of `func_0x0219c81c` and `func_0x0219c868`.
 
 - **P2-4, `aiAllySkip` writers.** The Blue writers of `+0x116` were not located. Red's are in `DecideMovement` (`dungeon_ai_movement.c` lines 361, 443 and 436–441). This depends on the AI (#52).
 - **Speed counters (#353 P2).** The Blue addresses of `BoostSpeed` and `LowerSpeed` are found, and Blue's limit is stage-specific; see [Speed counters](#speed-counters-353-p2). Still open: whether Red's limit is the same (red-hypothesis; `pmd-red` was not checked). `GetMovementSpeed` is `FUN_020023A8`.

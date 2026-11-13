@@ -504,6 +504,7 @@ mod tests {
             global: 7,
             run_seed: 123_456,
             floors_entered: 1,
+            floors: Vec::new(),
             dungeon: Some(DungeonSnapshot {
                 rng: row.dungeon_rng,
                 floor: FloorSnapshot {
@@ -521,6 +522,7 @@ mod tests {
                 monster_house_room: 0xFF,
                 player_spawn: None,
                 stairs_spawn: None,
+                stairs_pending: false,
             }),
         }
     }

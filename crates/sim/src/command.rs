@@ -99,4 +99,9 @@ pub enum Outcome {
     Blocked(Blocked),
     /// The command is valid input, but its rule is not modelled yet. The state did not change.
     NotModelled,
+    /// The leader took the stairs and the next floor is loaded (see [`crate::state`]).
+    NextFloor,
+    /// The leader took the stairs of the last floor: the dungeon is cleared and no dungeon is
+    /// loaded any more.
+    DungeonCleared,
 }
