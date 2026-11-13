@@ -13,5 +13,6 @@ pub mod floor;
 pub mod floor_gen;
 pub mod rng;
 pub mod state;
+mod targeting;
 pub mod turn;
 pub mod visibility;

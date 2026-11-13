@@ -3,10 +3,10 @@
 //! fixed point, with its rounding.
 //!
 //! Scope. The leader uses one of [`DAMAGING`], or Regular Attack ([`REGULAR_ATTACK`], the attack
-//! action `0x32`, `docs/re/combat.md`, P8). Its target is the wild monster on the tile the
-//! command faces; nothing beyond that tile is targeted (#420). The HP changes and nothing else
-//! does: no defeat (#422), no secondary effect (#421). Items, statuses, weather and the Deoxys
-//! adjustment are not modelled; each is a `shortcut:` note below.
+//! action `0x32`, `docs/re/combat.md`, P8). Its targets are the monsters the move's range picks
+//! (`crate::targeting`, the executor's areas and classes), each hit in the game's order. The HP
+//! changes and nothing else does: no defeat (#422), no secondary effect (#421). Items, statuses,
+//! weather and the Deoxys adjustment are not modelled; each is a `shortcut:` note below.
 //!
 //! Draw order of one use (`docs/re/combat.md`, P6 and P8): the slot-0 hit check, then
 //! `CalcDamage`'s boost roll, critical roll and variance roll, then the slot-1 hit check. The
@@ -19,6 +19,7 @@ use rescue_data::moves::Move;
 
 use crate::command::{Blocked, Direction, Outcome};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
+use crate::targeting::{self, Slot};
 
 /// The moves this module runs from a move slot: Tackle (`0x09A`) and Scratch (`0x104`). The
 /// dispatch hands them straight to `HandleDamagingMove` (`docs/re/move-effects.md`), and their
@@ -357,7 +358,7 @@ fn damage_scaled(
 
 impl Dungeon {
     /// The leader uses move slot `slot` at `direction` (its facing when `None`). The move must
-    /// be one of [`DAMAGING`], target the foe on the facing tile, and have PP. A refused use
+    /// be one of [`DAMAGING`], have PP, and its range picks at least one monster. A refused use
     /// changes nothing and takes no time; a use takes the leader's turn (see [`crate::turn`]).
     // shortcut: the leader does not turn to face `direction`, as the sim does not turn it on a
     // move either. With no facing direction in the command, the leader's stored direction is used.
@@ -382,28 +383,22 @@ impl Dungeon {
         let Some(mv) = data.moves.get(usize::from(moves.id)) else {
             return Outcome::NotModelled;
         };
-        // Only a foe on the facing tile is modelled (`0x00` area, class 0; #420).
-        if mv.targeting[0] & 0xFF != 0 {
-            return Outcome::NotModelled;
-        }
         if moves.pp == 0 {
             return Outcome::Blocked(Blocked::NoPp);
         }
-        let Some(index) = self.facing_foe(direction) else {
+        let Some(targets) = self.targets_of(mv, self.facing(direction)) else {
             return Outcome::NotModelled;
         };
         let slot = usize::from(slot);
-        self.take_leader_turn(|d| d.strike(slot, index, mv, data));
+        self.take_leader_turn(|d| d.strike(slot, &targets, mv, data));
         Outcome::Applied
     }
 
     /// The leader's Regular Attack (action `0x32`) at `direction`: move `0x163` with no move slot
-    /// and no PP (`docs/re/combat.md`, P8). The wild monster on the facing tile is the target.
+    /// and no PP (`docs/re/combat.md`, P8). Its targets are the monsters its range picks.
     // shortcut: the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`) are not
     // modelled: the sim keeps neither field.
     // shortcut: the second strike of `02181D98` (weather or an ability) is not modelled.
-    // shortcut: the move's targeting is not read: only a foe on the facing tile is hit, as for
-    // the damaging moves.
     pub(crate) fn regular_attack(
         &mut self,
         direction: Direction,
@@ -415,37 +410,51 @@ impl Dungeon {
         let Some(mv) = data.moves.get(usize::from(REGULAR_ATTACK)) else {
             return Outcome::NotModelled;
         };
-        // shortcut: a facing tile with no wild monster is not modelled: what the game does with
-        // an empty target is not read.
-        let Some(index) = self.facing_foe(Some(direction)) else {
+        let Some(targets) = self.targets_of(mv, direction) else {
             return Outcome::NotModelled;
         };
-        self.take_leader_turn(|d| d.resolve(index, mv, REGULAR_ATTACK_ARG8, data));
+        self.take_leader_turn(|d| {
+            for &target in &targets {
+                d.resolve(target, mv, REGULAR_ATTACK_ARG8, data);
+            }
+        });
         Outcome::Applied
     }
 
-    /// The index of the wild monster on the tile the leader faces: `direction`, or the leader's
-    /// stored direction when it is `None`.
-    fn facing_foe(&self, direction: Option<Direction>) -> Option<usize> {
-        let leader = self.team.first()?;
-        let facing =
-            direction.unwrap_or(DIRECTIONS[usize::from(leader.info.direction) % DIRECTIONS.len()]);
-        let (dx, dy) = facing.delta();
-        let at = (
-            leader.pos.0.saturating_add(i16::try_from(dx).unwrap_or(0)),
-            leader.pos.1.saturating_add(i16::try_from(dy).unwrap_or(0)),
-        );
-        self.wild.iter().position(|m| m.pos == at)
+    /// The direction a command uses: `direction`, or the leader's stored direction when it is
+    /// `None`.
+    fn facing(&self, direction: Option<Direction>) -> Direction {
+        let stored = self
+            .team
+            .first()
+            .map_or(0, |l| usize::from(l.info.direction));
+        direction.unwrap_or(DIRECTIONS[stored % DIRECTIONS.len()])
     }
 
-    /// One use of the move in the leader's `slot` on wild monster `target`: the PP mark, the hit
-    /// check, the damage, the second hit check, then the PP taken at the end (`docs/re/combat.md`,
+    /// The monsters a use of `mv` by the leader facing `facing` hits, in the game's order
+    /// (`targeting`). `None` when the range is not modelled, or when no monster would be hit.
+    // shortcut: what the game does with an empty target is not read, so a use with no target
+    // is not modelled.
+    // shortcut: a target that is the user is not modelled: the damage path against the user is
+    // not in the notes.
+    fn targets_of(&self, mv: &Move, facing: Direction) -> Option<Vec<Slot>> {
+        let targets = targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)?;
+        if targets.is_empty() || targets.contains(&Slot::Team(0)) {
+            return None;
+        }
+        Some(targets)
+    }
+
+    /// One use of the move in the leader's `slot` on each of `targets`, in order: the PP mark, the
+    /// hit checks and damage of each target, then the PP taken at the end (`docs/re/combat.md`,
     /// P1, P3, P6). A miss takes PP too.
-    fn strike(&mut self, slot: usize, target: usize, mv: &Move, data: &CombatData<'_>) {
+    fn strike(&mut self, slot: usize, targets: &[Slot], mv: &Move, data: &CombatData<'_>) {
         if let Some(leader) = self.team.first_mut() {
             leader.info.moves[slot].flags2 |= MoveSlot::USE_MARK;
         }
-        self.resolve(target, mv, ARG8, data);
+        for &target in targets {
+            self.resolve(target, mv, ARG8, data);
+        }
 
         // The PP is taken at the end of the action, once per use (`02159B18`).
         // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
@@ -461,13 +470,31 @@ impl Dungeon {
         }
     }
 
-    /// The hit checks and damage of one use by the leader on wild monster `target`, with the
-    /// move's `arg8` (24.8). It takes no PP; [`strike`](Self::strike) and Regular Attack add that.
-    fn resolve(&mut self, target: usize, mv: &Move, arg8: i64, data: &CombatData<'_>) {
+    /// The info of the monster at `slot`, if there is one.
+    fn info_of(&self, slot: Slot) -> Option<&EntityInfo> {
+        match slot {
+            Slot::Team(i) => self.team.get(i).map(|m| &m.info),
+            Slot::Wild(i) => self.wild.get(i).map(|m| &m.info),
+        }
+    }
+
+    /// The info of the monster at `slot`, mutably, if there is one.
+    fn info_mut(&mut self, slot: Slot) -> Option<&mut EntityInfo> {
+        match slot {
+            Slot::Team(i) => self.team.get_mut(i).map(|m| &mut m.info),
+            Slot::Wild(i) => self.wild.get_mut(i).map(|m| &mut m.info),
+        }
+    }
+
+    /// The hit checks and damage of one use by the leader on monster `target`, with the move's
+    /// `arg8` (24.8). It takes no PP; [`strike`](Self::strike) and Regular Attack add that.
+    fn resolve(&mut self, target: Slot, mv: &Move, arg8: i64, data: &CombatData<'_>) {
         let Some(attacker) = self.team.first().map(|m| m.info.clone()) else {
             return;
         };
-        let defender = self.wild[target].info.clone();
+        let Some(defender) = self.info_of(target).cloned() else {
+            return;
+        };
         let physical = is_physical(data.tables, mv.kind);
         let t = data.tables;
 
@@ -488,7 +515,10 @@ impl Dungeon {
             if hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
                 // shortcut: no defeat (#422): HP stops at 0 and the faint is not run.
                 let hp = i32::from(defender.hp) - dealt.value;
-                self.wild[target].info.hp = i16::try_from(hp.max(0)).unwrap_or(i16::MAX);
+                let hp = i16::try_from(hp.max(0)).unwrap_or(i16::MAX);
+                if let Some(info) = self.info_mut(target) {
+                    info.hp = hp;
+                }
             }
         }
     }
@@ -499,6 +529,7 @@ mod tests {
     use super::*;
     use crate::command::Command;
     use crate::floor::Floor;
+    use crate::floor::TERRAIN_FLOOR;
     use crate::rng::DungeonRng;
     use crate::state::{GameState, Monster};
     use rescue_data::combat::STAGES;
@@ -630,6 +661,13 @@ mod tests {
             info: leader_info,
         };
         let mut g = GameState::in_dungeon(1, Floor::new(), vec![leader], 2).unwrap();
+        // The facing tile is open ground: `Floor::new()` leaves its type at 0 (no walkable tile).
+        g.dungeon_mut()
+            .unwrap()
+            .floor
+            .tile_mut(6, 5)
+            .unwrap()
+            .terrain = TERRAIN_FLOOR;
         let wild = Monster {
             pos: (6, 5),
             visible: true,
@@ -668,7 +706,9 @@ mod tests {
             tables: t,
             moves: &moves,
         };
-        g.dungeon_mut().unwrap().strike(0, 0, mv, &data);
+        g.dungeon_mut()
+            .unwrap()
+            .strike(0, &[Slot::Wild(0)], mv, &data);
     }
 
     fn wild_hp(g: &GameState) -> i16 {
@@ -1029,7 +1069,7 @@ mod tests {
         };
         g.dungeon_mut()
             .unwrap()
-            .resolve(0, mv, REGULAR_ATTACK_ARG8, &data);
+            .resolve(Slot::Wild(0), mv, REGULAR_ATTACK_ARG8, &data);
     }
 
     #[test]
@@ -1124,5 +1164,214 @@ mod tests {
             Outcome::NotModelled
         );
         assert_eq!(wild_hp(&open), 100);
+    }
+
+    /// `count` five-draw blocks of a hit, from a copy of `rng`, in order.
+    fn draw_blocks(rng: &DungeonRng, count: usize) -> Vec<[i32; 5]> {
+        let mut r = *rng;
+        (0..count)
+            .map(|_| {
+                [
+                    r.int(100),
+                    r.int(100),
+                    r.int(100),
+                    r.int(0x4000),
+                    r.int(100),
+                ]
+            })
+            .collect()
+    }
+
+    /// A wild monster of the test info at `pos`.
+    fn foe_at(pos: (i16, i16)) -> Monster {
+        Monster {
+            pos,
+            visible: true,
+            info: EntityInfo {
+                not_team_member: true,
+                is_team_leader: false,
+                ..info([9, 0], [0, 0])
+            },
+        }
+    }
+
+    #[test]
+    fn a_cone_move_hits_each_monster_in_cone_order_with_five_draws_each() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x10; // the cone: facing - 1, facing, facing + 1
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The leader at (5, 5) faces Right. Foes stand on the three cone tiles, listed out of
+        // cone order, so only the cone order can give the draws to them in turn.
+        let mut g = battle([100; 3], 0);
+        g.dungeon_mut().unwrap().wild = vec![foe_at((6, 5)), foe_at((6, 4)), foe_at((6, 6))];
+        let before = *g.dungeon().unwrap().rng();
+        let blocks = draw_blocks(&before, 3);
+        let attacker = g.dungeon().unwrap().team()[0].info.clone();
+        let target = foe_at((6, 5)).info;
+        let dealt = |b: [i32; 5]| {
+            let rolls = Rolls {
+                boost: b[1],
+                crit: b[2],
+                variance: b[3],
+            };
+            damage(&t, &mv, &attacker, &target, rolls).value
+        };
+
+        // The targets are the cone's, as the executor lists them; `strike` runs the draws.
+        let targets =
+            targeting::executor_targets(g.dungeon().unwrap(), 0x9A, 0x10, Direction::Right, None)
+                .unwrap();
+        assert_eq!(targets, vec![Slot::Wild(2), Slot::Wild(0), Slot::Wild(1)]);
+        g.dungeon_mut().unwrap().strike(0, &targets, &mv, &data);
+        let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
+        // DownRight (6, 6) is wild 2, Right (6, 5) is wild 0, UpRight (6, 4) is wild 1.
+        assert_eq!(hp(&g, 2), 100 - dealt(blocks[0]));
+        assert_eq!(hp(&g, 0), 100 - dealt(blocks[1]));
+        assert_eq!(hp(&g, 1), 100 - dealt(blocks[2]));
+        // Fifteen draws in all, and the PP is taken once for the use.
+        let mut rest = before;
+        for _ in 0..3 {
+            for cap in [100, 100, 100, 0x4000, 100] {
+                rest.int(cap);
+            }
+        }
+        assert_eq!(*g.dungeon().unwrap().rng(), rest);
+        assert_eq!(leader_pp(&g), 9);
+    }
+
+    #[test]
+    fn an_around_move_hits_each_neighbour_in_facing_order_with_five_draws_each() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x20; // around: the eight neighbours from the facing direction on
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The leader at (5, 5) faces Right. Foes stand on three neighbours, listed out of
+        // facing order: from Right on, the order is Right, UpRight, then DownRight last.
+        let mut g = battle([100; 3], 0);
+        g.dungeon_mut().unwrap().wild = vec![foe_at((6, 6)), foe_at((6, 5)), foe_at((6, 4))];
+        let before = *g.dungeon().unwrap().rng();
+        let blocks = draw_blocks(&before, 3);
+        let attacker = g.dungeon().unwrap().team()[0].info.clone();
+        let target = foe_at((6, 5)).info;
+        let dealt = |b: [i32; 5]| {
+            let rolls = Rolls {
+                boost: b[1],
+                crit: b[2],
+                variance: b[3],
+            };
+            damage(&t, &mv, &attacker, &target, rolls).value
+        };
+
+        let targets =
+            targeting::executor_targets(g.dungeon().unwrap(), 0xA0, 0x20, Direction::Right, None)
+                .unwrap();
+        assert_eq!(targets, vec![Slot::Wild(1), Slot::Wild(2), Slot::Wild(0)]);
+        g.dungeon_mut().unwrap().strike(0, &targets, &mv, &data);
+        let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
+        // Right (6, 5) is wild 1 and takes the first block, UpRight (6, 4) is wild 2 and takes
+        // the second, DownRight (6, 6) is wild 0 and takes the third.
+        assert_eq!(hp(&g, 1), 100 - dealt(blocks[0]));
+        assert_eq!(hp(&g, 2), 100 - dealt(blocks[1]));
+        assert_eq!(hp(&g, 0), 100 - dealt(blocks[2]));
+        // Fifteen draws in all, and the PP is taken once for the use.
+        let mut rest = before;
+        for _ in 0..3 {
+            for cap in [100, 100, 100, 0x4000, 100] {
+                rest.int(cap);
+            }
+        }
+        assert_eq!(*g.dungeon().unwrap().rng(), rest);
+        assert_eq!(leader_pp(&g), 9);
+    }
+
+    #[test]
+    fn a_line_move_hits_the_first_monster_on_the_line_even_an_ally() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x52; // the line, class 2: any monster
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The wild foe is past an ally on the line, so the ally is the first monster met.
+        let mut g = battle([100; 3], 0);
+        let d = g.dungeon_mut().unwrap();
+        // The line walk reads the tiles: the test floor is open ground on the row.
+        for x in 5..=10 {
+            d.floor.tile_mut(x, 5).unwrap().terrain = TERRAIN_FLOOR;
+        }
+        d.wild[0].pos = (9, 5);
+        d.team.push(Monster {
+            pos: (7, 5),
+            visible: true,
+            info: info([9, 0], [0, 0]),
+        });
+        let out = g.step_with(
+            Command::UseMove {
+                slot: 0,
+                direction: Some(Direction::Right),
+            },
+            &data,
+        );
+        assert_eq!(out, Outcome::Applied);
+        let d = g.dungeon().unwrap();
+        assert!(d.team()[1].info.hp < 100, "the ally is hit");
+        assert_eq!(d.wild()[0].info.hp, 100, "the foe beyond it is not");
+    }
+
+    #[test]
+    fn tackle_does_not_hit_an_ally_on_the_facing_tile() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The ally stands where the foe was: class 0 is a foe only, so the use is refused.
+        let mut g = battle([100; 3], 0);
+        let d = g.dungeon_mut().unwrap();
+        d.wild.clear();
+        d.team.push(Monster {
+            pos: (6, 5),
+            visible: true,
+            info: info([9, 0], [0, 0]),
+        });
+        let before = g.clone();
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
+        assert_eq!(g, before);
+    }
+
+    #[test]
+    fn a_move_whose_area_is_not_modelled_changes_nothing() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x40; // two tiles ahead: its rule is not in the notes
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        let mut g = battle([100; 3], 0);
+        let before = g.clone();
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
+        assert_eq!(g, before);
     }
 }
