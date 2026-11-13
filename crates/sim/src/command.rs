@@ -61,8 +61,9 @@ pub enum Command {
     Run(Direction),
     /// Attack in a direction. Combat is not modelled yet.
     Attack(Direction),
-    /// Use move slot `slot` (0 to 3), at a direction for moves that need one. Moves are not
-    /// modelled yet.
+    /// Use move slot `slot` (0 to 3), at a direction for moves that need one. Only the
+    /// damaging moves of [`crate::combat`] are modelled, and only through
+    /// [`crate::state::GameState::step_with`].
     UseMove {
         slot: u8,
         direction: Option<Direction>,
@@ -92,6 +93,10 @@ pub enum Blocked {
     Terrain,
     /// A diagonal step would cut a wall corner: one of its orthogonal neighbours is a wall.
     CornerCut,
+    /// The move slot is empty, or the slot is not one of the four.
+    NoMove,
+    /// The move has no PP left, so the game does not use it (`docs/re/combat.md`, P3).
+    NoPp,
 }
 
 /// What a command did.

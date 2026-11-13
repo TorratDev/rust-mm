@@ -5,7 +5,7 @@
 //! Monsters live in two `Vec`s, the team and the wild monsters, in game slot order, so
 //! nothing depends on hash order. Field names and offsets follow `docs/re/structs.md`
 //! (the entity and entity-info tables, and the dungeon struct). Fields the notes do not
-//! record are left out, not guessed: the item and trap entities, the moves and statuses of
+//! record are left out, not guessed: the item and trap entities, the statuses of
 //! a monster, the weather and the floor properties. The turn-loop state is the fractional-turn
 //! counter, the leader's speed stage and its pending end-of-turns ([`crate::turn`]). The `turn`
 //! counter is the sim's own, not a game field.
@@ -15,7 +15,10 @@
 use serde::{Deserialize, Serialize};
 
 use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam};
+use rescue_data::moves::Move;
+use rescue_data::species::Species;
 
+use crate::combat::CombatData;
 use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
 use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
@@ -76,9 +79,8 @@ pub fn floor_records(map: &MapParam, dungeon: u8) -> Option<Vec<FloorRecord>> {
 pub const MAX_RESTORED_FLOORS: u32 = 1 << 16;
 
 /// The entity-info fields the notes record (`docs/re/structs.md`, "Entity info"). The
-/// offset is the Blue offset from `entity + 0x70`. Left out: `types`, `abilities`, the held
-/// item, the moves, the status records, the skill bits, the AI target and the decoy and
-/// curse state.
+/// offset is the Blue offset from `entity + 0x70`. Left out: the held item, the status
+/// records, the skill bits, the AI target and the decoy and curse state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityInfo {
     /// `+0x02`: species id.
@@ -101,8 +103,21 @@ pub struct EntityInfo {
     pub attack: [u8; 2],
     /// `+0x16`: base defence for each split (u8 pair).
     pub defence: [u8; 2],
-    /// `+0x1C`: offensive stages for each split (s16 pair, clamped to 0 to 20 by the game).
+    /// `+0x1C`: offensive stages for each split (s16 pair). A stage is an index 0 to 20 into
+    /// the stage table, clamped by the game; 10 is neutral.
     pub offensive_stages: [i16; 2],
+    /// `+0x20`: defensive stages for each split (s16 pair), as `offensive_stages`.
+    pub defensive_stages: [i16; 2],
+    /// `+0x24`: the attacker's accuracy stage (s16), as `offensive_stages`.
+    pub accuracy_stage: i16,
+    /// `+0x26`: the target's evasion stage (s16), as `offensive_stages`.
+    pub evasion_stage: i16,
+    /// `+0x56` and `+0x57`: the species' two types (0 is none). Set from [`Species::types`].
+    pub types: [u8; 2],
+    /// `+0x58` and `+0x59`: the species' two abilities. Set from [`Species::abilities`].
+    pub abilities: [u8; 2],
+    /// `+0xF4`: the four move slots, six bytes each.
+    pub moves: [MoveSlot; 4],
     /// `+0xE4` to `+0xE8`: the five speed-up counters (turns left, 0 when free). Each nonzero
     /// one adds 1 to the speed stage (`CalcSpeedStage`).
     // shortcut: the counters are set by the caller and never counted down (the gated-pass
@@ -127,6 +142,58 @@ pub struct EntityInfo {
     pub regen_speed: u8,
 }
 
+/// One move slot of a monster: the six bytes at `info + 0xF4 + 6 * slot` (`docs/re/combat.md`,
+/// "PP", #419 P3). Field names are ours; the byte layout is the game's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MoveSlot {
+    /// Byte 0. Bit 0 is set when the slot holds a move (the game's test in its use loop).
+    pub flags: u8,
+    /// Byte 1. Bit 3 (`0x08`) is the use mark: set when the move is used, and the PP is taken
+    /// at the end of the action (see [`crate::combat`]).
+    pub flags2: u8,
+    /// Bytes 2 and 3: the move ID, a [`rescue_data::moves::Move`] index.
+    pub id: u16,
+    /// Byte 4: the current PP. The maximum is the move's base PP.
+    pub pp: u8,
+    /// Byte 5: the Ginseng upgrade level.
+    pub ginseng: u8,
+}
+
+impl MoveSlot {
+    /// Bit 0 of [`flags`](Self::flags): the slot holds a move.
+    pub const HOLDS_MOVE: u8 = 1;
+    /// Bit 3 of [`flags2`](Self::flags2): the move was used and its PP is still to be taken.
+    pub const USE_MARK: u8 = 0x08;
+
+    /// A slot holding `mv` at full PP.
+    #[must_use]
+    pub fn new(mv: &Move) -> Self {
+        Self {
+            flags: Self::HOLDS_MOVE,
+            flags2: 0,
+            id: mv.id,
+            pp: mv.base_pp,
+            ginseng: 0,
+        }
+    }
+}
+
+impl EntityInfo {
+    /// Copies the species' types and abilities into the info (`+0x56` to `+0x59`), as the game
+    /// does when it spawns a monster (`docs/re/combat.md`, "Abilities", P6).
+    pub fn apply_species(&mut self, species: &Species) {
+        self.types = species.types;
+        self.abilities = species.abilities;
+    }
+
+    /// Whether the monster has ability `id` in either of its two slots (the game's
+    /// `AbilityIsActive` test on the pair).
+    #[must_use]
+    pub fn has_ability(&self, id: u8) -> bool {
+        self.abilities.contains(&id)
+    }
+}
+
 /// One monster: the entity's position and visibility, and its info.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Monster {
@@ -148,7 +215,7 @@ pub struct Dungeon {
     /// The team, in slot order; slot 0 is the leader.
     pub(crate) team: Vec<Monster>,
     /// The wild monsters, in slot order.
-    wild: Vec<Monster>,
+    pub(crate) wild: Vec<Monster>,
     /// The sim's turn counter: one per command that takes a turn.
     pub(crate) turn: u32,
     /// `fractionalTurn` (`dungeon+0x650`): the next fractional turn to run, 0 to 23.
@@ -307,7 +374,7 @@ impl Dungeon {
 }
 
 /// The eight directions in the game's table order (`Direction` declaration order).
-const DIRECTIONS: [Direction; 8] = [
+pub(crate) const DIRECTIONS: [Direction; 8] = [
     Direction::Down,
     Direction::DownRight,
     Direction::Right,
@@ -636,6 +703,12 @@ impl GameState {
         self.dungeon.as_ref()
     }
 
+    /// The current dungeon, mutably. Crate-internal: the tests place wild monsters with it.
+    #[cfg(test)]
+    pub(crate) fn dungeon_mut(&mut self) -> Option<&mut Dungeon> {
+        self.dungeon.as_mut()
+    }
+
     /// Enters a floor (see [`GameState::in_dungeon`]). Crate-private: a floor is entered only by
     /// the constructor or through the state's own rules. The floor's darkness comes from its
     /// record (floor number `floors_entered`, see [`floor_records`]); with no record it is lit.
@@ -701,9 +774,21 @@ impl GameState {
     /// leader's speed stage gives it one, then the command takes effect (see [`crate::turn`]).
     /// A refused move changes nothing and takes no time. While the leader's stairs flag is set,
     /// the command is the answer to the stairs menu: the floor changes ([`Outcome::NextFloor`],
-    /// or [`Outcome::DungeonCleared`] on the last floor). Otherwise attack, moves, items and
-    /// menus are valid input and return [`Outcome::NotModelled`].
+    /// or [`Outcome::DungeonCleared`] on the last floor). Otherwise attack, items and menus are
+    /// valid input and return [`Outcome::NotModelled`]. A move command (`UseMove`) runs only
+    /// through [`GameState::step_with`], with the combat tables.
     pub fn step(&mut self, command: Command) -> Outcome {
+        self.apply(command, None)
+    }
+
+    /// [`step`](Self::step) with the combat tables and the move table. A move command
+    /// (`UseMove`) runs its damage here; without the tables it is not modelled (see
+    /// [`crate::combat`]).
+    pub fn step_with(&mut self, command: Command, data: &CombatData<'_>) -> Outcome {
+        self.apply(command, Some(data))
+    }
+
+    fn apply(&mut self, command: Command, data: Option<&CombatData<'_>>) -> Outcome {
         // The stairs menu answers the leader's next input: confirm is given, so any command
         // takes the stairs (menus are not modelled).
         if self.dungeon.as_ref().is_some_and(|d| d.stairs_pending) {
@@ -731,10 +816,11 @@ impl GameState {
                 dungeon.take_leader_turn(|_| {});
                 Outcome::Applied
             }
-            Command::Attack(_)
-            | Command::UseMove { .. }
-            | Command::UseItem { .. }
-            | Command::Menu(_) => Outcome::NotModelled,
+            Command::UseMove { slot, direction } => match data {
+                Some(data) => dungeon.use_move(slot, direction, data),
+                None => Outcome::NotModelled,
+            },
+            Command::Attack(_) | Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
         }
     }
 
@@ -1034,7 +1120,13 @@ mod tests {
             max_hp: 30,
             attack: [10, 10],
             defence: [5, 5],
-            offensive_stages: [0, 0],
+            offensive_stages: [10, 10],
+            defensive_stages: [10, 10],
+            accuracy_stage: 10,
+            evasion_stage: 10,
+            types: [0, 0],
+            abilities: [0, 0],
+            moves: [MoveSlot::default(); 4],
             speed_up: [0; 5],
             speed_down: [0; 5],
             direction: 0,

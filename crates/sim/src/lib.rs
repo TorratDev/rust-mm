@@ -7,6 +7,7 @@
 #![deny(clippy::float_arithmetic)]
 #![deny(clippy::disallowed_types, clippy::disallowed_methods)]
 
+pub mod combat;
 pub mod command;
 pub mod floor;
 pub mod floor_gen;

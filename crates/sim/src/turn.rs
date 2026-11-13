@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use crate::command::{Command, Outcome};
     use crate::floor::Floor;
-    use crate::state::{EntityInfo, GameState, Monster};
+    use crate::state::{EntityInfo, GameState, Monster, MoveSlot};
 
     /// The gated fractional turns, transcribed from `docs/re/turns.md` ("Speed", table).
     const NOTE: [&[u8]; 5] = [
@@ -235,7 +235,13 @@ mod tests {
             max_hp: 30,
             attack: [10, 10],
             defence: [5, 5],
-            offensive_stages: [0, 0],
+            offensive_stages: [10, 10],
+            defensive_stages: [10, 10],
+            accuracy_stage: 10,
+            evasion_stage: 10,
+            types: [0, 0],
+            abilities: [0, 0],
+            moves: [MoveSlot::default(); 4],
             speed_up: [0; 5],
             speed_down: [0; 5],
             direction: 0,

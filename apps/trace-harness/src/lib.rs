@@ -464,7 +464,7 @@ fn push(diffs: &mut Vec<FieldDiff>, path: &str, expected: &str, actual: &str) {
 mod tests {
     use super::*;
     use rescue_nds::rom::SUPPORTED_DUMPS;
-    use rescue_sim::state::{DungeonSnapshot, EntityInfo, FloorSnapshot};
+    use rescue_sim::state::{DungeonSnapshot, EntityInfo, FloorSnapshot, MoveSlot};
     use rescue_trace::{Emulator, InitialSeed, Inputs, Rom, SCHEMA_VERSION};
 
     const SHA1: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -535,7 +535,13 @@ mod tests {
                 max_hp: e.max_hp,
                 attack: [10, 10],
                 defence: [5, 5],
-                offensive_stages: [0, 0],
+                offensive_stages: [10, 10],
+                defensive_stages: [10, 10],
+                accuracy_stage: 10,
+                evasion_stage: 10,
+                types: [0, 0],
+                abilities: [0, 0],
+                moves: [MoveSlot::default(); 4],
                 speed_up: [0; 5],
                 speed_down: [0; 5],
                 direction: 0,

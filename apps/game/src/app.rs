@@ -9,7 +9,7 @@
 use rescue_platform::{ButtonState, Flow};
 use rescue_render::anim::AnimPlayer;
 use rescue_sim::command::{Command, Direction, Outcome};
-use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster};
+use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster, MoveSlot};
 
 use crate::boot::RomCheck;
 use crate::dungeon::{self, Dungeon, FloorData, IDLE_GROUP, WALK_GROUP};
@@ -337,7 +337,13 @@ fn leader_monster(pos: (i16, i16), species: u16) -> Monster {
             max_hp: 100,
             attack: [0, 0],
             defence: [0, 0],
-            offensive_stages: [0, 0],
+            offensive_stages: [10, 10],
+            defensive_stages: [10, 10],
+            accuracy_stage: 10,
+            evasion_stage: 10,
+            types: [0, 0],
+            abilities: [0, 0],
+            moves: [MoveSlot::default(); 4],
             speed_up: [0; 5],
             speed_down: [0; 5],
             // Direction 0, south: the facing of a new run.
