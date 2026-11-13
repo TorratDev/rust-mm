@@ -100,6 +100,14 @@ pub fn state_from_row(
     properties: Option<&FloorProperties>,
 ) -> Result<GameState, RowError> {
     let floors_entered = floors_on_chain(row)?;
+    // The sim's clock starts on the row's fractional turn, 0 to 23.
+    let fractional_turn = u8::try_from(row.fractional_turn)
+        .ok()
+        .filter(|k| *k < 24)
+        .ok_or(RowError::Unrepresentable {
+            field: "fractionalTurn".to_owned(),
+            value: i64::from(row.fractional_turn),
+        })?;
     let mut team = Vec::new();
     for (slot, entity) in row.team.iter().enumerate() {
         if let Some(entity) = entity {
@@ -141,7 +149,8 @@ pub fn state_from_row(
             team,
             wild,
             turn: 0,
-            fractional_turn: 0,
+            fractional_turn,
+            pending_end_of_turns: 0,
             // shortcut: the row's observed stage is set below and overrides the computed one, so
             // the species speed is not read here. A row with no leader gets no stage, which the
             // sim computes from 0 (before: NotModelled). Load the species table to drop this.
@@ -182,7 +191,8 @@ fn floors_on_chain(row: &TurnRow) -> Result<u32, RowError> {
 }
 
 /// One monster from a trace entity. Fields the row does not carry take their zero value
-/// (`attack`, `defence`, `iq`, `direction`, `belly`), and `visible` is set on.
+/// (`attack`, `defence`, `iq`, `direction`), `belly` takes the floor's start, and `visible` is
+/// set on.
 fn monster(
     entity: &Entity,
     path: &str,
@@ -212,7 +222,15 @@ fn monster(
             speed_up: [0; 5],
             speed_down: [0; 5],
             direction: 0,
-            belly: 0,
+            // shortcut: the row carries no belly, so every monster starts at a floor's 100.000
+            // (the leader's only, the sole one the sim decreases); not zero, which would starve it.
+            belly: 100_000,
+            belly_empty: false,
+            regen_acc: 0,
+            // shortcut: the row carries no regeneration speed (the species table is not read,
+            // as with `leader_speed`), so HP regeneration runs at the clamp's floor of 30 until
+            // the table is loaded.
+            regen_speed: 0,
         },
     })
 }

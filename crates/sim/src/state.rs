@@ -7,8 +7,8 @@
 //! (the entity and entity-info tables, and the dungeon struct). Fields the notes do not
 //! record are left out, not guessed: the item and trap entities, the moves and statuses of
 //! a monster, the weather and the floor properties. The turn-loop state is the fractional-turn
-//! counter and the leader's speed stage ([`crate::turn`]). The `turn` counter is the sim's
-//! own, not a game field.
+//! counter, the leader's speed stage and its pending end-of-turns ([`crate::turn`]). The `turn`
+//! counter is the sim's own, not a game field.
 //!
 //! [`GameState::step`] is the only way a command changes the state. Integer math only.
 
@@ -82,9 +82,17 @@ pub struct EntityInfo {
     pub speed_down: [u8; 5],
     /// `+0x44`: facing direction (the game's direction index).
     pub direction: u8,
-    /// `+0x10E`: belly, a 4-byte fixed-point value (`probable` in the notes; its scale is
-    /// not named).
+    /// `+0x10E` (whole) and `+0x110` (thousandths) read as one value in thousandths: 100 000
+    /// is 100.000, the belly a floor starts with. Only the leader's belly is decreased.
     pub belly: i32,
+    /// `+0x118`: `bellyEmpty`. Set by the end-of-turn when the belly is 0, cleared at its start;
+    /// while it is set, HP regeneration is skipped.
+    pub belly_empty: bool,
+    /// `+0x1C4`: the HP regeneration accumulator (s16).
+    pub regen_acc: i16,
+    /// The species regeneration speed: `Species::regen_speed` in `rescue-data` (already shifted
+    /// left by one). Read for team members only; clamped to 30 to 500 when used.
+    pub regen_speed: u8,
 }
 
 /// One monster: the entity's position and visibility, and its info.
@@ -104,15 +112,18 @@ pub struct Dungeon {
     /// The floor map.
     floor: Floor,
     /// The floor's generator (`gDungeonRngState`).
-    rng: DungeonRng,
+    pub(crate) rng: DungeonRng,
     /// The team, in slot order; slot 0 is the leader.
-    team: Vec<Monster>,
+    pub(crate) team: Vec<Monster>,
     /// The wild monsters, in slot order.
     wild: Vec<Monster>,
     /// The sim's turn counter: one per command that takes a turn.
     pub(crate) turn: u32,
     /// `fractionalTurn` (`dungeon+0x650`): the next fractional turn to run, 0 to 23.
     pub(crate) fractional_turn: u8,
+    /// The leader's end-of-turns still waiting for a weather step (one per move or wait that
+    /// has not reached its weather step yet). See [`crate::turn`].
+    pub(crate) pending_end_of_turns: u8,
     /// The leader's species movement speed (`FUN_020023A8`, `monster_md` `+0xC`), the base term
     /// of `CalcSpeedStage`. Given at dungeon entry.
     pub(crate) leader_speed: i32,
@@ -387,6 +398,7 @@ impl GameState {
             wild: Vec::new(),
             turn: 0,
             fractional_turn: 0,
+            pending_end_of_turns: 0,
             leader_speed,
             speed_stage: None,
             shop_pass: false,
@@ -454,6 +466,7 @@ impl GameState {
                 wild: d.wild.clone(),
                 turn: d.turn,
                 fractional_turn: d.fractional_turn,
+                pending_end_of_turns: d.pending_end_of_turns,
                 leader_speed: d.leader_speed,
                 speed_stage: d.speed_stage,
                 shop_pass: d.shop_pass,
@@ -494,6 +507,7 @@ impl GameState {
                     // Clamped as the sim keeps them, so a crafted snapshot cannot index past
                     // the speed table or the 24 fractional turns.
                     fractional_turn: d.fractional_turn % FRACTIONAL_TURNS,
+                    pending_end_of_turns: d.pending_end_of_turns,
                     leader_speed: d.leader_speed,
                     speed_stage: d.speed_stage.map(|s| s.min(MAX_SPEED_STAGE)),
                     shop_pass: d.shop_pass,
@@ -601,6 +615,8 @@ pub struct DungeonSnapshot {
     pub turn: u32,
     /// `fractionalTurn`, 0 to 23. Restore takes it modulo 24.
     pub fractional_turn: u8,
+    /// The leader's end-of-turns waiting for a weather step.
+    pub pending_end_of_turns: u8,
     /// The leader's species movement speed, the base of its speed stage.
     pub leader_speed: i32,
     /// The stage the caller set, or `None` to compute it. Restore clamps it to 0 to 4.
@@ -643,6 +659,9 @@ mod tests {
             speed_down: [0; 5],
             direction: 0,
             belly: 0,
+            belly_empty: false,
+            regen_acc: 0,
+            regen_speed: 0,
         }
     }
 
@@ -770,13 +789,14 @@ mod tests {
     #[test]
     fn a_move_takes_the_leaders_turn_in_its_gated_fractional_turn() {
         // Stage 1 acts in fractional turns 3, 7, ...: a move from turn 0 runs turns 0 to 3,
-        // steps the leader, and leaves the counter on 4.
+        // steps the leader, runs its end-of-turn at the weather step of turn 6, and leaves the
+        // counter on 7, the leader's next gate.
         let mut g = run_with_leader(1);
         g.set_speed_stage(1);
         assert_eq!(g.step(Command::Move(Direction::Right)), Outcome::Applied);
         assert_eq!(leader_pos(&g), (6, 5));
         let d = g.dungeon.as_ref().unwrap();
-        assert_eq!((d.fractional_turn(), d.turn()), (4, 1));
+        assert_eq!((d.fractional_turn(), d.turn()), (7, 1));
     }
 
     #[test]
@@ -839,9 +859,9 @@ mod tests {
     #[test]
     fn a_fresh_leader_acts_without_a_caller_setting_its_stage() {
         let mut g = fresh_leader(1);
-        // Stage 1 acts in fractional turn 3, so the first wait leaves the counter on 4.
+        // Stage 1 acts in fractional turn 3, so the first wait leaves the counter on 7, the next gate.
         assert_eq!(g.step(Command::Wait), Outcome::Applied);
-        assert_eq!(g.dungeon().unwrap().fractional_turn(), 4);
+        assert_eq!(g.dungeon().unwrap().fractional_turn(), 7);
         assert_eq!(g.step(Command::Move(Direction::Right)), Outcome::Applied);
         assert_eq!(leader_pos(&g), (6, 5));
     }
@@ -1093,15 +1113,15 @@ mod tests {
     fn the_counter_and_the_stage_survive_a_snapshot() {
         let mut g = run_with_leader(0x1234_5679);
         g.set_speed_stage(2);
-        // Stage 2 acts in fractional turns 1 and 3: two waits leave the counter on 4.
+        // Stage 2 acts in fractional turns 1 and 3: two waits leave the counter on 5, the next gate.
         g.step(Command::Wait);
         g.step(Command::Wait);
-        assert_eq!(g.dungeon().unwrap().fractional_turn(), 4);
+        assert_eq!(g.dungeon().unwrap().fractional_turn(), 5);
         let snap = g.snapshot();
         let text = serde_json::to_string(&snap).unwrap();
         let back: Snapshot = serde_json::from_str(&text).unwrap();
         let mut restored = GameState::restore(&back).unwrap();
-        assert_eq!(restored.dungeon().unwrap().fractional_turn(), 4);
+        assert_eq!(restored.dungeon().unwrap().fractional_turn(), 5);
         assert_eq!(restored.dungeon().unwrap().speed_stage(), Some(2));
         // The restored run keeps the same schedule.
         for _ in 0..6 {

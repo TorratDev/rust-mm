@@ -204,6 +204,12 @@ pub enum Replay {
 /// sim does not model (`NotModelled`) stops the replay. Actions of the last row are applied
 /// but nothing compares them. `properties` gives the first floor (see [`floor`]); `None`
 /// leaves it empty.
+///
+/// The sim stands on the leader's next gate after each command, while the game's rows run on
+/// through the fractional turns in between. So a row is compared where the sim's clock is. A
+/// row between two gates (not a gate of the leader's speed stage) is skipped, since the game
+/// shows it before the leader's end-of-turn, which the sim has already applied. A row at a
+/// gate with another clock is a divergence in `fractionalTurn`.
 pub fn replay(
     rows: &[TurnRow],
     properties: Option<&FloorProperties>,
@@ -214,7 +220,25 @@ pub fn replay(
     let mut state = state_from_row(first, properties).map_err(HarnessError::Start)?;
     for (index, row) in rows.iter().enumerate() {
         let number = index + 1;
-        let diffs = compare_row(row, &state.snapshot());
+        let diffs = match state.dungeon() {
+            Some(d) if i16::from(d.fractional_turn()) != row.fractional_turn => {
+                let between_gates =
+                    u8::try_from(row.fractional_turn).is_ok_and(|k| !d.leader_gate(k));
+                if between_gates {
+                    Vec::new()
+                } else {
+                    let mut clock = Vec::new();
+                    push(
+                        &mut clock,
+                        "fractionalTurn",
+                        &row.fractional_turn.to_string(),
+                        &d.fractional_turn().to_string(),
+                    );
+                    clock
+                }
+            }
+            _ => compare_row(row, &state.snapshot()),
+        };
         if !diffs.is_empty() {
             return Ok(Replay::Divergence(Divergence {
                 row: number,
@@ -466,7 +490,10 @@ mod tests {
                 speed_up: [0; 5],
                 speed_down: [0; 5],
                 direction: 0,
-                belly: 0,
+                belly: 100_000,
+                belly_empty: false,
+                regen_acc: 0,
+                regen_speed: 0,
             },
         }
     }
@@ -487,6 +514,7 @@ mod tests {
                 wild: row.wild.iter().copied().map(monster).collect(),
                 turn: 0,
                 fractional_turn: 0,
+                pending_end_of_turns: 0,
                 leader_speed: 0,
                 speed_stage: None,
                 shop_pass: false,

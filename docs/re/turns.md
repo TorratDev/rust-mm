@@ -347,6 +347,35 @@ The weather source indices match Red **[red-hypothesis for the Red comparison]**
 - None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` is not checked in full (#51).
 The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). Its callers are the wild loop, the team loop (two sites), `02140E14` (call at `02140EA0`) and the swap pass `02140ED0`; the leader never calls it (#353 P3).
 
+### Per-turn effects in the sim (#344 P1, P2)
+
+What `crates/sim` does for a status-free leader that walks or waits (`turn.rs`, `leader_end_of_turn`, `regenerate_leader`). Sources: the investigator A findings on #344, which cite the addresses below and the py-desmume probes (kept outside the repo; no script hash filed). Tags: blue-verified for addresses, order and the call; runtime-confirmed for the belly step and the regen accumulator on the first floor (leader at stage 1, speed 200, max HP 30); the hunger tick was confirmed with a belly poke.
+
+**Order per leader command**, as the sim runs it:
+
+1. The fractional turns from the counter to the leader's gate run the other monsters' steps (none yet) and the weather step of each turn.
+2. **Regeneration** (`TickStatusAndHealthRegen`, `02185C70`, called from `RunLeaderTurn_Async` at `021410A8`, before the action). Skipped while `bellyEmpty` is set. Skipped on the floor's first pass (`param` TRUE, the first fractional turn of the floor, when the leader acts there; only stage 4 can). Blue-verified.
+3. The action (walk or wait).
+4. The other monsters' steps and the **weather step** of the action's turn `k` (`sub_8044AB4`, `021406F8`, when `gSpeedTurns[1][k+1]` is set). The display pass there runs the leader's `DoEndOfTurnEffects` (`021861E8`, call at `02187B68`, lr `02187B6C`) once per pending move. Blue-verified; the weather step is `turns.md` "One leader turn" step 7.
+5. The counter runs on to the leader's next gate, where the game waits for input. At stage 1 the state a command returns matches the game's row at that gate, the row that shows the end-of-turn ("Row timing"). For an action at 3 the end-of-turn runs at turn 6, and the counter stands on 7. The trace harness compares a row only where the sim's clock stands, and skips the rows between gates (`apps/trace-harness`, `replay`).
+
+**End-of-turn, leader only** (`DoEndOfTurnEffects`, `ov_0001/021861e8`, export lines 35 to 215, in game order). This order replaces the one in #344 P1 and investigator A's comment, which put the Shed Skin roll before the belly block. Blue-verified against the export, not only the runtime runs:
+
+- Clears `bellyEmpty` (`info+0x118`, line 35).
+- Warp Scarf roll: lines 38 to 65, only with item 0x16. Not modelled (no held item).
+- **Belly block** (`if info+7`, line 66): the belly decrement and, when the belly is 0, the hunger tick (lines 132 to 166).
+  - **Belly**: the belly drops by 0.1 (100 thousandths): index 10 of the table at `0x021AA824`. The table values are not recorded here (legal rule 3); the sim uses the measured step, which is exact in thousandths over 60 turns. Clamped at 0. Held-item terms and the linked-move term are not modelled.
+  - **Hunger**: when the belly is 0, `bellyEmpty` is set and the leader loses 1 HP (`FUN_0217BCA4(entity, 1, 0xE, 0x211)`, `0x211` = faint from hunger, line 165; `bellyEmpty` at line 166). The sim checks after the decrement, so the end-of-turn that reaches 0 already costs 1 HP. Runtime (#344, belly poked to 0.150): the first empty turn was -2 HP, one of them a wild monster's hit, not separated; later turns were -1 each. Not checked: the faint exit at 0 HP (the sim saturates at 0), and whether armour or an ability reduces the 1 HP.
+- Weather damage (`gDungeon+0xC106`, lines 183 to 205; the hunger message at line 177 is not an effect): not modelled (no weather).
+- **Shed Skin roll** (line 215): `DungeonRandInt(100)` (`DungeonRng::int(100)`, one LCG step), drawn every leader end-of-turn even though no status reads it yet, so the floor generator stays in step with the game. It comes after the belly block. Blue-verified for the unconditional call (ability 0x21 is tested only after it, line 216).
+- Not modelled: the roll and the weather block sit inside the `if (EntityIsValid(param_1)) && !IsFloorOver()` check at line 185, so a faint or the floor's end skips the roll in the game. That covers a hunger faint (the 1 HP at line 165 is not checked before the test), and the early exits after the weather damage (lines 206 to 213). The sim has no weather and always draws the roll (`shortcut:` in `turn.rs`).
+
+**HP regeneration** (once per leader command, before the action): the accumulator `info+0x1C4` (s16) takes `+maxHP`; each time it reaches the speed, HP goes up by 1 (`while speed <= acc`), then HP is capped at max. Speed is `Species::regen_speed` in `rescue-data` (the monster table byte `+0x1B`, `& 0x7F`, `<< 1`), clamped to 30 to 500. Heal Ribbon, Wish and Rain Dish terms are not modelled. Runtime: speed 200, max HP 30, the accumulator runs 0, 30, ..., 180, then 10 after the seventh tick, one HP each time.
+
+**Sim state added**: `belly` (thousandths, `info+0x10E` and `+0x110` read as one value; floor start 100 000), `belly_empty` (`+0x118`), `regen_acc` (`+0x1C4`), `regen_speed` (species, `u8`), and the leader's pending end-of-turns (dungeon-level, one per move or wait not yet at its weather step). All are in the snapshot.
+
+**Not modelled**: the attack path (`Execute`, `0218453C`, call at `02184DF8`, lr `02184DFC`), where the end-of-turn runs in the same fractional turn as the action; items, traps and stairs on the walked tiles; the empty-belly alert counter (`dungeon+0x669`, no state the sim holds). The weather resolver and the partners' and wild monsters' end-of-turns are not run either.
+
 ## For golden traces (V7)
 
 - **Trigger:** the entry of `RunFractionalTurn_Async`, RAM `0x021411BC`, while overlay 1 is loaded. Overlays 0 and 7 use the same RAM range when no dungeon runs, so the hook must only count hits after the dungeon has started (for example after `LoadAndRunDungeon_Async` has loaded overlay 1).
@@ -382,6 +411,9 @@ The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is de
 | `+0xD5` | `speedStageChanged` | `0xF8` | the leader repeats while it is set; [Speed](#speed) |
 | `+0xE0` | `speedStage` | `0x104` | written by `CalcSpeedStage` |
 | `+0x11A` | `attacking` | `0x148` | gate of all three turn loops; [Speed](#speed) |
+| `+0x10E` | `belly` (whole, s16) | — | with `+0x110` (thousandths); [Per-turn effects in the sim](#per-turn-effects-in-the-sim-344-p1-p2) |
+| `+0x110` | belly thousandths (s16) | — | 0 to 999 |
+| `+0x118` | `bellyEmpty` | — | set at belly 0, cleared at the start of each end-of-turn |
 | `+0x1C4` | `unk1F8` (HP regeneration counter) | `0x1F8` | [Per-turn effects](#per-turn-effects) |
 
 The full map is in [`structs.md`](structs.md).
