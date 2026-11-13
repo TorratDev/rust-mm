@@ -6,8 +6,9 @@
 //! nothing depends on hash order. Field names and offsets follow `docs/re/structs.md`
 //! (the entity and entity-info tables, and the dungeon struct). Fields the notes do not
 //! record are left out, not guessed: the item and trap entities, the moves and statuses of
-//! a monster, the weather, the floor properties, and the turn-loop state. The `turn` counter
-//! is the sim's own, not a game field.
+//! a monster, the weather and the floor properties. The turn-loop state is the fractional-turn
+//! counter and the leader's speed stage ([`crate::turn`]). The `turn` counter is the sim's
+//! own, not a game field.
 //!
 //! [`GameState::step`] is the only way a command changes the state. Integer math only.
 
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Tile, WIDTH};
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
+use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
 
 /// Team slots: `teamPokemon[4]` (`+0x11314`).
 pub const TEAM_SLOTS: usize = 4;
@@ -99,7 +101,12 @@ pub struct Dungeon {
     /// The wild monsters, in slot order.
     wild: Vec<Monster>,
     /// The sim's turn counter: one per command that takes a turn.
-    turn: u32,
+    pub(crate) turn: u32,
+    /// `fractionalTurn` (`dungeon+0x650`): the next fractional turn to run, 0 to 23.
+    pub(crate) fractional_turn: u8,
+    /// The leader's speed stage, 0 to 4, or `None` until one is set. The game computes it
+    /// from the speed counters (`CalcSpeedStage`); the sim takes it as input for now.
+    pub(crate) speed_stage: Option<u8>,
     /// `+0x34AA`: the Kecleon shop pass ran on this floor.
     shop_pass: bool,
     /// `+0x34AC`: the monster-house room, or [`NO_MONSTER_HOUSE`].
@@ -141,6 +148,18 @@ impl Dungeon {
         self.turn
     }
 
+    /// The next fractional turn to run, 0 to 23 (`dungeon+0x650`).
+    #[must_use]
+    pub const fn fractional_turn(&self) -> u8 {
+        self.fractional_turn
+    }
+
+    /// The leader's speed stage, or `None` until one is set.
+    #[must_use]
+    pub const fn speed_stage(&self) -> Option<u8> {
+        self.speed_stage
+    }
+
     /// Whether the Kecleon shop pass ran on this floor (`+0x34AA`).
     #[must_use]
     pub const fn shop_pass(&self) -> bool {
@@ -175,32 +194,32 @@ impl Dungeon {
             .any(|m| m.pos == (x, y))
     }
 
-    /// Moves the leader one tile in `dir`, or refuses with the reason. This is the regular
+    /// The tile the leader would step to in `dir`, or the reason it cannot. This is the regular
     /// mobility rule (`docs/re/turns.md`, `CanMoveInDirection` and the walkable-neighbour
     /// masks): the target must be NORMAL terrain, and a diagonal step needs both orthogonal
     /// neighbours to be open, so it never cuts a wall corner. Other mobility classes (water,
     /// lava, crevice) and the status and held-item overrides are not modelled, so the leader
-    /// moves as a regular monster.
-    fn move_leader(&mut self, dir: Direction) -> Outcome {
+    /// moves as a regular monster. Checks only; the caller moves the leader.
+    fn leader_target(&self, dir: Direction) -> Result<(i16, i16), Blocked> {
         let Some(leader) = self.team.first() else {
-            return Outcome::Blocked(Blocked::NoLeader);
+            return Err(Blocked::NoLeader);
         };
         let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
         let (dx, dy) = dir.delta();
         let (x, y) = (lx + dx, ly + dy);
         let Some(tile) = self.floor.tile(x, y) else {
-            return Outcome::Blocked(Blocked::OutOfBounds);
+            return Err(Blocked::OutOfBounds);
         };
         if tile.terrain & floor::TERRAIN_IMPASSABLE_WALL != 0 {
-            return Outcome::Blocked(Blocked::Wall);
+            return Err(Blocked::Wall);
         }
         // The map is at most 56 by 32, so the tile test above keeps both coordinates small.
         let target = (x as i16, y as i16);
         if self.occupied(target.0, target.1) {
-            return Outcome::Blocked(Blocked::Occupied);
+            return Err(Blocked::Occupied);
         }
         if tile.terrain & floor::TERRAIN_TYPE_MASK != TERRAIN_NORMAL {
-            return Outcome::Blocked(Blocked::Terrain);
+            return Err(Blocked::Terrain);
         }
         if dx != 0 && dy != 0 {
             // A wall (or the map edge) on either side of the diagonal blocks the step.
@@ -211,14 +230,10 @@ impl Dungeon {
                 })
             };
             if !open(lx + dx, ly) || !open(lx, ly + dy) {
-                return Outcome::Blocked(Blocked::CornerCut);
+                return Err(Blocked::CornerCut);
             }
         }
-        if let Some(leader) = self.team.first_mut() {
-            leader.pos = target;
-        }
-        self.turn = self.turn.saturating_add(1);
-        Outcome::Applied
+        Ok(target)
     }
 }
 
@@ -304,6 +319,8 @@ impl GameState {
             team,
             wild: Vec::new(),
             turn: 0,
+            fractional_turn: 0,
+            speed_stage: None,
             shop_pass: false,
             monster_house_room: NO_MONSTER_HOUSE,
             player_spawn: None,
@@ -312,21 +329,49 @@ impl GameState {
         Ok(())
     }
 
+    /// Sets the leader's speed stage (clamped to 0 to 4, as `CalcSpeedStage` does). Does
+    /// nothing when no dungeon is loaded.
+    pub fn set_speed_stage(&mut self, stage: u8) {
+        if let Some(dungeon) = self.dungeon.as_mut() {
+            dungeon.speed_stage = Some(stage.min(MAX_SPEED_STAGE));
+        }
+    }
+
     /// Applies one input command. The only entry point that changes the state.
     ///
-    /// Only movement and waiting have their rules here. Attack, moves, items and menus are
-    /// valid input and return [`Outcome::NotModelled`] without a change; a refused command
-    /// returns [`Outcome::Blocked`] without a change.
+    /// Movement and waiting take the leader's turn: the clock runs fractional turns until the
+    /// leader's speed stage gives it one, then the command takes effect (see [`crate::turn`]).
+    /// A refused move changes nothing and takes no time. Without a speed stage the leader's
+    /// turn cannot be placed, so movement and waiting return [`Outcome::NotModelled`]. Attack,
+    /// moves, items and menus are valid input and return [`Outcome::NotModelled`] too.
     pub fn step(&mut self, command: Command) -> Outcome {
         let Some(dungeon) = self.dungeon.as_mut() else {
             return Outcome::Blocked(Blocked::NoDungeon);
         };
         match command {
-            Command::Move(dir) => dungeon.move_leader(dir),
-            Command::Wait => {
-                dungeon.turn = dungeon.turn.saturating_add(1);
-                Outcome::Applied
+            Command::Move(dir) => {
+                let Some(stage) = dungeon.speed_stage else {
+                    return Outcome::NotModelled;
+                };
+                match dungeon.leader_target(dir) {
+                    Ok(target) => {
+                        dungeon.take_leader_turn(stage, |d| {
+                            if let Some(leader) = d.team.first_mut() {
+                                leader.pos = target;
+                            }
+                        });
+                        Outcome::Applied
+                    }
+                    Err(blocked) => Outcome::Blocked(blocked),
+                }
             }
+            Command::Wait => match dungeon.speed_stage {
+                Some(stage) => {
+                    dungeon.take_leader_turn(stage, |_| {});
+                    Outcome::Applied
+                }
+                None => Outcome::NotModelled,
+            },
             Command::Attack(_)
             | Command::UseMove { .. }
             | Command::UseItem { .. }
@@ -347,6 +392,8 @@ impl GameState {
                 team: d.team.clone(),
                 wild: d.wild.clone(),
                 turn: d.turn,
+                fractional_turn: d.fractional_turn,
+                speed_stage: d.speed_stage,
                 shop_pass: d.shop_pass,
                 monster_house_room: d.monster_house_room,
                 player_spawn: d.player_spawn,
@@ -382,6 +429,10 @@ impl GameState {
                     team: d.team.clone(),
                     wild: d.wild.clone(),
                     turn: d.turn,
+                    // Clamped as the sim keeps them, so a crafted snapshot cannot index past
+                    // the speed table or the 24 fractional turns.
+                    fractional_turn: d.fractional_turn % FRACTIONAL_TURNS,
+                    speed_stage: d.speed_stage.map(|s| s.min(MAX_SPEED_STAGE)),
                     shop_pass: d.shop_pass,
                     monster_house_room: d.monster_house_room,
                     player_spawn: d.player_spawn,
@@ -485,6 +536,10 @@ pub struct DungeonSnapshot {
     pub team: Vec<Monster>,
     pub wild: Vec<Monster>,
     pub turn: u32,
+    /// `fractionalTurn`, 0 to 23. Restore takes it modulo 24.
+    pub fractional_turn: u8,
+    /// The leader's speed stage, or `None` until one is set. Restore clamps it to 0 to 4.
+    pub speed_stage: Option<u8>,
     pub shop_pass: bool,
     pub monster_house_room: u8,
     pub player_spawn: Option<(i16, i16)>,
@@ -545,12 +600,14 @@ mod tests {
         f
     }
 
-    /// A run with the leader at (5, 5) on open ground.
+    /// A run with the leader at (5, 5) on open ground. The leader is the fastest stage, so
+    /// every command takes its turn in the fractional turn it is given.
     fn run_with_leader(seed: u32) -> GameState {
         let mut g = GameState::new(seed);
         let mut leader = monster(5, 5, 8);
         leader.info.is_team_leader = true;
         g.enter_dungeon(open_floor(), vec![leader]).unwrap();
+        g.set_speed_stage(MAX_SPEED_STAGE);
         g
     }
 
@@ -600,6 +657,7 @@ mod tests {
         let mut leader = monster(0, 0, 8);
         leader.info.is_team_leader = true;
         g.enter_dungeon(open_floor(), vec![leader]).unwrap();
+        g.set_speed_stage(MAX_SPEED_STAGE);
         let before = g.clone();
         assert_eq!(
             g.step(Command::Move(Direction::UpLeft)),
@@ -624,6 +682,7 @@ mod tests {
     fn an_empty_team_has_no_leader_to_move() {
         let mut g = GameState::new(1);
         g.enter_dungeon(open_floor(), Vec::new()).unwrap();
+        g.set_speed_stage(MAX_SPEED_STAGE);
         assert_eq!(
             g.step(Command::Move(Direction::Up)),
             Outcome::Blocked(Blocked::NoLeader)
@@ -639,6 +698,56 @@ mod tests {
         assert_eq!(g.step(Command::Wait), Outcome::Applied);
         assert_eq!(leader_pos(&g), before_pos);
         assert_eq!(g.dungeon.as_ref().unwrap().turn, 1);
+    }
+
+    #[test]
+    fn a_move_takes_the_leaders_turn_in_its_gated_fractional_turn() {
+        // Stage 1 acts in fractional turns 3, 7, ...: a move from turn 0 runs turns 0 to 3,
+        // steps the leader, and leaves the counter on 4.
+        let mut g = run_with_leader(1);
+        g.set_speed_stage(1);
+        assert_eq!(g.step(Command::Move(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (6, 5));
+        let d = g.dungeon.as_ref().unwrap();
+        assert_eq!((d.fractional_turn(), d.turn()), (4, 1));
+    }
+
+    #[test]
+    fn a_refused_move_takes_no_time() {
+        let mut g = run_with_leader(1);
+        g.set_speed_stage(1);
+        set_terrain(&mut g, 6, 5, floor::TERRAIN_IMPASSABLE_WALL);
+        let before = g.clone();
+        assert_eq!(
+            g.step(Command::Move(Direction::Right)),
+            Outcome::Blocked(Blocked::Wall)
+        );
+        assert_eq!(g, before);
+        assert_eq!(g.dungeon().unwrap().fractional_turn(), 0);
+    }
+
+    #[test]
+    fn without_a_speed_stage_the_leader_cannot_act() {
+        let mut g = GameState::in_dungeon(1, open_floor(), {
+            let mut l = monster(5, 5, 8);
+            l.info.is_team_leader = true;
+            vec![l]
+        })
+        .unwrap();
+        let before = g.clone();
+        assert_eq!(g.step(Command::Wait), Outcome::NotModelled);
+        assert_eq!(
+            g.step(Command::Move(Direction::Right)),
+            Outcome::NotModelled
+        );
+        assert_eq!(g, before);
+    }
+
+    #[test]
+    fn the_speed_stage_is_clamped_to_the_fastest() {
+        let mut g = run_with_leader(1);
+        g.set_speed_stage(9);
+        assert_eq!(g.dungeon().unwrap().speed_stage(), Some(MAX_SPEED_STAGE));
     }
 
     #[test]
@@ -751,6 +860,7 @@ mod tests {
             vec![l]
         })
         .unwrap();
+        g.set_speed_stage(MAX_SPEED_STAGE);
         set_terrain(&mut g, 1, 1, 0);
         assert_eq!(
             g.step(Command::Move(Direction::UpRight)),
@@ -794,6 +904,7 @@ mod tests {
         let mut team = vec![leader];
         team.push(monster(4, 4, 6));
         g.enter_dungeon(open_floor(), team).unwrap();
+        g.set_speed_stage(MAX_SPEED_STAGE);
         if let Some(d) = g.dungeon.as_mut() {
             d.wild.push(monster(20, 12, 3));
             d.wild.push(monster(30, 20, 4));
@@ -849,6 +960,40 @@ mod tests {
         let restored = GameState::restore(&back).unwrap();
         assert_eq!(restored, g);
         assert_eq!(restored.snapshot(), snap);
+    }
+
+    #[test]
+    fn the_counter_and_the_stage_survive_a_snapshot() {
+        let mut g = run_with_leader(0x1234_5679);
+        g.set_speed_stage(2);
+        // Stage 2 acts in fractional turns 1 and 3: two waits leave the counter on 4.
+        g.step(Command::Wait);
+        g.step(Command::Wait);
+        assert_eq!(g.dungeon().unwrap().fractional_turn(), 4);
+        let snap = g.snapshot();
+        let text = serde_json::to_string(&snap).unwrap();
+        let back: Snapshot = serde_json::from_str(&text).unwrap();
+        let mut restored = GameState::restore(&back).unwrap();
+        assert_eq!(restored.dungeon().unwrap().fractional_turn(), 4);
+        assert_eq!(restored.dungeon().unwrap().speed_stage(), Some(2));
+        // The restored run keeps the same schedule.
+        for _ in 0..6 {
+            assert_eq!(
+                restored.step(Command::Wait),
+                g.step(Command::Wait),
+                "turn outcome"
+            );
+        }
+        assert_eq!(restored, g);
+
+        // A crafted snapshot cannot put the counter or the stage out of range.
+        let mut crafted = snap.clone();
+        let d = crafted.dungeon.as_mut().unwrap();
+        d.fractional_turn = 30;
+        d.speed_stage = Some(9);
+        let r = GameState::restore(&crafted).unwrap();
+        assert_eq!(r.dungeon().unwrap().fractional_turn(), 6);
+        assert_eq!(r.dungeon().unwrap().speed_stage(), Some(MAX_SPEED_STAGE));
     }
 
     #[test]

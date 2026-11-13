@@ -19,9 +19,10 @@ use rescue_trace::{Entity, TurnRow};
 use crate::floor::{FloorError, generate};
 
 /// Row fields [`state_from_row`] does not carry, so no comparison can check them. The
-/// trace's `tilesSha256` is deferred (see the sub-issue); `type` and `speedStage` have no
-/// slot in the sim's entity; `fractionalTurn` and `frame` are the game's turn fraction and
-/// the capture run's counter.
+/// trace's `tilesSha256` is deferred (see the sub-issue); `type` has no slot in the sim's
+/// entity, and `speedStage` is carried for the leader only, as the dungeon's speed stage (not
+/// compared); `fractionalTurn` and `frame` are the game's turn fraction and the capture run's
+/// counter.
 pub const NOT_CARRIED: &[&str] = &[
     "fractionalTurn",
     "frame",
@@ -122,6 +123,14 @@ pub fn state_from_row(
     // shortcut: the generated tiles are not checked against the row's tilesSha256 (deferred
     // to #366), and the walkable masks and graphics variants are not set, so a move can still
     // differ from the game. Upgrade with the tile-hash check.
+    // The leader's speed stage is the only one the sim takes (it places the leader's turns);
+    // restore clamps it to 0 to 4. The other monsters' stages are not carried.
+    let leader_stage = row
+        .team
+        .first()
+        .copied()
+        .flatten()
+        .map(|leader| u8::try_from(leader.speed_stage).unwrap_or(u8::MAX));
     let snapshot = Snapshot {
         global: row.s_prng_state,
         run_seed: row.run_seed,
@@ -132,6 +141,8 @@ pub fn state_from_row(
             team,
             wild,
             turn: 0,
+            fractional_turn: 0,
+            speed_stage: leader_stage,
             shop_pass: false,
             monster_house_room: NO_MONSTER_HOUSE,
             player_spawn: None,

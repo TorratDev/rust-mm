@@ -484,6 +484,8 @@ mod tests {
                 team: row.team.iter().flatten().copied().map(monster).collect(),
                 wild: row.wild.iter().copied().map(monster).collect(),
                 turn: 0,
+                fractional_turn: 0,
+                speed_stage: None,
                 shop_pass: false,
                 monster_house_room: 0xFF,
                 player_spawn: None,
