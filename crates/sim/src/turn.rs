@@ -46,10 +46,11 @@ impl Dungeon {
     /// Runs fractional turns until the leader may act, then runs `act`, the leader's command,
     /// and the rest of that fractional turn. Counts one dungeon turn. The caller checks that
     /// the command is valid first, so a refused command never advances the clock.
-    pub(crate) fn take_leader_turn(&mut self, stage: u8, act: impl FnOnce(&mut Dungeon)) {
-        // Every stage has a gated turn, so this ends within one cycle of 24.
+    pub(crate) fn take_leader_turn(&mut self, act: impl FnOnce(&mut Dungeon)) {
+        // Every stage has a gated turn, so this ends within one cycle of 24. The stage is read
+        // on each fractional turn, as the gate does (`CalcSpeedStage` runs per turn).
         let mut k = self.fractional_turn;
-        while !acts(stage, k) {
+        while !acts(self.leader_stage(), k) {
             self.run_other_monsters(k);
             k = next(k);
         }
@@ -99,6 +100,8 @@ mod tests {
             attack: [10, 10],
             defence: [5, 5],
             offensive_stages: [0, 0],
+            speed_up: [0; 5],
+            speed_down: [0; 5],
             direction: 0,
             belly: 0,
         };
@@ -107,7 +110,7 @@ mod tests {
             visible: true,
             info,
         };
-        let mut g = GameState::in_dungeon(1, Floor::new(), vec![leader]).unwrap();
+        let mut g = GameState::in_dungeon(1, Floor::new(), vec![leader], 0).unwrap();
         g.set_speed_stage(stage);
         g
     }
