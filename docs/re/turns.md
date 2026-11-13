@@ -36,6 +36,40 @@ Status countdowns, and the per-turn burn and poison damage, are covered in [`sta
 
 The 24 fractional turns let monsters with different speeds act different numbers of times: `RunLeaderTurn_Async` looks up `gSpeedTurns[CalcSpeedStage(leader)][fractionalTurn]` (`ov_0001::021ABC84`, `s16[5][25]`, same values as Red) to decide whether the leader acts in this fractional turn.
 
+### One leader turn, no enemies near (#353 P6)
+
+Tags: the call order and gates are blue-verified (decompiles of `021411BC` and `02140FAC` and their callees, plus the calls in investigator A's trace of 13 leader turns, which all ran in this order). Confidence high for the order, medium for completeness. Bracketed addresses are return addresses (`lr`) from that trace. The case: a stage 1 leader walking, one partner on the team, four wild monsters far away.
+
+1. **Row.** The V7 hook at the entry of `RunFractionalTurn_Async` (`021411BC`). See [For golden traces](#for-golden-traces-v7).
+2. **Spawn step** `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), only when `gSpeedTurns[1][k] != 0`. No spawn fired in the run, and `TryForcedLoss` (`0206D7B0`) [`021408E8`] followed without using RNG.
+3. **Leader turn** `RunLeaderTurn_Async` (`02140FAC`), in this order:
+   1. `TryActivateArtificialWeatherAbilities` (`02176B54`).
+   2. Gate: `gSpeedTurns[CalcSpeedStage(leader)][k] != 0` and `attacking == 0`.
+   3. Loop, repeated while the exit test below asks for it:
+      1. `DisplayActions_Async(0)` [`02141030`].
+      2. `speedStageChanged` (`+0xD5`) = 0.
+      3. `IsFloorOver`.
+      4. `dungeon+0xB8` = leader, `+0xBC` = 0.
+      5. `TickStatusAndHealthRegen(leader)` [`021410A8`]. Skipped on the first pass when the parameter is TRUE.
+      6. `EnemyEvolution` [`021410C0`].
+      7. `dungeon+0xF` = 1, then the input `FUN_02166B10` [`021410D4`]. It waits for keys, and RNG did not move.
+      8. `dungeon+0xF` = 0, then `Execute` `0218453C` [`021410FC`]. The walk checks `CanMoveInDirection`, the move helper `02177700` updates the position, and the step animation `02187EE0` runs.
+      9. `FlushTempCutsceneFlags` [`02141100`], then `TryForcedLoss(0)` [`02141108`].
+      10. The leader's `0x8000` becomes `0x4000`, then the swap pass `02140ED0` [`0214114C`] (see [Swap flags](#swap-flags-181-p2)).
+      11. Exit test. `+0xBC == 0` and `+0xD5 == 0` returns TRUE. `+0xBC == 0` and `+0xD5 != 0` sets `fractionalTurn` to 0 and repeats. `+0xBC != 0` runs `FUN_021657A8`, sets the parameter to TRUE and repeats.
+4. **Wind**, only if step 3 returned TRUE: `UpdateWindTurns` [`02141204`]. No RNG visible.
+5. **Team non-leaders** `sub_8044574_Async` (`02140AC0`) [`02141220`]. For each gated partner: `TickStatusAndHealthRegen`, `EnemyEvolution`, then up to three cycles of `RunMonsterAI(0)` and `Execute`, repeating only while `Execute` returns 1. Then the partner's `DoEndOfTurnEffects` and `EnemyEvolution` inside `Execute` (when `aiAllySkip` is clear), `FlushTempCutsceneFlags` and `TryForcedLoss`. Phase 2 handles the `aiAllySkip` monsters. RNG first moves here, when a partner exists (3 steps in the run).
+6. **Wild monsters** `sub_8044820_Async` (`021408F8`) [`02141230`]. For each gated monster: `TickStatusAndHealthRegen`, `EnemyEvolution`, `RunMonsterAI(0)`, `Execute`, `FlushTempCutsceneFlags`, `TryForcedLoss`. Far monsters still run the AI, and RNG changes at each of their `Execute` calls.
+7. **Weather step** `sub_8044AB4` (`021406F8`) [`02141240`], if `gSpeedTurns[1][k+1]` is nonzero:
+   1. `DisplayActions_Async` [`02140754`]. For each mover it runs `TryForcedLoss`, `DoEndOfTurnEffects` (call `02187B68`) and `EnemyEvolution`. The trace order was leader, then partner, then wild monsters in slot order. Then `FlushTempCutsceneFlags`.
+   2. `FlushTempCutsceneFlags` and `TryForcedLoss` of the weather step.
+   3. The weather resolver `021953B4`, called at `0214076C`.
+
+   The belly decrement (leader only), and the Shed Skin and Warp Scarf RNG, are inside `DoEndOfTurnEffects` (see [Per-turn effects](#per-turn-effects)).
+8. `fractionalTurn` goes up by one, wrapping at 24 (`dungeon+0x650`).
+
+**Not covered by the run:** the leader's end-of-turn falls in the weather step of turn `k+3` at stage 1, not in turn `k` (see [Row timing](#for-golden-traces-v7)); items, traps, stairs and doors on the walked tiles; hunger; speed stages other than 1; the `+0xBC` repeat path; a spawn firing (none in the run). The trace's order for step 7 (leader first) is not reconciled with the two-pass structure described in [Per-turn effects](#per-turn-effects); the two are open.
+
 ## Speed
 
 Tags: the stage formula, the table and the gate are blue-verified, with high confidence. The speed sources are red-hypothesis, with medium confidence, because their Blue callers were not located.
@@ -78,6 +112,16 @@ Counters are not stat changes in themselves. Snow, Deoxys Speed, Kecleon and par
 - Leader: after its action, `RunLeaderTurn_Async` clears `speedStageChanged` (`+0xD5`). The loop repeats while `unkBC` (offset not checked) is nonzero or the speed stage changed. Each repeat sets `fractionalTurn` to 0. Tag blue-verified (the loop tail and its checks), confidence medium-high. Red: `dungeon_engine.c:142-144`.
 - Team non-leader: one `ExecuteEntityDungeonAction` cycle per gated turn. The cycle repeats, up to 3 cycles in total, only while Execute returns TRUE, which Red sets only after an interrupted action. Blue `0218453C` returns 1 on the same path. Tag blue-verified, confidence high.
 - Wild: exactly one cycle per gated turn. Tag blue-verified, confidence high.
+
+### Speed counters (#353 P2)
+
+Tags: the addresses, the write pattern and the stage checks are blue-verified, with high confidence (export decompile, STAMP 2026-11-12, and xrefs). The Red names and Red's limit are red-hypothesis.
+
+- **`BoostSpeed`** (`ov_0001::0218844C`, arguments `ctx, entity, turns, logFailure`). If `turns` is 0, it takes a count from `CalculateStatusTurns` (`ov_0001::0219CF28`) with the range at `0x021AA2F8` and parameter 0, plus 1. It reads the stage with `CalcSpeedStage` first. At stage 4 it writes nothing, and logs only when `logFailure` is set. Otherwise it writes `turns` into the first zero slot of the five speed-up counters (`+0xE4` to `+0xE8`), and writes nothing when all five are full. It reads the stage again. An unchanged stage gives the no-change message. A changed stage clears `+0x11A` (`attacking`), sets `+0xD5` (`speedStageChanged`) to 1, and shows the stage message.
+- **`LowerSpeed`** (`ov_0001::021882D0`, arguments `ctx, entity, stages, logFailure`). It first calls `FUN_02180870` as a guard (not decompiled). At stage 0 it writes nothing and logs only. Otherwise it repeats `stages` times. Each repeat takes the next zero slot of the five speed-down counters (`+0xE9` to `+0xED`); the scan index carries over, so each repeat fills a new slot. The value written is `CalculateStatusTurns` with the range at `0x021AA2FC` and parameter 1, plus 1. It reads the stage again and shows the no-change or stage message. It does not touch `+0xD5` or `+0x11A`.
+- **Limit.** The limit depends on the stage and is checked before the write: Boost refuses at stage 4, Lower at stage 0. Beyond that, the only cap is the five slots per side. The clamp to 0–4 is in `CalcSpeedStage`. Whether Red's limit is the same is not checked (no `pmd-red` checkout here).
+- **Callers** (xref call sites). `BoostSpeed`: `0215C4A0`, `0215C508`, `02162E38`, `0218694C` (the end-of-turn boost inside `021861E8`), and a jump table entry at `021466E4` (pool word read by `021466D4`, computed jump at `021466E0`). `LowerSpeed`: `0215CA10`, `0215CB0C`, `0215D998`, `0215DD2C`, `0215FC54`, `021607C4`, `021624B4`, `0218D218` and `02197A4C`.
+- **Other readers and writers of the counters.** `FUN_ov_0001__02190100` clears `+0xE9` to `+0xED` and reports a stage change. `FUN_ov_0001__0217930C` clears `+0xE4` and `+0xE9`. `FUN_ov_0001__02181904` reads `+0xE9+i`.
 
 ## Other monsters' turns
 
@@ -139,7 +183,7 @@ Tag blue-verified for the code path, confidence high. Not verified: the body of 
 - Regular: a cardinal bit when the neighbour is exactly NORMAL. A diagonal bit when the diagonal is exactly NORMAL and both orthogonal neighbours are not walls. A diagonal step therefore never cuts a wall corner.
 - Liquid: NORMAL or SECONDARY, with the same diagonal rule.
 - Crevice: any nonwall for a cardinal bit. A diagonal needs all three tiles to be nonwall.
-- Wall: all bits, minus the map edges. For `x < 2` the byte is `0x1F`; `y < 2` clears `0x38`; `x > 0x35` clears `0x0E`; `y > 0x1D` clears `0x83`. The three clears equal Red's `~(8|0x10|0x20)`, `~(2|4|8)` and `~(0x80|1|2)`.
+- Wall: all bits, minus the map edges. Four edge clears, each a `bic` on a byte that starts at `0xFF` (`02149248` to `02149270`, after the neighbour loops): `x < 2` clears `0xE0`, `y < 2` clears `0x38`, `x > 0x35` clears `0x0E`, `y > 0x1D` clears `0x83`. The comparisons are signed, so negative coordinates clear too. The byte is `0xFF` with every applicable clear applied: a tile where only `x < 2` applies is `0x1F`, and a corner with `x < 2` and `y < 2` is `0x07`. The `y < 2`, `x > 0x35` and `y > 0x1D` clears equal Red's `~(8|0x10|0x20)`, `~(2|4|8)` and `~(0x80|1|2)`; the `x < 2` clear was not compared with Red. The `0x1F` is a folded result, not a different operation (#353 P5, closed).
 
 **Bit `0x4` is not read by movement.** `TERRAIN_TYPE_CORNER_CUTTABLE` (`0x4`) is read neither by the mask writer nor by `CanMoveInDirection`. Corner cutting at runtime is decided by the nonwall rule above. Red's header says the bit is "seemingly only used during dungeon generation", which these two functions agree with. Tag blue-verified for the two functions. Confidence medium. The sweep of overlay 1 for other readers is below.
 
@@ -243,13 +287,24 @@ Tag: **[blue-verified]** for the arithmetic and the shared use. **[red-hypothesi
 
 `DoEndOfTurnEffects` (`021861E8`) returns `bool` in Blue, where Red's `DoEndOfTurnEffects_Async` returns `void`. The behaviour matches on the paths checked; see [`blue-vs-red.md`](../blue-vs-red.md). Tag blue-verified (callers), confidence medium. It is called per monster from `ExecuteEntityDungeonAction` (`0218453C`, call at `02184DF8`) when the entity is valid, `aiAllySkip` is clear and it is not the special case (Red `dungeon_action_execution.c:308-312`), and from the end-of-turn passes above.
 
+**Return value (#353 P4).** Blue's signature is `bool DoEndOfTurnEffects_Async(void * entity)` (`FUN_ov_0001__021861e8` in the export). Blue-verified, high confidence. It returns `false` when `EntityIsValid` fails after a blocking step, `true` when `IsFloorOver` is true after a step, and otherwise the result of `IsFloorOver()` after an `EntityIsValid` check. So `true` means the floor ended during the effects. `false` covers both an invalid entity and a floor that goes on, so the value cannot tell those two apart.
+
+**No caller uses the value.** Blue-verified, high confidence. All four call sites discard it and test the world themselves:
+
+- `02140A84`, in `sub_8044820_Async` (`021408F8`): if `EntityIsValid`, then `EnemyEvolution` (`02183BB4`), then `+0x116 = 0`.
+- `02140DD8`, in `sub_8044574_Async` (`02140AC0`): the same shape.
+- `02187B68`, in `DisplayActions_Async` (`0218766C`): `EntityIsValid`, then `IsFloorOver`. If the floor is not over, `EnemyEvolution`, and the loop continues.
+- `02184DF8`, in `FUN_0218453C` (Execute): the result is dropped, and `EnemyEvolution` runs with no validity test. On this path Execute returns 0. The return of 1 on the interrupted path under Speed is a different branch and was not re-checked here.
+
+Port consequence: the sim's version can return nothing. Its callers test entity validity and floor-over as Blue does.
+
 **DisplayActions gate and order (#182 P4).** The label `DisplayActions_Async` (`ov_0001::0218766C`, call to `DoEndOfTurnEffects` at `02187B68`) is confirmed. Its structure matches Red's `dungeon_entity_movement.c:146`: the speed multiplier, a loop over the 20 monsters that tests `numMoveTiles` (`+0x1C0`) with `waiting` clear, the direction fix, the `0x2000` flag with the pixel position update, the 24-frame move loop, a cleanup pass, and then two passes (non-leaders, then leaders by `+0x7`). Inside the `0x2000` branch, in this order: for the leader, DiscoverMinimap (`FUN_02147DC4`), `FUN_0219635C(0)` and `FUN_02165B00`; for others, TryInteractWithTile (`FUN_02187420`). Then TryForcedLoss (`FUN_0206D7B0(0)`), `DoEndOfTurnEffects` (`021861E8`), EnemyEvolution (`FUN_02183BB4`), PotentiallyCreateMusicBox (`FUN_02143200`), TryTriggerMonsterHouseWithMsg (`FUN_02187200`), and then the position-changed flag with the tail (`FUN_021760B4`, `FUN_02181F30`, `FUN_021938C8`). The validity and floor-over checks between the calls match Red. The Blue call ignores the `bool` result of `DoEndOfTurnEffects`. Tag blue-verified for the structure and call order; red-hypothesis for the names; confidence high.
 
 **Belly** (P6.1). Only the team leader (info `+0x7`) has its belly decreased, in the belly block of `DoEndOfTurnEffects`. The decrement is read from a table by index. The base index is 10, and held items adjust it: Tight Belt, Stamina Band, Energy Saver, Diet Ribbon, Heal Ribbon and Munch Belt. The index is clamped to the table length. Tag blue-verified for the gate (leader only); red-hypothesis for the arithmetic, which matches Red by inspection. Confidence medium. The decrement is a table lookup, scaled by 0.1 (s48.16). The table is at `0x021AA824`: 20 entries of 8 bytes, with the high word 0 and the low word a 16.16 value. The index is clamped to 0 to 19 (#182 P1). The table matches Red's `gBellyGoDownValues` **[red-hypothesis for the Red name]**. Its values are not recorded here (legal rule 3). The scale factor is a pool word at `0x02187158`. The linked-moves term adds an entry of a second table at `0x021AA434` to the decrement when the counter at `+0x125` is above 1, then clears the counter. Its values are not recorded either. Tag blue-verified for the table address, shape, indexing and scale; the Red match is red-hypothesis.
 
 **Starving** (P6.2). When the belly reaches 0, the empty-belly alert counter at `dungeon+0x669` goes up, capped at 10. Messages are chosen on counter values 1, 2 and 3, as in Red's `EMPTY_BELLY_ALERT` steps. The entity's `bellyEmpty` (`+0x118`) is set to TRUE. Tag blue-verified for the counter.
 
-**Empty-belly branch (#182 P1).** Once the belly rounds to 0 (`FUN_0200B9A4 == 0`), `DoEndOfTurnEffects` runs, in order: StopRunning (`FUN_021664B0`, Red `sub_805E804`), the camera (`FUN_02140E14`), DisplayActions (`FUN_0218766C(0)`), the validity and floor-over checks (`02142AE4`, `0214067C`), the alert counter `dungeon+0x669` (+1, capped at 10, messages on 1, 2 and 3), `FUN_0218F21C` (TrySendImmobilizeSleepEndMsg), the hunger damage, and last `bellyEmpty` (`+0x118`) = 1. The hunger damage is one call, `FUN_0217BCA4(entity, 1, 0xE, 0x211)` (DealDamageToEntity_Async): 1 HP per call, residual type `0xE` (Red `RESIDUAL_DAMAGE_HUNGER`, red-hypothesis) and exit reason `0x211` = 529 (Red `DUNGEON_EXIT_FAINTED_FROM_HUNGER`, red-hypothesis). When the belly is not 0, `+0x669` is reset to 0; after the damage, a nonzero belly drops the message, as in Red. Tag blue-verified for the call and its constants. Confidence high for the call; medium for the damage core, which was not followed into `HandleDealingDamage_Async`. Not verified: a runtime hunger tick.
+**Empty-belly branch (#182 P1).** Once the belly rounds to 0 (`FUN_0200B9A4 == 0`), `DoEndOfTurnEffects` runs, in order: StopRunning (`FUN_021664B0`, Red `sub_805E804`), `FUN_02140E14` (unnamed; see the AI paragraph below), DisplayActions (`FUN_0218766C(0)`), the validity and floor-over checks (`02142AE4`, `0214067C`), the alert counter `dungeon+0x669` (+1, capped at 10, messages on 1, 2 and 3), `FUN_0218F21C` (TrySendImmobilizeSleepEndMsg), the hunger damage, and last `bellyEmpty` (`+0x118`) = 1. The hunger damage is one call, `FUN_0217BCA4(entity, 1, 0xE, 0x211)` (DealDamageToEntity_Async): 1 HP per call, residual type `0xE` (Red `RESIDUAL_DAMAGE_HUNGER`, red-hypothesis) and exit reason `0x211` = 529 (Red `DUNGEON_EXIT_FAINTED_FROM_HUNGER`, red-hypothesis). When the belly is not 0, `+0x669` is reset to 0; after the damage, a nonzero belly drops the message, as in Red. Tag blue-verified for the call and its constants. Confidence high for the call; medium for the damage core, which was not followed into `HandleDealingDamage_Async`. Not verified: a runtime hunger tick.
 
 **HP regeneration** (P6.3), in `TickStatusAndHealthRegen` (`02185C70`). HP regen runs first, and is skipped if `bellyEmpty` is set or the status is 2 or 3 (poisoned or badly poisoned).
 
@@ -290,13 +345,18 @@ The weather source indices match Red **[red-hypothesis for the Red comparison]**
 
 - `DoEndOfTurnEffects` makes two `DungeonRandInt(100)` calls, in this order. First, Warp Scarf (item 22), only when the entity holds it and its turns-since counter (`+0x137`) is set; the roll is compared with the chance table. Second, Shed Skin, unconditionally, before the ability check (ability 0x21). Red does the same.
 - None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` is not checked in full (#51).
-The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). How step 3 reaches it has not been traced.
+The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). Its callers are the wild loop, the team loop (two sites), `02140E14` (call at `02140EA0`) and the swap pass `02140ED0`; the leader never calls it (#353 P3).
 
 ## For golden traces (V7)
 
 - **Trigger:** the entry of `RunFractionalTurn_Async`, RAM `0x021411BC`, while overlay 1 is loaded. Overlays 0 and 7 use the same RAM range when no dungeon runs, so the hook must only count hits after the dungeon has started (for example after `LoadAndRunDungeon_Async` has loaded overlay 1).
 - **Per-trigger state:** `fractionalTurn` at `dungeon+0x650`, with the dungeon struct at the pointer stored in `gDungeon` (`0x020E0788`), plus the RNG state from [`rng.md`](rng.md).
 - One player turn spans several fractional turns. To dump once per player action instead, hook `RunLeaderTurn_Async` (`ov_0001::02140FAC`) and keep the hits where it returns true.
+- **Row timing (#353 P1).** Blue-verified for the calls, gates and their order. The row mapping comes from investigator A's py-desmume run on the retail dump (13 leader turns at stage 1). No script hash is recorded for that run yet, so the mapping stays medium until a `verification/v7-trace/` run is filed with its hash.
+  - `RunDungeon_Async` advances no turn itself. Its loop calls `RunFractionalTurn_Async` (return address `0206E6A0`) until `IsFloorOver`. The turn counter `dungeon+0x650` advances at the end of each `RunFractionalTurn_Async` call.
+  - A row taken at the entry of turn `k` shows the state after all of turn `k-1`. A leader action in turn `k` (at stage 1 the leader acts in turns 3, 7, 11, ...) first shows in the row for `k+1`, not in row `k`.
+  - The leader's end-of-turn effects do not run in its own turn. At stage 1 they run inside the `DisplayActions_Async` call from the weather step (return address `02140754`), in turn `k+3` (turn 6 for an action in turn 3). The weather step runs in turns where `gSpeedTurns[1][ft+1]` is nonzero (2, 6, 10, ...). The effects therefore first show in row `k+4`. Other stages are not checked.
+  - For one row per player action, keep the TRUE returns of `RunLeaderTurn_Async` (above). That row is taken before the end-of-turn effects, so read the end-of-turn state at row `k+4`.
 
 ## Dungeon struct offsets seen so far
 
@@ -329,9 +389,9 @@ The full map is in [`structs.md`](structs.md).
 ## Open questions
 
 - **P2-4, `aiAllySkip` writers.** The Blue writers of `+0x116` were not located. Red's are in `DecideMovement` (`dungeon_ai_movement.c` lines 361, 443 and 436–441). This depends on the AI (#52).
-- **Speed counters.** Whether Blue applies the same stage-specific counter limit as Red was not verified. The Blue addresses of `BoostSpeed` and `LowerSpeed` were not located; `GetMovementSpeed` is `FUN_020023A8`.
+- **Speed counters (#353 P2).** The Blue addresses of `BoostSpeed` and `LowerSpeed` are found, and Blue's limit is stage-specific; see [Speed counters](#speed-counters-353-p2). Still open: whether Red's limit is the same (red-hypothesis; `pmd-red` was not checked). `GetMovementSpeed` is `FUN_020023A8`.
 - **P4.5, water and lava mobility.** Resolved for the mechanism (#184 P1, see [Mobility class source](#mobility-class-source-184-p1)): `GetCrossableTerrain` maps the species byte values 4 and 5 through the 8-byte table at `0x021B4834`, which dungeon setup writes from the tileset type. `DAT_0218269C` is the pool word for that address. Still open: the dungeon-setup caller chain of `0214969C`, and which tileset ids have type 1 (lava).
-- **Edge masks.** The `x < 2` wall byte `0x1F` is written as a value, while the other three edge cases clear bits. Check the disassembly of `02148F50`.
+- **Edge masks (closed, #353 P5).** All four edge cases are `bic` on `0xFF`. The `0x1F` for `x < 2` is the folded result of `bic 0xE0`, not a different operation. See [Movement](#movement).
 - **IQ test and `+0xC7`.** The body of `021805B0` was not decompiled. The `+0xC7` values are recorded in [`status.md`](status.md#muzzled-transform-invisible-mobile-blinker-189-p2) (#189 P2): values 1, 2 and 3 are written by `0218CE68`, `0218BFA8` and `0218BECC` [blue-verified]; the names INVISIBLE, TRANSFORMED and MOBILE are [red-hypothesis].
 - Closed (#184 P3): the readers and writers of bit `0x4` are in the bit `0x4` paragraph under [Movement](#movement).
 - **P5.1, belly test.** The ceiling reading is settled in Blue, see [Run flag and belly test](#run-flag-and-belly-test-181-p3). Still open: that Red's run check is also a ceiling (Red's run check was not read); that the argument `info+0x10E` matches Red's belly field; and the Red name of the action-index field `+0x46`.
@@ -343,4 +403,4 @@ The full map is in [`structs.md`](structs.md).
 - **P6.5, wind phase 3.** Resolved: see the wind paragraph under [Per-turn effects](#per-turn-effects).
 - **RNG in the status chain** of `TickStatusAndHealthRegen` (#51).
 - **`DisplayActions_Async` label.** Resolved (#182 P4): the label is confirmed, and the call order matches Red (see the DisplayActions paragraph under [Per-turn effects](#per-turn-effects)).
-- **`DoEndOfTurnEffects` return type.** Blue returns `bool` and Red returns `void`. Check whether the Blue callers use the return value.
+- **`DoEndOfTurnEffects` return value (closed, #353 P4).** Blue returns `bool`, the floor-over state, and no Blue caller uses it. Red returns `void`. See [Per-turn effects](#per-turn-effects).
