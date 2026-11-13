@@ -9,8 +9,9 @@
 //! not modelled; each is a `shortcut:` note below.
 //!
 //! Draw order of one use (`docs/re/combat.md`, P6): the slot-0 hit check, then `CalcDamage`'s
-//! boost roll, critical roll and variance roll, then the slot-1 hit check. A slot-0 miss stops
-//! after its one draw. The hit check always draws, even when its accuracy forces the result.
+//! boost roll, critical roll and variance roll, then the slot-1 hit check. The critical roll is
+//! not drawn for a target with Battle Armor or Shell Armor. A slot-0 miss stops after its one
+//! draw. The hit check always draws, even when its accuracy forces the result.
 
 use rescue_data::combat::CombatTables;
 use rescue_data::moves::Move;
@@ -55,6 +56,13 @@ const SUPER_LABEL: i32 = 3;
 const HUGE_POWER: u8 = 0x22;
 const PURE_POWER: u8 = 0x4B;
 const HUSTLE: u8 = 0x30;
+/// The target's ability that cuts a physical attack (`CalcStatBoosts`, `AbilityIsActive(target, 6)`).
+const INTIMIDATE: u8 = 0x06;
+/// The attacker's ability that adds 2 to its accuracy stage (`AccuracyCalc`, `AbilityIsActive(attacker, 0x33)`).
+const COMPOUND_EYES: u8 = 0x33;
+/// The target's abilities that skip the critical roll (`CalcDamage`, the two `AbilityIsActive` tests).
+const BATTLE_ARMOR: u8 = 0x0C;
+const SHELL_ARMOR: u8 = 0x13;
 
 /// The move data and the combat tables a move command reads (see [`crate::state::GameState::step_with`]).
 #[derive(Clone, Copy, Debug)]
@@ -175,8 +183,12 @@ pub fn hits(
         return true;
     }
     let mut acc = i64::from(accuracy);
-    acc =
-        acc * stage_entry(t.accuracy_stage[stage_index(i32::from(attacker.accuracy_stage))]) / 256;
+    // Compound Eyes adds 2 to the attacker's accuracy stage before the clamp (`AccuracyCalc`, P4).
+    let mut stage = i32::from(attacker.accuracy_stage);
+    if attacker.has_ability(COMPOUND_EYES) {
+        stage += 2;
+    }
+    acc = acc * stage_entry(t.accuracy_stage[stage_index(stage)]) / 256;
     // Hustle makes the target easier to hit with a physical move (`docs/re/combat.md`, P4).
     let mut evasion = i32::from(target.evasion_stage);
     if physical && attacker.has_ability(HUSTLE) {
@@ -186,13 +198,20 @@ pub fn hits(
     i64::from(roll) < acc
 }
 
+/// Whether `CalcDamage` draws the critical roll for `target`: not for Battle Armor or Shell Armor
+/// (`docs/re/combat.md`, P5).
+fn crit_drawn(target: &EntityInfo) -> bool {
+    !target.has_ability(BATTLE_ARMOR) && !target.has_ability(SHELL_ARMOR)
+}
+
 /// The random draws of one damaging hit after its hit check, in the game's order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rolls {
     /// `DungeonRandInt(100)` at the top of `CalcDamage`: Huge Power and Pure Power boost only
     /// when it is 32 or less.
     pub boost: i32,
-    /// `DungeonRandInt(100)`, the critical roll: a critical hit when it is below the odds.
+    /// `DungeonRandInt(100)`, the critical roll: a critical hit when it is below the odds. Not
+    /// drawn for a target where [`crit_drawn`] is false, and then it is ignored.
     pub crit: i32,
     /// `DungeonRandInt(0x4000)`, the variance.
     pub variance: i32,
@@ -207,15 +226,47 @@ pub struct Damage {
     pub crit: bool,
 }
 
+/// The attack after `CalcStatBoosts` (step 9): one numerator and one denominator, then a single
+/// truncating divide, so the boosts do not truncate one by one. Huge Power and Pure Power (on a
+/// boost roll of 32 or less), Hustle and Intimidate (the target's ability) apply to physical
+/// moves only.
+fn boosted_attack(
+    attack: i64,
+    physical: bool,
+    boost: i32,
+    attacker: &EntityInfo,
+    target: &EntityInfo,
+) -> i64 {
+    if !physical {
+        return attack;
+    }
+    let (mut num, mut den) = (1, 1);
+    if boost <= 32 && (attacker.has_ability(HUGE_POWER) || attacker.has_ability(PURE_POWER)) {
+        num *= 3;
+        den *= 2;
+    }
+    if attacker.has_ability(HUSTLE) {
+        num *= 3;
+        den *= 2;
+    }
+    if target.has_ability(INTIMIDATE) {
+        num *= 4;
+        den *= 5;
+    }
+    attack * num / den
+}
+
 /// The damage of `mv` from a team member `attacker` against `target` (`CalcDamage`). Steps as
 /// `docs/re/combat.md` lists them. The attacker is always a team member (the leader), so the
 /// level term is the team branch.
 // shortcut: the wild attacker's term (`attack / 3`, after a second boost pass) is not modelled,
 // because the sim's attackers are the leader's moves only.
-// shortcut: the held-item boosts, the Deoxys adjustment, the target's `+0xAE` defence stage, the
-// Wonder Guard branch and the Battle and Shell Armor gate on the critical roll are not modelled.
-// The game skips the critical roll for a target with Battle Armor (`0x0C`) or Shell Armor (`0x13`);
-// this sim rolls for it, as the brief asks, and a runtime run on an armoured target is the check.
+// shortcut: the held-item boosts, the Deoxys adjustment, the target's `+0xAE` defence stage and
+// the Wonder Guard branch are not modelled.
+// shortcut: Guts, Marvel Scale and Plus/Minus are not modelled: they need a negative status or a
+// dungeon flag, and the sim keeps neither.
+// shortcut: the IQ type-advantage critical term (`FUN_021805b0(attacker, 1)` on a super-effective
+// hit, odds 40 in place of the others) is not modelled: the sim keeps no IQ skill state.
 #[must_use]
 pub fn damage(
     t: &CombatTables,
@@ -237,20 +288,13 @@ pub fn damage(
         ),
         UNIT_248,
     );
-    let mut attack = (stat / 256).clamp(0, DAMAGE_CAP);
-
-    // CalcStatBoosts (step 9): Huge Power and Pure Power for a roll of 32 or less, Hustle; both
-    // for physical moves, each x 3/2 truncated.
-    if physical {
-        if rolls.boost <= 32
-            && (attacker.has_ability(HUGE_POWER) || attacker.has_ability(PURE_POWER))
-        {
-            attack = attack * 3 / 2;
-        }
-        if attacker.has_ability(HUSTLE) {
-            attack = attack * 3 / 2;
-        }
-    }
+    let attack = boosted_attack(
+        (stat / 256).clamp(0, DAMAGE_CAP),
+        physical,
+        rolls.boost,
+        attacker,
+        target,
+    );
 
     // Defence (step 6): the defence times its stage multiplier, truncated; not clamped.
     let defence_stage = stage_index(i32::from(target.defensive_stages[split]));
@@ -273,7 +317,7 @@ pub fn damage(
     // Type (step 13) and critical (step 14). The critical multiplier is the STAB one (1.5).
     let typing = type_factor(t, mv.kind, attacker, target).factor;
     let crit_odds = i64::from(mv.crit_chance);
-    let crit = i64::from(rolls.crit) < crit_odds;
+    let crit = crit_drawn(target) && i64::from(rolls.crit) < crit_odds;
     let multiplier = if crit {
         mul48(typing, i64::from(t.stab))
     } else {
@@ -357,9 +401,14 @@ impl Dungeon {
 
         let first = self.rng.int(100);
         if hits(t, first, mv.accuracy[0], &attacker, &defender, physical) {
+            // The critical roll is drawn only where `CalcDamage` draws it (`crit_drawn`).
             let rolls = Rolls {
                 boost: self.rng.int(100),
-                crit: self.rng.int(100),
+                crit: if crit_drawn(&defender) {
+                    self.rng.int(100)
+                } else {
+                    0
+                },
                 variance: self.rng.int(0x4000),
             };
             let dealt = damage(t, mv, &attacker, &defender, rolls);
@@ -760,6 +809,73 @@ mod tests {
         let mut high = neutral.clone();
         high.offensive_stages = [15, 15];
         assert!(damage(&t, &mv, &high, &target, rolls).value > 38);
+    }
+
+    #[test]
+    fn an_armoured_target_draws_no_critical_roll() {
+        let t = tables();
+        let mv = tackle([100; 3], 100);
+        for armour in [BATTLE_ARMOR, SHELL_ARMOR] {
+            let mut g = battle([100; 3], 100);
+            g.dungeon_mut().unwrap().wild[0].info.abilities = [armour, 0];
+            let before = *g.dungeon().unwrap().rng();
+            // Slot-0 check, boost, variance, slot-1 check: four draws, with no critical roll.
+            let mut rest = before;
+            rest.int(100);
+            let boost = rest.int(100);
+            let variance = rest.int(0x4000);
+            rest.int(100);
+            let attacker = g.dungeon().unwrap().team()[0].info.clone();
+            let target = g.dungeon().unwrap().wild()[0].info.clone();
+            let expected = damage(
+                &t,
+                &mv,
+                &attacker,
+                &target,
+                Rolls {
+                    boost,
+                    crit: 0,
+                    variance,
+                },
+            );
+            // The odds are 100, so a drawn roll would be critical: the armour makes it not.
+            assert!(!expected.crit);
+            strike(&mut g, &mv, &t);
+            assert_eq!(g.dungeon().unwrap().rng(), &rest);
+            assert_eq!(i32::from(wild_hp(&g)), 100 - expected.value);
+        }
+    }
+
+    #[test]
+    fn stat_boosts_take_one_divide_so_hustle_and_intimidate_differ_from_sequential_truncation() {
+        let neutral = info([0, 0], [0, 0]);
+        let hustle = info([0, 0], [HUSTLE, 0]);
+        let huge = info([0, 0], [HUGE_POWER, 0]);
+        let intimidate = info([9, 0], [INTIMIDATE, 0]);
+        // Hustle and Intimidate in one fraction: 5 x 3 x 4 / (2 x 5) = 6. Truncating after each
+        // boost would give 7, then 5.
+        assert_eq!(boosted_attack(5, true, 100, &hustle, &intimidate), 6);
+        assert_eq!(boosted_attack(5, true, 100, &neutral, &intimidate), 4);
+        // Huge Power needs a boost roll of 32 or less.
+        assert_eq!(boosted_attack(5, true, 32, &huge, &neutral), 7);
+        assert_eq!(boosted_attack(5, true, 33, &huge, &neutral), 5);
+        // A special move gets none of them.
+        assert_eq!(boosted_attack(5, false, 100, &hustle, &intimidate), 5);
+    }
+
+    #[test]
+    fn compound_eyes_adds_two_to_the_accuracy_stage_before_the_clamp() {
+        let t = tables();
+        let target = info([9, 0], [0, 0]);
+        // Stage 8 is 0.75 (192): 100 x 192 / 256 = 75, so a roll of 75 misses.
+        let mut low = info([0, 0], [0, 0]);
+        low.accuracy_stage = 8;
+        assert!(!hits(&t, 75, 100, &low, &target, true));
+        // With Compound Eyes it is stage 10 (neutral), so the threshold is 100.
+        let mut eyes = low.clone();
+        eyes.abilities = [COMPOUND_EYES, 0];
+        assert!(hits(&t, 75, 100, &eyes, &target, true));
+        assert!(!hits(&t, 100, 100, &eyes, &target, true));
     }
 
     #[test]

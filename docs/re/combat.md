@@ -430,7 +430,7 @@ The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings
 
 - **Draw.** `DungeonRandInt(100)` is the first draw, before every early return. **blue-verified** (static; [P1](#p1-hit-check-accuracycalc)).
 - **Order.** Early hits: an accuracy above 100 (checked before any stage is read); the sure-shot and whiffer statuses; the same-entity case. Then the accuracy is reduced by the Detect Band (item 35) and the Quick Dodger IQ (bit 5), which the sim does not model.
-- **Attacker stage.** The attacker's accuracy stage is `info + 0x24` (s16), clamped to 0 to 20. The accuracy becomes `acc * ACC[stage] / 256` (truncated), where `ACC` is the 21-entry integer table at `ov_0001::021AA8C4` (read through the pointer slot `ov_0001::0215AB2C`), each entry clamped to 0 to `0x6400`.
+- **Attacker stage.** The attacker's accuracy stage is `info + 0x24` (s16), `+2` when the attacker has Compound Eyes (`0x33`) (static, the export of `0215A928`; not seen at runtime), then clamped to 0 to 20. The accuracy becomes `acc * ACC[stage] / 256` (truncated), where `ACC` is the 21-entry integer table at `ov_0001::021AA8C4` (read through the pointer slot `ov_0001::0215AB2C`), each entry clamped to 0 to `0x6400`.
 - **Target stage.** The target's evasion stage is `info + 0x26`, clamped to 0 to 20, `+2` when the attacker has Hustle (`0x30`) and the move is physical (its attack ×3/2 is in the sim too). The accuracy becomes `acc * EVA[stage] / 256` (truncated), `EVA` the 21-entry table at `ov_0001::021AA918` (pointer slot `ov_0001::0215AB30`).
 - **Hit.** `roll < accuracy`. Neutral stage is index 10 (256 in both tables), so a neutral pair keeps the accuracy. **blue-verified** (formula from the decompile; 36 runtime calls matched it, with a lowered and a raised stage among them, run `o_acc`).
 - **Sim.** `combat::hits` (with `hits`'s threshold). The two truncations are separate.
@@ -441,7 +441,7 @@ The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings
 - **Wild gate.** `info + 6` non-zero (a wild monster) sets the odds to 0 before the other terms. The sim's attacker is always the leader, so the odds are the move's. Runtime: with forced odds 50, the 12 team-member calls crit exactly when `roll < 50`, and the 8 wild calls never crit. **blue-verified**.
 - **Other terms, not modelled.** Focus Energy (status 4, odds `DAT_0217C7C8`), Scope Lens (item 12, `+40`), Patsy Band (item 13, `+40`), the IQ type advantage (its odds replace the others). **medium** (values not read).
 - **Roll and effect.** A critical hit multiplies the type factor by the STAB multiplier (1.5). Its flag goes to the damage struct at `+0xD`, cleared when the damage is 0. **blue-verified**.
-- **Battle and Shell Armor.** The game does not draw the critical roll for a target with Battle Armor (`0x0C`) or Shell Armor (`0x13`): the draw sits inside a test of those two abilities (static). The sim draws it for every target, as the brief asks. **open** (a runtime run on an armoured target would settle it).
+- **Battle and Shell Armor.** The game does not draw the critical roll for a target with Battle Armor (`0x0C`) or Shell Armor (`0x13`): the draw sits inside a test of those two abilities (`0217BD94` lines 274 and 275 of the export). The sim skips the draw for such a target, so a hit draws four values, not five. **static**: no runtime run on an armoured target was made.
 
 ### P6. Abilities
 
@@ -460,17 +460,19 @@ The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings
 The sim runs a leader's use of Tackle (`0x9A`) or Scratch (`0x104`), the two moves of the dispatch's direct `HandleDamagingMove` path with a verified `arg8` of 1.0 ([#185](#damage-formula)). It takes the leader's turn, then:
 
 1. Marks the PP ([P3](#p3-pp-mark-on-use-take-it-at-the-end-of-the-action)). Draws the slot-0 hit check.
-2. On a hit: draws the boost roll, the critical roll and the variance roll, in that order, then computes the damage: the attack (power plus attack, the stage, truncated, clamped to 0 to 999, Huge Power and Pure Power at a boost roll of 32 or less, Hustle, each ×3/2 truncated), the defence (the stage, truncated), the level term (`level × 2/3` in 48.16), `x = (attack − defence) / 8 + term`, `base = x² × 0.05 + (2x − defence + 10)` clamped to [1, 999], the type factor and the critical multiplier, `arg8` (1.0), the variance `(0xE000 + roll) / 0x10000`, and the rounding of each 48.16 product (half up on bit 15) and the final integer (`FP48_16_ToS32`).
+2. On a hit: draws the boost roll, the critical roll (not for a target with Battle or Shell Armor, [P5](#p5-critical-hit-odds)) and the variance roll, in that order, then computes the damage: the attack (power plus attack, the stage, truncated, clamped to 0 to 999), then `CalcStatBoosts` as one fraction with one truncating divide: the numerator and denominator take Huge Power and Pure Power (×3/2, at a boost roll of 32 or less), Hustle (×3/2) and the target's Intimidate (×4/5), physical moves only (the export of `0217C7F8`: the ×3 and ×4 go to the numerator, the 2 and 5 to the denominator, then one divide). The defence (the stage, truncated), the level term (`level × 2/3` in 48.16), `x = (attack − defence) / 8 + term`, `base = x² × 0.05 + (2x − defence + 10)` clamped to [1, 999], the type factor and the critical multiplier, `arg8` (1.0), the variance `(0xE000 + roll) / 0x10000`, and the rounding of each 48.16 product (half up on bit 15) and the final integer (`FP48_16_ToS32`).
 3. Draws the slot-1 hit check. On a hit the target's HP falls by the damage.
 4. Takes 1 PP at the end of the action, after a hit or a miss.
 
-Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, variance, accuracy (slot 1). A slot-0 miss draws one value. Tests cover both counts, the critical path, the type cases, the stage formula at lowered and raised stages, and PP after a hit and after a miss.
+Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, variance, accuracy (slot 1). A target with Battle or Shell Armor draws no critical value, so its hit takes four. A slot-0 miss draws one value. Tests cover the counts, the armoured targets, the critical path, the type cases, the stage formula at lowered and raised stages, the single divide of the stat boosts (Hustle with Intimidate, where sequential truncation differs), Compound Eyes, and PP after a hit and after a miss.
 
 Left out, each as a `shortcut:` in the code:
 
 - Regular Attack (`0x163`): its route to the dispatcher is not traced ([P3](#p3-pp-mark-on-use-take-it-at-the-end-of-the-action)).
 - Targets beyond the facing tile (#420), defeat (#422), secondary effects (#421).
-- Held items, the Deoxys adjustment, Wonder Guard, the exposed flag, weather, charging, statuses, the offensive and defensive multipliers (`+0x2C`, `+0x34`, read as 1.0), the wild attacker's level term (`attack / 3`), the Battle and Shell Armor gate ([P5](#p5-critical-hit-odds)).
+- Held items, the Deoxys adjustment, Wonder Guard, the exposed flag, weather, charging, statuses, the offensive and defensive multipliers (`+0x2C`, `+0x34`, read as 1.0), the wild attacker's level term (`attack / 3`).
+- Guts, Marvel Scale and Plus/Minus (the [abilities table](#abilities-in-calcstatboosts)): they need a negative status or a dungeon flag.
+- The IQ type-advantage critical term (`FUN_021805b0(attacker, 1)`, [P5](#p5-critical-hit-odds)).
 - A facing tile with no wild monster: the game's result for an empty target is not read, so the use is not modelled.
 
 Checks: the damage steps were translated from `verification/v7-trace/combat_recompute.py`, which replays the 14 captured hits. Those hits are scratch data and were not re-run in this change.
