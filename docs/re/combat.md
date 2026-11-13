@@ -74,7 +74,7 @@ The accuracy and evasion stage tables (`ov_0001::021AA8C4`, `ov_0001::021AA918`)
 - **Charging:** ×2.0.
 - **Return value:** whether the combined result is "super-effective". Wonder Guard uses this.
 
-The four effectiveness multipliers in the pool are 0.5, 0.9, 1.0 and 1.5. Which index maps to which label has not been checked in Blue.
+The four effectiveness multipliers in the pool are 0.5, 0.9, 1.0 and 1.5. Which index maps to which multiplier and label is in [P1 of the damaging-moves section](#p1-type-factor-and-label) (#419).
 
 ### Abilities in `CalcStatBoosts`
 
@@ -398,6 +398,84 @@ Static, unless marked "runtime". The damage path and faint handler match Red by 
 - **Revive.** `ov_0001::0217D5FC` has two blocks that restore a target. Each sets HP to the maximum HP. The first block (orb-like) returns 0, which means no faint. The second (seed-like) falls through, as in Red's Reviver Seed. Not observed. Static, medium confidence; the field names come from their position in Red's struct.
 - **Item drop on KO.** The drop is in the damage handler `ov_0001::0217D5FC`, not in `HandleFaint_Async`: at `0x0217E5A4`–`0x0217E5E4`, after the Reviver Seed block and before the EXP award. Condition: `isTeamLeader` (info `+0x07`) is 0 and the held item (info `+0x5A`, flags bit 1) exists. Action: call `0x02143BF8(target, &target+0x4, &heldItem)`. It builds an `ENTITY_ITEM` (type 3) at the target's position and calls `0x02143918`, which leads to `SpawnItem` (`0x021440B0`) and `SpawnItemEntity` (`0x02141F58`). Then the 3-byte held item at `+0x5A`..`+0x5C` is zeroed. This matches the block `if (!isTeamLeader && ItemExists(heldItem)) SpawnDroppedItemWrapper(...); ZeroOutItem(...)` in pret/pmd-red `src/dungeon_damage.c` (red-hypothesis for the equivalence). Tag: blue-verified for the location and condition (static). Not observed at runtime: no KO'd target held an item in the 9,000-frame run.
 - **Open discrepancy.** One faint's return address (`0x0217E868`) lies inside the range that Ghidra gives `ov_0001::0217D5FC`, which is 4,612 bytes long. A damage entry at frame 621 and a faint at frame 687 are 66 frames apart. The timing suggests that the faint belongs to the same invocation. This is an inference from timing, not a checked fact.
+
+## Damaging moves in the sim (#419)
+
+The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings P1 to P7 (numbered as #419 numbers them, not the P1 to P6 of the sections above) come from two investigators' comments on [#419](https://github.com/TorratDev/rust-mm/issues/419): investigator a for P1, P2 and P7, investigator b for P3 to P6. Their static reads were checked against the Ghidra text export (STAMP 2026-11-12), and their runtime probes ran on the dump. The probes are scratch files, not in the repo. The tables are not copied here ([`legal.md`](../legal.md)): `rescue_data::combat` reads them from the user's dump at run time, and this page gives addresses, shapes and the rules. Tags are the same as above.
+
+### P1. Type factor and label (`sub_806E100`, `0217CE88`)
+
+- **Start and cells.** The factor starts at 1.0 (48.16). For each of the defender's two types (info `+0x56`, `+0x57`), the cell is `gTypeEffectivenessChart[move type][defender type]` (`ov_0001::021AAEE8`, [above](#type-effectiveness)). A Ghost defender (type 14) takes cell 0 against a Normal (1) or Fighting (7) move, unless it is exposed (flag `+0xD2`). Cell 2 is neutral and is not multiplied; cells 0, 1 and 3 multiply the factor by their pool entry (immune class x0.5, not very effective x0.9, super effective x1.5). **blue-verified** (decompile of `0217CE88`; investigator a's 26 runtime calls on 13 type pairs, including dual types).
+- **Pool.** The four pool entries are pointers in the array at `ov_0001::021AE248`. Entry `c` points to an 8-byte object whose second word is the 16.16 multiplier. The object for STAB, and for a critical hit, is `ov_0001::021AE238` (1.5). **blue-verified** (decompile, `0217CE88` and `0217BD94`).
+- **Label.** `gEffectivenessChart` (`ov_0001::021AA588`, 4 by 4 `s32`) is indexed `[cell of the first type][cell of the second]`. The sim uses only the label that means super effective (3). **blue-verified**; the other labels are not read by this code.
+- **Order.** The chart loop runs first. STAB comes after it, if the attacker has the move's type and the factor is not zero. Weather, charging and Wonder Guard are after it; the sim has none of them (see the shortcuts below). **blue-verified** (decompile).
+- **Sim.** `combat::type_factor`. A hand-made table gives a super pair, a dual pair (cells multiply), the Ghost exception and STAB.
+
+### P2. Physical or special (`FUN_02008C64`)
+
+- **Table.** `FUN_02008C64(type)` returns the byte at `DAT_02008C70 + type`, and `DAT_02008C70` holds `0x02091E78`. It is 18 bytes, one per type 0 to 17, in the ARM9 RAM image. That image is BLZ-compressed in the ROM, and `0x02091E78` lies past the bytes stored for the binary, so the table is read from the decompressed image. **blue-verified** (live read by investigator a). The ROM test reads them from the decompressed image and checks that each is 0 or 1.
+- **Meaning.** A nonzero byte is a physical type (split index 0: attack and defence). A zero byte is a special type (split index 1). The sim's split is `byte == 0`. **blue-verified** (static callers `CalcDamage` at `0217BDC8`, `AccuracyCalc` at `0215AAC4`, `0217C824`, and the hit handler at `0217E984`, `0217EA44`, `0217EBBC`).
+- **Sim.** `rescue_data::combat::CombatTables::physical`. Normal (type 1) is physical; the ROM test checks it.
+
+### P3. PP: mark on use, take it at the end of the action
+
+- **Check.** The use loop `FUN_ov_0001__0215BE14` reads the move at `info + 0xF4 + 6 * slot`. A slot whose PP is 0 is refused ("no PP") unless the move-ID table at `021AD0B8` matches. Otherwise it calls the per-use function `0215B384`, which runs the dispatcher and so the hit checks. **blue-verified** (static, and the monster path at runtime).
+- **Mark.** When `0215B384` returns non-zero (any completed use, a hit or a miss), the loop sets `move[1] |= 0x08`. **blue-verified** (static).
+- **Apply.** `FUN_ov_0001__02159B18` runs at the end of the action. For a marked move it clears the mark and takes 1 PP (2 with the `0x10` mark, below). It draws nothing. **blue-verified** (static, and runtime: PP goes down by one per use, including 11 forced slot-0 misses in run `o_miss`).
+- **Not seen, or not modelled.** The `0x10` mark (Pressure, ability `0x39` on the target, [hypothesis] name) takes 2 PP; the bit `0x04` clears the mark without a take (its writer is not traced). **open**.
+- **Regular Attack** (move `0x163`) took no PP in 14 uses (runtime). Its route to the dispatcher is not traced, so the sim does not run Regular Attack. **open**.
+- **Sim.** `MoveSlot` (6 bytes: `flags`, `flags2`, `id`, `pp`, `ginseng`) in `EntityInfo::moves`; `strike` sets and clears the mark, and takes 1 PP after the hit checks.
+
+### P4. Hit check (`AccuracyCalc`, `0215A928`)
+
+- **Draw.** `DungeonRandInt(100)` is the first draw, before every early return. **blue-verified** (static; [P1](#p1-hit-check-accuracycalc)).
+- **Order.** Early hits: an accuracy above 100 (checked before any stage is read); the sure-shot and whiffer statuses; the same-entity case. Then the accuracy is reduced by the Detect Band (item 35) and the Quick Dodger IQ (bit 5), which the sim does not model.
+- **Attacker stage.** The attacker's accuracy stage is `info + 0x24` (s16), `+2` when the attacker has Compound Eyes (`0x33`) (static, the export of `0215A928`; not seen at runtime), then clamped to 0 to 20. The accuracy becomes `acc * ACC[stage] / 256` (truncated), where `ACC` is the 21-entry integer table at `ov_0001::021AA8C4` (read through the pointer slot `ov_0001::0215AB2C`), each entry clamped to 0 to `0x6400`.
+- **Target stage.** The target's evasion stage is `info + 0x26`, clamped to 0 to 20, `+2` when the attacker has Hustle (`0x30`) and the move is physical (its attack ×3/2 is in the sim too). The accuracy becomes `acc * EVA[stage] / 256` (truncated), `EVA` the 21-entry table at `ov_0001::021AA918` (pointer slot `ov_0001::0215AB30`).
+- **Hit.** `roll < accuracy`. Neutral stage is index 10 (256 in both tables), so a neutral pair keeps the accuracy. **blue-verified** (formula from the decompile; 36 runtime calls matched it, with a lowered and a raised stage among them, run `o_acc`).
+- **Sim.** `combat::hits` (with `hits`'s threshold). The two truncations are separate.
+
+### P5. Critical hit odds
+
+- **Source.** The odds are the move data's byte `+0x13`, `Move::crit_chance`, passed to `CalcDamage` as `critChance` by its four callers (`021566CC`, `0215675C`, `02161AB4`, `02161CC0`). **blue-verified** (static callers; runtime, the argument equals the table byte in 14 calls).
+- **Wild gate.** `info + 6` non-zero (a wild monster) sets the odds to 0 before the other terms. The sim's attacker is always the leader, so the odds are the move's. Runtime: with forced odds 50, the 12 team-member calls crit exactly when `roll < 50`, and the 8 wild calls never crit. **blue-verified**.
+- **Other terms, not modelled.** Focus Energy (status 4, odds `DAT_0217C7C8`), Scope Lens (item 12, `+40`), Patsy Band (item 13, `+40`), the IQ type advantage (its odds replace the others). **medium** (values not read).
+- **Roll and effect.** A critical hit multiplies the type factor by the STAB multiplier (1.5). Its flag goes to the damage struct at `+0xD`, cleared when the damage is 0. **blue-verified**.
+- **Battle and Shell Armor.** The game does not draw the critical roll for a target with Battle Armor (`0x0C`) or Shell Armor (`0x13`): the draw sits inside a test of those two abilities (`0217BD94` lines 274 and 275 of the export). The sim skips the draw for such a target, so a hit draws four values, not five. **static**: no runtime run on an armoured target was made.
+
+### P6. Abilities
+
+- **Writer.** `info + 0x58` and `+0x59` are the species' two abilities, copied at monster spawn by `FUN_ov_0001__0217930C` (its callers: the spawn at `021794CC`, the evolution at `02182900`, and others). `FUN_020021EC` reads the species record at `+0x17` and `+0x18`, the same bytes as `rescue_data::Species::abilities`. Level-up does not write them. **blue-verified** (static; runtime: 10 of 10 calls matched the species record).
+- **Sim.** `EntityInfo::apply_species` copies `Species::abilities` into `abilities`, and `has_ability` tests the pair. The sim changes no ability (no ability-changing effect is modelled).
+
+### P7. Stage tables (`CalcDamage`)
+
+- **Tables.** Attack `ov_0001::021AA660` and defence `ov_0001::021AA6B4`: 21 `s24.8` words each. Only `CalcDamage` reads them. **blue-verified** (export xrefs).
+- **Index.** The stage is `info + 0x1C` (attack) or `+0x20` (defence), plus `2 * split`, clamped to 0 to 20. Neutral is 10. The shape is non-decreasing in both tables, and equal except at indices 7 to 9, where the defence table is higher. **blue-verified** (live read; runtime probe `r.py` of the clamp at (25, -5) gave (20, 0)).
+- **Not checked.** The Deoxys ±2 (its three form IDs are in [Damage formula](#damage-formula), not the signs), and the Skull Bash defence stage (`info + 0xAE == 6`). **open**.
+- **Sim.** `rescue_data::combat::CombatTables::{attack_stage, defence_stage}`; the sim keeps `EntityInfo::{offensive_stages, defensive_stages}`.
+
+### What the sim runs, and what it leaves out
+
+The sim runs a leader's use of Tackle (`0x9A`) or Scratch (`0x104`), the two moves of the dispatch's direct `HandleDamagingMove` path with a verified `arg8` of 1.0 ([#185](#damage-formula)). It takes the leader's turn, then:
+
+1. Marks the PP ([P3](#p3-pp-mark-on-use-take-it-at-the-end-of-the-action)). Draws the slot-0 hit check.
+2. On a hit: draws the boost roll, the critical roll (not for a target with Battle or Shell Armor, [P5](#p5-critical-hit-odds)) and the variance roll, in that order, then computes the damage: the attack (power plus attack, the stage, truncated, clamped to 0 to 999), then `CalcStatBoosts` as one fraction with one truncating divide: the numerator and denominator take Huge Power and Pure Power (×3/2, at a boost roll of 32 or less), Hustle (×3/2) and the target's Intimidate (×4/5), physical moves only (the export of `0217C7F8`: the ×3 and ×4 go to the numerator, the 2 and 5 to the denominator, then one divide). The defence (the stage, truncated), the level term (`level × 2/3` in 48.16), `x = (attack − defence) / 8 + term`, `base = x² × 0.05 + (2x − defence + 10)` clamped to [1, 999], the type factor and the critical multiplier, `arg8` (1.0), the variance `(0xE000 + roll) / 0x10000`, and the rounding of each 48.16 product (half up on bit 15) and the final integer (`FP48_16_ToS32`).
+3. Draws the slot-1 hit check. On a hit the target's HP falls by the damage.
+4. Takes 1 PP at the end of the action, after a hit or a miss.
+
+Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, variance, accuracy (slot 1). A target with Battle or Shell Armor draws no critical value, so its hit takes four. A slot-0 miss draws one value. Tests cover the counts, the armoured targets, the critical path, the type cases, the stage formula at lowered and raised stages, the single divide of the stat boosts (Hustle with Intimidate, where sequential truncation differs), Compound Eyes, and PP after a hit and after a miss.
+
+Left out, each as a `shortcut:` in the code:
+
+- Regular Attack (`0x163`): its route to the dispatcher is not traced ([P3](#p3-pp-mark-on-use-take-it-at-the-end-of-the-action)).
+- Targets beyond the facing tile (#420), defeat (#422), secondary effects (#421).
+- Held items, the Deoxys adjustment, Wonder Guard, the exposed flag, weather, charging, statuses, the offensive and defensive multipliers (`+0x2C`, `+0x34`, read as 1.0), the wild attacker's level term (`attack / 3`).
+- Guts, Marvel Scale and Plus/Minus (the [abilities table](#abilities-in-calcstatboosts)): they need a negative status or a dungeon flag.
+- The IQ type-advantage critical term (`FUN_021805b0(attacker, 1)`, [P5](#p5-critical-hit-odds)).
+- A facing tile with no wild monster: the game's result for an empty target is not read, so the use is not modelled.
+
+Checks: the damage steps were translated from `verification/v7-trace/combat_recompute.py`, which replays the 14 captured hits. Those hits are scratch data and were not re-run in this change.
 
 ## Entity layout seen here
 

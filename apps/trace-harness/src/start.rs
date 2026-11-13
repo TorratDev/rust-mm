@@ -11,7 +11,7 @@ use rescue_sim::floor::{Floor, HEIGHT, Tile, WIDTH};
 use rescue_sim::floor_gen::FloorProperties;
 use rescue_sim::rng::DungeonPreseed;
 use rescue_sim::state::{
-    DungeonSnapshot, EntityInfo, FloorSnapshot, GameState, MAX_RESTORED_FLOORS, Monster,
+    DungeonSnapshot, EntityInfo, FloorSnapshot, GameState, MAX_RESTORED_FLOORS, Monster, MoveSlot,
     NO_MONSTER_HOUSE, Snapshot, StateError, TEAM_SLOTS, TileSnapshot,
 };
 use rescue_trace::{Entity, TurnRow};
@@ -233,7 +233,13 @@ fn monster(
             max_hp: entity.max_hp,
             attack: [0, 0],
             defence: [0, 0],
-            offensive_stages: [0, 0],
+            offensive_stages: [10, 10],
+            defensive_stages: [10, 10],
+            accuracy_stage: 10,
+            evasion_stage: 10,
+            types: [0, 0],
+            abilities: [0, 0],
+            moves: [MoveSlot::default(); 4],
             // shortcut: the row does not carry the speed counters, so they start at 0.
             speed_up: [0; 5],
             speed_down: [0; 5],

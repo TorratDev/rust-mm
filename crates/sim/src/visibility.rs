@@ -169,7 +169,7 @@ mod tests {
     use super::*;
     use crate::command::{Command, Direction, Outcome};
     use crate::floor::{Floor, HEIGHT, Room, TERRAIN_FLOOR, Tile, WIDTH};
-    use crate::state::{EntityInfo, GameState, Monster};
+    use crate::state::{EntityInfo, GameState, Monster, MoveSlot};
 
     /// A run whose first floor is `floor`, with the leader at `pos` and darkness `darkness`. The
     /// floor is entered the way the game enters it, so the darkness comes from the record table.
@@ -185,7 +185,13 @@ mod tests {
             max_hp: 10,
             attack: [1, 1],
             defence: [1, 1],
-            offensive_stages: [0, 0],
+            offensive_stages: [10, 10],
+            defensive_stages: [10, 10],
+            accuracy_stage: 10,
+            evasion_stage: 10,
+            types: [0, 0],
+            abilities: [0, 0],
+            moves: [MoveSlot::default(); 4],
             speed_up: [0; 5],
             speed_down: [0; 5],
             direction: 0,

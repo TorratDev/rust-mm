@@ -104,6 +104,11 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::021AA588 | gEffectivenessChart | int[4][4] | blue-verified | Same 16 values as `pmd-red` |
 | ov_0001::021AA660 | gAtkStatStageMultipliers | int[21] | blue-verified | Same 21 s24.8 values as `pmd-red`; read by `CalcDamage` |
 | ov_0001::021AA6B4 | gDefStatStageMultipliers | int[21] | blue-verified | Same 21 s24.8 values as `pmd-red`; read by `CalcDamage` |
+| ov_0001::021AE248 | gTypeMultiplierPool | - | blue-verified | Four pointers to 8-byte objects, each second word a 16.16 multiplier; read by `sub_806E100` (our name; #419 P1) |
+| ov_0001::021AE238 | gStabMultiplier | - | blue-verified | 8-byte object, second word the 1.5 multiplier; STAB in `sub_806E100` and the critical multiplier in `CalcDamage` (our name; #419 P1) |
+| ov_0001::021AA8C4 | gAccStatStageMultipliers | - | blue-verified | 21 integers, read by `AccuracyCalc` through `ov_0001::0215AB2C` (our name; #419 P4) |
+| ov_0001::021AA918 | gEvaStatStageMultipliers | - | blue-verified | 21 integers, read by `AccuracyCalc` through `ov_0001::0215AB30` (our name; #419 P4) |
+| 02091E78 | gPhysicalTypes | - | blue-verified | 18 bytes in the ARM9 RAM image (after BLZ decompression), read by `FUN_02008C64` (our name; #419 P2) |
 | 020E0788 | gDungeon | void * | blue-verified | Pointer to the dungeon struct; read by `RunDungeon_Async`, `IsFloorOver` and `RunFractionalTurn_Async` |
 | ov_0001::021411BC | RunFractionalTurn_Async | void RunFractionalTurn_Async(bool param_1) | blue-verified | Same call sequence as `pmd-red`, each step followed by `IsFloorOver`; increments `dungeon+0x650` and wraps it at 24 |
 | ov_0001::0214067C | IsFloorOver | bool IsFloorOver(void) | blue-verified | Same checks as `pmd-red`; sets `dungeon+0x648` to 1 or 2 |

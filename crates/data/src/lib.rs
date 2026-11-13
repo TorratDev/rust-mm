@@ -14,6 +14,7 @@
 #![deny(clippy::float_arithmetic)]
 #![deny(clippy::disallowed_types, clippy::disallowed_methods)]
 
+pub mod combat;
 pub mod dungeon;
 pub mod item;
 pub mod moves;
