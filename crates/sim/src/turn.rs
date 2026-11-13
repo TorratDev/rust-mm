@@ -51,15 +51,23 @@ const REGEN_SPEED_MIN: i32 = 30;
 const REGEN_SPEED_MAX: i32 = 500;
 
 impl Dungeon {
+    /// Whether the leader acts in fractional turn `k` at its current speed stage (`gSpeedTurns`).
+    /// The trace harness uses it to tell a row between two gates from a clock that is wrong.
+    #[must_use]
+    pub fn leader_gate(&self, k: u8) -> bool {
+        acts(self.leader_stage(), k)
+    }
+
     /// Runs fractional turns until the leader may act, then runs `act`, the leader's command,
     /// and the rest of that fractional turn. Counts one dungeon turn. The caller checks that
     /// the command is valid first, so a refused command never advances the clock.
     ///
     /// The leader's end-of-turn (belly, hunger, the Shed Skin roll) runs at the weather step
-    /// that follows the action, and the clock then runs on to the leader's next gate, where the
-    /// game waits for input. So a command returns with its end-of-turn applied, as the game's
-    /// row shows it (`docs/re/turns.md`, "Row timing"). Only a leader that acts on a fractional
-    /// turn with no weather step after it can leave an end-of-turn pending.
+    /// that follows a walk or wait, and the clock then runs on to the leader's next gate, where
+    /// the game waits for input. At stage 1 the state a command returns therefore matches the
+    /// game's row at that gate, the row that shows the end-of-turn (`docs/re/turns.md`, "Row
+    /// timing"). A leader that acts on a fractional turn with no weather step after it can leave
+    /// one pending.
     pub(crate) fn take_leader_turn(&mut self, act: impl FnOnce(&mut Dungeon)) {
         let k = self.run_to_leader_gate(self.fractional_turn);
         // The floor's first pass skips the regeneration tick (`param` TRUE in the floor loop).
@@ -128,29 +136,30 @@ impl Dungeon {
     }
 
     /// `DoEndOfTurnEffects` for the leader (`docs/re/turns.md`, "Per-turn effects"), in game
-    /// order. It clears `bellyEmpty`. The Warp Scarf roll and the weather damage are not
-    /// modelled (no held item, no weather). The Shed Skin roll, `DungeonRandInt(100)`, is drawn
-    /// unconditionally so the floor generator advances as in the game; its result is unused
-    /// until a status or ability reads it. Then the belly block: the belly drops by 0.1, and at
-    /// 0 the leader is hungry (`bellyEmpty` set, 1 HP lost).
+    /// order (`ov_0001/021861e8`, export lines 35 to 215): it clears `bellyEmpty`; then the belly
+    /// block, where the belly drops by 0.1 and at 0 the leader is hungry (`bellyEmpty` set, 1 HP
+    /// lost); then the Shed Skin roll, `DungeonRandInt(100)`, drawn unconditionally so the floor
+    /// generator stays in step with the game. Its result is unused until a status or ability
+    /// reads it. The Warp Scarf roll and the weather damage (between the two) are not modelled.
     fn leader_end_of_turn(&mut self) {
         // shortcut: the held-item decrement terms (Tight Belt, Stamina Band, Energy Saver, Diet
         // Ribbon, Heal Ribbon, Munch Belt) and the linked-move term are not modelled; every turn
         // costs the base 0.1. The empty-belly alert counter (`dungeon+0x669`) is not kept: it
         // changes no state the sim holds.
         // shortcut: the 1 HP of hunger is taken without a faint check; HP stops at 0 and the
-        // faint exit (`HandleFaint_Async`) is not ported.
-        let _shed_skin = self.rng.int(100);
-        let Some(leader) = self.team.first_mut() else {
-            return;
-        };
-        let info = &mut leader.info;
-        info.belly_empty = false;
-        info.belly = (info.belly - BELLY_PER_TURN).max(0);
-        if info.belly == 0 {
-            info.belly_empty = true;
-            info.hp = (info.hp - 1).max(0);
+        // faint exit (`HandleFaint_Async`) is not ported. The game's early exits after the
+        // weather damage (export lines 206 to 213) would skip the roll; the sim has no weather,
+        // so it always draws it. A hunger faint does not skip it in the game either.
+        if let Some(leader) = self.team.first_mut() {
+            let info = &mut leader.info;
+            info.belly_empty = false;
+            info.belly = (info.belly - BELLY_PER_TURN).max(0);
+            if info.belly == 0 {
+                info.belly_empty = true;
+                info.hp = (info.hp - 1).max(0);
+            }
         }
+        let _shed_skin = self.rng.int(100);
     }
 }
 

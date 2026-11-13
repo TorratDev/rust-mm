@@ -105,7 +105,10 @@ fn scenario_file(name: &str, text: &str) -> String {
 
 #[test]
 fn waits_match_and_exit_zero() {
-    let out = run_cli("waits.jsonl", &[row(vec![action(1, 0, 0, 0)]), row(vec![])]);
+    // Stage 4 acts every turn, so the wait leaves the clock on 1 for the second row.
+    let mut second = row(vec![]);
+    second.fractional_turn = 1;
+    let out = run_cli("waits.jsonl", &[row(vec![action(1, 0, 0, 0)]), second]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).starts_with("match: 2 rows"));
 }

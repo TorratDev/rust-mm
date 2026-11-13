@@ -7,8 +7,8 @@
 //! (the entity and entity-info tables, and the dungeon struct). Fields the notes do not
 //! record are left out, not guessed: the item and trap entities, the moves and statuses of
 //! a monster, the weather and the floor properties. The turn-loop state is the fractional-turn
-//! counter, the leader's speed stage and its pending end-of-turns ([`crate::turn`]). The `turn` counter is the sim's
-//! own, not a game field.
+//! counter, the leader's speed stage and its pending end-of-turns ([`crate::turn`]). The `turn`
+//! counter is the sim's own, not a game field.
 //!
 //! [`GameState::step`] is the only way a command changes the state. Integer math only.
 

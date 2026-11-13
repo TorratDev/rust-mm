@@ -2,14 +2,33 @@
 //! step is refused; the tests use that to check what a refused step does to the replay.
 
 use super::*;
-use rescue_sim::rng::DungeonPreseed;
+use rescue_sim::rng::{DungeonPreseed, DungeonRng};
 use rescue_trace::Action;
 
 const RUN_SEED: u32 = 0x00FF_80BA;
+const RNG_AT_ROW: u32 = 0x00AB_CDEF;
 
 /// The replay of `rows`, which must not fail.
 fn ok(rows: &[TurnRow]) -> Replay {
     replay(rows, None).expect("replay")
+}
+
+/// A stage-1 row on fractional turn `fractional_turn`, with a full-HP leader (the regeneration
+/// tick then changes nothing) and the given dungeon RNG state.
+fn stage_one_row(
+    fractional_turn: i16,
+    frame: u64,
+    dungeon_rng: u32,
+    actions: Vec<Action>,
+) -> TurnRow {
+    let mut r = row(10, frame, actions);
+    r.fractional_turn = fractional_turn;
+    r.dungeon_rng = dungeon_rng;
+    if let Some(leader) = r.team[0].as_mut() {
+        leader.hp = 30;
+        leader.speed_stage = 1;
+    }
+    r
 }
 
 fn action(id: u16, direction: u8, param: u8, slot: u8) -> Action {
@@ -61,8 +80,47 @@ fn empty_trace_matches() {
 
 #[test]
 fn a_wait_leaves_the_rows_matching() {
-    let rows = vec![row(10, 1, vec![action(1, 0, 0, 0)]), row(10, 2, vec![])];
+    // The leader is at speed stage 4 (every turn is a gate), so the wait leaves the clock on 1.
+    let mut second = row(10, 2, vec![]);
+    second.fractional_turn = 1;
+    let rows = vec![row(10, 1, vec![action(1, 0, 0, 0)]), second];
     assert_eq!(ok(&rows), Replay::Match { rows: 2 });
+}
+
+#[test]
+fn a_stage_one_wait_is_compared_at_the_next_gate_only() {
+    // Stage 1 acts on fractional turns 3, 7, 11, ... A wait at 3 runs the leader's end-of-turn at
+    // the weather step of turn 6, so the game's row at 7 holds one Shed Skin roll. Rows 4 to 6
+    // show the game before that roll, with the RNG still unchanged, so they are skipped.
+    let mut stepped = DungeonRng::from_state(RNG_AT_ROW);
+    stepped.int(100);
+    let rows = vec![
+        stage_one_row(3, 1, RNG_AT_ROW, vec![action(1, 0, 0, 0)]),
+        stage_one_row(4, 2, RNG_AT_ROW, vec![]),
+        stage_one_row(5, 3, RNG_AT_ROW, vec![]),
+        stage_one_row(6, 4, RNG_AT_ROW, vec![]),
+        stage_one_row(7, 5, stepped.state(), vec![]),
+    ];
+    assert_eq!(ok(&rows), Replay::Match { rows: 5 });
+}
+
+#[test]
+fn a_gate_row_on_another_clock_is_a_fractional_turn_divergence() {
+    // The leader does not move, so the sim's clock stays on 3. Row 2 is on 7, a gate of stage 1,
+    // so it is compared and its clock is the divergence.
+    let rows = vec![
+        stage_one_row(3, 1, RNG_AT_ROW, vec![]),
+        stage_one_row(7, 2, RNG_AT_ROW, vec![]),
+    ];
+    match replay(&rows, None) {
+        Ok(Replay::Divergence(d)) => {
+            assert_eq!((d.row, d.frame, d.fractional_turn), (2, 2, 7));
+            assert_eq!(d.diffs[0].path, "fractionalTurn");
+            assert_eq!(d.diffs[0].expected, "7");
+            assert_eq!(d.diffs[0].actual, "3");
+        }
+        other => panic!("expected a clock divergence at row 2, got {other:?}"),
+    }
 }
 
 #[test]
