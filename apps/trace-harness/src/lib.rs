@@ -466,7 +466,10 @@ mod tests {
                 speed_up: [0; 5],
                 speed_down: [0; 5],
                 direction: 0,
-                belly: 0,
+                belly: 100_000,
+                belly_empty: false,
+                regen_acc: 0,
+                regen_speed: 0,
             },
         }
     }
@@ -487,6 +490,7 @@ mod tests {
                 wild: row.wild.iter().copied().map(monster).collect(),
                 turn: 0,
                 fractional_turn: 0,
+                pending_end_of_turns: 0,
                 leader_speed: 0,
                 speed_stage: None,
                 shop_pass: false,
