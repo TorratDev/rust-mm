@@ -20,6 +20,15 @@ pub fn check(env: Option<OsString>, config: Option<&Path>) -> RomCheck {
     check_with(env, config, SUPPORTED_DUMPS)
 }
 
+/// The bytes of the dump `check` accepted, read whole for the game's data (#70).
+pub fn read(env: Option<OsString>, config: Option<&Path>) -> Result<Vec<u8>, String> {
+    match rom::resolve_rom_path(env, config) {
+        Ok(Some(path)) => std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display())),
+        Ok(None) => Err(String::from("no ROM configured")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn check_with(env: Option<OsString>, config: Option<&Path>, table: &[KnownDump]) -> RomCheck {
     match rom::resolve_rom_path(env, config) {
         Err(e) => RomCheck::Refused(e.to_string()),
