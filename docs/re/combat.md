@@ -596,3 +596,31 @@ Unresolved items from the three investigation files for this issue. Each item is
 - Item drop: at runtime, no KO'd target held an item, so the drop call never ran. Whether the held-item check is the only gate (the Reviver Seed branch exits earlier, and the drop may depend on other flags). The meaning of the `0x02143918` arguments beyond `(entity, item entity, item, 1, 0)`. Whether team members (non-leader) drop items at the same rate as wild monsters.
 - The team size behind the four `AddExpPoints` calls seen for two KOs was not logged.
 - The discrepancy around `0x0217E868` (see the defeat section).
+
+## Defeat in the sim (#422)
+
+`crates/sim/src/combat.rs` removes a wild monster whose HP a use takes to 0. The use's hits run
+first, in the order of the targets, and the defeated monsters are removed after the last hit.
+Regular Attack does the same. [hypothesis] The rule is the faint path's outcome for a wild
+monster; no runtime trace was checked for it in this PR. The sim does not run `HandleFaint_Async`.
+The sim's removal is a shortcut: the wild list is compacted, so the monsters after a removed one
+move down an index, and their order is kept. [hypothesis] The game keeps the slot empty
+(`wildPokemon[16]`, see [`state.rs`](../../crates/sim/src/state.rs)).
+
+**Shortcut: the timing of the defeat.** The game calls the faint from the damage path (callers
+listed under Faint above), so a target can faint before the next target is hit. [hypothesis] The
+interleaving is inferred from the timing of one trace (see the open discrepancy above). The sim
+removes the defeated monsters only after the last hit, and does not run the faint's own draws or
+effects. So a use that defeats one target and then hits another may differ from the game. The
+`// shortcut:` note on `resolve_all` in `combat.rs` marks the same point.
+
+Tests: `a_move_that_takes_a_wild_monster_to_0_hp_removes_it`,
+`a_regular_attack_that_takes_a_wild_monster_to_0_hp_removes_it`,
+`one_use_that_defeats_two_wild_monsters_removes_both_and_keeps_the_middle_one`.
+
+Not in the sim yet, each for a reason the notes give:
+
+- **Leader defeat and the `Outcome` for it.** The sim has no leader-faint path: a move never targets the leader (`targets_of`), and no wild AI attacks it. A new `Outcome` variant would be in `command.rs`, which the sim's #422 change does not cover.
+- **Experience.** The award (`AddExpPoints`) needs the species' EXP yield (`Species::exp_yield` in `rescue-data`, read from the species table at offset `0x20`) and a per-monster EXP-gained field (`+0x1C8`). The sim has neither, and adding the field changes the public `EntityInfo`. The offset `0x20` is static (the EXP formula bullet above); `+0x1C8` is blue-verified in the Award bullet above. The multiplier's writer of `2` and `0` is not located, so the sim would use 1. The formula row is static, not blue-verified.
+- **Level-up.** No row in the notes is blue-verified for it, and the sim does not take the level table.
+- **Item drop, Reviver Seed, recruit and join.** The sim has no items, revive or join path.

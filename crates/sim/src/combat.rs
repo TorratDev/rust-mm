@@ -413,11 +413,7 @@ impl Dungeon {
         let Some(targets) = self.targets_of(mv, direction) else {
             return Outcome::NotModelled;
         };
-        self.take_leader_turn(|d| {
-            for &target in &targets {
-                d.resolve(target, mv, REGULAR_ATTACK_ARG8, data);
-            }
-        });
+        self.take_leader_turn(|d| d.resolve_all(&targets, mv, REGULAR_ATTACK_ARG8, data));
         Outcome::Applied
     }
 
@@ -452,9 +448,7 @@ impl Dungeon {
         if let Some(leader) = self.team.first_mut() {
             leader.info.moves[slot].flags2 |= MoveSlot::USE_MARK;
         }
-        for &target in targets {
-            self.resolve(target, mv, ARG8, data);
-        }
+        self.resolve_all(targets, mv, ARG8, data);
 
         // The PP is taken at the end of the action, once per use (`02159B18`).
         // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
@@ -486,14 +480,56 @@ impl Dungeon {
         }
     }
 
+    /// One use's hits on each of `targets`, in order, then the defeat of the wild monsters that
+    /// the use took to 0 HP (see [`remove_defeated`](Self::remove_defeated)).
+    // shortcut: the game runs the faint of a target inside the damage path, as its hit takes it to
+    // 0 HP, so the next target is hit after that faint. The sim removes the defeated monsters only
+    // after the last hit, and does not run a faint's own draws or effects, so a use that defeats
+    // one target and then hits another may differ from the game.
+    fn resolve_all(&mut self, targets: &[Slot], mv: &Move, arg8: i64, data: &CombatData<'_>) {
+        let mut defeated = Vec::new();
+        for &target in targets {
+            if self.resolve(target, mv, arg8, data) {
+                defeated.push(target);
+            }
+        }
+        self.remove_defeated(&defeated);
+    }
+
+    /// Removes the wild monsters in `defeated` from the wild list. The list is compacted: the
+    /// monsters that remain keep their order, which is the order the others act and draw in,
+    /// but the ones after a removed monster move down an index.
+    // shortcut: the wild list is compacted on a defeat; the game keeps the slot empty. Only the
+    // indices change, not the order of the monsters that remain.
+    // shortcut: a defeated team member stays in the team at 0 HP, and no faint is run for it
+    // (`HandleFaint_Async`).
+    fn remove_defeated(&mut self, defeated: &[Slot]) {
+        let mut wild: Vec<usize> = defeated
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Wild(i) => Some(i),
+                Slot::Team(_) => None,
+            })
+            .collect();
+        // Highest index first, so each removal leaves the lower indices where they are.
+        wild.sort_unstable_by(|a, b| b.cmp(a));
+        wild.dedup();
+        for i in wild {
+            if i < self.wild.len() {
+                self.wild.remove(i);
+            }
+        }
+    }
+
     /// The hit checks and damage of one use by the leader on monster `target`, with the move's
     /// `arg8` (24.8). It takes no PP; [`strike`](Self::strike) and Regular Attack add that.
-    fn resolve(&mut self, target: Slot, mv: &Move, arg8: i64, data: &CombatData<'_>) {
+    /// Returns whether a hit took the target to 0 HP.
+    fn resolve(&mut self, target: Slot, mv: &Move, arg8: i64, data: &CombatData<'_>) -> bool {
         let Some(attacker) = self.team.first().map(|m| m.info.clone()) else {
-            return;
+            return false;
         };
         let Some(defender) = self.info_of(target).cloned() else {
-            return;
+            return false;
         };
         let physical = is_physical(data.tables, mv.kind);
         let t = data.tables;
@@ -513,14 +549,16 @@ impl Dungeon {
             let dealt = damage_scaled(t, mv, arg8, &attacker, &defender, rolls);
             let second = self.rng.int(100);
             if hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
-                // shortcut: no defeat (#422): HP stops at 0 and the faint is not run.
+                // HP stops at 0; a monster at 0 is defeated (`remove_defeated`).
                 let hp = i32::from(defender.hp) - dealt.value;
                 let hp = i16::try_from(hp.max(0)).unwrap_or(i16::MAX);
                 if let Some(info) = self.info_mut(target) {
                     info.hp = hp;
                 }
+                return hp == 0;
             }
         }
+        false
     }
 }
 
@@ -1353,6 +1391,123 @@ mod tests {
         };
         assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
         assert_eq!(g, before);
+    }
+
+    /// The battle, with a second wild monster at (7, 5) at 50 HP beyond the first, which is at 1
+    /// HP: a hit on the first takes it to 0.
+    fn battle_with_a_defeat() -> GameState {
+        let mut g = battle([100; 3], 0);
+        let d = g.dungeon_mut().unwrap();
+        d.wild[0].info.hp = 1;
+        let mut far = d.wild[0].clone();
+        far.pos = (7, 5);
+        far.info.hp = 50;
+        d.wild.push(far);
+        g
+    }
+
+    /// The wild list after a defeat: one monster left, the one at (7, 5) with 50 HP.
+    fn assert_survivor_only(g: &GameState) {
+        let wild = g.dungeon().unwrap().wild();
+        assert_eq!(wild.len(), 1, "the defeated monster is removed");
+        assert_eq!(wild[0].pos, (7, 5));
+        assert_eq!(wild[0].info.hp, 50, "the survivor is not hit");
+    }
+
+    #[test]
+    fn a_move_that_takes_a_wild_monster_to_0_hp_removes_it() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        let mut g = battle_with_a_defeat();
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        assert_survivor_only(&g);
+    }
+
+    #[test]
+    fn a_regular_attack_that_takes_a_wild_monster_to_0_hp_removes_it() {
+        let t = tables();
+        let moves = table(&[regular_attack_move([100; 3])]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        let mut g = battle_with_a_defeat();
+        let attack = Command::Attack(Direction::Right);
+        assert_eq!(g.step_with(attack, &data), Outcome::Applied);
+        assert_survivor_only(&g);
+    }
+
+    #[test]
+    fn one_use_that_defeats_two_wild_monsters_removes_both_and_keeps_the_middle_one() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x10; // the cone: facing - 1, facing, facing + 1
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The cone order is (6, 6), (6, 5), (6, 4): wild 2, wild 0, wild 1. Wild 0 and wild 2 are
+        // at 1 HP, so the use defeats both; wild 1 at 100 HP survives its own hit.
+        let mut g = battle([100; 3], 0);
+        let mut low = foe_at((6, 5));
+        low.info.hp = 1;
+        let mut mid = foe_at((6, 4));
+        mid.info.hp = 100;
+        let mut low2 = foe_at((6, 6));
+        low2.info.hp = 1;
+        let target = mid.info.clone();
+        g.dungeon_mut().unwrap().wild = vec![low, mid, low2];
+        let before = *g.dungeon().unwrap().rng();
+        let blocks = draw_blocks(&before, 3);
+        let attacker = g.dungeon().unwrap().team()[0].info.clone();
+        let rolls = Rolls {
+            boost: blocks[2][1],
+            crit: blocks[2][2],
+            variance: blocks[2][3],
+        };
+        let dealt = damage(&t, &mv, &attacker, &target, rolls).value;
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        let wild = g.dungeon().unwrap().wild();
+        assert_eq!(wild.len(), 1, "both defeated monsters are removed");
+        assert_eq!(wild[0].pos, (6, 4));
+        assert_eq!(
+            i32::from(wild[0].info.hp),
+            100 - dealt,
+            "the survivor's HP changes only by its own hit"
+        );
+    }
+
+    #[test]
+    fn a_hit_that_leaves_a_wild_monster_above_0_hp_keeps_it() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        let mut g = battle_with_a_defeat();
+        g.dungeon_mut().unwrap().wild[0].info.hp = 100;
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        let wild = g.dungeon().unwrap().wild();
+        assert_eq!(wild.len(), 2);
+        assert!(wild[0].info.hp > 0 && wild[0].info.hp < 100);
     }
 
     #[test]
