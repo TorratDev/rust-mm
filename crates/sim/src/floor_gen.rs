@@ -14,6 +14,7 @@ use crate::floor::{
     stairs_check,
 };
 use crate::rng::DungeonRng;
+use rescue_formats::fixedmap::FixedMap;
 
 /// "Unset" stairs position, as the game stores it.
 pub const UNSET: (i16, i16) = (-1, -1);
@@ -553,7 +554,10 @@ impl FloorSteps for PortedSteps {
             "fixed room {number}: no fixed-room file loaded"
         );
         // An absent entry reads as no room, like a zero width or height.
-        floor::fixed_map_entry(&self.fixed_map, number).map_or((0, 0), |e| (e.width, e.height))
+        FixedMap::parse(&self.fixed_map)
+            .ok()
+            .and_then(|m| m.entry(number))
+            .map_or((0, 0), |e| (e.width, e.height))
     }
     fn place_fixed_room(
         &mut self,
@@ -563,7 +567,9 @@ impl FloorSteps for PortedSteps {
         rng: &mut DungeonRng,
         g: &mut GenState,
     ) {
-        let entry = floor::fixed_map_entry(&self.fixed_map, number)
+        let entry = FixedMap::parse(&self.fixed_map)
+            .ok()
+            .and_then(|m| m.entry(number))
             .unwrap_or_else(|| panic!("fixed room {number}: no entry"));
         self.fixed_out = floor::FixedRoomOut {
             tileset_flag: g.tileset_type2,
@@ -591,7 +597,9 @@ impl FloorSteps for PortedSteps {
         rng: &mut DungeonRng,
         g: &mut GenState,
     ) {
-        let entry = floor::fixed_map_entry(&self.fixed_map, room.number)
+        let entry = FixedMap::parse(&self.fixed_map)
+            .ok()
+            .and_then(|m| m.entry(room.number))
             .unwrap_or_else(|| panic!("fixed room {}: no entry", room.number));
         self.fixed_out = floor::FixedRoomOut {
             tileset_flag: g.tileset_type2,

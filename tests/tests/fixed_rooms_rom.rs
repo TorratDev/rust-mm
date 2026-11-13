@@ -8,10 +8,11 @@
 //! so these rows do not check the spawn RNG. Skipped without a ROM (`docs/rom-tests.md`).
 
 use rescue_formats::archive::Archive;
+use rescue_formats::fixedmap::FixedMap;
 use rescue_nds::binary::{overlay_data, read_overlay_tables};
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
-use rescue_sim::floor::{self, FIXED_TILE_ENTRY_SIZE, Floor, HEIGHT, NO_ROOM, WIDTH, layout_fnv1a};
+use rescue_sim::floor::{FIXED_TILE_ENTRY_SIZE, Floor, HEIGHT, NO_ROOM, WIDTH, layout_fnv1a};
 use rescue_sim::floor_gen::{FloorProperties, GenState, PortedSteps, generate_floor};
 use rescue_sim::rng::DungeonRng;
 
@@ -283,7 +284,8 @@ rescue_tests::rom_test! {
         let darc = Archive::parse(&dun).expect("dungeon.sbin archive parses");
         let fixed_map = darc.get(&dun, "fixedmap").expect("fixedmap in dungeon.sbin").to_vec();
         let table = fixed_table(&bytes, &header, &fs);
-        assert!(floor::fixed_map_entry(&fixed_map, 1).is_some(), "fixedmap has entry 1");
+        let map = FixedMap::parse(&fixed_map).expect("fixedmap parses");
+        assert!(map.entry(1).is_some(), "fixedmap has entry 1");
 
         let mut bad = Vec::new();
         for want in FIXED_ORACLE_FLOORS {

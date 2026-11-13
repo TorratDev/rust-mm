@@ -2848,6 +2848,7 @@ version = "0.0.0"
 name = "rescue-sim"
 version = "0.0.0"
 dependencies = [
+ "rescue-formats",
  "serde",
  "serde_json",
 ]
