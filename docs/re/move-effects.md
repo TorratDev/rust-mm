@@ -9,7 +9,7 @@ Issue: [#50](https://github.com/TorratDev/rust-mm/issues/50). Part of the combat
 - The switch has 413 case IDs. The other 406 IDs go to one of 262 handler addresses, and seven IDs have no handler. Handler bodies are not catalogued here.
 - Runtime (py-desmume, run by investigator C on the dump with SHA-1 `6f01887356268de39085df01490347bbcc3aa330`; 3,000 frames after the dungeon starts): the entry fired 68 times, with move IDs `0x09A`, `0x0D9`, `0x104` and `0x163`. That is the only runtime evidence here. The other IDs are static.
 - One `switch`, not nine. In `ov_0001::02156824` there is one `switch` on the move ID at `move+2`, with case values from 0 to 0x19C (**blue-verified**, investigator B's findings on [#355](https://github.com/TorratDev/rust-mm/issues/355)). The other eight text hits of `switch` are the default label and seven `goto`s to it (case IDs 0x166, 0x167, 0x192, 0x194, 0x195, 0x198 and 0x19B; case 0x164 falls into the label). All of them set a local to 0, so they have no effect. The ID checks before the switch are plain `if`s (for example 0x89 and 0xFC) and are not catalogued here.
-- Not verified: the miss path (Red's `dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick), and the handler bodies. The hit/miss shape is in [`combat.md`](combat.md#dispatch-shape-and-hitmiss-branch-p2-186). `HandleDamagingMove` (`ov_0001::0215675C`) is the handler for 60 IDs in the catalogue below.
+- The miss path and the first dungeon's handlers are in [First dungeon: move list, handlers and draws](#first-dungeon-move-list-handlers-and-draws-357). Not verified: Red's miss path (`dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick), and the handler bodies outside that list. The hit/miss shape is in [`combat.md`](combat.md#dispatch-shape-and-hitmiss-branch-p2-186). `HandleDamagingMove` (`ov_0001::0215675C`) is the handler for 60 IDs in the catalogue below.
 
 ## Roll wrapper per move ID (P3, #186)
 
@@ -39,6 +39,97 @@ Investigator A's findings. Tag: **blue-verified** (decompile and x-ref). Confide
 - Whether each case's callee uses the roll for accuracy, for the secondary effect, or for something else.
 - `FUN_0218579C`, `FUN_02185568` and `FUN_02188030` were not decompiled.
 - Runtime values of the chances: no trace. A `register_exec` hook on `FUN_02159F10` and `FUN_02159F6C` could confirm them.
+
+## First dungeon: move list, handlers and draws (#357)
+
+Scope: the moves that can be in play on the first dungeon's floors 1 to 3 (dungeon 0). Source: investigator C's findings on [#357](https://github.com/TorratDev/rust-mm/issues/357) (Ghidra copy `rescue-arm9-c`, export of 2026-11-12). The runtime runs were made by investigator C from the first floor's save with py-desmume; their scripts are in the investigator's scratch folder, not in this repo, so the runtime tags below cannot be rerun from here yet (see [open points](#open-points-and-conflicts-357)).
+
+Tags: **blue-verified** (an address read in Blue, or a runtime check named in the row). **lead** (a pointer or an assumption that is not checked; the findings' "hypothesis" items are recorded as leads). Values from table words (pool chances, spawn weights, learnset levels beyond the bins below) are not copied into this page.
+
+### P1: move list (#357)
+
+Floors 1 and 2 share one spawn list and floor 3 adds one species; index 0 of the floor table is a placeholder. **blue-verified** (static, `rescue_data::dungeon::parse_mapparam`; runtime on floor 1 for the species seen).
+
+| Group | Moves (ID and name) | Tag |
+|-------|---------------------|-----|
+| Wild, seen at runtime on floor 1 | `09A` Tackle (Wurmple), `087` Absorb (Sunkern) | **blue-verified** (runtime) |
+| Wild, static only | `09A` Tackle (Pidgey), `06F` Hypnosis (Exeggcute, floor 3 only) | **blue-verified** (static spawn list); **lead** for the rule "all learnset moves at or below the spawn level" for these two species |
+| Core, level 5 or below (12) | `09A` Tackle, `0D9` Growl, `104` Scratch, `0E0` Leer, `07A` Tail Whip, `05C` Low Kick, `0BC` Thundershock, `0B9` Helping Hand, `133` Water Sport, `087` Absorb, `06F` Hypnosis, `163` Regular Attack | **blue-verified** (learnsets; the two starters and partners were both level 5 on floor 1, runtime). `163` is the engine's attack entry: **lead** for whether ID `163` or ID `0` is the A-button attack in every case (see [open points](#open-points-and-conflicts-357)) |
+| Core, levels 6 to 10 (13) | `025` Smokescreen, `013` Rage, `010` Bubble, `046` Withdraw, `04A` Focus Energy, `08E` Sand-Attack, `0FB` Razor Leaf, `0B6` Vine Whip, `0C0` Thunder Wave, `149` Leech Seed, `03F` Bite, `03B` Disable, `106` Ember | **blue-verified** (learnsets). **lead** for the cap of level 10, which the issue does not give and the findings assume |
+| Engine | `160` Struggle (used when no PP is left) | **blue-verified** (dispatch case, forced run); **lead** for the trigger |
+
+The starter and partner set is the 11 species the findings name by name (Bulbasaur, Charmander, Squirtle, Pikachu, Chikorita, Cyndaquil, Totodile, Machop, Meowth, Psyduck, Eevee). **lead**: taken from the species table by name, not checked against the quiz table.
+
+Total: 26 move IDs (12 + 13 + Struggle). The names are the ones in the [catalogue](#catalogue) below. **blue-verified** (`rescue_data::moves::parse_moves` on the dump).
+
+### Common path for every move (#357, P2)
+
+- The dispatch `ov_0001::02156824` calls `AccuracyCalc` (`ov_0001::0215A928`) with accuracy slot 0 before its switch; the call site's return address is `021571B8`. The fourth argument is the accuracy slot, not a flag. **blue-verified** (runtime: forced miss on `09A` and `0D9`).
+- `AccuracyCalc` draws one `DungeonRandInt(100)` (the call inside it is at `0215A950`) and hits when the roll is below the accuracy. **blue-verified** (runtime, one draw per call). The draw itself is `DungeonRandInt` in [rng.md](rng.md#dungeon-lcg-blue-verified).
+- The handler then runs as listed in the table. Draws below are counted after this first accuracy draw.
+
+### P2: handler, steps and draws per move (#357)
+
+Legend: **HDM** = `ov_0001::0215675C` (HandleDamagingMove). "Draws" are in order. Changed bytes are offsets into the target's `info` (or the user's) from the forced runs; the byte values are not copied. Each row is **blue-verified** unless a sub-claim is marked **lead**.
+
+| Move | Handler | Steps, in order | Draws | Observed change (forced run) |
+|------|---------|-----------------|-------|------------------------------|
+| `09A` Tackle, `104` Scratch, `163` Regular Attack, `0FB` Razor Leaf, `0B6` Vine Whip | `ov_0001::0215675C` (HDM, direct) | type lookup `GetMoveTypeForMonster`, power `GetMovePower`, `CalcDamage` (`ov_0001::0217BD94`) with the normal multiplier, then the second accuracy check `ov_0001::0215652C` (see miss paths) | `0217C02C` Int(100) (ability roll), `0217C698` Int(100) (critical), `0217C720` Int(0x4000) (variance), `0215A950` Int(100) (accuracy, slot 1) | target HP down (`info+0x0E`) |
+| `05C` Low Kick | `ov_0001::0215C600` | multiplier from a species lookup on the target's apparent ID (`02002314`), then HDM | as HDM | target HP down. **lead**: what the lookup classifies (probably weight) |
+| `0BC` Thundershock | `ov_0001::0215E314` | HDM; if it hits, the chance gate `ov_0001::02159F6C` with a table chance; if the gate passes, paralysis `021885A0(user, target, 0)` | as HDM, then one Int(100) for the gate | target HP down; no status in the run (gate failed) |
+| `106` Ember | `ov_0001::0215D040` | `0218F168()` (not read), HDM with the normal multiplier, gate, burn `0218A710(user, target, 0, 0)` | as HDM, then one Int(100) for the gate | target HP down. **lead**: `0218F168` |
+| `010` Bubble | `ov_0001::0215DD2C` | HDM, gate, `021882D0(user, target, 1, 0, arg4)` (speed lowering, see [symbols](../symbols.md)) | as HDM, then one Int(100) for the gate | target HP down |
+| `03F` Bite | `ov_0001::0215CCCC` | HDM, gate, `021887E0(user, target, 0)` (not read) | as HDM, then one Int(100) for the gate | target HP down. **lead**: the effect of `021887E0` |
+| `087` Absorb | `ov_0001::0215F314` | HDM with the normal multiplier; if it hits, heal of half the damage (minimum 1) through `0218DF38` (`HealTargetHP`, red-hypothesis name), or through `0217BCA4` (`DealDamageToEntity_Async`) on the ability branch; the check `02159F10(user, 0)` is a validity test that draws nothing | as HDM only | target HP down; user `+0xD8` set |
+| `160` Struggle | `ov_0001::02162C70` | HDM; then recoil of the user's max HP divided by 4 (minimum 1) through `sub_806F370_Async` (`ov_0001::0217BB94`) | as HDM only | target HP down; user HP down |
+| `0D9` Growl | `ov_0001::021616F0` | `02189534(user, target, stat 0, 1, 1, 1)`: attack stage down one | none | target `+0x1C` changed (one stage) |
+| `0E0` Leer, `07A` Tail Whip | `ov_0001::02161548` (shared, see P3) | `021893A4(user, target, 0, 1, 1, 1)`: defense stage down one | none | target `+0x20` changed (one stage) |
+| `08E` Sand-Attack | `ov_0001::0215EEF8` | `02188910(user, target, 0, 1)`: accuracy stage down one | none | target `+0x24` changed (one stage) |
+| `046` Withdraw | `ov_0001::0215CF7C` | `021890C4(user, target, 0, 1)`: defense stage up one | none | target `+0x20` changed (one stage). Run against the leader as target; the self-target effect is **lead** |
+| `0B9` Helping Hand | `ov_0001::0215E3C4` | if user is not target: `02189234` twice (stat 0 and stat 1, one stage up each); otherwise a fail message | none | target `+0x1C` and `+0x1E` changed |
+| `0C0` Thunder Wave, `03B` Disable | `ov_0001::0215E2F8` and `ov_0001::0215CF60` (same body, see P3) | `021885A0(user, target, 1)`: paralysis | `DungeonRandRange(1, 2)` (one Int(1)) | target `+0x9B`, `+0x9C` set, `+0xE0` cleared |
+| `06F` Hypnosis | `ov_0001::0215E07C` | `0219CF28` (`CalculateStatusTurns`, duration range; for team members halved or capped by IQ skill and ability), then `0218B2D0` (`SleepStatusTarget`) | `DungeonRandRange(3, 7)` | target `+0x99`, `+0x9A` set (sleep and turns) |
+| `025` Smokescreen | `ov_0001::0215D5BC` | `0219CF28` with a range, then `0218D778` (not read) | `DungeonRandRange(1, 6)` | target `+0xC4`, `+0xC5` set |
+| `04A` Focus Energy | `ov_0001::0215D5FC` | `0218D5F0()` (not read) | `DungeonRandRange(2, 4)`, drawn inside the call. **lead**: its position relative to the accuracy draw | target `+0xC4`, `+0xC5` set |
+| `013` Rage | `ov_0001::0215DCC8` | `0218E428(user, target, 0xC, ...)` (not read) | `DungeonRandRange(4, 10)` | target `+0xAE`, `+0xAF`, `+0x11C` set |
+| `149` Leech Seed | `ov_0001::02163204` | `0218DAE4(user, target, 1)`; user `+0xD8` set | `DungeonRandRange(10, 12)` | target `+0xB8`, `+0xBC`, `+0xBD`, `+0xC0`, `+0xC1` set; user `+0xD8` set |
+| `133` Water Sport (and `0D4` Mud Sport) | `ov_0001::021617C0` | `021955B0(1)` (Mud Sport: `021955B0(0)`): a floor-wide effect | `DungeonRandRange(10, 12)` | none on target or user (floor state, not read) |
+
+`DungeonRandRange(a, b)` draws one `DungeonRandInt(b - a)` and adds `a` ([rng.md](rng.md#dungeon-lcg-blue-verified)). **blue-verified.** The bounds are the constants the handler passes. Roll results are not recorded here.
+
+### Miss paths (#357, P2)
+
+- **Dispatch miss (accuracy slot 0).** The handler is not called. No draw follows the accuracy draw, and the target's `info+0x12A` is not written. **blue-verified** (runtime: forced miss on `09A` and `0D9`, by forcing the call's return to 0).
+- **Second accuracy miss (slot 1), damaging moves.** `ov_0001::0215652C` calls `AccuracyCalc` again with slot 1 (return address `02156550`) and draws one more Int(100). On a miss it prints the miss text, sets the damage struct's byte at `+0xF`, and HP does not change. The three `CalcDamage` draws are already spent, so the draw sequence matches a hit up to the second accuracy draw. The target's `info+0x12A` is set to 1. **blue-verified** (runtime: forced second miss on `09A` and `0BC`).
+  - A natural second miss after a first hit is **lead**: the two accuracy draws are independent, but no natural case was seen.
+- **Secondary gate miss.** On `0BC`, `106`, `010` and `03F` the gate draws one Int(100) after the damage. If it fails, the status or stat call is skipped. **blue-verified** (static order; the run's gate failed and no status was set).
+- **Absorb and Struggle** use `02159F10(user, 0)`, which is a validity test: chance 0 draws nothing. **blue-verified** (see [roll wrapper](#roll-wrapper-per-move-id-p3-186)).
+
+### Shared handlers (#357, P3)
+
+- **`ov_0001::0215675C` (HDM).** Direct for `09A`, `104`, `163`, `0FB`, `0B6` and case 0 (ID `000`). Wrapped by `05C`, `0BC`, `106`, `010`, `03F`, `087` and `160`, each of which calls HDM with its own multiplier or a follow-up. **blue-verified** (export decompile; runtime for the direct moves).
+- **`ov_0001::02161548`.** `0E0` Leer and `07A` Tail Whip, one defense-down call. **blue-verified** (runtime).
+- **`ov_0001::0215E2F8` and `ov_0001::0215CF60`.** Two functions with the same body: `0C0` Thunder Wave and `03B` Disable both call `021885A0(user, target, 1)`. **blue-verified** (export decompile; runtime for both). The Red names differ; see open points.
+- **`ov_0001::0215E07C`.** Hypnosis in the list. The catalogue maps `004`, `022`, `04F`, `054` and `0E7` to it too; not checked. **lead**.
+- **`ov_0001::02159F6C` (chance gate).** Thundershock, Ember, Bubble and Bite. Its roll goes through `DungeonRandOutcome` (`ov_0001::0219CFCC`), per the [roll wrapper](#roll-wrapper-per-move-id-p3-186). **blue-verified**.
+- **`ov_0001::0219CF28` (`CalculateStatusTurns`).** Shared by Hypnosis and Smokescreen. **blue-verified** ([symbols](../symbols.md)).
+- **One-move handlers** in the list (no sharing inside it): `021616F0`, `0215EEF8`, `0215CF7C`, `0215E3C4`, `0215D5BC`, `0215D5FC`, `0215DCC8`, `02163204`, `021617C0`, `0215F314`, `02162C70`. **blue-verified**.
+
+Cross-references from the catalogue, outside the list and not checked: `0215CCCC` also for `0DD`, `10F`, `12F`; `0215EEF8` also for `092`, `111`; `0215CF7C` also for `03A`. **lead**.
+
+### Open points and conflicts (#357)
+
+1. **Conflict with [`combat.md`](combat.md#dispatch-shape-and-hitmiss-branch-p2-186).** Its dispatch section says there is no accuracy roll in the dispatch (investigator A, medium confidence). The section above records an accuracy call before the switch, with forced-miss runs. [combat.md](combat.md) is owned by another task and is not edited here; its owner should reconcile the two.
+2. **Disable.** The Blue handler for `03B` has the same body as Thunder Wave (paralysis). The catalogue's Red name `DisableMoveAction` implies another effect. This page keeps the Blue reading. **lead** for the Red name.
+3. **ID `0` versus `163`.** Six natural attacks had move ID `0` in the 4,500-frame run; `163` was not sampled there. The earlier 3,000-frame run recorded `163` (see the dispatch section). Which ID is the A-button attack in each case is **lead**.
+4. **Runs.** The 4,500-frame run had 78 dispatch entries, nine with an accuracy call (IDs `09A`, `104` and `0D9` once each). The other 69 entries have ID `0` and no accuracy call, from the second caller `0215AB34`, which is not examined. **lead**: how the sim should call the dispatch for that caller.
+5. **Status codes** belong to [#73](https://github.com/TorratDev/rust-mm/issues/73). This table gives only the bytes that change.
+6. **Level cap 10** is an assumption. **lead**.
+7. **Static-only spawns.** Pidgey and Exeggcute are static only; weight-zero entries are assumed not to spawn through the weighted pick. **lead**.
+8. **Unnamed callees.** `0215652C` has no row in [symbols](../symbols.md): the findings give its role, not a signature. Several callees (`021885A0`, `0218B2D0`, `0218D778`, `0218D5F0`, `0218E428`, `0218DAE4`, `0218F168`, `021882D0`, `021887E0`, `021955B0`) are known from their state changes, not their bodies.
+9. **Chance values** come from table words. The findings give them; they are not copied here.
+10. **Chance-gate name.** The findings call `02159F6C` by the name of its roll (DungeonRandOutcome). The gate is `02159F6C`; the roll it makes is `0219CFCC`.
+11. **Reproducibility.** The runtime scripts (the natural capture, the forced captures and the probe) are in the investigator's scratch folder, not in the repo. [`verification/v7-trace/`](../../verification/v7-trace/) was not used. **lead**: add them under `verification/` to rerun the runs.
 
 ## Catalogue
 
