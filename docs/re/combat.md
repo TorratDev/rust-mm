@@ -183,42 +183,86 @@ The hit check is `AccuracyCalc`, at `ov_0001::0215A928`. It is the Blue counterp
 
 ## Range and targeting
 
-Targeting is read from the move in three parts. Static, P4a to P4f.
+A move's targets are picked by two resolvers. They read the same move fields but are different code, so each has its own tables below. Static evidence only, from the Blue ARM9 and overlay 1 text export and the xrefs in investigator B's findings on [#355](https://github.com/TorratDev/rust-mm/issues/355). No emulator run. Tag **blue-verified** unless a line says otherwise.
 
-- **Range byte** (move `+0x19`): display text only. Its only reader is `FUN_0200B304`, which is called only from the message builder `FUN_0200B188`. Nothing in the dungeon logic reads it, and Red's `GetMoveRangeID` is also display-only.
-- **Targeting** (`u16` at move `+0x8` for the player and `+0xA` for the AI): read through `FUN_0200B4EC(move, i)`. The selector is `ov_0001::02191A30`, which returns `targeting[i]`, except that move `0xED` with `i == 0` returns `0x73` unless the attacker is type `0x0E`. The AI resolver `FUN_02192728` uses `i = 1`.
-- **Target class** (low nibble of the targeting value, read in `ov_0001::02192274`):
-  - `0`: foe.
-  - `1`: not a foe (an ally or the user). Whether the user is caught here, or by a separate self check, is open (Red's `TARGET_PARTY` includes the user).
-  - `2`: any target, excluding a target with `+8 == 1` or a `+0x98` value of 1 or 4.
-  - `3` and `4`: always valid.
-  - `5`: any target except the user, with the same exclusions as `2`.
-  - `6`: an ally, not the user.
-  - `7` to `15`: not handled. The function returns false. Red's `TARGET_SPECIAL` (15) is handled elsewhere.
-- **Area** (high nibble, in the AI resolver `FUN_02192728` and `FUN_02192508`). The area names are Red's `TargetingFlag` names, which the findings give as red-hypotheses:
+- **Executor path** (applies a move the user uses): `ov_0001::0215A520` (`GetTargetsForMove`, Red's name) builds the candidate list. `ov_0001::0215A3A8` (`FilterMoveTarget`, our name) keeps or drops each candidate. The move dispatch path calls `0215A520` (see [move effects](move-effects.md)). The line area is walked by `ov_0001::0215AB34`.
+- **AI path** (picks a target for a monster): `ov_0001::02192728` and `ov_0001::02192508` build the list. `ov_0001::02192274` (`IsAITargetEligible`) filters it.
+- **Targeting value.** `ov_0001::02191A30(user, move, i)` returns `targeting[i]`, except that move `0xED` with `i == 0` returns `0x73` unless the attacker is type `0x0E`. The executor uses `i = 0`, which is the `u16` at move `+0x8`. The AI uses `i = 1`, which is the `u16` at move `+0xA`. The low nibble is the target class and the high nibble is the area.
 
-| Nibble | Blue behaviour | Red name (hypothesis) |
-|--------|----------------|-----------------------|
-| `0x00` | 8 neighbours; a direction test (`FUN_02180FFC`) gates each | `TARGETING_FLAG_TARGET_OTHER` |
-| `0x10` | 8 neighbours; all accepted | `FRONTAL_CONE` |
-| `0x20` | 8 neighbours; all accepted | `AROUND` |
-| `0x30` | 20 entity slots (`+0x11364`), with the relation from `FUN_02141C08` | `ROOM` |
-| `0x40` | 8 offsets at twice the distance, with the direction gate (`FUN_02180FFC`) | `2_TILES_AHEAD` |
-| `0x50` | A line, distance 10 (`FUN_02192618`) | `LINE` |
-| `0x60` | All 20 valid slots | `FLOOR` |
-| `0x70` | The user only | `SELF` |
-| `0x80` | Cut corners, distance 1 (`FUN_02192618`, limit 1) | `CUT_CORNERS` |
+### Helpers
 
-The difference between `0x10` and `0x20` is not known: both take the same path in the helpers (no direction gate). The candidate rule and the helpers are in [candidate selection](#candidate-selection-p1-186).
+Tags are for the role read in the export. The names are ours unless marked.
 
-- **AI condition** (`0xF00` bits, read in `FUN_02192274`). They match Red's `AI_CONDITION_*` values:
-  - `0x100`: random. The chance is accuracy byte 2 (`FUN_0200B3C4(move, 2)`) against `DungeonRandInt(100)`. The field name in Red is not confirmed.
-  - `0x200`: HP at or below 25% (`FUN_021818A4`).
-  - `0x300`: has a status (`FUN_02181904`).
-  - `0x400`: asleep (`FUN_021818D0`).
-  - `0x500`: HP at or below 25% or has a status.
-  - `0x600`: ghost target (type `0x0E`) with `+0xD2 == 0`.
-  - The condition is checked only when the attacker has the Status Checker IQ skill (IQ bit 8, through `IqSkillIsEnabled`). Without it, only `0x100` applies.
+| Address | Name | Role | Tag |
+|---------|------|------|-----|
+| `ov_0001::02180FFC` | `CanMoveOrAttackInDirection` | Direction test from a tile. The neighbour in `dir` must not have flag `0x10` (wall). An entity there must be type 1 (monster), else false. A per-tile "direction open" bit is then tested, to block corner cutting. The byte it reads is chosen by a terrain-class index: default 2, minimum 2 from `0218267C`, 3 for some info, held-item and IQ-bit cases. Callers: `02156404`, `02177688`, `02191F84`, `02192728` (2 sites). | blue-verified |
+| `ov_0001::02192618` | `IsTargetInLine` | AI line test `(user, target, limit)`. True when the Chebyshev distance is under 11 and no more than `limit`, and the offset lies on one of the 8 directions (axis or exact diagonal). Returns a bool, not a direction. Caller: `02192728` only. | blue-verified |
+| `ov_0001::02191E70` | `IsProjectilePathClear` | Projectile path test `(user, target, dir, maxdist)`. The distance is clamped to `maxdist` first. If IQ bit 3 is clear, the function returns true, because the clamp makes the test always pass. If set, it walks from the user in `dir` for up to dist + 1 steps: false when it leaves the map (x 1 to 0x36, y 1 to 0x1E) or meets a tile with `flags & 3 == 0`, true on reaching the target, false on any other entity. Callers: `021853CC`, `02192728`. | blue-verified; IQ bit 3 name open |
+| `ov_0001::02141C08` | `IsInSameRoomAI` | AI relation `(a, b)`. False if b's `+0x20` byte is 0. For two monsters, false when the `+0xC7` and `+0xC9` flags exclude b. Otherwise `0219C6BC(a+4, b+4)`: the same room, or within 2 tiles in a corridor (the limit is `gDungeon+0x15FA1`, or 2 if that is 0). 15 callers. The executor's room test `02141AF0` is the same without the two flag exclusions. | blue-verified |
+| `ov_0001::021818A4` | `IsHpBelowQuarter` | True when HP (`info+0xE`) is at or below `0208625C(max HP, 4)`. Callers: `021644B8`, `02192274` (2 sites). | blue-verified; the "quarter" depends on `0208625C`, not decompiled |
+| `ov_0001::02181904` | `HasAnyStatus` | True when any of a fixed set of info fields holds its listed value: `+0x99`, `+0x9B`, `+0xA0`, `+0xAC`, `+0xB3`, `+0xB8`, `+0xC4`, `+0xC9`, `+0xCB`, `+0xD2`, `+0xDA`, a six-byte entry block at `+0xF4`, and five bytes at `+0xE9` to `+0xED`. 8 callers. | blue-verified; the meanings of `+0x99` and `+0xA0` are medium confidence |
+| `ov_0001::021818D0` | `IsSleepLike` | True when `info+0x99` is 1, 3 or 5. 11 callers. | blue-verified |
+| `ov_0001::02180994` | `GetTreatmentBetweenMonsters` | Returns 0 for an ally or the same entity, 1 for a foe, 2 to ignore. The name is Red's (red-hypothesis); the return values are read in Blue. Used by `0215A3A8` and `02192274`. | blue-verified |
+
+### Executor path (`0215A520`, `0215A3A8`)
+
+**Target class**, in `0215A3A8`. For every class, a candidate is rejected when its entity has `+0x8 == 1`, or `+0x98` of 1 or 4. A move `0xFC` aimed at the user is also rejected. After that:
+
+- `0` and `4`: a foe (relation 1).
+- `1`: an ally or the user (relation 0). **The user is in class 1.** `02180994(user, user)` returns 0 for the same entity, so the self case passes.
+- `2` and `3`: any candidate that passes the common rejects.
+- `5`: any candidate except the user.
+- `6`: an ally, not the user.
+- `7` and up: false.
+- Argument 7 (`skipRelation`): when set, every class passes the relation test. The caller sets it when the user's `+0xAC` is 2 or 4, or `+0xC9 == 1`. The meaning of `+0xAC` is open.
+- A veto from `0215A054` can drop a target by its `+0xDC` value. The veto set depends on the move and on `+0xAE`. The field names are open.
+
+**Class 4 is decided before filtering**, in `0215A520`. If `0215A2C0(user, move)` returns 0, the targeting becomes `0x73` (class 3, self). Otherwise it becomes `0` (area `0x00`, class 0: a foe on the facing tile). So executor class 4 is a conditional self. `0215A2C0` is not decompiled.
+
+### AI path (`02192274`, `02192728`)
+
+**Target class**, in `02192274`:
+
+- `0`: a foe (relation 1).
+- `1`: an ally or the user (relation 0). Whether the user is a candidate depends on the area (below).
+- `2`: any candidate, excluding `+0x8 == 1` and `+0x98` of 1 or 4.
+- `3` and `4`: always pass.
+- `5`: any candidate except the user, with the same excludes as `2`.
+- `6`: an ally, not the user.
+- `7` to `15`: false.
+
+### Area (high nibble)
+
+| Nibble | Executor (`0215A520`) | AI (`02192728`, `02192508`) | Red name (hypothesis) |
+|--------|-----------------------|-----------------------------|-----------------------|
+| `0x00` | facing tile, only if `02180FFC(user, facing)` passes; the type-1 entity there | 8 neighbours, each through `02180FFC` | `TARGET_OTHER` |
+| `0x10` | a frontal cone of 3 tiles: facing −1, facing, facing +1 (wrapping); type-1 entities | 8 neighbours, no gate | `FRONTAL_CONE` |
+| `0x20` | 8 neighbours; type-1 entities | 8 neighbours, no gate | `AROUND` |
+| `0x30` | the 20 slots at `gDungeon+0x11364` in the same room or area (`02141AF0`); any valid entity, the user included | the 20 slots, relation from `02141C08` | `ROOM` |
+| `0x40` | facing tile (`021775F0`, rejected if `021820B0` says blocked); if no entity there, the tile two ahead (`021774FC`) | 8 offsets at twice the distance, each through `02180FFC` | `2_TILES_AHEAD` |
+| `0x50` | the line walked by `0215AB34`: up to 10 tiles in the facing direction, stopping at a wall; the first entity hit | the line test `02192618` (distance 10), then the path test `02191E70` | `LINE` |
+| `0x60` | all 20 slots; every valid entity, the user included | all 20 valid slots | `FLOOR` |
+| `0x70` | the user only | the user only | `SELF` |
+| `0x80` | facing tile, with the corner-cut check (`021775F0`); the type-1 entity there | distance 1 through `02192618` (limit 1) | `CUT_CORNERS` |
+
+The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas that reach the user's own entity. The other areas touch neighbour tiles or a line, which never hold the user. This was checked on the executor path. On the AI path the class-1 relation test is the same, but the self case through `02141C08` was not checked separately.
+
+**Where the two paths differ**
+
+- `0x10`: a three-tile cone on the executor path, eight neighbours on the AI path, so the AI is wider. `0x20` is eight neighbours on both paths. Red's `FRONTAL_CONE` and `AROUND` match the executor.
+- `0x00`, `0x40`, `0x50` and `0x80`: the tile rules above differ.
+- `0x30`: the executor uses `02141AF0`, and the AI uses `02141C08`, which also excludes monsters through `+0xC7` and `+0xC9`.
+- Class 4: a conditional self or foe on the executor path, always passing on the AI path.
+
+### AI condition (`0xF00` bits, read in `02192274`)
+
+- `0x100`: random. The chance is the move entry byte at `+0x10`, which is `accuracy[2]`. `FUN_0200B3C4(move, i)` reads the byte at the move entry plus `0xE` plus `i`, with entries `0x24` bytes apart, so `i = 2` gives `+0x10`. The chance is compared with `DungeonRandInt(100)`. `+0x13` is crit chance, a different byte. The port reads this as `accuracy[2]` in `crates/data/src/moves.rs`. Red's name `ACCURACY_AI_CONDITION_RANDOM_CHANCE` is a red-hypothesis.
+- `0x200`: HP at or below 25% (`021818A4`).
+- `0x300`: has a status (`02181904`).
+- `0x400`: asleep (`021818D0`).
+- `0x500`: HP at or below 25% or has a status.
+- `0x600`: ghost target (type `0x0E`) with `+0xD2 == 0`.
+- The condition is checked only when the attacker has the Status Checker IQ skill (IQ bit 8, through `IqSkillIsEnabled`). Without it, only `0x100` applies.
 
 ### Candidate selection (P1, #186)
 
@@ -237,7 +281,7 @@ Investigator A's findings for the area classes. Tag: **blue-verified** (decompil
 **Not verified**
 
 - `FUN_0200B4EC` (the class bits source).
-- Whether the classes `0x10` and `0x20` differ anywhere outside these two helpers (callers were not checked).
+- Whether the classes `0x10` and `0x20` differ outside these two helpers: they do on the executor path (see [Range and targeting](#range-and-targeting)). The AI path was not re-checked for callers.
 - The meaning of `info+0xC9`.
 - Runtime behaviour: no trace.
 
@@ -321,16 +365,17 @@ Unresolved items from the three investigation files for this issue. Each item is
 
 **Range and targeting**
 
-- Helpers `FUN_02180FFC`, `FUN_02192618`, `FUN_02191E70`, `FUN_02141C08`, `FUN_021818A4`, `FUN_02181904` and `FUN_021818D0` are not decompiled. The area rules (P4d) depend on them.
-- The difference between area nibbles `0x10` and `0x20` is unknown.
-- Whether the user is included in target class `1` is open.
-- The byte index of the random chance (`FUN_0200B3C4(move, 2)`) and the field name it maps to are unconfirmed.
-- The Red `IQ_STATUS_CHECKER` gate is the Red reference only, and the Blue IQ bit mapping (bit 8) is not checked against the IQ table.
+- `FUN_0208625C` is not decompiled. The 25% in `IsHpBelowQuarter` (`021818A4`) rests on reading it as a divide by 4.
+- `FUN_0215A2C0`, which decides executor class 4, is not decompiled.
+- The meanings of `info+0xAC`, `+0xC9` (the executor's `skipRelation` and the AI single-candidate case), and `+0x99` and `+0xA0` (the status helpers) are open.
+- The names of IQ bits 3, `0xC` and `0xD` are open. Bit 3 gates the projectile walk, and `0xC` and `0xD` gate the terrain-class index.
+- The veto fields of `0215A054` (`+0xDC`, `+0xAE`) are named by position only.
+- The Red name for the random-chance byte is unconfirmed. The byte's offset (`+0x10`) is read in Blue.
+- The executor room test `02141AF0` has no row in [`symbols.md`](../symbols.md).
 
 **Move effects**
 
 - The miss path of the dispatch (Red's `dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick).
-- The other 8 `switch` statements in `ov_0001::02156824`.
 - The 262 handler bodies. The Red names for them are hypotheses.
 - Seven IDs have no handler (`none`, no effect). `MOVE_IS_WATCHING` has no Red name; its Blue handler is `ov_0001::0215CDB4`.
 
