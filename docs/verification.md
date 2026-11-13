@@ -772,3 +772,25 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** the black dots are the decoder bug. P1 and P2 as the investigator describes them. The frame test passes after the fix.
 - **Not run:** the decoder fix was not checked against a live retail frame in this PR (the VRAM comparison is the investigator's). The frame test was not run against the pre-fix code, so it is not shown to fail without the fix.
 - **Notes:** the snapshot digests were updated by hand from insta's `.snap.new` output, keeping each file's metadata. `cargo fmt --all` also reformatted `tests/tests/formats_rom.rs`.
+
+## #334 — Dungeon scene: command-line options, the leader sprite and the minimap
+
+- **Assumption:** the dungeon scene draws a generated floor with the leader's idle sprite on the top screen and the minimap on the lower screen. The options choose the floor: `--dungeon` (default 0), `--floor` (default 1), `--seed` (default `B2804D01`, the new game's natural seed), `--species` (default 25).
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0, Windows 11 Pro (10.0.26200). ROM: the main checkout's `pmdb.nds` as `RESCUE_ROM`, with `RESCUE_REQUIRE_ROM=1` for the gated tests.
+- **What the game reads from the dump** (`FloorData::from_rom` in `apps/game/src/dungeon.rs`): the #400 reads, plus `system.sbin` `monspara` (the species' overworld palette), `dungeon.sbin` `zmappat` (`Patterns::decode`, and BG palette 14 at `0xCC10`), and `monster.sbin` `palet` and `ax<species>`. The idle pose is group 7, direction 0 (south), its first step, drawn with `render_sprite` at `sprite_origin(LEADER_SCREEN, step)`.
+- **Options:** `--dungeon`, `--floor`, `--seed` and `--species` take a value, and any of them opens the dungeon scene at start (with a ROM; without one the refused screen stays). Bad values are errors (`parse_number`, `parse_seed`, unit test `dungeon_options`).
+- **Evidence:**
+  - ROM tests `leader_sprite_and_minimap_are_drawn` (new) and `natural_frame_has_no_backdrop_or_black_pixel` (changed to skip the leader's own pixels), and the #400 tests: `RESCUE_ROM=<main>/pmdb.nds RESCUE_REQUIRE_ROM=1 cargo test -p rescue-game`: 30 passed, none skipped. The new test checks that every opaque sprite pixel is on the top frame in its own colour at `leader_at + left/top`, and that the lower screen has minimap pixels on the backdrop (816 floor-coloured and 12 stairs-coloured pixels for the natural floor, which has 266 floor cells by terrain class 1).
+  - Headless tests: `opens_on_the_dungeon_when_asked`, `boot_to_menu_and_back_headless`, `a_held_button_counts_once`, `refused_rom_quits_on_press`, `dungeon_options`, and the placeholder tests in `dungeon.rs` (no sprite, no minimap). They pass with no ROM.
+  - `cargo test --workspace` (no ROM): all pass. `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all --check`: pass.
+  - Run: `rescue --dungeon 0 --floor 1 --frames 180` with `RESCUE_ROM` set opened a window, ran 180 ticks and exited 0. Without a ROM, `--frames 5 --dungeon 0 --floor 1` runs, reports no ROM, and exits 0.
+- **Outcome:** a floor from the ROM with the leader's sprite at the spawn, centred as #400 has it, and the minimap below. The floor layer is on BG3 at priority 3, as the retail dungeon is (`docs/re/ui-screens.md`, section 1), so the sprites at priority 3 draw over it. Before the change the floor was at the default priority 0 and hid every sprite; the sprite test found it.
+- **Shortcuts (in code, `shortcut:` comments):**
+  - Leader species: not modelled (no personality quiz). Every game draws `DEFAULT_SPECIES` = 25, Pikachu, the species `rom_sprite_tests` decodes. `--species` overrides it.
+  - Minimap: all cells revealed (`known_all`), since visibility is not ported (#407). No monsters, items, traps or leader dot. The stairs bit is not set on the grid. Every canvas tile uses BG palette 14; the BG0 map's own palette bits are not read. Layout option `t` is 1, the dng1 capture's value; the options screen is not ported.
+- **Not verified:**
+  - The minimap's cell input is the sim's tile terrain word (bits 0 and 1 give the class). The render crate's rule was checked against captured `cells.json` (#313), not against this floor. The 816 floor pixels for 266 floor cells (about 3 per cell) follow the pattern table, but no retail capture of this floor was compared.
+  - The sprite and minimap pixels were checked by the ROM tests, not by eye. No screenshot was taken.
+- **Render crate:** not touched. The pixel copy and the palette are in `apps/game`.
+- **Not run:** the window was started, not inspected; no screenshot.

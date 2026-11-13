@@ -24,10 +24,18 @@ pub fn screen(
 ) -> Result<(), PlatformError> {
     match screen {
         Screen::Top => top(scene, dungeon, p),
-        Screen::Bottom => {
-            p.clear(BOTTOM);
-            Ok(())
-        }
+        Screen::Bottom => match (scene, dungeon) {
+            (
+                Scene::Dungeon,
+                Some(Dungeon {
+                    minimap: Some(m), ..
+                }),
+            ) => blit(m, p),
+            _ => {
+                p.clear(BOTTOM);
+                Ok(())
+            }
+        },
     }
 }
 
