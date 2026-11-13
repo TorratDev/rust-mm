@@ -5,7 +5,8 @@
 //! The steps this function calls are behind [`FloorSteps`]; this module
 //! decides when each runs and which RNG draws happen around it.
 //! [`PortedSteps`] implements them with the ported functions of
-//! [`crate::floor`]; the fixed rooms are not ported yet.
+//! [`crate::floor`]. The fixed-room tile placement is ported; the spawns it asks
+//! for are kept in `fixed_out`, not placed (see [`PortedSteps`]).
 
 use crate::floor::{
     self, EnemySpawn, Floor, Grid, GridMode, Layout, LayoutPlan, MAX_LAYOUT_ATTEMPTS,

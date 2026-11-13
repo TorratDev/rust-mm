@@ -676,3 +676,20 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - `cargo test -p rescue-sim`: 96 passed, 0 failed (one new unit test, `fixed_tile_setter_code_44_clears_bit_1_only`).
 - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass. `scripts/check-determinism.sh`: pass.
 - Outcome: the whole-floor check passes on all 100 rows. The P7 draw is a shortcut: the setter's global-RNG draws stay unported; rooms 50-66 have no table monster, so no draw happens there. The test does not check the spawn lists, so the draw is checked only through the dungeon RNG state.
+
+---
+
+## #110 — Whole-floor golden coverage: layout variants and fixed rooms
+
+- **Assumption:** every `Layout` and `LayoutPlan` variant has at least one whole-floor row that `cargo test` checks, and the fixed rooms are checked by the ROM-gated test `tests/tests/fixed_rooms_rom.rs`. No oracle value is new in this entry.
+- **Date:** 2026-11-13.
+- **Environment:** Windows 11 Pro (10.0.26200), rustc 1.97.0, no ROM (`RESCUE_ROM` unset).
+- **Evidence:**
+  - Audit of `whole_floors_match_the_floor_oracle` (`crates/sim/src/floor.rs`): its 39 `ORACLE_FLOORS` rows cover all seven `Layout` variants, `LayoutPlan::OuterRooms` and the three `GridMode`s of `LayoutPlan::Standard`. The coverage table is in [`re/dungeon-generation.md`](re/dungeon-generation.md#whole-floor-golden-test). Every committed value in `re/layout-*.md` and `re/outer-ring-floor.md` is already a row of the table.
+  - New test `whole_floor_rows_cover_every_layout_variant` (`crates/sim/src/floor.rs`): maps each variant to its layout byte through `plan_layout` and checks a row exists for it. Its `variant` match is exhaustive, so a new variant fails to compile until it is named.
+  - The whole-floor test's doc now points to `fixed_rooms_rom.rs`; the module doc of `crates/sim/src/floor_gen.rs` no longer says the fixed rooms are not ported.
+  - `cargo test -p rescue-sim`: 97 passed, 0 failed. `cargo test -p rescue-tests --test fixed_rooms_rom`: passed with no ROM; `require_rom` returns early, so the body did not run.
+  - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/check-determinism.sh`: pass.
+- **Outcome:** the sim side covers every variant. Two gaps are recorded, not fixed: layout bytes 12 to 15 have no row of their own (they take the standard generator, as byte 0 does), and the fixed-room check runs only with a dump (its 100-row check passed on the supported dump in the #342 P5 and P7 entries above).
+- **Fallback adopted:** none.
+- **Notes:** no oracle values were added or invented. Regeneration commands are in the coverage section of `re/dungeon-generation.md`.

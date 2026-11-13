@@ -6786,6 +6786,11 @@ mod tests {
     /// `GenerateFloor`'s return, for the natural seed and the forced seeds on
     /// layouts 0, 1, 2, 3, 4 (crossroads), 5 (two rooms with a monster house),
     /// 6 (line), 7 (cross), 8, 9 (beetle), 10 (outer rooms) and 11.
+    ///
+    /// Fixed rooms are not in this test. Their whole-floor check is
+    /// `tests/tests/fixed_rooms_rom.rs` (ROM-gated; its rows are in
+    /// `docs/re/fixed-rooms.md`). The coverage table is in
+    /// `docs/re/dungeon-generation.md`, "Whole-floor golden test".
     #[test]
     fn whole_floors_match_the_floor_oracle() {
         assert_eq!(natural_entry(), NATURAL_ENTRY);
@@ -6826,6 +6831,62 @@ mod tests {
                 terrain,
                 [want.terrain.0, want.terrain.1, 0, 0],
                 "{what}: terrain"
+            );
+        }
+    }
+
+    /// Every `LayoutPlan` and `Layout` variant has a row in [`ORACLE_FLOORS`],
+    /// through the layout byte that `plan_layout` maps to it. The match in
+    /// `variant` is exhaustive, so a new variant fails to compile until it is
+    /// named; add it to `cases` and to `ORACLE_FLOORS` as well. Layout bytes
+    /// 12 to 15 take the standard generator like byte 0 and have no row of
+    /// their own.
+    #[test]
+    fn whole_floor_rows_cover_every_layout_variant() {
+        fn variant(plan: LayoutPlan) -> &'static str {
+            match plan {
+                LayoutPlan::Standard {
+                    mode: GridMode::Full,
+                    ..
+                } => "standard full",
+                LayoutPlan::Standard {
+                    mode: GridMode::LeftHalf,
+                    ..
+                } => "standard left half",
+                LayoutPlan::Standard {
+                    mode: GridMode::LeftThreeQuarters,
+                    ..
+                } => "standard left three quarters",
+                LayoutPlan::OuterRooms { .. } => "outer rooms",
+                LayoutPlan::Other(Layout::OneRoomMonsterHouse) => "one room monster house",
+                LayoutPlan::Other(Layout::OuterRing) => "outer ring",
+                LayoutPlan::Other(Layout::Crossroads) => "crossroads",
+                LayoutPlan::Other(Layout::TwoRoomsMonsterHouse) => "two rooms monster house",
+                LayoutPlan::Other(Layout::Line) => "line",
+                LayoutPlan::Other(Layout::Cross) => "cross",
+                LayoutPlan::Other(Layout::Beetle) => "beetle",
+            }
+        }
+        let cases = [
+            (0, "standard full"),
+            (8, "standard full"),
+            (1, "standard left half"),
+            (11, "standard left three quarters"),
+            (10, "outer rooms"),
+            (2, "one room monster house"),
+            (3, "outer ring"),
+            (4, "crossroads"),
+            (5, "two rooms monster house"),
+            (6, "line"),
+            (7, "cross"),
+            (9, "beetle"),
+        ];
+        for (layout, name) in cases {
+            let plan = plan_layout(layout, &mut DungeonRng::from_state(NATURAL_ENTRY));
+            assert_eq!(variant(plan), name, "layout byte {layout}");
+            assert!(
+                ORACLE_FLOORS.iter().any(|f| f.layout == layout),
+                "layout byte {layout}: no whole-floor row"
             );
         }
     }
