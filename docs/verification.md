@@ -749,3 +749,26 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - Without a ROM, or if the first floor does not load: solid colours per terrain, the default `FloorProperties`, and no camera (the 8-pixel placeholder cells do not scroll).
 - **Not run:** the window. The game was not started on a display, so what New Game shows on screen is not checked. The test compares layout hashes and the camera, not pixels.
 - **Open risk:** the camera doc says the floor map is 512 x 256 and wraps, but the floor layer is 56 x 32 cells of 24 pixels (1344 x 768). `BgLayer` wraps at its own size, so a scroll near the floor edge shows the far side of the floor. Not checked against a captured retail frame.
+
+---
+
+## #403 — PX control indices 1 and 5 (black dots on the dungeon floor)
+
+- **Assumption:** the black dots on the first floor are the PX (AT4PX) decoder's fault: its pattern rule for control indices 1 and 5 was wrong, so tileset 14 (`b14fon`) has an index-15 pixel. Static and runtime inputs: investigator a's P1 and P2 on #403.
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0, Windows 11 Pro (10.0.26200). ROM: the main checkout's `pmdb.nds` as `RESCUE_ROM`, with `RESCUE_REQUIRE_ROM=1`. Dump SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- **Evidence:**
+  - Fix in `crates/formats/src/px.rs`: index 1 is `(l, l+1, l+1, l+1)`, index 5 is `(l, l-1, l-1, l-1)`. Indices 2–4 and 6–8 are unchanged. Unit test `patterns_and_back_references` updated for flags 1 and 5. New unit test `index_1_and_5_back_reference_copies_pattern_bytes` (hand-made stream: both indices, then a back-reference over their output).
+  - ROM test `tileset_14_chr_has_no_index_15` (`tests/tests/formats_rom.rs`): `b14fon` decodes with no index-15 nibble, and the chr's SHA-1 is `cfac371cdad6bc242167edf9d4cf92082cb8ad1a`. Investigator a's Python replica matches retail VRAM at `0x06008000` over all 10752 bytes with this rule (P2, frame 35100); the chr hash here is a hash only.
+  - ROM test `natural_frame_has_no_backdrop_or_black_pixel` (`apps/game/src/dungeon.rs`): the natural-seed frame has no pixel equal to the backdrop `[16,16,24,255]` or to black `[0,0,0,255]`. Investigator a's probe found 72 such pixels before the fix.
+  - `RESCUE_ROM=<main>/pmdb.nds RESCUE_REQUIRE_ROM=1 cargo test --workspace --no-fail-fast`: all pass, none skipped.
+  - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/check-determinism.sh`: pass. `cargo fuzz run formats_containers -- -max_total_time=60` (MSVC ASan DLL dir on PATH): 735156 runs, no crash.
+- **Changed expectations** (all PX-decoded data, all from the fix; sizes unchanged, only digests moved):
+  - `data_rom__tables_parse_and_agree`, `levels` (`lvmp*` are AT4PX): `3879183f…` → `d4ec9276…`.
+  - `formats_rom__archives_sir0_compression_snapshot`, `px` counts: dungeon `0eadb16a…` → `480f098e…`, sample `60b2e3ef…` → `29a2d3e9…`, titlemenu `b2a1a9dd…` → `c140bb41…`.
+  - `formats_rom__graphics_portraits_sprites_effects_snapshot`, `portrait files`: `3f7c907f…` → `5b82a729…`.
+  - `formats_rom__tilesets_ground_snapshot`, `tilesets`: `23d22e65…` → `11ffef52…`.
+  - Unchanged: the ground maps, species, moves, items, mapparam, type chart, recruit, sprites, effects, and the `px` counts (sizes) in every archive.
+- **Outcome:** the black dots are the decoder bug. P1 and P2 as the investigator describes them. The frame test passes after the fix.
+- **Not run:** the decoder fix was not checked against a live retail frame in this PR (the VRAM comparison is the investigator's). The frame test was not run against the pre-fix code, so it is not shown to fail without the fix.
+- **Notes:** the snapshot digests were updated by hand from insta's `.snap.new` output, keeping each file's metadata. `cargo fmt --all` also reformatted `tests/tests/formats_rom.rs`.

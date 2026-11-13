@@ -264,4 +264,20 @@ mod rom_tests {
             assert_eq!(cam.to_screen(entity_pixel(natural.leader, (0, 0))), LEADER_SCREEN);
         }
     }
+
+    rescue_tests::rom_test! {
+        /// The natural-seed frame has no backdrop or black pixel: the floor is drawn in its
+        /// tile colours. Black dots came from the PX control-index 1/5 bug (#403 P1).
+        fn natural_frame_has_no_backdrop_or_black_pixel(rom) {
+            use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
+            let data = FloorData::from_rom(&rom.read()).expect("the first floor loads");
+            let natural = build(SEED, Some(&data)).expect("the natural floor builds");
+            for y in 0..SCREEN_HEIGHT {
+                for x in 0..SCREEN_WIDTH {
+                    let p = natural.frame.get(x, y);
+                    assert!(p != BACKDROP && p != [0, 0, 0, 255], "pixel ({x}, {y}) is {p:?}");
+                }
+            }
+        }
+    }
 }

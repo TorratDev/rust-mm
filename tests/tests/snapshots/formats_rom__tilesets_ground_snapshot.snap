@@ -3,5 +3,5 @@ source: tests/tests/formats_rom.rs
 assertion_line: 404
 expression: summary
 ---
-tilesets 76 (23d22e65a3491926c0c64692315f825806a2aa1c)
+tilesets 76 (11ffef52c75709f2462a770d800bcb72cabba814)
 ground maps 201 (f157c4b97a50858d4643798f9f8bde2b53a6b8b0)
