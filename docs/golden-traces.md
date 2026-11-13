@@ -128,6 +128,41 @@ These fields are not in v1 rows. Each is either out of the schema or not documen
 - Windows setup, the save state and the self-test: [`scripts/README.md`](../scripts/README.md).
 - The capture script is `scripts/capture_golden.py`. It uses the emulator and the row reader in [`verification/v7-trace`](../verification/v7-trace).
 
+## Leader-only replay (#348)
+
+`rescue-trace-harness` compares every field of a row by default ([`Scope::All`](../apps/trace-harness/src/lib.rs)). A leader-only mode, `Scope::Leader` (`replay_with`), compares `team[0]` only: its position, species, level, HP and max HP. The belly is not in the trace, and the other monsters and the RNG are left out. The clock rules are the same in both modes.
+
+**Why the full match waits for #73.** On the movement trace, every row the replay compares that differs is a monster turn: the wild monsters move and draw RNG each leader turn, and the ally follows and is attacked. The sim does not run those turns yet (enemy AI and wild movement, [#73](https://github.com/TorratDev/rust-mm/issues/73)). The leader itself matches on every compared row. The all-field match stays the gate for #73; the leader-only test is a check on the leader, not a claim that the floor replay matches.
+
+**Floor.** The row has no floor id or tile grid that the sim can compare. The replay uses the floor the scenario gives (`--scenario`, or the test's scenario file), and a move the floor refuses shows as a leader divergence (`team[0].x` or `.y`). The tile hash is not compared (it needs the sim's walkable masks, [#366](https://github.com/TorratDev/rust-mm/issues/366)).
+
+**Gate rows and the start.** A row is compared at the sim's clock, as the replay above describes. Before any command has run, a gate row on another clock is compared rather than reported as a `fractionalTurn` difference: the sim has not run to its first gate yet (the first row of the movement trace is on turn 0, and the first gate is 3).
+
+**The trace-gated test.** `apps/trace-harness/tests/movement_trace.rs` runs the leader-only replay on a local trace. It skips (prints `SKIPPED`, passes) unless `RESCUE_TRACE_MOVEMENT` names the trace. With it set, the test needs:
+
+- `RESCUE_TRACE_MOVEMENT_SCENARIO`: the scenario file for the trace (`{"dungeonId":0,"floorId":0}` for the movement trace).
+- `RESCUE_ROM`, or `rom_path` in `rescue.toml`: the trace's own dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, see [`supported-dumps.md`](supported-dumps.md)). The test fails if it is missing or another dump.
+
+It fails on a divergence or a sim gap, and passes with a match over every trace row. Keep the trace out of the repository. Do not commit it or anything derived from it, except the test.
+
+**How to capture the movement trace** (from your own dump, into a folder outside the repository):
+
+```
+py scripts\capture_golden.py C:\roms\dump.nds --make-state C:\work\floor1.sav
+py scripts\capture_golden.py C:\roms\dump.nds C:\work\movement.jsonl --state C:\work\floor1.sav --turn-inputs verification\v7-trace\movement_inputs.txt --frames 1700
+```
+
+Then run the test (PowerShell):
+
+```
+$env:RESCUE_ROM = "C:\roms\dump.nds"
+$env:RESCUE_TRACE_MOVEMENT = "C:\work\movement.jsonl"
+$env:RESCUE_TRACE_MOVEMENT_SCENARIO = "C:\work\movement.scenario.json"
+cargo test -p rescue-trace-harness --test movement_trace -- --nocapture
+```
+
+The scenario file holds `{"dungeonId":0,"floorId":0}`. With `--nocapture`, a run that compared the trace prints `no leader difference over N trace rows`; a run that skipped prints `SKIPPED`. Check that it did not skip. The full replay (`rescue-trace-harness movement.jsonl --scenario ...`) still stops at the first monster row.
+
 ## Links
 
 - Epic and tasks: [#54](https://github.com/TorratDev/rust-mm/issues/54), parent [#5](https://github.com/TorratDev/rust-mm/issues/5).

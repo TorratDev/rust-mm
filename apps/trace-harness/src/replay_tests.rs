@@ -106,20 +106,76 @@ fn a_stage_one_wait_is_compared_at_the_next_gate_only() {
 
 #[test]
 fn a_gate_row_on_another_clock_is_a_fractional_turn_divergence() {
-    // The leader does not move, so the sim's clock stays on 3. Row 2 is on 7, a gate of stage 1,
-    // so it is compared and its clock is the divergence.
+    // The wait at 3 moves the sim's clock to its next gate, 7. Row 2 is on 11, also a gate of
+    // stage 1, so it is compared and its clock is the divergence.
     let rows = vec![
-        stage_one_row(3, 1, RNG_AT_ROW, vec![]),
-        stage_one_row(7, 2, RNG_AT_ROW, vec![]),
+        stage_one_row(3, 1, RNG_AT_ROW, vec![action(1, 0, 0, 0)]),
+        stage_one_row(11, 2, RNG_AT_ROW, vec![]),
     ];
     match replay(&rows, None) {
         Ok(Replay::Divergence(d)) => {
-            assert_eq!((d.row, d.frame, d.fractional_turn), (2, 2, 7));
+            assert_eq!((d.row, d.frame, d.fractional_turn), (2, 2, 11));
             assert_eq!(d.diffs[0].path, "fractionalTurn");
-            assert_eq!(d.diffs[0].expected, "7");
-            assert_eq!(d.diffs[0].actual, "3");
+            assert_eq!(d.diffs[0].expected, "11");
+            assert_eq!(d.diffs[0].actual, "7");
         }
         other => panic!("expected a clock divergence at row 2, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_gate_row_before_any_command_is_compared_not_a_clock_divergence() {
+    // The sim starts on fractional turn 0 and has not run to its first gate (3). No command has
+    // applied yet, so the gate row at 3 is compared: its fields match, so the replay matches.
+    let rows = vec![
+        stage_one_row(0, 1, RNG_AT_ROW, vec![]),
+        stage_one_row(3, 2, RNG_AT_ROW, vec![]),
+    ];
+    assert_eq!(ok(&rows), Replay::Match { rows: 2 });
+}
+
+#[test]
+fn a_gate_row_before_any_command_is_still_compared_field_by_field() {
+    // The same start, but the game's RNG at the gate differs from the sim's: the row is
+    // compared, so the RNG is the divergence (not a clock).
+    let rows = vec![
+        stage_one_row(0, 1, RNG_AT_ROW, vec![]),
+        stage_one_row(3, 2, RNG_AT_ROW + 1, vec![]),
+    ];
+    match replay(&rows, None) {
+        Ok(Replay::Divergence(d)) => {
+            assert_eq!((d.row, d.fractional_turn), (2, 3));
+            assert_eq!(d.diffs[0].path, "dungeonRng");
+        }
+        other => panic!("expected an RNG divergence at row 2, got {other:?}"),
+    }
+}
+
+#[test]
+fn leader_scope_ignores_fields_that_are_not_the_leader() {
+    // Only the RNG differs on row 2: the all-field replay diverges there, the leader scope
+    // matches.
+    let rows = vec![
+        stage_one_row(0, 1, RNG_AT_ROW, vec![]),
+        stage_one_row(0, 2, RNG_AT_ROW + 1, vec![]),
+    ];
+    assert!(matches!(replay(&rows, None), Ok(Replay::Divergence(d)) if d.row == 2));
+    assert_eq!(
+        replay_with(&rows, None, Scope::Leader).expect("replay"),
+        Replay::Match { rows: 2 }
+    );
+}
+
+#[test]
+fn leader_scope_still_reports_the_leader() {
+    // A refused move leaves the leader on x 10, so the leader scope diverges on team[0].x.
+    let rows = vec![row(10, 1, vec![action(2, 2, 1, 0)]), row(11, 2, vec![])];
+    match replay_with(&rows, None, Scope::Leader) {
+        Ok(Replay::Divergence(d)) => {
+            assert_eq!(d.row, 2);
+            assert_eq!(d.diffs[0].path, "team[0].x");
+        }
+        other => panic!("expected a leader divergence at row 2, got {other:?}"),
     }
 }
 

@@ -186,6 +186,31 @@ pub fn compare_row(row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
     diffs
 }
 
+/// Compares the leader (`team[0]`) only: position, species, level, HP and max HP. The belly is
+/// not in the trace, and the other monsters and the RNG are left out, so a row can match while
+/// the monsters are still unmodelled (#73). Used by [`Scope::Leader`].
+#[must_use]
+pub fn compare_leader(row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
+    let mut diffs = Vec::new();
+    let Some(dungeon) = &state.dungeon else {
+        push(&mut diffs, "dungeon", "present", "absent");
+        return diffs;
+    };
+    let index = team_index(&row.team);
+    let actual = index[0].and_then(|i| dungeon.team.get(i));
+    compare_monster(&mut diffs, "team[0]", row.team[0], actual);
+    diffs
+}
+
+/// Which fields [`replay_with`] compares on each row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Every field [`compare_row`] checks. This is the gate for a full match (#73).
+    All,
+    /// The leader only, see [`compare_leader`].
+    Leader,
+}
+
 /// The result of [`replay`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Replay {
@@ -208,24 +233,40 @@ pub enum Replay {
 /// The sim stands on the leader's next gate after each command, while the game's rows run on
 /// through the fractional turns in between. So a row is compared where the sim's clock is. A
 /// row between two gates (not a gate of the leader's speed stage) is skipped, since the game
-/// shows it before the leader's end-of-turn, which the sim has already applied. A row at a
-/// gate with another clock is a divergence in `fractionalTurn`.
+/// shows it before the leader's end-of-turn, which the sim has already applied. A gate row on
+/// another clock is a divergence in `fractionalTurn`, unless no command has run yet: the sim
+/// then still stands on the start clock and has not reached its first gate, so the row is
+/// compared as it is.
+///
+/// Compares every field ([`Scope::All`]); see [`replay_with`] for the other scopes.
 pub fn replay(
     rows: &[TurnRow],
     properties: Option<&FloorProperties>,
+) -> Result<Replay, HarnessError> {
+    replay_with(rows, properties, Scope::All)
+}
+
+/// [`replay`] with the fields compared on each row given by `scope`. The clock rules are the
+/// same for every scope.
+pub fn replay_with(
+    rows: &[TurnRow],
+    properties: Option<&FloorProperties>,
+    scope: Scope,
 ) -> Result<Replay, HarnessError> {
     let Some(first) = rows.first() else {
         return Ok(Replay::Match { rows: 0 });
     };
     let mut state = state_from_row(first, properties).map_err(HarnessError::Start)?;
+    let mut applied = false;
     for (index, row) in rows.iter().enumerate() {
         let number = index + 1;
         let diffs = match state.dungeon() {
             Some(d) if i16::from(d.fractional_turn()) != row.fractional_turn => {
-                let between_gates =
-                    u8::try_from(row.fractional_turn).is_ok_and(|k| !d.leader_gate(k));
-                if between_gates {
+                let gate = u8::try_from(row.fractional_turn).is_ok_and(|k| d.leader_gate(k));
+                if !gate {
                     Vec::new()
+                } else if !applied {
+                    compare(scope, row, &state.snapshot())
                 } else {
                     let mut clock = Vec::new();
                     push(
@@ -237,7 +278,7 @@ pub fn replay(
                     clock
                 }
             }
-            _ => compare_row(row, &state.snapshot()),
+            _ => compare(scope, row, &state.snapshot()),
         };
         if !diffs.is_empty() {
             return Ok(Replay::Divergence(Divergence {
@@ -253,6 +294,7 @@ pub fn replay(
                 index: position + 1,
                 source,
             })?;
+            applied = true;
             if state.step(command) == Outcome::NotModelled {
                 return Ok(Replay::SimGap {
                     row: number,
@@ -344,6 +386,13 @@ pub fn render_sim_gap(row: usize, command: &str) -> String {
         "sim gap at row {row}: {command} is not modelled by the sim yet
 "
     )
+}
+
+fn compare(scope: Scope, row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
+    match scope {
+        Scope::All => compare_row(row, state),
+        Scope::Leader => compare_leader(row, state),
+    }
 }
 
 fn compare_monster(

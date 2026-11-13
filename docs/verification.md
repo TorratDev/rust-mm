@@ -816,3 +816,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - The walk's timing against retail beyond investigator a's runs (down, right, diagonal; every walk 24 frames).
 - **Sim gap:** the sim has no public constructor for a team leader, so `app.rs` builds the `EntityInfo` literal (all fields are public). A constructor in `crates/sim` would remove it.
 - **Not run:** a live walk to the stairs on floor 1 (see Not verified).
+
+## #348 — Leader replay of the movement trace before enemy AI
+
+- **Assumption:** investigator a's triage on #348 (main at `33625fd`): row 4 is a harness clock false divergence (P1); every compared divergence after it is a monster turn (P2, #73); a leader-only comparison matches (P3). The harness fix and the leader-only mode follow that.
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0, Windows 11 Pro (10.0.26200). ROM: the main checkout's `pmdb.nds` (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`) as `RESCUE_ROM`. Trace: `C:/Users/Troll/rescue-re/scratch/a348/mv.jsonl`, SHA-1 `c106dcde49f56a864d4d90ba25674791baf3dbbe`, 67 rows, scenario `{"dungeonId":0,"floorId":0}`, captured by investigator a with `capture_golden.py --state floor1.sav --turn-inputs verification/v7-trace/movement_inputs.txt --frames 1700`. Not committed.
+- **What changed:** `apps/trace-harness` only. `replay` compares a gate row (not a clock divergence) while no command has run yet. `Scope` and `replay_with` add the leader-only mode (`compare_leader`: `team[0]` position, species, level, HP, max HP). Unit tests in `replay_tests.rs`; trace-gated test `tests/movement_trace.rs`.
+- **Evidence:**
+  - Unit tests: `cargo test -p rescue-trace-harness` passes. Changed: `a_gate_row_on_another_clock_is_a_fractional_turn_divergence` (the clock now starts after a wait, so row 2 at 11 is the divergence). New: `a_gate_row_before_any_command_is_compared_not_a_clock_divergence`, `a_gate_row_before_any_command_is_still_compared_field_by_field`, `leader_scope_ignores_fields_that_are_not_the_leader`, `leader_scope_still_reports_the_leader`.
+  - Trace-gated test, with `RESCUE_ROM`, `RESCUE_TRACE_MOVEMENT` and `RESCUE_TRACE_MOVEMENT_SCENARIO` set: runs (not skipped) and passes: `no leader difference over 67 trace rows (gate rows compared)`. The rows compared are row 1 and the 16 gate rows (ft 3 mod 4: rows 4, 8, ..., 64), so 17 compared, as investigator a counted. Without the env var it prints `SKIPPED` and passes.
+  - Full mode on the same trace (`rescue-trace-harness mv.jsonl --scenario sc.json`): no longer stops at row 4. It stops at row 8 (frame 424, fractionalTurn 7): `dungeonRng` 1709136509 vs 865330516 and `wild[0..2]` one tile off. This is the same first divergence as investigator a's run with the fix; it is a monster turn (#73).
+  - `cargo test --workspace` (no ROM set): 537 passed. `cargo clippy --workspace --all-targets -- -D warnings`: clean. `cargo fmt --all --check`: clean.
+- **Outcome:** the harness reports the leader correct on the movement trace's compared rows. The full match stays the gate for #73 and is not claimed.
+- **Not verified:**
+  - The leader-only mode does not compare the floor directly (no tile hash in the sim, #366). A wrong floor would show as a refused move, which the trace does not do here.
+  - The row-4 divergence before the fix was reproduced by investigator a, not again in this PR.
+  - Belly is not in the trace and is not compared.
+- **Not run:** the trace was not recaptured; the reused capture's SHA-1 is recorded above.
