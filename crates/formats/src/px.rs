@@ -7,14 +7,15 @@
 //! A clear bit reads a byte `b` with high nibble `h` and low nibble `l`:
 //!
 //! * `h` equals control nibble `i`: emit a 4-nibble pattern as 2 bytes. For `i == 0` all
-//!   four nibbles are `l`; for `i` in 1..=4 all are `l` except nibble `i-1`, which is
-//!   `l-1`; for `i` in 5..=8 all are `l` except nibble `i-5`, which is `l+1` (mod 16).
-//!   Nibbles pack big-end first: bytes `n0<<4|n1`, `n2<<4|n3`.
+//!   four nibbles are `l`; for `i == 1` the nibbles are `(l, l+1, l+1, l+1)`; for `i == 5`
+//!   they are `(l, l-1, l-1, l-1)`; for `i` in 2..=4 all are `l` except nibble `i-1`,
+//!   which is `l-1`; for `i` in 6..=8 all are `l` except nibble `i-5`, which is `l+1`
+//!   (mod 16). Nibbles pack big-end first: bytes `n0<<4|n1`, `n2<<4|n3`.
 //! * otherwise: a back-reference of `h + 3` bytes from `((l << 8) | next) - 0x1000`
 //!   bytes before the current end of output.
 //!
-//! The pattern rule was settled against Blue's portraits (the alternatives leave stray
-//! pixels); see the spec.
+//! The indices 1 and 5 rule is the ARM9 decoder's (`FUN_02013388`, cases 0x1e and 0x1a)
+//! and matches the retail VRAM tile data [blue-verified]; see the spec.
 
 use crate::read::{self as bytes, Error, Result};
 
@@ -122,11 +123,14 @@ pub fn decompress(data: &[u8], limit: usize) -> Result<Vec<u8>> {
             let b = next(&mut pos)?;
             let (hi, lo) = (b >> 4, b & 0xF);
             if let Some(i) = h.flags.iter().position(|&f| f == hi) {
+                let (up, down) = ((lo + 1) & 0xF, lo.wrapping_sub(1) & 0xF);
                 let mut n = [lo; 4];
                 match i {
                     0 => {}
-                    1..=4 => n[i - 1] = lo.wrapping_sub(1) & 0xF,
-                    _ => n[i - 5] = (lo + 1) & 0xF,
+                    1 => n = [lo, up, up, up],
+                    5 => n = [lo, down, down, down],
+                    2..=4 => n[i - 1] = down,
+                    _ => n[i - 5] = up,
                 }
                 out.push(n[0] << 4 | n[1]);
                 out.push(n[2] << 4 | n[3]);
@@ -192,8 +196,8 @@ pub(crate) mod tests {
             0b1000_0000u8, // literal, then 7 non-literals
             0xAB,          // literal
             0x17,          // flag 0 (nibble 1): all 7 -> 77 77
-            0x27,          // flag 1 (nibble 2): n0 = 6 -> 67 77
-            0x67,          // flag 5 (nibble 6): n0 = 8 -> 87 77
+            0x27,          // flag 1 (nibble 2): n0 = 7, rest 8 -> 78 88
+            0x67,          // flag 5 (nibble 6): n0 = 7, rest 6 -> 76 66
             0x0F,          // back-reference: len 3, dist 0x1000 - 0xFFE = 2
             0xFE,
         ];
@@ -203,7 +207,24 @@ pub(crate) mod tests {
         c.extend(body);
         assert_eq!(
             decompress(&c, DEFAULT_LIMIT).unwrap(),
-            [0xAB, 0x77, 0x77, 0x67, 0x77, 0x87, 0x77, 0x87, 0x77, 0x87]
+            [0xAB, 0x77, 0x77, 0x78, 0x88, 0x76, 0x66, 0x76, 0x66, 0x76]
+        );
+    }
+
+    #[test]
+    fn index_1_and_5_back_reference_copies_pattern_bytes() {
+        // flags: index 1 -> nibble 1, index 5 -> nibble 5. Byte 0x13 is index 1 with
+        // l = 3 -> 34 44; 0x59 is index 5 with l = 9 -> 98 88; then a back-reference of
+        // 3 bytes at distance 4 copies the first three output bytes.
+        let mut c = AT4PX.to_vec();
+        let body = [0x00u8, 0x13, 0x59, 0x0F, 0xFC];
+        c.extend(((0x12 + body.len()) as u16).to_le_bytes());
+        c.extend([0xF, 1, 0xF, 0xF, 0xF, 5, 0xF, 0xF, 0xF]);
+        c.extend(7u16.to_le_bytes());
+        c.extend(body);
+        assert_eq!(
+            decompress(&c, DEFAULT_LIMIT).unwrap(),
+            [0x34, 0x44, 0x98, 0x88, 0x34, 0x44, 0x98]
         );
     }
 

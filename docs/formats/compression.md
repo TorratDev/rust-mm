@@ -49,10 +49,10 @@ The five-byte form `AT4PX` in older notes has `X` at byte 4. `X` is not `'N'`, s
 
 A command byte covers 8 items, MSB first. Bit set: copy one literal byte. Bit clear: read byte `b`, `h = b >> 4`, `l = b & 0xF`:
 
-- `h == f[i]` (first match): write 4 nibbles as 2 bytes `n0<<4|n1`, `n2<<4|n3`. `i == 0`: all four are `l`. `i` in 1–4: all `l` except `n[i-1] = l - 1`. `i` in 5–8: all `l` except `n[i-5] = l + 1` (mod 16).
+- `h == f[i]` (first match): write 4 nibbles as 2 bytes `n0<<4|n1`, `n2<<4|n3`. `i == 0`: all four are `l`. `i == 1`: `(l, l+1, l+1, l+1)`. `i == 5`: `(l, l-1, l-1, l-1)`. `i` in 2–4: all `l` except `n[i-1] = l - 1`. `i` in 6–8: all `l` except `n[i-5] = l + 1` (mod 16).
 - otherwise: back-reference of `h + 3` bytes starting `0x1000 - ((l << 8) | next)` bytes before the end of the output.
 
-The pattern rule was settled on Blue's portraits: the other three candidate readings (base `l±1` with one nibble back at `l`, swapped nibble order) leave stray pixels and score worse on a smoothness count over all 13 Bulbasaur faces.
+The rule for indices 1 and 5 is confirmed by Blue's own decoder and by retail VRAM [blue-verified]. In `FUN_02013388`, case `0x1e` (index 1) writes `(c<<4 | c+1)` and `((c+1)<<4 | c+1)`, and case `0x1a` (index 5) writes `(c<<4 | c-1)` and `((c-1)<<4 | c-1)`. Index 2 (case `0x1d`) writes `(c<<4 | c-1)` and `(c<<4 | c)`; indices 2–4 and 6–8 are unchanged by this fix. For the first floor's tileset 14 (`b14fon`), decoding with this rule gives 0 byte mismatches against the retail VRAM at `0x06008000` over all 10752 bytes (frame 35100, py-desmume). The previous rule, which put `l-1` on index 1 and `l+1` on index 5, differed in 114 of 760 pattern ops and left index-15 pixels in the floor (black dots, #403). The earlier claim that Blue's portraits settled the rule was wrong for these two indices.
 
 ## Which codecs Blue uses
 

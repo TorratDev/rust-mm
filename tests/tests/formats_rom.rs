@@ -99,6 +99,19 @@ rescue_tests::rom_test! {
 }
 
 rescue_tests::rom_test! {
+    /// The first floor's tileset (14, `b14fon`) decodes with no index-15 pixel, and its chr
+    /// has the SHA-1 of the corrected decode, which matches retail VRAM (#403 P2).
+    fn tileset_14_chr_has_no_index_15(rom) {
+        let bytes = rom.read();
+        let data = rom_file(&bytes, "dungeon.sbin");
+        let arc = Archive::parse(&data).unwrap();
+        let t = tileset::Tileset::load(&arc, &data, 14).unwrap();
+        assert!(t.chr.iter().all(|&b| b >> 4 != 0xF && b & 0xF != 0xF), "index-15 pixel in b14fon");
+        assert_eq!(digest_bytes(&t.chr), "cfac371cdad6bc242167edf9d4cf92082cb8ad1a");
+    }
+}
+
+rescue_tests::rom_test! {
     /// Every dungeon tileset loads; full ones render all metatiles and have an
     /// autotile table whose entries name existing metatiles.
     fn tilesets_decode(rom) {
