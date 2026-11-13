@@ -80,6 +80,18 @@ In Red these are `unkDungeon644` fields `+0x34`, `+0x38` and `+0x3C`. In Blue th
 
 **For golden traces (V7):** the floor seed follows from the run preseed, and the run preseed follows from the global LCG. So it is enough to capture `sPRNGState` at dungeon entry, or `dungeon+0x66C` and `dungeon+0x670`. The rescue path offers a way to set the preseed directly.
 
+### Per-floor seed and the draws before GenerateFloor (#345 P2)
+
+Sources: probes on the retail dump (dungeon 0, floors 1 to 3) and the export decompiles, investigator b on [#345](https://github.com/TorratDev/rust-mm/issues/345). The seed chain and the counts are [blue-verified]; the roles of the draws are [hypothesis].
+
+1. **One seed per floor, from one chain.** `GenerateDungeonRNGSeed` (`0219D0C4`) runs once per floor entered, from the run preseed in `dungeon+0x66C`. That preseed is set once, before the loop (`SetDungeonRNGPreseed23Bit`, `0219D124`), and nothing in the loop sets it again. Probe: preseed state 16744635 gives floor 1 the seed 14307067; floor 2 has preseed state 3151642857 and seed 10589043. The sim's `DungeonPreseed::next_floor_seed` gives both, and [`GameState`](../../crates/sim/src/state.rs) never re-seeds it.
+2. **Ten draws before `GenerateFloor`.** The LCG state at `GenerateFloor`'s entry (`02151E7C`) is 10 steps after `InitDungeonRNG` on floors 1, 2 and 3:
+   - 1 from `DungeonRandInt(4)` at `0206E0E0` in `RunDungeon_Async` (the Deoxys-form draw, `+0x3360`). [blue-verified]
+   - 9 from the call at `02182BB4`, inside `FUN_ov_0001__02182B3C`, reached from `FUN_ov_0001__0217AA14`, once per floor. [blue-verified count; hypothesis: builds the floor's spawn list]. The count was 9 on all three floors. Whether it depends on the team, the bag or the spawn table was not tested.
+   - Sim: `FLOOR_ENTRY_STEPS = 10` in `state.rs`, drawn before `generate_floor`. The trace harness uses the same 10 (`ENTRY_STEPS`, [#332](https://github.com/TorratDev/rust-mm/issues/332) P2, checked on floor 1 only).
+   - [shortcut] The 9 spawn-list draws are counted, not ported. A floor past the first matches retail only once they are.
+3. **Draws between `GenerateFloor` and turn 1 (not ported).** From `GenerateFloor`'s return (`021525B4`) to the first turn (`021411BC`): 22 steps on floor 1, 15 on floor 2 and 19 on floor 3, data dependent. Their callers include `02144714` (floor items), `02179E2C` (initial wild monsters), `021388E8`, `02138B88`, `02138BE8`, `021432A4`, `021448E0` and `02190A10`. The sim leaves the floor generator where `GenerateFloor` left it. [blue-verified counts]
+
 ## Mersenne Twister
 
 Tag: **[blue-verified]**. `MersenneTwister_InitializeState` (`0200CCB0`) fills `sStateArray` with the MT19937 recurrence (`0x6C078965`) and sets `sStateIndex` to 624. `Random32MersenneTwister` (`0200CB40`) is the generator; `sStateIndex` starts at 625 (`0x271`), which forces initialisation on first use.
@@ -405,6 +417,7 @@ Source: investigator B. Static Ghidra only; no runtime run. Red names are **red-
 
 - The unnamed global-LCG callers are classified above with [hypothesis] labels. Still open: the names of the `FUN_0200F768` mission cluster (its structure is read; the meaning of record fields `+0`, `+2` and `+0x11`, and which array is the player's accepted list, are not established). Of the dungeon callers (#168 P1), the 13 labels that have no name in other docs have these open points: `021A7124` (which event), `02145660` (which item), and the trap ids behind `021972B4` and `02197CB8` (the dispatcher `02197D88` is checked only for its summon and warp cases). The floor weight tables behind `021388D4`, `02138B74` and `02138C68` are not decoded. This feeds #48, #50 and #52.
 - Correct the subsystem labels above once the bodies are read.
+- Per-floor draws (#345 P2): the roles of the 9 draws of `FUN_ov_0001__02182B3C` (via `0217AA14`) and what they depend on; the 15 to 22 draws between `GenerateFloor` and turn 1 (their callers are listed under [Per-floor seed](#per-floor-seed-and-the-draws-before-generatefloor-345-p2)).
 - The 20 `OtherRandInt` callers are classed in [Caller classes (#169 P2)](#caller-classes-169-p2) with [hypothesis] labels. Open: who reads `+0x4E`, and which scripts use opcode `0xB`, commands `0x6D` and `0xDC`, and switch `0xC3`.
 - Whether any run-time pointer writes `gOtherRngState` through an alias. The static literal-pool search found none (#169 P3, all 19 `0x020E03F8` hits read); overlays were not searched for `0x020E03F8`.
 - A natural-caller trace of the 16-bit generator: the forced-call vectors are in, but no caller is reached on the boot path (needs input that reaches a ground caller).
