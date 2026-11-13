@@ -661,6 +661,13 @@ mod tests {
             info: leader_info,
         };
         let mut g = GameState::in_dungeon(1, Floor::new(), vec![leader], 2).unwrap();
+        // The facing tile is open ground: `Floor::new()` leaves its type at 0 (no walkable tile).
+        g.dungeon_mut()
+            .unwrap()
+            .floor
+            .tile_mut(6, 5)
+            .unwrap()
+            .terrain = TERRAIN_FLOOR;
         let wild = Monster {
             pos: (6, 5),
             visible: true,
@@ -1226,6 +1233,55 @@ mod tests {
         assert_eq!(hp(&g, 2), 100 - dealt(blocks[0]));
         assert_eq!(hp(&g, 0), 100 - dealt(blocks[1]));
         assert_eq!(hp(&g, 1), 100 - dealt(blocks[2]));
+        // Fifteen draws in all, and the PP is taken once for the use.
+        let mut rest = before;
+        for _ in 0..3 {
+            for cap in [100, 100, 100, 0x4000, 100] {
+                rest.int(cap);
+            }
+        }
+        assert_eq!(*g.dungeon().unwrap().rng(), rest);
+        assert_eq!(leader_pp(&g), 9);
+    }
+
+    #[test]
+    fn an_around_move_hits_each_neighbour_in_facing_order_with_five_draws_each() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x20; // around: the eight neighbours from the facing direction on
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The leader at (5, 5) faces Right. Foes stand on three neighbours, listed out of
+        // facing order: from Right on, the order is Right, UpRight, then DownRight last.
+        let mut g = battle([100; 3], 0);
+        g.dungeon_mut().unwrap().wild = vec![foe_at((6, 6)), foe_at((6, 5)), foe_at((6, 4))];
+        let before = *g.dungeon().unwrap().rng();
+        let blocks = draw_blocks(&before, 3);
+        let attacker = g.dungeon().unwrap().team()[0].info.clone();
+        let target = foe_at((6, 5)).info;
+        let dealt = |b: [i32; 5]| {
+            let rolls = Rolls {
+                boost: b[1],
+                crit: b[2],
+                variance: b[3],
+            };
+            damage(&t, &mv, &attacker, &target, rolls).value
+        };
+
+        let targets =
+            targeting::executor_targets(g.dungeon().unwrap(), 0xA0, 0x20, Direction::Right, None)
+                .unwrap();
+        assert_eq!(targets, vec![Slot::Wild(1), Slot::Wild(2), Slot::Wild(0)]);
+        g.dungeon_mut().unwrap().strike(0, &targets, &mv, &data);
+        let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
+        // Right (6, 5) is wild 1 and takes the first block, UpRight (6, 4) is wild 2 and takes
+        // the second, DownRight (6, 6) is wild 0 and takes the third.
+        assert_eq!(hp(&g, 1), 100 - dealt(blocks[0]));
+        assert_eq!(hp(&g, 2), 100 - dealt(blocks[1]));
+        assert_eq!(hp(&g, 0), 100 - dealt(blocks[2]));
         // Fifteen draws in all, and the PP is taken once for the use.
         let mut rest = before;
         for _ in 0..3 {

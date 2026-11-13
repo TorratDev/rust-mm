@@ -327,44 +327,47 @@ The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas t
 
 ### Executor in the sim (#420)
 
-`crates/sim/src/targeting.rs` ports the executor path for the areas and classes below. The rows above are the source. Where the code goes beyond a row, or a row is incomplete, the item says so. The export lines are from the Ghidra text export (STAMP 2026-11-12), read by the implementer, not run; the reviewer should check them.
+`crates/sim/src/targeting.rs` ports the executor path for the areas and classes below. The rows above are the source. Where the code goes beyond a row, or a row is incomplete, the item says so. The export lines are from the Ghidra text export (STAMP 2026-11-12). Tags: **[blue-verified]** means read in the export or live in the `rescue-arm9-r` project and cited with its lines; **[hypothesis]** means inferred, or not checked against the export. On the #430 review the reviewer spot-checked `0215A520` line 44, the `0x10`/`0x20` loop, the wall test of `0215AB34` and `02180FFC`, and read `021AE280` live.
 
 **Modelled**
 
-- **Area `0x00`** (facing), through `02177688`. The facing tile gives its monster when the tile is not a wall (flag `0x10`). The direction-open bit is a shortcut (see below).
-- **Area `0x10`** (cone). Facing − 1, facing, facing + 1, wrapping, each a monster. No gate. Matches `0215A520` lines 61 to 80 (export).
-- **Area `0x50`** (line), through `0215AB34`. The walk takes up to 10 tiles. It stops at a wall, or at the first monster, which is the candidate. Export lines 137 to 139 break on the first monster that `0215A054` does not veto, and line 152 passes it to `0215A3A8`. The wall test in the export is the terrain type, `terrain & 3 == 0` (lines 64 and 136), not flag `0x10`. The row says only "a wall". The sim uses the export's test (type 0, which `turns.md` calls a wall). Whether generated walls are always type 0 is not checked here; the reviewer should confirm. The projectile helper `0215B060` and the frame actions in the walk are not modelled. No dungeon RNG draw was seen in the parts of the export read here. Not verified by a run.
-- **Area `0x70`** (user). The user only (`0215A520` lines 129 to 131, export).
-- **Classes**, as `0215A3A8` lines 25 to 55: `0` and `4` a foe; `1` an ally or the user; `2` and `3` any; `5` any except the user; `6` an ally that is not the user; `7` and up nothing.
-- **Move `0xFC`** aimed at the user is rejected (`0215A3A8` line 12, export).
-- **Move `0xED`** takes the self class `0x73` unless the user is a Ghost (`02191A30`, the row above). The sim checks either of the user's two types for Ghost (type 14). The row does not say whether it means either type. Medium.
-- **Class 4** (`0215A520` lines 41 to 52, export). It becomes self (`0x73`) when `0215A2C0` returns 0, else the foe branch (area 0, class 0). **The `0x97` exception (requested on #420):** export line 44 is `if (move == 0x97 && GetEffectiveWeather(user) == 1) iVar3 = 1;`. It runs after `0215A2C0` is called, and it forces the foe branch whatever `0215A2C0` returned. So Solarbeam (`0x97`, targeting byte `0x74`) in sunny weather is area 0, class 0. The weather is `02195C48(user)` (the weather accessor above; item 45 open). The sim has no weather state, so the rewrite takes the sunny test as unknown, and Solarbeam is refused.
+- **Area `0x00`** (facing), through `02180FFC` at class 2. [blue-verified] The facing tile gives its monster when it is not a wall (flag `0x10`) and its type (`terrain & 3`) is not 0. A diagonal facing also needs both orthogonal neighbours open (not a wall, type not 0, on the map). This is the corner rule of the leader's step, shared as `Dungeon::corner_open`. [blue-verified] The table at `021AE280` is `01 02 04 08 10 20 40 80`, so the mask is `1 << dir` (read live in the #430 review). The sim recomputes the test from terrain and does not read `Tile::walkable_neighbors`, which it never fills. Class 3 is a shortcut (see below).
+- **Area `0x10`** (cone) [blue-verified]. Facing − 1, facing, facing + 1, wrapping, each a monster. No gate. Matches `0215A520` lines 61 to 80 (export).
+- **Area `0x20`** (around) [blue-verified]. The loop of `0215A520` lines 61 to 80, the same as `0x10`, starts at `info +0x44` (the facing index) and runs eight times, `& 7`, each a monster. No gate. The `0x10` loop starts at facing − 1 and runs three times. Test: `the_around_area_lists_the_eight_neighbours_from_the_facing_tile_on`.
+- **Area `0x50`** (line), through `0215AB34`. The walk takes up to 10 tiles. It stops at a wall, or at the first monster, which is the candidate.
+  - [blue-verified] The wall test is `(*tile & 3) == 0` (type 0) in both loops of `0215AB34`, confirmed in the #430 review. The row's "flag `0x10`" is not the test used.
+  - [blue-verified] Export lines 137 to 139 break on the first monster that `0215A054` does not veto, and line 152 passes it to `0215A3A8`.
+  - [hypothesis] Whether generated walls are always type 0 is not checked.
+  - [blue-verified] The projectile helper `0215B060` and the frame actions in the walk are not modelled.
+  - [hypothesis] No dungeon RNG draw was seen in the parts of the export read; not verified by a run.
+- **Area `0x70`** (user) [blue-verified]. The user only (`0215A520` lines 129 to 131, export).
+- **Classes** [blue-verified], as `0215A3A8` lines 25 to 55: `0` and `4` a foe; `1` an ally or the user; `2` and `3` any; `5` any except the user; `6` an ally that is not the user; `7` and up nothing.
+- **Move `0xFC`** aimed at the user is rejected [blue-verified] (`0215A3A8` line 12, export).
+- **Move `0xED`** takes the self class `0x73` unless the user is a Ghost [blue-verified] (`02191A30`, the row above). [hypothesis] The sim checks either of the user's two types for Ghost (type 14). The row does not say whether it means either type.
+- **Class 4** [blue-verified] (`0215A520` lines 41 to 52, export). It becomes self (`0x73`) when `0215A2C0` returns 0, else the foe branch (area 0, class 0). **The `0x97` exception (requested on #420):** [blue-verified] export line 44 is `if (move == 0x97 && GetEffectiveWeather(user) == 1) iVar3 = 1;`. It runs after `0215A2C0` is called, and it forces the foe branch whatever `0215A2C0` returned. So Solarbeam (`0x97`, targeting byte `0x74`) in sunny weather is area 0, class 0. [hypothesis] The weather is `02195C48(user)` (the weather accessor above; item 45 open). The sim has no weather state, so the rewrite takes the sunny test as unknown, and Solarbeam is refused.
 
 **Not modelled.** The use is refused with `NotModelled`, and the state does not change:
 
-- **Area `0x20`** (around). The order of the eight neighbours is not in the notes. The export (`0215A520` lines 61 to 82) starts at the facing direction and walks all eight, which would be the order. That is a lead for an investigator to confirm, so it is not ported.
-- **Areas `0x30` and `0x60`** (room, floor). They walk the 20 slots of `gDungeon+0x11364` and need the room test `02141AF0`. The sim's team and wild vectors are not mapped to those slots.
-- **Areas `0x40` and `0x80`** (two ahead, cut corners). They need `021775F0` (facing tile, with the corner-cut check for `0x80`) and `021774FC`, and neither is in the notes. `021820B0` (the blocked test for `0x40`) is not in the notes either.
-- **Class 4** other than Solarbeam in sunny weather. `0215A2C0` is not decompiled in the notes. `ai.md` describes a function at that address as the bide match, which is a different source and is not used here.
+- **Areas `0x30` and `0x60`** (room, floor). [blue-verified] They walk the 20 slots of `gDungeon+0x11364` and need the room test `02141AF0`. The sim's team and wild vectors are not mapped to those slots.
+- **Areas `0x40` and `0x80`** (two ahead, cut corners). [blue-verified] They need `021775F0` (facing tile, with the corner-cut check for `0x80`) and `021774FC`, and neither is in the notes. `021820B0` (the blocked test for `0x40`) is not in the notes either.
+- **Class 4** other than Solarbeam in sunny weather. [blue-verified] `0215A2C0` is not decompiled in the notes. `ai.md` describes a function at that address as the bide match, which is a different source and is not used here.
 
 **Shortcuts** (each has a `shortcut:` note in the code):
 
-- **The direction-open bit of `02180FFC`** (the `0x00` gate). The export (`02180FFC` lines 14 to 62) tests the user's own tile: byte `+6 + class` masked by a per-direction value from the table at `021AE280`. The class is `0218267C`'s result, at least 2, and 3 for `info +0xC7 == 3`, held item 9, or IQ bit `0xC`, or IQ bit `0xD` (3 for an even direction index, 2 for an odd one). The walkable masks the sim keeps are `Tile::walkable_neighbors` (`turns.md`), and the table and class rule are not ported. **BLOCKED** for this part: a facing monster is always a candidate, so a diagonal corner that the game blocks is hit here. It does not change the orthogonal case in the sim's tests.
-- **The common rejects** of `0215A3A8` (`info +0x8 == 1` and `+0x98` of 1 or 4, export lines 15 to 24). The sim keeps neither field, so nothing is rejected by them.
-- **The veto `0215A054`** (`+0xDC`, `+0xAE`). Not applied: the sim keeps neither field.
-- **Argument 7 (`skipRelation`).** Read as 0. It is set from `+0xAC` and `+0xC9`, which the sim does not keep. Export line 36 also tests IQ 7, which only clears `skipRelation` further, so 0 is the same result.
-- **Relation 2** of `02180994` ("not a target", [visibility.md](visibility.md) P4). The sim has only relations 0 and 1.
+- **The class-3 cases of the direction-open bit of `02180FFC`** (the `0x00` gate). [blue-verified] The export (`02180FFC` lines 14 to 62) tests the user's own tile: byte `+6 + class` masked by a per-direction value from the table at `021AE280`. The class is `0218267C`'s result, at least 2, and 3 for `info +0xC7 == 3`, held item 9, or IQ bit `0xC`, or IQ bit `0xD` (3 for an even direction index, 2 for an odd one). [hypothesis] The sim uses class 2 for every user and recomputes the bit from terrain (see Modelled). A class-3 user may get a different answer, and the `FUN_0206d474` gate is not modelled either.
+- **The common rejects** of `0215A3A8` (`info +0x8 == 1` and `+0x98` of 1 or 4, export lines 15 to 24) [blue-verified]. The sim keeps neither field, so nothing is rejected by them.
+- **The veto `0215A054`** (`+0xDC`, `+0xAE`) [blue-verified]. Not applied: the sim keeps neither field.
+- **Argument 7 (`skipRelation`).** [hypothesis] Read as 0. It is set from `+0xAC` and `+0xC9`, which the sim does not keep. Export line 36 also tests IQ 7, which only clears `skipRelation` further, so 0 is the same result.
+- **Relation 2** of `02180994` ("not a target", [visibility.md](visibility.md) P4) [blue-verified]. The sim has only relations 0 and 1.
 
-**Draw order of a multi-target move.** The dispatch `02156824` runs the hit path for each target in its loop, so the slot-0 check and the `CalcDamage` draws sit inside the per-target switch. Each target in the list therefore takes its own five draws (or one, on a slot-0 miss), in list order. The PP mark and the PP take happen once per use. The sim's `strike` does this, and the test `a_cone_move_hits_each_monster_in_cone_order_with_five_draws_each` checks the order and the count. Regular Attack has one target on its facing tile, so it is unaffected.
+**Draw order of a multi-target move.** [hypothesis] The dispatch `02156824` runs the hit path for each target in its loop, so the slot-0 check and the `CalcDamage` draws sit inside the per-target switch. Each target in the list therefore takes its own five draws (or one, on a slot-0 miss), in list order. The PP mark and the PP take happen once per use. The game side is from the #356 notes and was not re-read here. The sim's `strike` does this, and the test `a_cone_move_hits_each_monster_in_cone_order_with_five_draws_each` checks the sim's order and count only. Regular Attack has one target on its facing tile, so it is unaffected.
 
 **Open** (new from this port)
 
-- The direction-open bit: its class rule (`0218267C` and the `info +0xC7`, held item 9, IQ `0xC` and `0xD` cases) and the table at `021AE280`.
+- The class-3 rule of the direction-open bit: `0218267C` and the `info +0xC7`, held item 9, IQ `0xC` and `0xD` cases, and the `FUN_0206d474` gate.
 - `021775F0`, `021774FC` and `021820B0`: their bodies (the `0x40` and `0x80` candidates).
 - `0215A2C0`, which decides class 4 except for Solarbeam in sunny weather.
-- The wall test of the line (type `& 3 == 0` in the export, flag `0x10` in the row). The reviewer should check it against the export.
 - Whether `0215B060` (the projectile helper) and `02017A60` (called in the walk when argument 4 is set) draw from the dungeon RNG.
-- The order of the eight neighbours of area `0x20`, as the export reads it.
 
 ### AI condition (`0xF00` bits, read in `02192274`)
 

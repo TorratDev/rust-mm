@@ -3,9 +3,9 @@
 //! targeting byte) gives the candidates in the game's order, and the class (low nibble) keeps
 //! some of them.
 //!
-//! Only the areas whose rule is in the notes are modelled: facing (`0x00`), cone (`0x10`), line
-//! (`0x50`) and self (`0x70`). The others return `None` and the use is not modelled. The
-//! class-4 rewrite is modelled for Solarbeam (`0x97`), and only with the weather it needs.
+//! Only the areas whose rule is in the notes are modelled: facing (`0x00`), cone (`0x10`), around
+//! (`0x20`), line (`0x50`) and self (`0x70`). The others return `None` and the use is not
+//! modelled. The class-4 rewrite is modelled for Solarbeam (`0x97`), and only with the weather it needs.
 //! Integer math only.
 
 use crate::command::Direction;
@@ -123,12 +123,19 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
     Some(match area {
         Area::Facing => {
             let (x, y) = step(lx, ly, facing);
-            // A wall on the facing tile gives no candidate (`02180FFC`).
-            // shortcut: the direction-open bit of `02180FFC` (a walkable-neighbour bit of the
-            // user's tile, `docs/re/combat.md`, "Helpers") is not read: a facing monster is
-            // always a candidate.
+            let (dx, dy) = facing.delta();
+            // `02180FFC` at class 2: the facing tile is not a wall (flag `0x10`) and has a type
+            // other than 0, and a diagonal step has both orthogonal neighbours open. The corner
+            // test is shared with the leader's step (`Dungeon::corner_open`).
+            // shortcut: class 2 is used for every user. Class 3 (movement type 3 species,
+            // `info +0xC7 == 3`, held item 9, IQ bits 0xC and 0xD) and the gate `FUN_0206d474`
+            // are not modelled, so a user in those cases may get a different answer here.
             match d.floor().tile(x, y) {
-                Some(t) if t.terrain & TERRAIN_IMPASSABLE_WALL == 0 => {
+                Some(t)
+                    if t.terrain & TERRAIN_IMPASSABLE_WALL == 0
+                        && t.terrain & TERRAIN_TYPE_MASK != 0
+                        && d.corner_open(lx, ly, dx, dy) =>
+                {
                     monster_at(d, x, y).into_iter().collect()
                 }
                 _ => Vec::new(),
@@ -138,6 +145,14 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
             .into_iter()
             .filter_map(|k| {
                 let (x, y) = step(lx, ly, DIRECTIONS[k]);
+                monster_at(d, x, y)
+            })
+            .collect(),
+        // The eight neighbours from the facing direction on, wrapping (`0215A520`: the loop starts
+        // at `info +0x44` and runs eight times, `& 7`). No gate, as in the cone.
+        Area::Around => (0..8)
+            .filter_map(|k| {
+                let (x, y) = step(lx, ly, DIRECTIONS[(dir + k) % 8]);
                 monster_at(d, x, y)
             })
             .collect(),
@@ -164,11 +179,10 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
         Area::User => vec![Slot::Team(0)],
         // shortcut: these areas are not modelled, because their rule is not in the notes or
         // needs the game's 20-slot order, which the sim does not keep. Each refuses the use.
-        // `0x20`: the order of the eight neighbours is not in the notes (the export's loop starts
-        // at the facing direction; a lead, not verified). `0x30` and `0x60`: the 20 slots of
-        // `gDungeon+0x11364` and the room test `02141AF0`. `0x40` and `0x80`: the facing tile
-        // helper `021775F0` and the tile test `021774FC` are not read.
-        Area::Around | Area::Room | Area::TwoAhead | Area::Floor | Area::CutCorners => {
+        // `0x30` and `0x60`: the 20 slots of `gDungeon+0x11364` and the room test `02141AF0`.
+        // `0x40` and `0x80`: the facing tile helper `021775F0` and the tile test `021774FC` are
+        // not read.
+        Area::Room | Area::TwoAhead | Area::Floor | Area::CutCorners => {
             return None;
         }
     })
@@ -509,13 +523,105 @@ mod tests {
         );
     }
 
+    /// Sets the terrain of tile `(x, y)` of the dungeon in `g`.
+    fn set_terrain(g: &mut GameState, x: i32, y: i32, terrain: u16) {
+        g.dungeon_mut()
+            .unwrap()
+            .floor
+            .tile_mut(x, y)
+            .unwrap()
+            .terrain = terrain;
+    }
+
+    #[test]
+    fn the_around_area_lists_the_eight_neighbours_from_the_facing_tile_on() {
+        // The foes are listed in table order from Down, so only the facing order can sort them.
+        let g = dungeon(
+            vec![monster((10, 10), false)],
+            vec![
+                monster((10, 11), true), // Down, Wild(0)
+                monster((11, 11), true), // DownRight, Wild(1)
+                monster((11, 10), true), // Right, Wild(2)
+                monster((11, 9), true),  // UpRight, Wild(3)
+                monster((10, 9), true),  // Up, Wild(4)
+                monster((9, 9), true),   // UpLeft, Wild(5)
+                monster((9, 10), true),  // Left, Wild(6)
+                monster((9, 11), true),  // DownLeft, Wild(7)
+            ],
+        );
+        // Facing Right (index 2): Right, UpRight, Up, UpLeft, Left, DownLeft, then wraps to Down
+        // and DownRight.
+        assert_eq!(
+            targets(&g, 0x20, Direction::Right),
+            Some((2..8).chain(0..2).map(Slot::Wild).collect::<Vec<_>>())
+        );
+        // Facing Down (index 0) starts at Down and runs to DownRight, the last.
+        assert_eq!(
+            targets(&g, 0x20, Direction::Down),
+            Some((0..8).map(Slot::Wild).collect::<Vec<_>>())
+        );
+        // Facing DownLeft (index 7) wraps at once: DownLeft, then Down, and so on to Left.
+        assert_eq!(
+            targets(&g, 0x20, Direction::DownLeft),
+            Some(
+                [7].into_iter()
+                    .chain(0..7)
+                    .map(Slot::Wild)
+                    .collect::<Vec<_>>()
+            )
+        );
+    }
+
+    /// The targets of byte `0x00` for a foe at (11, 9) and the leader at (10, 10) facing UpRight,
+    /// after `edit` has changed the dungeon.
+    fn up_right_foe(edit: impl FnOnce(&mut GameState)) -> Option<Vec<Slot>> {
+        let mut g = dungeon(vec![monster((10, 10), false)], vec![monster((11, 9), true)]);
+        edit(&mut g);
+        targets(&g, 0x00, Direction::UpRight)
+    }
+
+    #[test]
+    fn a_diagonal_facing_foe_needs_both_orthogonal_sides_open() {
+        // The sides of the diagonal from (10, 10) to (11, 9) are (11, 10) and (10, 9).
+        assert_eq!(up_right_foe(|_| {}), Some(vec![Slot::Wild(0)]));
+        // A wall on either side cuts the corner.
+        assert_eq!(
+            up_right_foe(|g| set_terrain(g, 11, 10, TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL)),
+            Some(vec![])
+        );
+        assert_eq!(
+            up_right_foe(|g| set_terrain(g, 10, 9, TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL)),
+            Some(vec![])
+        );
+        // A side of type 0 (not a wall flag) is not open either.
+        assert_eq!(up_right_foe(|g| set_terrain(g, 10, 9, 0)), Some(vec![]));
+        // A facing tile of type 0 gives no candidate.
+        assert_eq!(up_right_foe(|g| set_terrain(g, 11, 9, 0)), Some(vec![]));
+    }
+
+    #[test]
+    fn a_cardinal_facing_foe_has_no_corner_test() {
+        // A foe on the tile to the right, with walls on both sides of the row above it: a
+        // cardinal step cuts no corner, so the foe is still the candidate.
+        let mut g = dungeon(
+            vec![monster((10, 10), false)],
+            vec![monster((11, 10), true)],
+        );
+        set_terrain(&mut g, 11, 9, TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL);
+        set_terrain(&mut g, 10, 9, TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL);
+        assert_eq!(
+            targets(&g, 0x00, Direction::Right),
+            Some(vec![Slot::Wild(0)])
+        );
+    }
+
     #[test]
     fn areas_whose_rule_is_not_in_the_notes_are_not_modelled() {
         let g = dungeon(
             vec![monster((10, 10), false)],
             vec![monster((11, 10), true)],
         );
-        for byte in [0x20u16, 0x30, 0x40, 0x60, 0x80] {
+        for byte in [0x30u16, 0x40, 0x60, 0x80] {
             assert_eq!(targets(&g, byte, Direction::Right), None, "{byte:#x}");
         }
     }

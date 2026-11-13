@@ -357,19 +357,27 @@ impl Dungeon {
         if tile.terrain & floor::TERRAIN_TYPE_MASK != TERRAIN_NORMAL {
             return Err(Blocked::Terrain);
         }
-        if dx != 0 && dy != 0 {
-            // A wall (or the map edge) on either side of the diagonal blocks the step.
-            let open = |xx: i32, yy: i32| {
-                self.floor.tile(xx, yy).is_some_and(|t| {
-                    t.terrain & floor::TERRAIN_IMPASSABLE_WALL == 0
-                        && t.terrain & floor::TERRAIN_TYPE_MASK != 0
-                })
-            };
-            if !open(lx + dx, ly) || !open(lx, ly + dy) {
-                return Err(Blocked::CornerCut);
-            }
+        if !self.corner_open(lx, ly, dx, dy) {
+            return Err(Blocked::CornerCut);
         }
         Ok(target)
+    }
+
+    /// Whether a step from `(x, y)` by `(dx, dy)` cuts no wall corner. A cardinal step has no
+    /// corner. A diagonal one needs both orthogonal neighbours open: not a wall, and a type other
+    /// than 0, so a wall or the map edge on either side blocks it. Shared by
+    /// [`Self::leader_target`] and the executor's facing candidate (`crate::targeting`).
+    pub(crate) fn corner_open(&self, x: i32, y: i32, dx: i32, dy: i32) -> bool {
+        if dx == 0 || dy == 0 {
+            return true;
+        }
+        let open = |xx: i32, yy: i32| {
+            self.floor.tile(xx, yy).is_some_and(|t| {
+                t.terrain & floor::TERRAIN_IMPASSABLE_WALL == 0
+                    && t.terrain & floor::TERRAIN_TYPE_MASK != 0
+            })
+        };
+        open(x + dx, y) && open(x, y + dy)
     }
 }
 
