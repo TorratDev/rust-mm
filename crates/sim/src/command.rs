@@ -59,8 +59,9 @@ pub enum Command {
     /// checks hold (`docs/re/turns.md`, "Running and swapping"). With an empty belly it is one
     /// step.
     Run(Direction),
-    /// Regular Attack in a direction (action `0x32`, move `0x163`): it takes no PP. Only a foe
-    /// on the facing tile is modelled, and only through [`crate::state::GameState::step_with`].
+    /// Regular Attack in a direction (action `0x32`, move `0x163`): it takes no PP. Its targets
+    /// are the monsters its range picks. Only the modelled areas run, through
+    /// [`crate::state::GameState::step_with`].
     Attack(Direction),
     /// Use move slot `slot` (0 to 3), at a direction for moves that need one. Only the
     /// damaging moves of [`crate::combat`] are modelled, and only through
