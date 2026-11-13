@@ -56,6 +56,8 @@ pub type FloorRecord = [u8; FLOOR_PROPERTIES];
 /// The floor records of dungeon `dungeon` in `map`, indexed by the floor number the game uses
 /// (the `mapparam` floor index). Entry 0 is the placeholder Red keeps there, so the length is
 /// the floor count the loop compares against (`docs/re/turns.md`, "Floor loop exit").
+// shortcut: dungeon ids 0x4B to 0x61 read mapparam group 0x34 in the game, not `dungeons[id]`,
+// and have 4 floors (`docs/re/turns.md`, "Floor index convention"); upgrade when that mapping is ported.
 #[must_use]
 pub fn floor_records(map: &MapParam, dungeon: u8) -> Option<Vec<FloorRecord>> {
     map.dungeons
@@ -1112,12 +1114,15 @@ mod tests {
     }
 
     /// `n` floors of layout 1 with no items or monsters, after the placeholder at index 0: the
-    /// floor count is `n + 1`.
+    /// floor count is `n + 1`. Floor `i` has room density `i`, so the floors differ.
     fn records(n: usize) -> Vec<FloorRecord> {
-        let mut floor = [0u8; FLOOR_PROPERTIES];
-        floor[0] = 1;
         let mut out = vec![[0u8; FLOOR_PROPERTIES]];
-        out.extend(std::iter::repeat_n(floor, n));
+        for i in 1..=n {
+            let mut floor = [0u8; FLOOR_PROPERTIES];
+            floor[0] = 1;
+            floor[1] = u8::try_from(i).expect("few floors");
+            out.push(floor);
+        }
         out
     }
 
@@ -1125,6 +1130,16 @@ mod tests {
     /// the fixed draws, then `GenerateFloor`. Returns the floor, the generator after it, and the
     /// generator's stairs.
     fn chained_floor(seed: u32, recs: &[FloorRecord], n: usize) -> (Floor, DungeonRng, GenState) {
+        chained_floor_with(seed, &recs[n], n)
+    }
+
+    /// [`chained_floor`] with the floor's record given directly, so a test can build floor `n`
+    /// from another floor's record.
+    fn chained_floor_with(
+        seed: u32,
+        record: &FloorRecord,
+        n: usize,
+    ) -> (Floor, DungeonRng, GenState) {
         let mut preseed = DungeonPreseed::new(seed);
         let mut floor_seed = 0;
         for _ in 0..n {
@@ -1137,7 +1152,7 @@ mod tests {
         let mut floor = Floor::new();
         let mut g = GenState::default();
         generate_floor(
-            &properties_from_record(&recs[n]),
+            &properties_from_record(record),
             false,
             &mut floor,
             &mut rng,
@@ -1247,6 +1262,14 @@ mod tests {
             d.floor(),
             &floor2,
             "floor 2 is generated from the chain's second seed"
+        );
+        // Floor 2 takes record 2, not record 1 (an off-by-one in `take_stairs` would pass the
+        // check above only if the two records made the same floor).
+        let (floor2_from_record_1, _, _) = chained_floor_with(seed, &recs[1], 2);
+        assert_ne!(
+            d.floor(),
+            &floor2_from_record_1,
+            "floor 2 is built from record 2, not record 1"
         );
         assert_eq!(
             d.rng(),
