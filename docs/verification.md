@@ -729,3 +729,23 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** P1 and P2 as the investigators describe them: the floor's properties come from the ROM's record for dungeon 0 floor 1, and tileset 14 builds a layer for the natural-seed floor. Not run: the layer is not compared with a runtime frame, and no pixels are checked.
 - **Fallback adopted:** variant draws are fixed at 0 (`shortcut:` comment in `rom_tests.rs`); the retail variants need the global RNG (P3), which the scene wiring will add. Palette animation is not applied (static palette).
 - **Notes:** `crates/render/Cargo.toml` gained a dev-dependency on `rescue-sim` for the sim-floor test; the task's file list did not name it. The ROM test repeats the harness's generation call (about six lines), because the harness's `generate` is app-local and was not in the move.
+
+---
+
+## #400 — Dungeon scene: the ROM's first floor in the game (P3, P4, wiring)
+
+- **Assumption:** the game's dungeon scene shows dungeon 0, floor 1 from the ROM, on the natural seed (`0xB280_4D01`), in tileset 14's graphics, scrolled so the leader (`GenState::stairs_a`) is centred.
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0, Windows 11 Pro (10.0.26200). ROM: the main checkout's `pmdb.nds` as `RESCUE_ROM`, with `RESCUE_REQUIRE_ROM=1` for the gated test.
+- **What the game reads from the dump** (`apps/game/src/dungeon.rs`, `FloorData::from_rom`): `system.sbin` (`itempara`, for the item count) and `dungeon.sbin` (`mapparam`, through `rescue_sim::floor_gen::properties_for`; tileset number from record byte `+0x02`; `Tileset::load` for that number). `main` reads the same file `boot` checked (`boot::read`).
+- **Evidence:**
+  - ROM test `first_floor_matches_the_oracle_and_centres_the_leader` (`apps/game`, `RESCUE_ROM=<main>/pmdb.nds RESCUE_REQUIRE_ROM=1 cargo test -p rescue-game first_floor`): 1 passed, not skipped. It checks tileset 14, layout 1, and `layout_fnv1a` of the scene's floor against the `ORACLE_FLOORS` rows for layout 1: `0xf56d_01ac_d18e_338a` (natural seed) and `0xeb41_617f_5f54_1eec` (seed `0x1234_5678`). It also checks the leader at (20, 25) and the camera scroll (364, 508), which is `follow((20, 25), (0, 0))`.
+  - `cargo test --workspace` with `RESCUE_ROM` set: all pass, none failed. `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all --check`, `scripts/check-determinism.sh`, `scripts/check-deps.sh`: pass.
+  - Placeholder path (no ROM, and `App` tests): `the_seed_builds_the_same_floor_every_time`, `the_frame_draws_each_visible_cell_in_its_terrain_colour`, `boot_to_menu_and_back_headless` pass.
+- **Outcome:** P3 and P4 as the investigators describe them. The scene's floor is the sim's floor for the natural seed with the ROM's properties, drawn in the tileset's tiles, with the camera on the leader. The layer wraps (`BgLayer::pixel` takes the scroll modulo the layer size).
+- **Placeholder (not retail):**
+  - Palette animation: the palette is static. The tileset's `canm` is not applied (#400 P2, unsettled slot mapping).
+  - Variants: the autotile variant draws come from a `GlobalRng` seeded with six zero bytes (`shortcut:` in `dungeon.rs`). Retail draws depend on frame timing (#400 P3), so they are not reproducible.
+  - Without a ROM, or if the first floor does not load: solid colours per terrain, the default `FloorProperties`, and no camera (the 8-pixel placeholder cells do not scroll).
+- **Not run:** the window. The game was not started on a display, so what New Game shows on screen is not checked. The test compares layout hashes and the camera, not pixels.
+- **Open risk:** the camera doc says the floor map is 512 x 256 and wraps, but the floor layer is 56 x 32 cells of 24 pixels (1344 x 768). `BgLayer` wraps at its own size, so a scroll near the floor edge shows the far side of the floor. Not checked against a captured retail frame.

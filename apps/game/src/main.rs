@@ -199,6 +199,17 @@ fn main() -> ExitCode {
         ),
         RomCheck::Refused(why) => eprintln!("rescue: {why}"),
     }
+    // The dungeon's floor comes from the same dump. Without it the dungeon shows a placeholder.
+    let floor = match rom {
+        RomCheck::Ready(_) => boot::read(
+            std::env::var_os(ROM_PATH_ENV),
+            Some(Path::new(CONFIG_FILE_NAME)),
+        )
+        .and_then(|bytes| dungeon::FloorData::from_rom(&bytes))
+        .map_err(|e| eprintln!("rescue: dungeon placeholder, the first floor did not load: {e}"))
+        .ok(),
+        RomCheck::NotConfigured | RomCheck::Refused(_) => None,
+    };
     let config = Config {
         title: String::from("rescue"),
         scale: opts.scale,
@@ -216,7 +227,7 @@ fn main() -> ExitCode {
         speed: opts.speed,
         start_paused: opts.pause,
     };
-    match rescue_platform::run(&config, &mut App::new(&rom)) {
+    match rescue_platform::run(&config, &mut App::new(&rom, floor)) {
         Ok(stats) => {
             println!(
                 "rescue: ran {} ticks, presented {} frames, gamepads at start: {}",

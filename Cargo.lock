@@ -2809,10 +2809,12 @@ name = "rescue-game"
 version = "0.0.0"
 dependencies = [
  "rescue-data",
+ "rescue-formats",
  "rescue-nds",
  "rescue-platform",
  "rescue-render",
  "rescue-sim",
+ "rescue-tests",
 ]
 
 [[package]]
