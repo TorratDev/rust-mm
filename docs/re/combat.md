@@ -401,7 +401,7 @@ Static, unless marked "runtime". The damage path and faint handler match Red by 
 
 ## Damaging moves in the sim (#419)
 
-The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings P1 to P7 (numbered as #419 numbers them, not the P1 to P6 of the sections above) come from two investigators' comments on [#419](https://github.com/TorratDev/rust-mm/issues/419): investigator a for P1, P2 and P7, investigator b for P3 to P6. Their static reads were checked against the Ghidra text export (STAMP 2026-11-12), and their runtime probes ran on the dump. The probes are scratch files, not in the repo. The tables are not copied here ([`legal.md`](../legal.md)): `rescue_data::combat` reads them from the user's dump at run time, and this page gives addresses, shapes and the rules. Tags are the same as above.
+The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings P1 to P8 (numbered as #419 numbers them, not the P1 to P6 of the sections above) come from two investigators' comments on [#419](https://github.com/TorratDev/rust-mm/issues/419): investigator a for P1, P2, P7 and P8, investigator b for P3 to P6. Their static reads were checked against the Ghidra text export (STAMP 2026-11-12), and their runtime probes ran on the dump. The probes are scratch files, not in the repo. The tables are not copied here ([`legal.md`](../legal.md)): `rescue_data::combat` reads them from the user's dump at run time, and this page gives addresses, shapes and the rules. Tags are the same as above.
 
 ### P1. Type factor and label (`sub_806E100`, `0217CE88`)
 
@@ -423,7 +423,7 @@ The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings
 - **Mark.** When `0215B384` returns non-zero (any completed use, a hit or a miss), the loop sets `move[1] |= 0x08`. **blue-verified** (static).
 - **Apply.** `FUN_ov_0001__02159B18` runs at the end of the action. For a marked move it clears the mark and takes 1 PP (2 with the `0x10` mark, below). It draws nothing. **blue-verified** (static, and runtime: PP goes down by one per use, including 11 forced slot-0 misses in run `o_miss`).
 - **Not seen, or not modelled.** The `0x10` mark (Pressure, ability `0x39` on the target, [hypothesis] name) takes 2 PP; the bit `0x04` clears the mark without a take (its writer is not traced). **open**.
-- **Regular Attack** (move `0x163`) took no PP in 14 uses (runtime). Its route to the dispatcher is not traced, so the sim does not run Regular Attack. **open**.
+- **Regular Attack** (move `0x163`) takes no PP and never enters `0215BE14`: see [P8](#p8-regular-attack-action-0x32). **blue-verified** (static and runtime).
 - **Sim.** `MoveSlot` (6 bytes: `flags`, `flags2`, `id`, `pp`, `ginseng`) in `EntityInfo::moves`; `strike` sets and clears the mark, and takes 1 PP after the hit checks.
 
 ### P4. Hit check (`AccuracyCalc`, `0215A928`)
@@ -455,20 +455,34 @@ The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings
 - **Not checked.** The Deoxys ±2 (its three form IDs are in [Damage formula](#damage-formula), not the signs), and the Skull Bash defence stage (`info + 0xAE == 6`). **open**.
 - **Sim.** `rescue_data::combat::CombatTables::{attack_stage, defence_stage}`; the sim keeps `EntityInfo::{offensive_stages, defensive_stages}`.
 
+### P8. Regular Attack (action `0x32`)
+
+- **Action.** Regular Attack is action `0x32` (50) at info `+0x42`. The leader's input loop `02166B10` writes it with `021418AC(info+0x42, 0x32)` when the attack input has no `0x200` bit and `02165A80` returns 0. The move-menu actions `0x14` (leader, `02172CDC`) and `0x15` (`02191DBC`) use the move slot path and reach `0215BE14`; action `0x32` does not. Runtime: the leader ran action 50 (163 executions) in base run `5803e729`. **blue-verified**.
+- **Execute switch.** `0218453C` case `0x32` calls `FUN_02172ADC(entity, 0x163)`. The literal is at `02184E44`. **blue-verified** (static; the literal read at runtime).
+- **Route.** `02172ADC` builds a stack copy of move `0x163` (flags `0x0D`, PP 10, a temporary: no move slot is read or written). It runs `0215B384(entity, 0, 0, 0, 0, move)` once, or twice when a weather or ability count says so (`02181D98`, not run). `0215B384` skips the animation call and calls the dispatcher `02156824` for the target list. The dispatcher runs the slot-0 hit check `0215A928` (`0215A950` draws), then switch case `0x163` calls `0215675C(entity, target, move, 0x80)`, which calls `CalcDamage` (`arg8` `0x80`), then the slot-1 check at `0215652C`. `0215BE14` is not on this path. **blue-verified** (static; the hit and miss runs below reached the accuracy and damage hooks along this route). The probe's entry counts for `0215B384` and `0215BE14` were not split by action, so they are not quoted here. **open** for the two-strike branch (`02181D98` returning 2).
+- **Move row.** Accuracy: slot 0 is 125, slot 1 is 93 (`FUN_0200B3C4`). Power 1 (base power, with the ginseng byte 0 added). Type 0 (`GetMoveTypeForMonster`; the row's own type byte is also 0, so the sim reads the row). Critical odds 0 (row `+0x13`). The sim reads all four from the move table in the dump, not from this note. **blue-verified** (runtime hooks of `acc` and `calc`; the dump's row read by the ROM check).
+- **PP.** None. The PP byte of the stack copy is a literal and is never written back. **blue-verified** (runtime, 14 uses in the base run).
+- **Draws, hit.** Return sites, in order: `rand(100)` at `0215A950` (slot-0 check), `rand(100)` at `0217C02C` (boost), `rand(100)` at `0217C698` (critical), `rand(0x4000)` at `0217C720` (variance), `rand(100)` at `0215A950` (slot-1 check, return `02156550`). Six leader hits in run `5803e729` (the first at frame 1511). **blue-verified** (runtime).
+- **Draws, slot-0 miss.** One draw, `rand(100)` at `0215A950`; no `CalcDamage`, no slot-1 check. Forced: the accuracy byte of `0x163` set to 1 at `AccuracyCalc` entry (run `75abd573`, ten leader attacks). **blue-verified** (runtime, patched memory).
+- **Critical.** The odds argument is 0, so a leader hit does not crit without Focus Energy or the IQ skill. In the six leader hits the roll was 41, 97, 0, 72, 83 and 29 with the odds at 0, and no hit was reported critical; the crit flag itself was not hooked. **medium** for "no natural crit"; the Focus Energy and IQ terms are not run ([P5](#p5-critical-hit-odds)).
+- **Natural miss.** Not seen. All 24 accuracy calls on `0x163` in the base run hit. The slot-1 miss path is the shared one. **open**.
+- **Empty swings.** Most action-50 executions in the script hit an empty tile: no accuracy call and no `CalcDamage` followed. The sim does not model them (see below). **open**.
+- **Sim.** `combat::REGULAR_ATTACK` (`0x163`, the row is read from `CombatData::moves`), `regular_attack` (the facing foe, the leader's turn) and `resolve` (the draws and damage, shared with `strike`). `strike` adds the PP mark and the PP take, which `resolve` does not do.
+
 ### What the sim runs, and what it leaves out
 
-The sim runs a leader's use of Tackle (`0x9A`) or Scratch (`0x104`), the two moves of the dispatch's direct `HandleDamagingMove` path with a verified `arg8` of 1.0 ([#185](#damage-formula)). It takes the leader's turn, then:
+The sim runs a leader's use of Tackle (`0x9A`) or Scratch (`0x104`), the two moves of the dispatch's direct `HandleDamagingMove` path with a verified `arg8` of 1.0 ([#185](#damage-formula)), and its Regular Attack ([P8](#p8-regular-attack-action-0x32)), which takes the same hit checks, damage and draws with `arg8` `0x80` and no PP. It takes the leader's turn, then:
 
 1. Marks the PP ([P3](#p3-pp-mark-on-use-take-it-at-the-end-of-the-action)). Draws the slot-0 hit check.
 2. On a hit: draws the boost roll, the critical roll (not for a target with Battle or Shell Armor, [P5](#p5-critical-hit-odds)) and the variance roll, in that order, then computes the damage: the attack (power plus attack, the stage, truncated, clamped to 0 to 999), then `CalcStatBoosts` as one fraction with one truncating divide: the numerator and denominator take Huge Power and Pure Power (×3/2, at a boost roll of 32 or less), Hustle (×3/2) and the target's Intimidate (×4/5), physical moves only (the export of `0217C7F8`: the ×3 and ×4 go to the numerator, the 2 and 5 to the denominator, then one divide). The defence (the stage, truncated), the level term (`level × 2/3` in 48.16), `x = (attack − defence) / 8 + term`, `base = x² × 0.05 + (2x − defence + 10)` clamped to [1, 999], the type factor and the critical multiplier, `arg8` (1.0), the variance `(0xE000 + roll) / 0x10000`, and the rounding of each 48.16 product (half up on bit 15) and the final integer (`FP48_16_ToS32`).
 3. Draws the slot-1 hit check. On a hit the target's HP falls by the damage.
 4. Takes 1 PP at the end of the action, after a hit or a miss.
 
-Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, variance, accuracy (slot 1). A target with Battle or Shell Armor draws no critical value, so its hit takes four. A slot-0 miss draws one value. Tests cover the counts, the armoured targets, the critical path, the type cases, the stage formula at lowered and raised stages, the single divide of the stat boosts (Hustle with Intimidate, where sequential truncation differs), Compound Eyes, and PP after a hit and after a miss.
+Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, variance, accuracy (slot 1). A target with Battle or Shell Armor draws no critical value, so its hit takes four. A slot-0 miss draws one value. Tests cover the counts, the armoured targets, the critical path, the type cases, the stage formula at lowered and raised stages, the single divide of the stat boosts (Hustle with Intimidate, where sequential truncation differs), Compound Eyes, and PP after a hit and after a miss. For Regular Attack: the five draws of a hit and the one draw of a slot-0 miss, no PP, `arg8` `0x80` (half the damage of the same hit at 1.0), and `Attack` applied on a foe and unmodelled without one.
 
 Left out, each as a `shortcut:` in the code:
 
-- Regular Attack (`0x163`): its route to the dispatcher is not traced ([P3](#p3-pp-mark-on-use-take-it-at-the-end-of-the-action)).
+- Regular Attack (`0x163`): the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`), the second strike of `02181D98`, and the empty-tile swing ([P8](#p8-regular-attack-action-0x32)).
 - Targets beyond the facing tile (#420), defeat (#422), secondary effects (#421).
 - Held items, the Deoxys adjustment, Wonder Guard, the exposed flag, weather, charging, statuses, the offensive and defensive multipliers (`+0x2C`, `+0x34`, read as 1.0), the wild attacker's level term (`attack / 3`).
 - Guts, Marvel Scale and Plus/Minus (the [abilities table](#abilities-in-calcstatboosts)): they need a negative status or a dungeon flag.

@@ -774,16 +774,16 @@ impl GameState {
     /// leader's speed stage gives it one, then the command takes effect (see [`crate::turn`]).
     /// A refused move changes nothing and takes no time. While the leader's stairs flag is set,
     /// the command is the answer to the stairs menu: the floor changes ([`Outcome::NextFloor`],
-    /// or [`Outcome::DungeonCleared`] on the last floor). Otherwise attack, items and menus are
-    /// valid input and return [`Outcome::NotModelled`]. A move command (`UseMove`) runs only
-    /// through [`GameState::step_with`], with the combat tables.
+    /// or [`Outcome::DungeonCleared`] on the last floor). Otherwise items and menus are valid
+    /// input and return [`Outcome::NotModelled`]. A move command (`UseMove`) and an attack
+    /// (`Attack`) run only through [`GameState::step_with`], with the combat tables.
     pub fn step(&mut self, command: Command) -> Outcome {
         self.apply(command, None)
     }
 
     /// [`step`](Self::step) with the combat tables and the move table. A move command
-    /// (`UseMove`) runs its damage here; without the tables it is not modelled (see
-    /// [`crate::combat`]).
+    /// (`UseMove`) and an attack (`Attack`) run their damage here; without the tables they are
+    /// not modelled (see [`crate::combat`]).
     pub fn step_with(&mut self, command: Command, data: &CombatData<'_>) -> Outcome {
         self.apply(command, Some(data))
     }
@@ -820,7 +820,11 @@ impl GameState {
                 Some(data) => dungeon.use_move(slot, direction, data),
                 None => Outcome::NotModelled,
             },
-            Command::Attack(_) | Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
+            Command::Attack(dir) => match data {
+                Some(data) => dungeon.regular_attack(dir, data),
+                None => Outcome::NotModelled,
+            },
+            Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
         }
     }
 
