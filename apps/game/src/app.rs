@@ -6,27 +6,44 @@ use crate::boot::RomCheck;
 use crate::dungeon::{self, Dungeon, FloorData};
 use crate::scene::Scene;
 
-/// The running game: the current scene, last tick's held buttons, the ROM's first floor (None
-/// for the placeholder), and the floor while the dungeon scene is up.
+/// The running game: the current scene, last tick's held buttons, the ROM's floor (None for
+/// the placeholder), the seed the dungeon scene generates from, and the floor while the
+/// dungeon scene is up.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct App {
     pub scene: Scene,
     held: ButtonState,
     floor: Option<FloorData>,
+    seed: u32,
     dungeon: Option<Dungeon>,
 }
 
 impl App {
-    pub fn new(rom: &RomCheck, floor: Option<FloorData>) -> App {
+    /// `open_dungeon` starts on the dungeon scene instead of the splash (with a ROM).
+    pub fn new(rom: &RomCheck, floor: Option<FloorData>, seed: u32, open_dungeon: bool) -> App {
         let scene = match rom {
+            RomCheck::Ready(_) if open_dungeon => Scene::Dungeon,
             RomCheck::Ready(_) => Scene::Splash { ticks: 0 },
             RomCheck::NotConfigured | RomCheck::Refused(_) => Scene::Refused,
         };
-        App {
+        let mut app = App {
             scene,
             held: ButtonState::default(),
             floor,
+            seed,
             dungeon: None,
+        };
+        if app.scene == Scene::Dungeon {
+            app.enter_dungeon();
+        }
+        app
+    }
+
+    /// Builds the floor on entry. If it cannot be built, the menu stays up.
+    fn enter_dungeon(&mut self) {
+        match dungeon::build(self.seed, self.floor.as_ref()) {
+            Some(d) => self.dungeon = Some(d),
+            None => self.scene = Scene::Menu { cursor: 0 },
         }
     }
 
@@ -51,12 +68,8 @@ impl App {
         }
         self.scene = self.scene.step(pressed);
         if self.scene == Scene::Dungeon && self.dungeon.is_none() {
-            // The floor is built on entry and dropped on leaving, so each visit starts from
-            // the same seed. If it cannot be built, the menu stays up.
-            match dungeon::build(dungeon::SEED, self.floor.as_ref()) {
-                Some(d) => self.dungeon = Some(d),
-                None => self.scene = Scene::Menu { cursor: 0 },
-            }
+            // Dropped on leaving, so each visit starts from the same seed.
+            self.enter_dungeon();
         } else if self.scene != Scene::Dungeon {
             self.dungeon = None;
         }
@@ -82,8 +95,23 @@ mod tests {
     }
 
     #[test]
+    fn opens_on_the_dungeon_when_asked() {
+        let ready = RomCheck::Ready(RomId::BlueRescueTeamEur);
+        let app = App::new(&ready, None, dungeon::SEED, true);
+        assert_eq!(app.scene, Scene::Dungeon);
+        assert!(app.dungeon().is_some(), "the floor is built at start");
+        let refused = App::new(&RomCheck::NotConfigured, None, dungeon::SEED, true);
+        assert_eq!(refused.scene, Scene::Refused);
+    }
+
+    #[test]
     fn boot_to_menu_and_back_headless() {
-        let mut app = App::new(&RomCheck::Ready(RomId::BlueRescueTeamEur), None);
+        let mut app = App::new(
+            &RomCheck::Ready(RomId::BlueRescueTeamEur),
+            None,
+            dungeon::SEED,
+            false,
+        );
         assert_eq!(app.scene, Scene::Splash { ticks: 0 });
         for _ in 0..crate::scene::SPLASH_TICKS {
             app.tick(ButtonState::default());
@@ -108,7 +136,12 @@ mod tests {
 
     #[test]
     fn a_held_button_counts_once() {
-        let mut app = App::new(&RomCheck::Ready(RomId::BlueRescueTeamEur), None);
+        let mut app = App::new(
+            &RomCheck::Ready(RomId::BlueRescueTeamEur),
+            None,
+            dungeon::SEED,
+            false,
+        );
         app.tick(held(DsButton::Start));
         assert_eq!(app.scene, Scene::Title);
         // Still held: must not also fire the title's press on the next tick.
@@ -118,7 +151,7 @@ mod tests {
 
     #[test]
     fn refused_rom_quits_on_press() {
-        let mut app = App::new(&RomCheck::NotConfigured, None);
+        let mut app = App::new(&RomCheck::NotConfigured, None, dungeon::SEED, false);
         assert_eq!(app.scene, Scene::Refused);
         assert_eq!(app.tick(ButtonState::default()), Flow::Continue);
         assert_eq!(app.tick(held(DsButton::A)), Flow::Quit);

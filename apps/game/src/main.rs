@@ -4,8 +4,10 @@
 //! driven by `app`. Drawing is placeholder blocks for now (`draw`); the original art and
 //! text are not loaded yet. Logs keyboard and gamepad input to stdout.
 //!
-//! Usage: `rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]`. `--frames` (or the `RESCUE_FRAMES`
-//! environment variable) stops after N logic ticks, for headless runs in CI.
+//! Usage: `rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]`, plus
+//! the dungeon options (`--dungeon`, `--floor`, `--seed`, `--species`; see `USAGE`). `--frames`
+//! (or the `RESCUE_FRAMES` environment variable) stops after N logic ticks, for headless runs
+//! in CI.
 
 mod app;
 mod boot;
@@ -27,6 +29,7 @@ use crate::boot::RomCheck;
 
 const USAGE: &str =
     "usage: rescue [--frames N] [--scale N] [--gap N] [--layout NAME] [--ff N] [--pause]
+             [--dungeon N] [--floor N] [--seed HEX] [--species N]
   --frames N   stop after N logic ticks (DS rate, ~59.83 per second); also RESCUE_FRAMES=N
   --scale N    initial window scale (default 2)
   --gap N      gap between the two screens in DS pixels, 0..=64 (default 0)
@@ -35,6 +38,11 @@ const USAGE: &str =
                --frames implies --no-settings unless --settings is given
   --ff N       fast-forward multiplier 1..=16 (default 1)
   --pause      start paused (with --frames, N counts presented frames)
+  --dungeon N  dungeon of the dungeon scene (default 0)
+  --floor N    floor of that dungeon (default 1)
+  --seed HEX   seed of the floor generator (default B2804D01, the new game's)
+  --species N  species of the leader's sprite (default 25; the leader is not chosen yet)
+               Any of the four dungeon options opens the dungeon scene at start (needs a ROM).
 Window keys: F11 = fullscreen, F10 = next layout.
 Debug keys: F5 = pause, F6 = step one tick, Tab (held) = fast-forward.
 Keys: arrows = D-pad, X = A, Z = B, S = X, A = Y, Q = L, W = R,
@@ -60,6 +68,12 @@ struct Options {
     speed: u32,
     pause: bool,
     help: bool,
+    dungeon: u8,
+    floor: u8,
+    seed: u32,
+    species: u16,
+    /// Set by any of the four dungeon options: the game opens on the dungeon scene.
+    open_dungeon: bool,
 }
 
 /// Parses `args` (without the program name). `env_frames` is the value of
@@ -77,6 +91,11 @@ where
         speed: 1,
         pause: false,
         help: false,
+        dungeon: dungeon::DEFAULT_DUNGEON,
+        floor: dungeon::DEFAULT_FLOOR,
+        seed: dungeon::SEED,
+        species: dungeon::DEFAULT_SPECIES,
+        open_dungeon: false,
     };
     if let Some(v) = env_frames {
         opts.frames = Some(parse_positive("RESCUE_FRAMES", v)?);
@@ -122,6 +141,16 @@ where
                         .ok_or_else(|| format!("--scale must be 1..=16, got {n}"))?;
                 }
             }
+            "--dungeon" | "--floor" | "--species" | "--seed" => {
+                let value = args.next().ok_or_else(|| format!("{arg} needs a value"))?;
+                opts.open_dungeon = true;
+                match arg.as_str() {
+                    "--dungeon" => opts.dungeon = parse_number(&arg, &value)?,
+                    "--floor" => opts.floor = parse_number(&arg, &value)?,
+                    "--species" => opts.species = parse_number(&arg, &value)?,
+                    _ => opts.seed = parse_seed(&value)?,
+                }
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -133,6 +162,22 @@ fn parse_positive(name: &str, value: &str) -> Result<u64, String> {
         Ok(n) if n > 0 => Ok(n),
         _ => Err(format!("{name} must be a positive integer, got {value:?}")),
     }
+}
+
+fn parse_number<T: std::str::FromStr>(name: &str, value: &str) -> Result<T, String> {
+    value
+        .parse()
+        .map_err(|_| format!("{name} must be a whole number in range, got {value:?}"))
+}
+
+/// A seed in hex, with or without `0x`.
+fn parse_seed(value: &str) -> Result<u32, String> {
+    let digits = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    u32::from_str_radix(digits, 16)
+        .map_err(|_| format!("--seed must be a hex number of up to 8 digits, got {value:?}"))
 }
 
 /// Formats an input event as one log line.
@@ -205,8 +250,10 @@ fn main() -> ExitCode {
             std::env::var_os(ROM_PATH_ENV),
             Some(Path::new(CONFIG_FILE_NAME)),
         )
-        .and_then(|bytes| dungeon::FloorData::from_rom(&bytes))
-        .map_err(|e| eprintln!("rescue: dungeon placeholder, the first floor did not load: {e}"))
+        .and_then(|bytes| {
+            dungeon::FloorData::from_rom(&bytes, opts.dungeon, opts.floor, opts.species)
+        })
+        .map_err(|e| eprintln!("rescue: dungeon placeholder, the floor did not load: {e}"))
         .ok(),
         RomCheck::NotConfigured | RomCheck::Refused(_) => None,
     };
@@ -227,7 +274,8 @@ fn main() -> ExitCode {
         speed: opts.speed,
         start_paused: opts.pause,
     };
-    match rescue_platform::run(&config, &mut App::new(&rom, floor)) {
+    let mut app = App::new(&rom, floor, opts.seed, opts.open_dungeon);
+    match rescue_platform::run(&config, &mut app) {
         Ok(stats) => {
             println!(
                 "rescue: ran {} ticks, presented {} frames, gamepads at start: {}",
@@ -263,9 +311,53 @@ mod tests {
                 settings: Settings::Default,
                 speed: 1,
                 pause: false,
-                help: false
+                help: false,
+                dungeon: 0,
+                floor: 1,
+                seed: dungeon::SEED,
+                species: 25,
+                open_dungeon: false,
             }
         );
+    }
+
+    #[test]
+    fn dungeon_options() {
+        let o = parse_args(
+            args(&[
+                "--dungeon",
+                "3",
+                "--floor",
+                "7",
+                "--seed",
+                "0x1234abcd",
+                "--species",
+                "4",
+            ]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            (o.dungeon, o.floor, o.seed, o.species),
+            (3, 7, 0x1234_ABCD, 4)
+        );
+        assert!(o.open_dungeon);
+        assert_eq!(
+            parse_args(args(&["--seed", "B2804D01"]), None)
+                .unwrap()
+                .seed,
+            dungeon::SEED
+        );
+        assert!(
+            !parse_args(args(&["--scale", "3"]), None)
+                .unwrap()
+                .open_dungeon
+        );
+        assert!(parse_args(args(&["--dungeon", "256"]), None).is_err());
+        assert!(parse_args(args(&["--floor", "-1"]), None).is_err());
+        assert!(parse_args(args(&["--seed", "0x1234567890"]), None).is_err());
+        assert!(parse_args(args(&["--seed", "xyz"]), None).is_err());
+        assert!(parse_args(args(&["--species"]), None).is_err());
     }
 
     #[test]
