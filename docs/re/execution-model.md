@@ -433,4 +433,4 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 - Scene-runner inner phases `0x0` to `0x11` of states 1 and 2 (the switch on `DAT_02070358`, not named), and the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (their readers are not traced). The phase names and the variable `0x19` values are in [Scene runner states](#scene-runner-states-161-p1).
 - Whether modes 2 and 3 are reached in play.
 - Names for the IME helpers (proposed in #157 P2, awaiting confirmation) and the rename of `FUN_0201DE24` to `RemoveMoneyAndRandomItems` (proposed in [Scene graph](#scene-graph), awaiting confirmation).
-- Where the main loop of `RunDungeon_Async` advances a turn (the V7 trigger, #49).
+- Closed (#353 P1): `RunDungeon_Async` advances no turn itself. Its loop calls `RunFractionalTurn_Async`, which advances `fractionalTurn` when it ends. What a V7 row shows, and when a leader action appears in one, is in [`turns.md`](turns.md#for-golden-traces-v7).
