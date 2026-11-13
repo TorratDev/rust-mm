@@ -670,8 +670,9 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Notes:** the test reads the tile table from the ARM9 overlay that holds `021AC208`, and `fixedmap` from `dungeon.sbin`. The tileset (`+0x34AE`) is left at 0, as in the whole-floor test of `crates/sim`, because the natural value was not recorded by the probe.
 
 ### Re-run after P6 (code `0x44`) and P7 (monster draw), 2026-11-13
-- **Result: PASSES.** `RESCUE_ROM=C:/Users/Troll/Documents/github/rust-mm/pmdb.nds cargo test -p rescue-tests --test fixed_rooms_rom`: 1 passed, 0 mismatches in 100 rows. Before the change: 49 mismatches (RNG state on numbers 1-49, and number 1's tile hash on seed `0x0BADF00D`). The rows were not changed.
+- **Result: PASSES.** `RESCUE_REQUIRE_ROM=1 RESCUE_ROM=<dump> cargo test -p rescue-tests --test fixed_rooms_rom`: 1 passed, 0 mismatches in 100 rows. Before the change: 49 mismatches (RNG state on numbers 1-49, and number 1's tile hash on seed `0x0BADF00D`). The rows were not changed.
+- **Environment:** Windows 11 Pro (10.0.26200), rustc 1.97.0, the supported dump `pmdb.nds` (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`).
 - Fixes: code `0x44` clears tile `+2` bit 1 only (`02152B20`, [`re/fixed-rooms.md`](re/fixed-rooms.md#code-0x44-and-the-monster-draw-p6-p7)); the monster setter draws one `DungeonRandInt(8)` per table monster (`02153018`, LR `021909C4`), in `PortedSteps::place_fixed_room`.
 - `cargo test -p rescue-sim`: 96 passed, 0 failed (one new unit test, `fixed_tile_setter_code_44_clears_bit_1_only`).
 - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass. `scripts/check-determinism.sh`: pass.
-- Outcome: the whole-floor check passes on all 100 rows. The P7 draw is a shortcut: the setter's global-RNG draws stay unported; numbers 50 and up do not run the draw. The test does not check the spawn lists, so the draw is checked only through the dungeon RNG state.
+- Outcome: the whole-floor check passes on all 100 rows. The P7 draw is a shortcut: the setter's global-RNG draws stay unported; rooms 50-66 have no table monster, so no draw happens there. The test does not check the spawn lists, so the draw is checked only through the dungeon RNG state.

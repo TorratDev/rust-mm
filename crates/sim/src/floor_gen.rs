@@ -574,7 +574,7 @@ impl FloorSteps for PortedSteps {
         // shortcut: one DungeonRandInt(8) per table monster, the wander-step draw
         // of 02190854 (retail rooms 1-49 have no other dungeon draw); the setter's
         // global-RNG draws stay unported, upgrade when a monster state other than the
-        // wander step is reached. Not run for numbers 50 and up (no monster tile there).
+        // wander step is reached. Rooms 50-66 have no table monster, so no draw there.
         for spawn in &self.fixed_out.spawns {
             if matches!(spawn, floor::FixedSpawn::Monster { .. }) {
                 let _ = rng.int(8);

@@ -1,7 +1,7 @@
 # Fixed rooms: the fixed-room file and ProcessFixedRoom
 
 **Date:** 2026-11-12
-**Status:** partial. File format, decoder, tile setter, both placement paths, the number-4 rectangle and the staged stamp ported; spawn effects, the staged reveal and the RNG order of spawns still open. No emulator run covers the staged stamp or the number-4 rectangle yet (unit tests only). The retail whole-floor check of numbers 1 to 66 is in (see [Retail whole-floor check](#retail-whole-floor-check-p5)): it does not pass yet (dungeon RNG steps on 48 of numbers 1 to 49, the tile hash of number 1 on one seed).
+**Status:** partial. File format, decoder, tile setter, both placement paths, the number-4 rectangle and the staged stamp ported; spawn effects, the staged reveal and the RNG order of spawns still open. No emulator run covers the staged stamp or the number-4 rectangle yet (unit tests only). The retail whole-floor check of numbers 1 to 66 is in (see [Retail whole-floor check](#retail-whole-floor-check-p5)): it passes on all 100 rows after the P6 and P7 fixes (see [Code 0x44 and the monster draw](#code-0x44-and-the-monster-draw-p6-p7)). Before those fixes it failed on 49 rows (dungeon RNG steps and the tile hash of number 1 on one seed).
 **Subsystem:** dungeon floor generation (fixed rooms)
 
 Issue: [#342](https://github.com/TorratDev/rust-mm/issues/342), parent [#111](https://github.com/TorratDev/rust-mm/issues/111). Parent notes: [`dungeon-generation.md`](dungeon-generation.md).
@@ -133,7 +133,7 @@ Codes 8 and `0x43` (label `02152D34`) do set bit 0 (`p[1] |= 1; p[1] &= 0xfffd`)
 - No other dungeon draw happens in rooms 1-49. Items (`02153190`) and traps (`02152FAC`, code `0x45`) draw nothing in these rooms. Rooms 50-66 have no monster call; their draws are the layout draws.
 - Not checked: other monster states (no retail room reaches them), and whether the setter's global-RNG draws (`RandInt(10)`, `RandInt(18)`, see the table in P3) affect the dungeon RNG (they do not; they are the global generator).
 
-Rust: `PortedSteps::place_fixed_room` (`crates/sim/src/floor_gen.rs`) draws `rng.int(8)` once per `FixedSpawn::Monster` in `FixedRoomOut::spawns`, in setter order, and discards the result. Shortcut comment there: one wander-step draw, valid for the retail monster states; the setter's global-RNG draws stay unported. Numbers 50 and up are not run through this path (no monster tile there).
+Rust: `PortedSteps::place_fixed_room` (`crates/sim/src/floor_gen.rs`) draws `rng.int(8)` once per `FixedSpawn::Monster` in `FixedRoomOut::spawns`, in setter order, and discards the result. Shortcut comment there: one wander-step draw, valid for the retail monster states; the setter's global-RNG draws stay unported. Rooms 50-66 have no table monster, so no draw happens there.
 
 ## Evidence and verification status
 - Sources: investigator A's findings for #342 (`~/rescue-re/scratch/findings/342-a.md`): ROM data read from `fixedmap` in `dungeon.sbin` (`pmdb.nds`), static decompiles from a ghidra-cli copy, and one py-desmume probe for the `021B3ED0` value. Tags: ROM-data and static claims are [blue-verified]; the reveal details are read, not run.
