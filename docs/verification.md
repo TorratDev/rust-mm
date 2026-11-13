@@ -794,3 +794,25 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - The sprite and minimap pixels were checked by the ROM tests, not by eye. No screenshot was taken.
 - **Render crate:** not touched. The pixel copy and the palette are in `apps/game`.
 - **Not run:** the window was started, not inspected; no screenshot.
+
+## #347 — The leader walks a floor and the stairs take it to the next
+
+- **Assumption:** input and walk follow investigator a's findings on #347 (P1: the held word each frame, two D-pad bits for a diagonal, R for diagonals only, A+B to wait, B for run; P2: 24 frames a tile at 1 px a frame on each axis, walk group 0, idle group 7). The sim's `Command` and `GameState` (#346 and the sim) are used as they are.
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0, Windows 11 Pro (10.0.26200). ROM: the main checkout's `pmdb.nds` as `RESCUE_ROM`, with `RESCUE_REQUIRE_ROM=1`.
+- **What changed:** `apps/game` only. `input.rs` maps the held buttons to a `Command` (pure). `walk.rs` is the walk on screen (24 frames a tile, pure). `dungeon.rs` draws one floor at a pose, and generates the first floor. `app.rs` owns the run as a sim `GameState` with the floor records from `properties_for` and `floor_records`; a move starts a walk, the stairs (`Outcome::NextFloor`) rebuild the floor, tileset and view, and `Outcome::DungeonCleared` goes back to the menu. `crates/render` and `crates/sim` are not touched (`follow` already takes a sub-cell offset, so the camera follows the drawn sprite without a change).
+- **Evidence:**
+  - Headless: `input::a_list_of_held_buttons_gives_the_list_of_commands` (15 button states to 15 commands); `walk` tests (one tile in 24 frames, a diagonal at 1 px on each axis, a run of three tiles, no legs); `app::a_move_walks_a_tile_and_inputs_wait_for_the_walk` (the sim is on the new tile at once, and no input is read for the next 23 frames); `app::a_held_move_onto_the_stairs_takes_them_after_the_walk` (from a tile next to the stairs, a held direction steps the leader onto them on the first tick; the scene holds through the walk's 24 frames; the tick that ends the walk takes the stairs, and the placeholder clears to `Scene::Menu { cursor: 0 }`); `app::the_stairs_clear_a_dungeon_with_no_next_floor` (standing on the stairs waits for the next input, then the dungeon clears to the menu); `app::the_sim_floors_start_at_the_start_floor`; `scene` no longer leaves the dungeon on B.
+  - ROM: `app::the_stairs_take_the_rom_floor_to_the_next` (from a tile next to floor 1's stairs, a held direction walks the leader onto them; when the walk ends the stairs take it to floor 2: the walk is gone, `floors_entered` is 2 and the view is rebuilt); `dungeon::the_camera_follows_the_drawn_sprite`; the #334 and #400 tests, updated to the new `first_floor` and `draw`.
+  - `RESCUE_ROM=<main>/pmdb.nds RESCUE_REQUIRE_ROM=1 cargo test -p rescue-game`: 40 passed, none skipped. `cargo test -p rescue-game` without a ROM: 40 passed. `cargo test --workspace`: 519 passed. `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all --check`: pass.
+  - Smoke run: `rescue --dungeon 0 --floor 1 --frames 240 --no-settings` with `RESCUE_ROM` set: loads the ROM, runs 240 ticks, exits 0.
+- **Shortcuts (in code, `shortcut:` comments):**
+  - Timing: every tile takes 24 frames, including a run's tiles (the run is one straight line, so each tile is walked in turn). The speed stage (the queued moves of `02187C90`) and the one-tile-a-frame run are not settled (investigator a's P2 and P1), so a fast leader is not shown faster. The speed option (`dungeonSpeed`, a 12-frame tile in investigator a's poke) is not read.
+  - Leader stats: level 1, 100 HP, belly 100.000, placeholder for the sim's team member; the ROM gives only the species' movement speed and sprite.
+  - `--floor N`: the sim numbers its floors from 1, so its list starts at the start floor's record (index 1). The first floor's layout is generated from the oracle seed (`DungeonRng::from_state`, as #400 pins), not from the sim's preseed chain that the later floors use.
+  - `B` no longer leaves the dungeon (it is run). The only way back to the menu is the dungeon's clear.
+- **Not verified:**
+  - A live walk to the stairs with the keyboard. The game was started with the ROM for 240 ticks, but no input was sent, so the walk and the stairs were checked by the headless and ROM tests only. Those tests hold a direction from a tile next to the stairs, so the walk is driven through the input path; the keyboard itself was not used. No screenshot was taken.
+  - The walk's timing against retail beyond investigator a's runs (down, right, diagonal; every walk 24 frames).
+- **Sim gap:** the sim has no public constructor for a team leader, so `app.rs` builds the `EntityInfo` literal (all fields are public). A constructor in `crates/sim` would remove it.
+- **Not run:** a live walk to the stairs on floor 1 (see Not verified).
