@@ -4,7 +4,7 @@ First entry points into Blue's combat code, found from the code that reads the t
 
 Every function below matches its `pmd-red` counterpart in `src/dungeon_damage.c` by argument count, constants and calls, so it keeps that name, including `pmd-red`'s placeholder names (`sub_806E100`, ...). Confirmed by reading Blue's code, not by emulator trace.
 
-**Status.** Most of this page was read statically, from Blue's decompiled code, its overlay and ARM9 data, and `pmd-red` at the pinned commit. The runtime evidence is the damage formula check for 14 observed `CalcDamage` hits (#185, [verification](../verification.md#v6--blue-reuses-reds-logic)), the move-dispatch and EXP checks in the sections on [move effects](#move-effects) and [defeat and experience](#defeat-and-experience). The formula matches the hits, except the parts listed in [the damage formula](#damage-formula). The issue's condition, "matches observed emulator hits", holds for the cases those 14 hits cover.
+**Status.** Most of this page was read statically, from Blue's decompiled code, its overlay and ARM9 data, and `pmd-red` at the pinned commit. The runtime evidence is the damage formula check for 14 observed `CalcDamage` hits (#185, [verification](../verification.md#v6--blue-reuses-reds-logic)), the move-dispatch and EXP checks in the sections on [move effects](#move-effects) and [defeat and experience](#defeat-and-experience). The formula matches the hits, except the parts listed in [the damage formula](#damage-formula). The issue's condition, "matches observed emulator hits", holds for the cases those 14 hits cover. The hit check, critical-hit roll, Huge Power and Hustle, and the RNG order of a basic attack were checked in a later runtime pass, see [basic attack at runtime](#basic-attack-at-runtime-356).
 
 ## Functions
 
@@ -83,8 +83,8 @@ These modifiers are applied in the stat-boost function (`ov_0001::0217C7F8`). Ab
 | Ability or item | ID | Applies to | Effect |
 |-----------------|----|-----------|--------|
 | Guts | `0x11` | attacker | attack ×2 while the attacker has a negative status |
-| Huge Power, Pure Power | `0x22`, `0x4B` | attacker | attack ×3/2 for physical moves when the roll is 32 or less (the roll is `CalcDamage`'s first `DungeonRandInt(100)`) |
-| Hustle | `0x30` | attacker | attack ×3/2 for physical moves |
+| Huge Power, Pure Power | `0x22`, `0x4B` | attacker | attack ×3/2 for physical moves when the roll is 32 or less (the roll is `CalcDamage`'s first `DungeonRandInt(100)`). Gate measured at runtime, see [P3](#p3-huge-power-and-hustle) |
+| Hustle | `0x30` | attacker | attack ×3/2 for physical moves. Measured on one move only ([P3](#p3-huge-power-and-hustle)). Its target evasion effect is in [P5](#p5-static-leftovers) |
 | Plus, Minus | `0x38`, `0x3F` | attacker and target (flag chosen by the not-enemy test) | ×3/2 on attack and defense for special moves. The flags are at `gDungeon` `+0x3358` and `+0x335A` (pairing inferred, see [open questions](#open-questions)) |
 | Intimidate | `0x06` | target | attack ×4/5 for physical moves |
 | Marvel Scale | `0x34` | target | defense ×3/2 while the target has a negative status |
@@ -105,7 +105,7 @@ The item boosts are gated by the argument `arg_10`, as in Red.
 
 ### Critical hits
 
-- The crit roll (`DungeonRandInt(100)`) is drawn only when the defender has neither Battle Armor (`0x0C`) nor Shell Armor (`0x13`).
+- The crit roll (`DungeonRandInt(100)`, `0217C698`) is drawn only when the defender has neither Battle Armor (`0x0C`) nor Shell Armor (`0x13`). This gate is static. The runtime probes drew the roll on every attack they ran ([P2](#p2-critical-hit-roll)), and the findings do not say whether those targets had either ability, so the gate stays open.
 - Focus Energy (status 4) sets the odds to 999.
 - IQ Type Advantage Master (IQ skill ID 1, not confirmed) sets the odds to 40 when the type result is super-effective.
 - A crit multiplies by 1.5. The crit flag is stored in the damage struct at `+0xD` and is cleared when the damage is 0.
@@ -156,30 +156,101 @@ Callers, **blue-verified**. All four are unconditional calls:
 
 For bit-exact replay the order of RNG calls matters ([`rng.md`](rng.md)). Blue's `CalcDamage` makes three dungeon RNG calls, in this order (static, P2.4). The type function and `CalcStatBoosts` make no RNG call.
 
-1. `DungeonRandInt(100)` at the top of `CalcDamage`, before the items. Its result is the **roll** that `CalcStatBoosts` receives as its sixth argument. Huge Power and Pure Power read it (boost only when the roll is 32 or less). The earlier note that this result is unused was wrong. The Ghidra call site shows four arguments because the prototype is not set. The sixth is inferred from the callee, and the stack store was not seen in the disassembly.
-2. `DungeonRandInt(100)` for the critical hit, compared with the odds. It runs after the type function and the screen multipliers, and only when the defender has neither Battle Armor nor Shell Armor.
-3. `DungeonRandInt(0x4000)` for the variance. It always runs.
+1. `DungeonRandInt(100)` at the top of `CalcDamage` (`0217C02C`), before the items. Its result is the **roll** that `CalcStatBoosts` receives as its sixth argument. Huge Power and Pure Power read it (boost only when the roll is 32 or less). The earlier note that this result is unused was wrong. The Ghidra call site shows four arguments because the prototype is not set. The sixth is inferred from the callee, and the stack store was not seen in the disassembly.
+2. `DungeonRandInt(100)` for the critical hit (`0217C698`), compared with the odds. It runs after the type function and the screen multipliers, and only when the defender has neither Battle Armor nor Shell Armor.
+3. `DungeonRandInt(0x4000)` for the variance (`0217C720`). It always runs.
 
 ## Accuracy and evasion
 
 The hit check is `AccuracyCalc`, at `ov_0001::0215A928`. It is the Blue counterpart of Red's `AccuracyCalc` (static, P3a).
 
-- Its first step is `DungeonRandInt(100)`, drawn before every early return. The result is used only at the end, as `roll < effective accuracy`. So one RNG call is consumed on every call, including forced hits and misses (P3d). Keep this draw order in any golden trace, even when the result is forced.
-- The accuracy is the move's accuracy byte at `+0xE + slot`, read by `FUN_0200B3C4` (slot 0 to 2).
+- Its first step is `DungeonRandInt(100)`, drawn before every early return. The result is used only at the end, as `roll < effective accuracy`. So one RNG call is consumed on every call, including forced hits and misses ([P1](#p1-hit-check-accuracycalc), [P6](#p6-rng-order-for-a-basic-attack)). Keep this draw order in any golden trace, even when the result is forced.
+- The accuracy is the move-data table entry for the move ID at `+0xE + slot` (slot 0 to 2), read by `FUN_0200B3C4` (`0200B3C4`; the table index is move ID × `0x24`, [P1](#p1-hit-check-accuracycalc)). It is not the move instance's byte. A damaging attack calls the check twice, at slot 0 and slot 1.
 - Early results, as in Red:
   - Attacker status 1 (sure shot) hits; status 2 (whiffer) misses.
   - Thunder (`0x40`) always hits in rain (weather 4). In sun (weather 1) it lowers the attacker's accuracy stage by 2.
   - Compound Eyes (`0x33`) on the attacker: +2 accuracy stage.
   - Target exposed (flag at info `+0xD2`): evasion stage 10.
   - Sand Veil (`0x1D`) in a sandstorm (weather 2): +2 evasion stage.
-  - Hustle (`0x30`) with a physical move: a +2 stage change. The findings give this change as an evasion stage; the stage it applies to needs a recheck.
+  - Hustle (`0x30`) with a physical move: **+2 to the target's evasion stage** (`info+0x26`, static). That lowers the hit chance. See [P5](#p5-static-leftovers).
 - Penalties: a target holding the Detect Band (item 35) takes −30. A target with the Quick Dodger IQ skill (IQ bit 5) takes −30. For move `0x163` (Regular Attack), an attacker with IQ bit 4 (Sure Hit) is a sure-hit case.
 - Stage tables: accuracy at `ov_0001::021AA8C4` (pointer slot `ov_0001::0215AB2C`) and evasion at `ov_0001::021AA918` (pointer slot `ov_0001::0215AB30`). Both have 21 entries and match Red's `gAccEvsStatStageMultipliers` entry by entry. Blue stores integers where Red's table holds s24.8 values. The stage is clamped to 0 to 20, and the multiplier to a cap of `0x6400`.
-- `IqSkillIsEnabled` at `ov_0001::021805B0` tests bit `n` of the info's IQ bitfield at `+0x87` (mask `1 << n`). Blue calls it through a pointer (`PTR_FUN_021805C8`), so the helper is not decompiled. The bit numbers 4, 5 and 8 match Red's IQ skill indices.
-- Other callers of the random outcome functions (static, P3f):
-  - `DungeonRandOutcome` at `ov_0001::0219CFCC`, called from the chance wrappers `ov_0001::02159F10` (the chance is doubled when the attacker has ability `0x26`) and `ov_0001::02159F6C` (the chance gate, which returns false when the target has the flag `+0x12A` and `+0xE` is 0, and calls `FUN_0213EB00` for ability `0x4C`).
-  - `DungeonRandOutcome_2` at `ov_0001::0219CFF0`, called from the AI target pick (`ov_0001::0218579C`), the AI candidate pick (`ov_0001::02185568`) and the AI move choice (`ov_0001::02192D24`).
-  - The meaning of each chance argument is not traced.
+- `IqSkillIsEnabled` at `ov_0001::021805B0` tests bit `n` of the info's 24-bit IQ bitfield, at `+0x87` to `+0x89`. It calls the helper `02004250` (`IsIQSkillSet`) through the pointer `PTR_FUN_021805C8` (blue-verified). The bit numbers 4, 5 and 8 match Red's IQ skill indices.
+- Callers of the random outcome functions and their chance sources are in [P4](#p4-outcome-wrappers-and-ai-chance-sources). Of the 63 move-side wrapper calls in overlay 1, 19 pass a literal 0 and draw nothing, and 44 draw. The AI chance sources are open.
+
+## Basic attack at runtime (#356)
+
+Runtime evidence in this section comes from investigator a's scratch probes. They are not in the repo. The probe is `rngprobe.py` (sha256 prefix `e4b0c544dc60d5b6`). It hooks exec on `DungeonRandInt` at `0219D058` (the result is read at the return site, and the caller from LR), on `AccuracyCalc` at `0215A928` and on `CalcDamage` at `0217BD94`. It ran on the retail dump with SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, driven by `boot_to_dungeon` and `combat_inputs.txt` (the #185 scenario, in [`verification/v7-trace/`](../../verification/v7-trace/)). Frames count from the first dungeon frame. Run IDs are the `ev.json` sha256 prefixes: base `cf15b0ff`, forced slot-0 miss `25f4c5ac`, forced crit odds `6b21d775`, forced Huge Power `7aa9ed88`, forced Hustle `23907351`. Some runs write memory, and each point says which. Committing the probe to `verification/v7-trace/` is a follow-up.
+
+### P1. Hit check (AccuracyCalc)
+
+- **Draw order.** `AccuracyCalc` (`ov_0001::0215A928`) draws `DungeonRandInt(100)` first, at `0215A950`, before every early return. It then returns `roll < effective accuracy`. **blue-verified** (static).
+- **Two checks per damaging attack.** Slot 0 is called from the dispatcher `02156824` (return address `021571B8`). Slot 1 is called from `DamageAccuracyCheck` (`ov_0001::0215652C`, return address `02156550`), which the damage path reaches after `CalcDamage`. A slot-0 miss ends the attack: forced misses showed no `CalcDamage` and no second check. A slot-1 miss comes after `CalcDamage` has drawn its rolls. **blue-verified** (static call sites, and the runtime points below).
+- **Slot-1 result.** Result 0 prints the missed message, sets the damage struct `+0xF` to 1 and skips `HandleDealingDamage_Async`. Result 1 calls `HandleDealingDamage_Async`. **blue-verified** (static, medium: an `AbilityIsActive(target, 0x2E)` branch before the call writes `gDungeon+0x652`, not traced).
+- **Accuracy source.** `FUN_0200B3C4` (`0200B3C4`) reads the move-data table at `*(u16 *)(move + 2) × 0x24 + table base + 0xE + slot`. Its first argument is a move pointer, and the entry is the move ID's, not the move instance's. **blue-verified** (static).
+- **Runtime, hit.** All 29 calls in the 9000-frame base run (`cf15b0ff`) returned a hit, including accuracy values above 100, which return a hit after the draw. Example: frame 1433, move 154, roll 39, hit. **blue-verified** (runtime, scratch probe).
+- **Runtime, natural slot-1 miss.** Frame 3411, move 260, slot 1: roll 91 against the move's accuracy value, miss. No patch. Run `6b21d775` changes only the crit argument, not this path. **blue-verified** (runtime).
+- **Runtime, forced slot-0 miss.** The move's accuracy byte in the move-data table was set to 1 at `AccuracyCalc` entry (a 32-bit memory write; a byte write did not stick). 101 calls in run `25f4c5ac`. Frame 1433, roll 39, miss, and no `CalcDamage` after it. **blue-verified** (runtime, patched memory).
+- **Not seen.** A miss through a lowered accuracy stage or a raised evasion stage, and the sure-shot and whiffer early returns. **open**.
+
+### P2. Critical hit roll
+
+- **Position.** `DungeonRandInt(100)` at `0217C698` is drawn after the first roll (`0217C02C`) and before the variance roll (`0217C720`). It was drawn in every `CalcDamage` the probes ran, including attacks with natural crit odds 0 (move 355, roll 41, no crit). **blue-verified** (runtime). The Battle and Shell Armor gate above is still static.
+- **Flag.** A crit sets byte `+0xD` of the damage struct to `01`. Run `6b21d775` forced the odds argument (the stack argument at `sp+0`) to 999 at `CalcDamage` entry: 7 crits in 12 hits. **blue-verified** (runtime, patched argument).
+- **Multiplier.** Frame 1528, move 355, same rolls in both runs (38, 41, 4326): damage 7 without a crit and 10 with one, consistent with ×1.5. The exact multiplier was not recomputed from the 48.16 value; only integer damage was compared. **blue-verified** (runtime; medium on the exact value).
+- **Natural odds.** The natural odds argument was 12 for moves 154 and 260, and 0 for move 355. The two natural-odds attacks in the base run rolled 48 and 56 and did not crit. A natural crit has not been seen firing. **open**.
+
+### P3. Huge Power and Hustle
+
+Each ability was forced by writing its ID to the attacker's ability byte `info+0x58` (the first of the two bytes that `AbilityIsActive` tests) at `CalcDamage` entry (`0217BD94`). The RNG is the same as in the base run.
+
+| Frame | Move | Roll at `0217C02C` | Damage, base | Damage, Huge Power |
+|-------|------|--------------------|--------------|--------------------|
+| 1437 | 154 | 14 | 4 | 6 |
+| 1528 | 355 | 38 | 7 | 7 |
+| about 1557 | 355 | 4 | 1 | 2 |
+| about 1650 | 355 | 37 | 8 | 8 |
+| 3051 | 260 | 64 | 18 | 18 |
+
+- **Gate.** Huge Power boosts only when the roll is 32 or less. This matches the comparison in `CalcStatBoosts` (`0217C7F8`, where `0x20 < param_6` is the cut). Rolls 14 and 4 boosted; 38, 37 and 64 did not. **blue-verified** (static comparison; the runtime rows agree).
+- **Hustle.** Forced the same way (run `23907351`). Move 154 went from 4 to 6, the ×3/2 on a physical move. On move 355 the integer damage stayed 7 at frame 1528, too small to tell. **blue-verified** (static `CalcStatBoosts` row above; the runtime value is for one move only, medium).
+
+### P4. Outcome wrappers and AI chance sources
+
+- **Move callers.** `DungeonRandOutcome` (`ov_0001::0219CFCC`) is reached only through the wrappers `ov_0001::02159F10` and `ov_0001::02159F6C`. Each returns true at once when its chance argument is 0, with no draw: `02159F10` tests its second argument and `02159F6C` its third. The overlay 1 export has 63 call sites: 14 to `02159F10` and 49 to `02159F6C`. Of these, 19 pass the literal 0 (13 and 6), so they draw nothing. Examples: dispatcher `02156824` (`02159F10(param_2, 0)`, a validity test), `0215C44C`, `0215E298` and `021629D0`. The other 44 pass a constant read from the overlay: 1 to `02159F10` and 43 to `02159F6C`. For example, `0215DD2C` (Thundershock) passes `(int)*(short *)PTR_DAT_ov_0001__021aa0a4`. For these, the wrapper's entity checks run first, then one `DungeonRandInt(100)` through `DungeonRandOutcome` when they pass (the secondary gate in [move-effects.md](move-effects.md#miss-paths-357-p2)). So the chance doubling for ability `0x26` and the ability `0x4C` hook are reachable through these 44 calls. A basic attack (`0x163`) calls `HandleDamagingMove` directly, with no wrapper, so [P6](#p6-rng-order-for-a-basic-attack) does not change. **blue-verified** (static: a multi-line count of the `ov_0001` export).
+- **AI chance sources.** `DungeonRandOutcome_2` (`ov_0001::0219CFF0`) is called with these chances. Call sites are **blue-verified** (static):
+  - `02185568`: chance from `FUN_021473A8(entity, param, 1)`.
+  - `0218579C`, call at `02185820`: chance from `FUN_021473A8(param_1, item, 2)`.
+  - `02185AB8` and `02185BEC`: chance from the table at `02185C60`, index `i` below a count read at `021B3F44`. The count was 0 at dungeon start, so the table was not read.
+  - `02192D24`, call at `02192D80`: chance is the value at `021AA184`, which is **70** at runtime (run `cf15b0ff`). The call is gated by `info+0xAC == 2`. The value is **blue-verified** (runtime, scratch probe). That the roll is the confusion roll of `ChooseAIMove` is a **hypothesis**, which the findings do not show. Test: an exec hook on `02192D80` in a turn where the monster has `info+0xAC == 2`, comparing the roll with the move chosen. The meaning of `info+0xAC` is open.
+- **Open.** `FUN_021473A8` beyond its first cases, the values at `02185C60`, and the meaning of `info+0xAC`. These are leads for a later trace and are not traced here. **open**.
+
+### P5. Static leftovers
+
+- **Weather accessor** `FUN_02195C48`, named `GetEffectiveWeather` in [`symbols.md`](../symbols.md). It returns the weather byte at `gDungeon+0xC104`, or 0 when the entity is non-null and `HasHeldItem(entity, 45)` holds. A null entity gives the raw weather. The name of item 45 is open. **blue-verified** (export body, not run).
+- **IQ bit helper** `02004250` (`IsIQSkillSet`, in [`symbols.md`](../symbols.md)), reached through `PTR_FUN_021805C8` (read at runtime). It tests `(b0 & m) | (b1 & (m >> 8)) | (b2 & (m >> 16)) != 0` over the three IQ bytes. **blue-verified**.
+- **Physical-move table** `FUN_02008C64` (`IsTypePhysical`, the name from `pmd-red`). It returns the byte at `DAT_02008C70 + type`. The table is at `0x02091E78`, 18 bytes, read at runtime. Its per-type values are not copied here. The runtime values make Regular Attack (type 0) and Normal (type 1) physical. **blue-verified** for the role; the name is Red's.
+- **Hustle, target evasion.** With `AbilityIsActive(attacker, 0x30)` and a physical move, the target's evasion stage at `info+0x26` rises by 2, clamped to 0 to 20 (static; the offset is investigator a's read). The evasion table at `021AA918` (runtime read) then lowers the hit chance. In one forced run (`23907351`), the attack the base run hit, with the same roll, missed. That is one case: medium. This +2 is not the attacker's stage. Hustle's attack ×3/2 in `CalcStatBoosts` is a separate multiplier ([P3](#p3-huge-power-and-hustle)). **blue-verified** (static); runtime, one case.
+- **Other penalties.** The Detect Band penalty (`021AA39C`) and the Quick Dodger penalty (`021AA290`) were read at runtime and match the values above. **blue-verified**.
+
+### P6. RNG order for a basic attack
+
+These are the dungeon-RNG draws of one basic attack, in order. Each address is the **return site** of its `DungeonRandInt` call; the call instruction is 4 bytes earlier (for the `AccuracyCalc` draw, the call is at `0215A94C`). Observed on move 355 (Regular Attack, ID `0x163`), 154 and 260 (base run `cf15b0ff`, and the crit path in `6b21d775`). **blue-verified** (static call sites, runtime sequence).
+
+- **Hit, or a slot-1 miss: five draws.**
+  1. `rand(100)` at `0215A950`: `AccuracyCalc` slot 0, return address `021571B8`.
+  2. `rand(100)` at `0217C02C`: `CalcDamage`, the Huge Power roll.
+  3. `rand(100)` at `0217C698`: the critical roll.
+  4. `rand(0x4000)` at `0217C720`: the variance.
+  5. `rand(100)` at `0215A950`: `AccuracyCalc` slot 1, return address `02156550`.
+
+  Draw 5 decides a slot-1 miss. A hit and a slot-1 miss draw the same five values; only the last comparison differs.
+- **Slot-0 miss: one draw.** `rand(100)` at `0215A950`, then the attack ends. No `CalcDamage`.
+- **Critical hit.** The same five draws as a hit. Only the critical comparison differs.
+- **Non-damaging moves** (only 217 and 135 were seen): only the slot-0 draw. Other non-damaging handlers draw more: Hypnosis calls `CalculateStatusTurns`, and Leech Seed and Water Sport call `DungeonRandRange(10, 12)` ([move-effects.md](move-effects.md)).
+- **Not covered.** Targets with Battle or Shell Armor (the static gate), Thunder and weather, sure-shot, and kills. After the hits, extra draws were seen in the crit run only and are not attributed: `rand(10000)` at `021388E8`, `rand(56)` at `0219C038`, `rand(32)` at `0219C044`, `rand(112)` at `0219C1E4`, `rand(100)` at `021828A4`, `rand(2)` and `rand(3)` at `02190A10`, and `rand(100)` at `02179DF0`. **open**.
+
+Anything that simulates a basic attack needs this five-draw order.
 
 ## Range and targeting
 
@@ -295,7 +366,7 @@ Investigator A's findings. Tag: **blue-verified** (decompile of `ov_0001::021568
 
 - `FUN_02156824(param_1 = entity list, param_2 = user, param_3 = move, param_4, param_5)` loops over up to `0x40` target slots. Its only `switch` is `switch(uVar17)`, where `uVar17` is the move ID (the `u16` at `move + 2`). It has 413 case labels and the default label `switchD_ov_0001__02157544_default`. Several cases are `goto switchD_..._default`. Those gotos are the only other occurrences of the switch label, so the "8 other switches" may be those.
 - Each case sets `local_114`, the per-target result. The case callees take `(user, target, move, param_4)`. Most return a bool. The case for `CalcDamage` (`FUN_0215675C`) calls `CalcDamage` directly.
-- There is no accuracy roll in the dispatch. Rolls are inside the case callees, through the wrappers in [`move-effects.md`](move-effects.md#roll-wrapper-per-move-id-p3-186).
+- The dispatch makes one accuracy call, earlier in `02156824` (export line 246, before the switch): slot 0 through `AccuracyCalc`, return address `021571B8` ([P1](#p1-hit-check-accuracycalc)). Rolls inside the case callees go through the wrappers in [`move-effects.md`](move-effects.md#roll-wrapper-per-move-id-p3-186).
 - Earlier in the loop, `info + 0x12A` is set to 1 for the target, and `info + 0xD8` is set to 1 or 2 depending on `param_5`.
 - After the switch:
   - **Miss** (`local_114 == 0`): if the user and target are both valid and `target.info + 6 != 0` (not a team member), the saved value `cVar1` is written back to `target.info + 0xD8`.
@@ -339,9 +410,9 @@ Unresolved items from the three investigation files for this issue. Each item is
 
 **Not yet done**
 
-- Critical hits, held items, abilities, status effects, weather and type effects against observed hits. The #185 check does not cover them (see [the damage formula](#damage-formula)).
-- A runtime check of a Huge Power roll and of a critical hit, as a separate task under #17.
-- A runtime check of the hit check (no hit has been observed).
+- Held items, abilities other than Huge Power, status effects, weather and type effects against observed hits. The #185 check does not cover them (see [the damage formula](#damage-formula)). Critical hits are partly covered by [P2](#p2-critical-hit-roll): a natural crit has not been seen.
+- Huge Power is checked at runtime ([P3](#p3-huge-power-and-hustle)). A natural critical hit is not ([P2](#p2-critical-hit-roll)).
+- Hits, a slot-0 miss and a slot-1 miss are seen at runtime ([P1](#p1-hit-check-accuracycalc)). Still open: a miss from a lowered accuracy stage, a raised evasion stage, sure-shot or whiffer.
 
 **Damage formula**
 
@@ -355,13 +426,13 @@ Unresolved items from the three investigation files for this issue. Each item is
 
 **Accuracy and evasion**
 
-- The weather accessor `FUN_02195C48` is not named, and the item check it makes (item 45) is not identified.
-- The helper behind `PTR_FUN_021805C8` is not decompiled.
-- `FUN_02008C64` as the physical-move table is inferred from Red's `IsTypePhysical`.
-- The offsets `+0x24`, `+0x26`, `+0xC4` and `+0xD2` in the info struct are inferred from Red's names. `+0xC4` is listed in [`structs.md`](structs.md) as the sure-shot status.
+- The weather accessor `FUN_02195C48` is named `GetEffectiveWeather` ([P5](#p5-static-leftovers)). The item check it makes (item 45) is not identified.
+- Closed: the helper behind `PTR_FUN_021805C8` is `02004250` ([P5](#p5-static-leftovers)).
+- Closed: `FUN_02008C64` is the physical-move table lookup, read at runtime ([P5](#p5-static-leftovers)).
+- The offsets `+0x24`, `+0xC4` and `+0xD2` in the info struct are inferred from Red's names. `+0xC4` is listed in [`structs.md`](structs.md) as the sure-shot status. `+0x26` is the target's evasion stage by investigator a's static read ([P5](#p5-static-leftovers)).
 - `FUN_0208625C(a, 0x100)` is treated as `a / 256`, which is inferred from its use.
-- Hustle's stage change: the findings call it evasion, but the sign and the target stage need a recheck.
-- The callers of `DungeonRandOutcome` and `DungeonRandOutcome_2` are listed but their chance arguments are not traced.
+- Hustle's evasion effect is static plus one forced run ([P5](#p5-static-leftovers)). Hustle's attack ×3/2 was measured on one move ([P3](#p3-huge-power-and-hustle)). The two effects are not yet tied to one code path; a second move would test it.
+- The AI chance sources of `DungeonRandOutcome_2` are open: `FUN_021473A8` beyond its first cases, the values at `02185C60`, and the meaning of `info+0xAC` at `02192D80` ([P4](#p4-outcome-wrappers-and-ai-chance-sources)).
 
 **Range and targeting**
 
