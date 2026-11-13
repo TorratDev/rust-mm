@@ -18,7 +18,7 @@ Issue: [#342](https://github.com/TorratDev/rust-mm/issues/342), parent [#111](ht
 | `0201A54C` | `OpenFileAndGetFileDataPtr("fixedmap")` | [blue-verified] |
 
 ## File and decoder (ported)
-- `fixedmap`: SIR0 container in `dungeon.sbin`. Entry `N` is the file offset at index `N` of a `u32` array; entry = width, height, flags, tile stream. [blue-verified] for the entry; [hypothesis] that the array starts at the SIR0 content pointer (header word `+4`); the game reaches it through the file handle's `+0xC`. Not run. Read from the retail `fixedmap` (7552 bytes): the table holds 140 entries ([blue-verified] ROM data, see the findings note below).
+- `fixedmap`: SIR0 container in `dungeon.sbin`. Entry `N` is the file offset at index `N` of a `u32` array at the SIR0 content pointer (header word `+4`); entry = width, height, flags, tile stream. The format and its checks are in [`formats/fixedmap.md`](../formats/fixedmap.md) (parser `crates/formats/src/fixedmap.rs`, #397). [blue-verified]: the table base, the 140 entries and the entry layout (ROM data and the decompile of the relocation, `0201A188`); the table base is not read at runtime.
 - Decoder: byte `0x0E` then a literal code; otherwise code `b >> 4` repeated `(b & 0xF) + 1` times, row by row. [blue-verified] static; The escape is read only when the repeat count is 0 and leaves it 0, so a literal is one tile. [blue-verified] static (findings-342b).
 
 ## Placement (ported)
@@ -140,4 +140,4 @@ Rust: `PortedSteps::place_fixed_room` (`crates/sim/src/floor_gen.rs`) draws `rng
 - Unit tests in `crates/sim/src/floor.rs` check the shapes and values stated above: the number-4 rectangle with and without the tileset flag and for number 3 (`number_4_rectangle_is_applied_with_or_without_the_tileset_flag`); the staged stamp's rectangle, buffer, placeholder, room bytes and the table monster recorded with spawn 0 (`staged_room_is_a_placeholder`).
 - **No emulator run covers P1 or P2 yet.** Neither a forced staged room nor a forced fixed room 4 with the tileset flag has been run against the retail dump (P5 of the findings needs the forcing). The unit tests check the port against the findings, not the game.
 
-Rust: `floor::fixed_map_entry`, `floor::TileStream`, `floor::FixedRoomOut` (with `staged: Option<StagedRoom>`), `PortedSteps::{fixed_map, fixed_table, tileset, fixed_out}`.
+Rust: `rescue_formats::fixedmap::{FixedMap, TileStream}` (#397), `floor::FixedRoomOut` (with `staged: Option<StagedRoom>`), `PortedSteps::{fixed_map, fixed_table, tileset, fixed_out}`.

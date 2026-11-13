@@ -695,3 +695,20 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** the sim side covers the natural seed and the three forced seeds on every layout byte 0 to 11, and all rows match. Still not covered by a row: layout bytes 12 to 15, which take the standard generator as byte 0 does (checked by reading `GenerateFloor`'s `switch`, not by an oracle run). The fixed-room check is ROM-gated and passed on the supported dump.
 - **Fallback adopted:** none.
 - **Notes:** the nine values are hashes and counts from the `generateEnd` fields; the runs and their commands are in the coverage section of `re/dungeon-generation.md`.
+
+---
+
+## #397 — `fixedmap` parser in `crates/formats` (P1-P3)
+
+- **Assumption:** the parser in `crates/formats/src/fixedmap.rs` reads the retail `fixedmap` as the game does (entry table at the SIR0 content pointer, 140 file-relative offsets, entry = width, height, flags and a stream bounded by the next entry, the run-length decoder), and the sim's switch to it changes no output on the retail file.
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0 on Windows 11 Pro (10.0.26200); nightly-2026-10-01 for the fuzz target's type check. Dump SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (the main checkout's `pmdb.nds`). The static inputs are investigator A's findings for #397 (P1-P3, comment of 2026-11-13).
+- **Evidence:**
+  - Unit tests in `crates/formats/src/fixedmap.rs` (4 tests, hand-made bytes): lookup and stream bounds, width 0 accepted, the decoder's runs and escapes, an escape without its literal, and rejections (table past the file, entry in the header, entry overlapping the next header, entry 139 at the table, short stream, run past the last code).
+  - ROM test `fixedmap_entries_decode_to_their_size` (`tests/tests/fixedmap_rom.rs`): all 140 entries; widths and heights 5 to 17, flags 0 or 1, exactly `width * height` codes per entry, and entry 139 followed by two `0xAA` bytes before the table.
+  - `RESCUE_ROM=<dump> cargo test -p rescue-tests --test fixed_rooms_rom --test fixedmap_rom`: 2 passed, 0 skipped. `fixed_rooms_match_the_retail_floors` still checks 100 of 100 rows.
+  - `cargo test --workspace`: 460 passed, 0 failed. `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/check-deps.sh`, `scripts/check-determinism.sh`: pass.
+  - Fuzz: `cargo +nightly-2026-10-01 check --manifest-path fuzz/Cargo.toml --bin formats_fixedmap`: pass.
+- **Outcome:** verified against the retail dump: all 140 entries parse and decode as the spec says; the whole-floor check runs through the new parser with no change in its 100 rows. Not run: the fuzz target under libFuzzer (`cargo-fuzz` is not installed here; CI runs it). The game's behaviour on a malformed file is not run.
+- **Fallback adopted:** the entry count is fixed at 140 (the game stores none); the rejection list is a design choice, marked as such in [`formats/fixedmap.md`](formats/fixedmap.md).
+- **Notes:** the sim keeps `GenState::fixed_map` as raw bytes and parses it at each use. Behaviour changes only for a malformed file: a file that fails the parse now gives no room (size 0) or the existing "no entry" panic, where the old lookup read whatever the bad entry held. The sim's unit tests for the old lookup moved to `fixedmap.rs`, so `cargo test -p rescue-sim` runs 2 fewer tests.

@@ -68,6 +68,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "formats_fixedmap"
+path = "fuzz_targets/formats_fixedmap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "data_tables"
 path = "fuzz_targets/data_tables.rs"
 test = false

@@ -6,6 +6,7 @@ One spec per parser, with its verification status. Issue: [#41](https://github.c
 |------|--------|--------|
 | [nds-container.md](nds-container.md) | `crates/nds` (header, FNT/FAT, overlays, BLZ) | verified (ROM-gated `tests/tests/nds_rom.rs`) |
 | [archive.md](archive.md) | `crates/formats` `archive`, `sir0` | verified |
+| [fixedmap.md](fixedmap.md) | `crates/formats` `fixedmap` | verified (ROM-gated `tests/tests/fixedmap_rom.rs`); fuzz target `formats_fixedmap` |
 | [compression.md](compression.md) | `crates/formats` `compress` (Nitro), `px` (AT4PX/PKDPX) | PX verified; Nitro codecs unit-tested (unused by Blue) |
 | [graphics.md](graphics.md) | `crates/formats` `gfx`, `graphics` | tiles and RGBX palettes verified |
 | [portraits.md](portraits.md) | `crates/formats` `portrait` | verified |
