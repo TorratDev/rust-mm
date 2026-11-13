@@ -482,6 +482,10 @@ impl Dungeon {
 
     /// One use's hits on each of `targets`, in order, then the defeat of the wild monsters that
     /// the use took to 0 HP (see [`remove_defeated`](Self::remove_defeated)).
+    // shortcut: the game runs the faint of a target inside the damage path, as its hit takes it to
+    // 0 HP, so the next target is hit after that faint. The sim removes the defeated monsters only
+    // after the last hit, and does not run a faint's own draws or effects, so a use that defeats
+    // one target and then hits another may differ from the game.
     fn resolve_all(&mut self, targets: &[Slot], mv: &Move, arg8: i64, data: &CombatData<'_>) {
         let mut defeated = Vec::new();
         for &target in targets {
@@ -1439,6 +1443,51 @@ mod tests {
         let attack = Command::Attack(Direction::Right);
         assert_eq!(g.step_with(attack, &data), Outcome::Applied);
         assert_survivor_only(&g);
+    }
+
+    #[test]
+    fn one_use_that_defeats_two_wild_monsters_removes_both_and_keeps_the_middle_one() {
+        let t = tables();
+        let mut mv = tackle([100; 3], 0);
+        mv.targeting[0] = 0x10; // the cone: facing - 1, facing, facing + 1
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        // The cone order is (6, 6), (6, 5), (6, 4): wild 2, wild 0, wild 1. Wild 0 and wild 2 are
+        // at 1 HP, so the use defeats both; wild 1 at 100 HP survives its own hit.
+        let mut g = battle([100; 3], 0);
+        let mut low = foe_at((6, 5));
+        low.info.hp = 1;
+        let mut mid = foe_at((6, 4));
+        mid.info.hp = 100;
+        let mut low2 = foe_at((6, 6));
+        low2.info.hp = 1;
+        let target = mid.info.clone();
+        g.dungeon_mut().unwrap().wild = vec![low, mid, low2];
+        let before = *g.dungeon().unwrap().rng();
+        let blocks = draw_blocks(&before, 3);
+        let attacker = g.dungeon().unwrap().team()[0].info.clone();
+        let rolls = Rolls {
+            boost: blocks[2][1],
+            crit: blocks[2][2],
+            variance: blocks[2][3],
+        };
+        let dealt = damage(&t, &mv, &attacker, &target, rolls).value;
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        let wild = g.dungeon().unwrap().wild();
+        assert_eq!(wild.len(), 1, "both defeated monsters are removed");
+        assert_eq!(wild[0].pos, (6, 4));
+        assert_eq!(
+            i32::from(wild[0].info.hp),
+            100 - dealt,
+            "the survivor's HP changes only by its own hit"
+        );
     }
 
     #[test]
