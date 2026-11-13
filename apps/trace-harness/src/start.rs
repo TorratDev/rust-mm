@@ -142,6 +142,10 @@ pub fn state_from_row(
             wild,
             turn: 0,
             fractional_turn: 0,
+            // shortcut: the row's observed stage is set below and overrides the computed one, so
+            // the species speed is not read here. A row with no leader gets no stage, which the
+            // sim computes from 0 (before: NotModelled). Load the species table to drop this.
+            leader_speed: 0,
             speed_stage: leader_stage,
             shop_pass: false,
             monster_house_room: NO_MONSTER_HOUSE,
@@ -204,6 +208,9 @@ fn monster(
             attack: [0, 0],
             defence: [0, 0],
             offensive_stages: [0, 0],
+            // shortcut: the row does not carry the speed counters, so they start at 0.
+            speed_up: [0; 5],
+            speed_down: [0; 5],
             direction: 0,
             belly: 0,
         },
