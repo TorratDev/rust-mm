@@ -13,7 +13,9 @@ mod app;
 mod boot;
 mod draw;
 mod dungeon;
+mod input;
 mod scene;
+mod walk;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -244,18 +246,21 @@ fn main() -> ExitCode {
         ),
         RomCheck::Refused(why) => eprintln!("rescue: {why}"),
     }
-    // The dungeon's floor comes from the same dump. Without it the dungeon shows a placeholder.
-    let floor = match rom {
+    // The dungeon's floors come from the same dump. Without it the dungeon shows a placeholder.
+    let rom_bytes = match rom {
         RomCheck::Ready(_) => boot::read(
             std::env::var_os(ROM_PATH_ENV),
             Some(Path::new(CONFIG_FILE_NAME)),
         )
-        .and_then(|bytes| {
-            dungeon::FloorData::from_rom(&bytes, opts.dungeon, opts.floor, opts.species)
-        })
-        .map_err(|e| eprintln!("rescue: dungeon placeholder, the floor did not load: {e}"))
+        .map_err(|e| eprintln!("rescue: dungeon placeholder, the ROM did not load: {e}"))
         .ok(),
         RomCheck::NotConfigured | RomCheck::Refused(_) => None,
+    };
+    let run = app::RunConfig {
+        seed: opts.seed,
+        dungeon: opts.dungeon,
+        floor: opts.floor,
+        species: opts.species,
     };
     let config = Config {
         title: String::from("rescue"),
@@ -274,7 +279,7 @@ fn main() -> ExitCode {
         speed: opts.speed,
         start_paused: opts.pause,
     };
-    let mut app = App::new(&rom, floor, opts.seed, opts.open_dungeon);
+    let mut app = App::new(&rom, rom_bytes, run, opts.open_dungeon);
     match rescue_platform::run(&config, &mut app) {
         Ok(stats) => {
             println!(

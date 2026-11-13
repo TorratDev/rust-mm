@@ -37,7 +37,8 @@ pub enum Scene {
     },
     /// Placeholder until the adventure log exists.
     AdventureLog,
-    /// The dungeon: one generated floor (`dungeon`, built by `app` on entry; #70).
+    /// The dungeon: the run, driven by `app` (#70, #347). B is run here, so it does not leave;
+    /// the dungeon's clear goes back to the menu.
     Dungeon,
 }
 
@@ -78,7 +79,6 @@ impl Scene {
                 }
             }
             Scene::AdventureLog if back => Scene::Menu { cursor: 1 },
-            Scene::Dungeon if back => Scene::Menu { cursor: 0 },
             _ => self,
         }
     }
@@ -144,10 +144,8 @@ mod tests {
             Scene::Menu { cursor: 1 }.step(press(DsButton::Start)),
             Scene::AdventureLog
         );
-        assert_eq!(
-            Scene::Dungeon.step(press(DsButton::B)),
-            Scene::Menu { cursor: 0 }
-        );
+        // B is run in the dungeon, so it does not leave.
+        assert_eq!(Scene::Dungeon.step(press(DsButton::B)), Scene::Dungeon);
         assert_eq!(
             Scene::AdventureLog.step(press(DsButton::B)),
             Scene::Menu { cursor: 1 }
