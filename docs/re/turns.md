@@ -41,7 +41,7 @@ The 24 fractional turns let monsters with different speeds act different numbers
 Tags: the call order and gates are blue-verified (decompiles of `021411BC` and `02140FAC` and their callees, plus the calls in investigator A's trace of 13 leader turns, which all ran in this order). Confidence high for the order, medium for completeness. Bracketed addresses are return addresses (`lr`) from that trace. The case: a stage 1 leader walking, one partner on the team, four wild monsters far away.
 
 1. **Row.** The V7 hook at the entry of `RunFractionalTurn_Async` (`021411BC`). See [For golden traces](#for-golden-traces-v7).
-2. **Spawn step** `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), only when `gSpeedTurns[1][k] != 0`. No spawn fired in the run, and `TryForcedLoss` (`021408E8`) followed without using RNG.
+2. **Spawn step** `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), only when `gSpeedTurns[1][k] != 0`. No spawn fired in the run, and `TryForcedLoss` (`0206D7B0`) [`021408E8`] followed without using RNG.
 3. **Leader turn** `RunLeaderTurn_Async` (`02140FAC`), in this order:
    1. `TryActivateArtificialWeatherAbilities` (`02176B54`).
    2. Gate: `gSpeedTurns[CalcSpeedStage(leader)][k] != 0` and `attacking == 0`.
@@ -345,7 +345,7 @@ The weather source indices match Red **[red-hypothesis for the Red comparison]**
 
 - `DoEndOfTurnEffects` makes two `DungeonRandInt(100)` calls, in this order. First, Warp Scarf (item 22), only when the entity holds it and its turns-since counter (`+0x137`) is set; the roll is compared with the chance table. Second, Shed Skin, unconditionally, before the ability check (ability 0x21). Red does the same.
 - None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` is not checked in full (#51).
-The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). Its callers are the wild loop, the team loop and the swap pass `02140ED0`; the leader never calls it (#353 P3).
+The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). Its callers are the wild loop, the team loop (two sites), the camera function `02140E14` (call at `02140EA0`) and the swap pass `02140ED0`; the leader never calls it (#353 P3).
 
 ## For golden traces (V7)
 
