@@ -14,6 +14,7 @@ use crate::floor::{
     stairs_check,
 };
 use crate::rng::DungeonRng;
+use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam};
 use rescue_formats::fixedmap::FixedMap;
 
 /// "Unset" stairs position, as the game stores it.
@@ -983,6 +984,142 @@ pub fn generate_floor<S: FloorSteps>(
     }
     steps.final_steps(floor, rng, g.tileset_type2);
     Ok(())
+}
+
+/// A dungeon and floor that the ROM's `mapparam` has no record for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoFloor {
+    /// Dungeon number.
+    pub dungeon: u8,
+    /// Floor number within the dungeon.
+    pub floor: u8,
+}
+
+impl std::fmt::Display for NoFloor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "dungeon {} floor {} is not in the ROM's mapparam",
+            self.dungeon, self.floor
+        )
+    }
+}
+
+impl std::error::Error for NoFloor {}
+
+/// Reads one `FloorProperties` from its raw record (Red's struct, the offsets named on
+/// [`FloorProperties`]). Every field is one byte.
+#[must_use]
+pub fn properties_from_record(record: &[u8; FLOOR_PROPERTIES]) -> FloorProperties {
+    FloorProperties {
+        layout: record[0x00],
+        room_density: record[0x01].cast_signed(),
+        byte_05: record[0x05],
+        byte_06: record[0x06],
+        byte_07: record[0x07],
+        byte_08: record[0x08],
+        byte_09: record[0x09],
+        byte_0b: record[0x0B],
+        byte_0c: record[0x0C],
+        byte_0d: record[0x0D],
+        byte_0f: record[0x0F],
+        byte_10: record[0x10],
+        byte_13: record[0x13],
+        byte_14: record[0x14],
+        byte_15: record[0x15],
+        itemless_chance: record[0x19],
+    }
+}
+
+/// The properties of floor `floor` of dungeon `dungeon`: its dungeon's floor entry names a
+/// record in `floor_properties`. `Err` if either index is past the ROM's table.
+pub fn properties_for(map: &MapParam, dungeon: u8, floor: u8) -> Result<FloorProperties, NoFloor> {
+    let missing = NoFloor { dungeon, floor };
+    let entry = map
+        .dungeons
+        .get(usize::from(dungeon))
+        .and_then(|floors| floors.get(usize::from(floor)))
+        .ok_or(missing)?;
+    let record = map
+        .floor_properties
+        .get(usize::from(entry.properties))
+        .ok_or(missing)?;
+    Ok(properties_from_record(record))
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    #[test]
+    fn record_bytes_map_to_their_fields() {
+        let mut r = [0u8; FLOOR_PROPERTIES];
+        r[0x00] = 0x11;
+        r[0x01] = 0xFB; // -5 as a signed byte
+        r[0x05] = 15;
+        r[0x06] = 4;
+        r[0x07] = 7;
+        r[0x08] = 8;
+        r[0x09] = 9;
+        r[0x0B] = 11;
+        r[0x0C] = 12;
+        r[0x0D] = 13;
+        r[0x0F] = 2;
+        r[0x10] = 3;
+        r[0x13] = 5;
+        r[0x14] = 6;
+        r[0x15] = 1;
+        r[0x19] = 10;
+        assert_eq!(
+            properties_from_record(&r),
+            FloorProperties {
+                layout: 0x11,
+                room_density: -5,
+                byte_05: 15,
+                byte_06: 4,
+                byte_07: 7,
+                byte_08: 8,
+                byte_09: 9,
+                byte_0b: 11,
+                byte_0c: 12,
+                byte_0d: 13,
+                byte_0f: 2,
+                byte_10: 3,
+                byte_13: 5,
+                byte_14: 6,
+                byte_15: 1,
+                itemless_chance: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn floor_reads_its_record() {
+        // Not game data: a floor entry that names record 1, which has layout 1.
+        let mut first = [0u8; FLOOR_PROPERTIES];
+        first[0x00] = 1;
+        first[0x01] = 5;
+        let map = MapParam {
+            dungeons: vec![vec![rescue_data::dungeon::Floor {
+                properties: 1,
+                monsters: 0,
+                traps: 0,
+                items: [0; 4],
+            }]],
+            floor_properties: vec![[0; FLOOR_PROPERTIES], first],
+            monster_spawns: Vec::new(),
+            trap_chances: Vec::new(),
+            item_spawns: Vec::new(),
+        };
+        assert_eq!(properties_for(&map, 0, 0).map(|p| p.layout), Ok(1));
+        assert_eq!(
+            properties_for(&map, 0, 1),
+            Err(NoFloor {
+                dungeon: 0,
+                floor: 1
+            })
+        );
+    }
 }
 
 #[cfg(test)]

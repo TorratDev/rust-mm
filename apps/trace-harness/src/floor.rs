@@ -5,13 +5,15 @@
 
 use std::fmt;
 
-use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam};
+use rescue_data::dungeon::MapParam;
 use rescue_data::item::parse_items;
 use rescue_formats::archive::Archive;
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
 use rescue_sim::floor::Floor;
-use rescue_sim::floor_gen::{FloorProperties, GenState, PortedSteps, generate_floor};
+use rescue_sim::floor_gen::{
+    FloorProperties, GenState, PortedSteps, generate_floor, properties_for,
+};
 use rescue_sim::rng::DungeonRng;
 
 use crate::scenario::Scenario;
@@ -63,49 +65,6 @@ fn rom_error(e: impl fmt::Display) -> FloorError {
     FloorError::Rom(e.to_string())
 }
 
-/// Reads one `FloorProperties` from its raw record (Red's struct, the offsets named on
-/// [`FloorProperties`]). Every field is one byte.
-#[must_use]
-pub fn properties_from_record(record: &[u8; FLOOR_PROPERTIES]) -> FloorProperties {
-    FloorProperties {
-        layout: record[0x00],
-        room_density: record[0x01].cast_signed(),
-        byte_05: record[0x05],
-        byte_06: record[0x06],
-        byte_07: record[0x07],
-        byte_08: record[0x08],
-        byte_09: record[0x09],
-        byte_0b: record[0x0B],
-        byte_0c: record[0x0C],
-        byte_0d: record[0x0D],
-        byte_0f: record[0x0F],
-        byte_10: record[0x10],
-        byte_13: record[0x13],
-        byte_14: record[0x14],
-        byte_15: record[0x15],
-        itemless_chance: record[0x19],
-    }
-}
-
-/// The properties of the scenario's floor: its dungeon's floor entry names a record in
-/// `floor_properties`.
-pub fn properties_for(map: &MapParam, scenario: Scenario) -> Result<FloorProperties, FloorError> {
-    let missing = FloorError::NoFloor {
-        dungeon: scenario.dungeon_id,
-        floor: scenario.floor_id,
-    };
-    let entry = map
-        .dungeons
-        .get(usize::from(scenario.dungeon_id))
-        .and_then(|floors| floors.get(usize::from(scenario.floor_id)))
-        .ok_or_else(|| missing.clone())?;
-    let record = map
-        .floor_properties
-        .get(usize::from(entry.properties))
-        .ok_or(missing)?;
-    Ok(properties_from_record(record))
-}
-
 /// Generates the floor of a row from its `floorSeed`. Returns the floor and the layout byte
 /// the generator recorded.
 pub fn generate(floor_seed: u32, props: &FloorProperties) -> Result<(Floor, u8), FloorError> {
@@ -144,7 +103,11 @@ pub fn load_map_param(rom: &[u8]) -> Result<MapParam, FloorError> {
 
 /// The properties of the scenario's floor, read from the ROM.
 pub fn start_properties(rom: &[u8], scenario: Scenario) -> Result<FloorProperties, FloorError> {
-    properties_for(&load_map_param(rom)?, scenario)
+    let map = load_map_param(rom)?;
+    properties_for(&map, scenario.dungeon_id, scenario.floor_id).map_err(|e| FloorError::NoFloor {
+        dungeon: e.dungeon,
+        floor: e.floor,
+    })
 }
 
 /// The bytes of sub-file `name` in the pack file `pack` of the ROM.
@@ -165,7 +128,8 @@ fn sub_file<'a>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use rescue_data::dungeon::Floor as DungeonFloor;
+    use rescue_data::dungeon::FLOOR_PROPERTIES;
+    use rescue_sim::floor_gen::properties_from_record;
 
     /// A hand-written first-floor record: layout 1, room density 5, walk 15, monster
     /// density 4, two items, five extra hallways. Not game data.
@@ -182,80 +146,6 @@ pub(crate) mod tests {
 
     pub(crate) fn first_floor_properties() -> FloorProperties {
         properties_from_record(&first_floor_record())
-    }
-
-    #[test]
-    fn record_bytes_map_to_their_fields() {
-        let mut r = [0u8; FLOOR_PROPERTIES];
-        r[0x00] = 0x11;
-        r[0x01] = 0xFB; // -5 as a signed byte
-        r[0x05] = 15;
-        r[0x06] = 4;
-        r[0x07] = 7;
-        r[0x08] = 8;
-        r[0x09] = 9;
-        r[0x0B] = 11;
-        r[0x0C] = 12;
-        r[0x0D] = 13;
-        r[0x0F] = 2;
-        r[0x10] = 3;
-        r[0x13] = 5;
-        r[0x14] = 6;
-        r[0x15] = 1;
-        r[0x19] = 10;
-        assert_eq!(
-            properties_from_record(&r),
-            FloorProperties {
-                layout: 0x11,
-                room_density: -5,
-                byte_05: 15,
-                byte_06: 4,
-                byte_07: 7,
-                byte_08: 8,
-                byte_09: 9,
-                byte_0b: 11,
-                byte_0c: 12,
-                byte_0d: 13,
-                byte_0f: 2,
-                byte_10: 3,
-                byte_13: 5,
-                byte_14: 6,
-                byte_15: 1,
-                itemless_chance: 10,
-            }
-        );
-    }
-
-    #[test]
-    fn scenario_floor_reads_its_record() {
-        let map = MapParam {
-            dungeons: vec![vec![DungeonFloor {
-                properties: 1,
-                monsters: 0,
-                traps: 0,
-                items: [0; 4],
-            }]],
-            floor_properties: vec![[0; FLOOR_PROPERTIES], first_floor_record()],
-            monster_spawns: Vec::new(),
-            trap_chances: Vec::new(),
-            item_spawns: Vec::new(),
-        };
-        let scenario = Scenario {
-            dungeon_id: 0,
-            floor_id: 0,
-        };
-        assert_eq!(properties_for(&map, scenario), Ok(first_floor_properties()));
-        let missing = Scenario {
-            dungeon_id: 0,
-            floor_id: 1,
-        };
-        assert_eq!(
-            properties_for(&map, missing),
-            Err(FloorError::NoFloor {
-                dungeon: 0,
-                floor: 1
-            })
-        );
     }
 
     #[test]

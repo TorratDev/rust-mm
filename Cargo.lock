@@ -2837,6 +2837,7 @@ dependencies = [
  "rescue-data",
  "rescue-formats",
  "rescue-nds",
+ "rescue-sim",
  "rescue-tests",
 ]
 
@@ -2848,6 +2849,7 @@ version = "0.0.0"
 name = "rescue-sim"
 version = "0.0.0"
 dependencies = [
+ "rescue-data",
  "rescue-formats",
  "serde",
  "serde_json",

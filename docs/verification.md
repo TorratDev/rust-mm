@@ -712,3 +712,20 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** verified against the retail dump: all 140 entries parse and decode as the spec says; the whole-floor check runs through the new parser with no change in its 100 rows. Not run: the fuzz target under libFuzzer (`cargo-fuzz` is not installed here; CI runs it). The game's behaviour on a malformed file is not run.
 - **Fallback adopted:** the entry count is fixed at 140 (the game stores none); the rejection list is a design choice, marked as such in [`formats/fixedmap.md`](formats/fixedmap.md).
 - **Notes:** the sim keeps `GenState::fixed_map` as raw bytes and parses it at each use. Behaviour changes only for a malformed file: a file that fails the parse now gives no room (size 0) or the existing "no entry" panic, where the old lookup read whatever the bad entry held. The sim's unit tests for the old lookup moved to `fixedmap.rs`, so `cargo test -p rescue-sim` runs 2 fewer tests.
+
+---
+
+## #400 — Dungeon scene: floor properties in the sim and the floor layer (P1, P2)
+
+- **Assumption:** `properties_for` and `properties_from_record`, moved from the trace harness into `rescue_sim`, read the same values; and a background layer built from tileset 14's tiles and the sim's autotile cells on the natural seed draws the first floor with the tileset's own tiles.
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0, Windows 11 Pro (10.0.26200). Dump SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (the main checkout's `pmdb.nds`). Static and runtime inputs: investigator a's P1 and investigator b's P2 on #400.
+- **Evidence:**
+  - Moved to `crates/sim/src/floor_gen.rs`: `properties_from_record` and `properties_for(map, dungeon, floor)`, which returns a new `NoFloor` error. The two tests moved with them (`record_tests`). The harness's `start_properties` calls the sim function and maps `NoFloor` to its own `FloorError::NoFloor`. `rescue-sim` gained the `rescue-data` dependency (`scripts/check-deps.sh`: pass).
+  - New `rescue_render::bg::floor_layer(&Tileset, cells)`: the 56x32 cells become a 168x96 `BgLayer`, each cell drawn as its metatile (3x3 tiles) with the tileset's own palettes. Unit tests `floor_layer_draws_each_cell_as_its_metatile` and `floor_layer_refuses_what_the_tileset_lacks` (short cell grid, metatile past the list, tile past the tile data, palette bank past the palettes).
+  - ROM test `floor_layer_builds_for_the_natural_first_floor` (`crates/render/src/rom_tests.rs`): dungeon 0 floor 1 through `properties_for`; tileset number from record byte `+0x02` (asserted 14); the sim generates the floor from `DungeonRng::from_state(0xB280_4D01)`; autotile with variant draws fixed at 0; the layer is 168x96 and draws some nonzero tiles. Run as `RESCUE_ROM=<main checkout>/pmdb.nds RESCUE_REQUIRE_ROM=1 cargo test -p rescue-render floor_layer_builds`: 1 passed, not skipped.
+  - `cargo test -p rescue-sim -p rescue-render -p rescue-trace-harness`: sim 97 passed, render 124 passed, harness 39 + 6 passed. `cargo test --workspace`: pass.
+  - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/check-deps.sh`, `scripts/check-determinism.sh`: pass.
+- **Outcome:** P1 and P2 as the investigators describe them: the floor's properties come from the ROM's record for dungeon 0 floor 1, and tileset 14 builds a layer for the natural-seed floor. Not run: the layer is not compared with a runtime frame, and no pixels are checked.
+- **Fallback adopted:** variant draws are fixed at 0 (`shortcut:` comment in `rom_tests.rs`); the retail variants need the global RNG (P3), which the scene wiring will add. Palette animation is not applied (static palette).
+- **Notes:** `crates/render/Cargo.toml` gained a dev-dependency on `rescue-sim` for the sim-floor test; the task's file list did not name it. The ROM test repeats the harness's generation call (about six lines), because the harness's `generate` is app-local and was not in the move.

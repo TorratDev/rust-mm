@@ -1,16 +1,62 @@
 //! ROM-gated check of the BG renderer on a real ground map (docs/rom-tests.md). Skipped
 //! without a ROM. Asserts only that the frame is non-empty and deterministic, never ROM bytes.
 
+use rescue_data::dungeon::parse_mapparam;
+use rescue_data::item::parse_items;
 use rescue_formats::archive::Archive;
 use rescue_formats::graphics::Palette;
 use rescue_formats::ground;
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
+use rescue_sim::floor::Floor;
+use rescue_sim::floor_gen::{GenState, PortedSteps, generate_floor, properties_for};
+use rescue_sim::rng::DungeonRng;
 
 use rescue_formats::tileset;
 
 use crate::autotile::{GRID_H, GRID_W, autotile};
-use crate::bg::{BgLayer, compose, ground_layer, ground_layer_at};
+use crate::bg::{BgLayer, compose, floor_layer, ground_layer, ground_layer_at};
+
+rescue_tests::rom_test! {
+    /// The first floor of a new game (dungeon 0, floor 1), generated on the natural seed. Its
+    /// properties come from the ROM's `mapparam`, its tileset (14) from record byte `+0x02`,
+    /// and the floor layer covers the whole 168x96 map with the tileset's tiles.
+    fn floor_layer_builds_for_the_natural_first_floor(rom) {
+        let bytes = rom.read();
+        let header = Header::parse(&bytes).expect("header parses");
+        let fs = Filesystem::parse(&bytes, &header).expect("FNT/FAT parse");
+        let sys = fs.data(&bytes, fs.get("system.sbin").expect("system.sbin").id).expect("file bytes");
+        let items = parse_items(Archive::parse(sys).unwrap().get(sys, "itempara").expect("itempara"))
+            .expect("items parse");
+        let dun = fs.data(&bytes, fs.get("dungeon.sbin").expect("dungeon.sbin").id).expect("file bytes");
+        let arc = Archive::parse(dun).unwrap();
+        let map = parse_mapparam(arc.get(dun, "mapparam").expect("mapparam"), items.len())
+            .expect("mapparam parses");
+        let props = properties_for(&map, 0, 1).expect("first floor has a record");
+        let entry = &map.dungeons[0][1];
+        let tileset_no = map.floor_properties[usize::from(entry.properties)][0x02];
+        assert_eq!(tileset_no, 14, "tileset of the first floor");
+
+        let mut rng = DungeonRng::from_state(0xB280_4D01);
+        let mut floor = Floor::new();
+        let mut g = GenState::default();
+        generate_floor(&props, false, &mut floor, &mut rng, &mut g, &mut PortedSteps::default(), false)
+            .expect("the natural floor generates");
+        let terrain: Vec<u16> = (0..GRID_H)
+            .flat_map(|y| (0..GRID_W).map(move |x| (x, y)))
+            .map(|(x, y)| floor.tile(x as i32, y as i32).expect("cell in the grid").terrain)
+            .collect();
+
+        let t = tileset::Tileset::load(&arc, dun, tileset_no).expect("tileset 14 loads");
+        let cex = t.autotile.clone().expect("tileset 14 has an autotile table");
+        // shortcut: variant draws are always 0; the scene's RNG draws come with the scene wiring (#400 P3).
+        let cells = autotile(&terrain, u16::from(tileset_no), &cex, &[], false, || 0)
+            .expect("autotile runs");
+        let layer = floor_layer(&t, &cells).expect("the floor layer builds");
+        assert_eq!((layer.cols, layer.rows), (GRID_W * 3, GRID_H * 3));
+        assert!(layer.map.iter().any(|e| e.tile != 0), "the floor draws some tiles");
+    }
+}
 
 rescue_tests::rom_test! {
     /// Renders layer 0 of the first town map (`T*`) that has tiles and palettes, twice, and

@@ -122,6 +122,12 @@ The content header is a table of pointers, one per animated color slot (0 = not 
 
 `NN` is the tileset number. Each floor picks it through `FloorProperties.tileset` (byte 2) in `mapparam` ([`data.md`](data.md)).
 
+## Where the code lives
+
+- Tileset parts: `rescue_formats::tileset::Tileset::load`.
+- Floor background layer: `rescue_render::bg::floor_layer` takes a `Tileset` and the 56x32 autotile cells, and draws each cell as its metatile (3x3 tiles) with the tileset's own palettes. Static palette: `canm` is not applied. An out-of-range tile, metatile or palette bank is an error. ROM test: `floor_layer_builds_for_the_natural_first_floor` (tileset 14).
+- The floor's properties from the ROM's `mapparam`: `rescue_sim::floor_gen::properties_for` (takes the dungeon and floor numbers).
+
 ## Unknown fields
 
 - The 48 bytes after the autotile table. The game never reads them: the only readers of the table are two `ldrb` at `ov_0001::0214936c` and `ov_0001::021495d0`, and they stop at index 2303. The 48 bytes are 16 triples (the repeated triple is usually of shape a,b,a). Their meaning is unknown; treat them as padding and do not model them.
