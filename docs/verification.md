@@ -676,3 +676,22 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - `cargo test -p rescue-sim`: 96 passed, 0 failed (one new unit test, `fixed_tile_setter_code_44_clears_bit_1_only`).
 - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass. `scripts/check-determinism.sh`: pass.
 - Outcome: the whole-floor check passes on all 100 rows. The P7 draw is a shortcut: the setter's global-RNG draws stay unported; rooms 50-66 have no table monster, so no draw happens there. The test does not check the spawn lists, so the draw is checked only through the dungeon RNG state.
+
+---
+
+## #110 — Whole-floor golden coverage: layout variants and fixed rooms
+
+- **Assumption:** every `Layout` and `LayoutPlan` variant has a whole-floor row for the natural seed and for each of the three forced seeds (`0x12345678`, `0xCAFEBABF`, `0x0BADF00D`) that `cargo test` checks, and the fixed rooms are checked by the ROM-gated test `tests/tests/fixed_rooms_rom.rs`.
+- **Date:** 2026-11-13.
+- **Environment:** Windows 11 Pro (10.0.26200), rustc 1.97.0, Python 3.12.10 with py-desmume (system Python), dump SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- **Evidence:**
+  - Oracle runs (`verification/v7-trace/floor_oracle.py`, outputs kept outside the repo): `--layouts 3,4,5,6,7,9,10` (natural seed; 7 cases, output SHA-1 `024756e54b9432979ec3f996b483c19cae1150f6`) and `--seeds 0xCAFEBABF,0x0BADF00D --layouts 3` (2 cases, output SHA-1 `1163534e0b4a2d6987c8f7c7f743fbcb45614933`). Both ran with `layoutIndependentOfGlobalRng: true`.
+  - Nine new rows in `ORACLE_FLOORS` (39 to 48): the natural seed for layouts 3, 4, 5, 6, 7, 9 and 10, and layout 3 for seeds `0xCAFEBABF` and `0x0BADF00D`. All nine match `generate_floor`; no mismatch. Before this, layouts 3 to 7, 9 and 10 had no natural-seed row, and layout 3 had only seed `0x12345678`.
+  - Audit of `whole_floors_match_the_floor_oracle` (`crates/sim/src/floor.rs`): after the new rows, every layout byte 0 to 11 has four rows (natural seed and the three forced seeds). The coverage table is in [`re/dungeon-generation.md`](re/dungeon-generation.md#whole-floor-golden-test).
+  - New test `whole_floor_rows_cover_every_layout_variant` (`crates/sim/src/floor.rs`): maps each variant to its layout byte through `plan_layout`, and checks a row exists for each of the four entries. Its `variant` match is exhaustive, so a new variant fails to compile until it is named.
+  - The whole-floor test's doc now points to `fixed_rooms_rom.rs`; the module doc of `crates/sim/src/floor_gen.rs` no longer says the fixed rooms are not ported.
+  - `cargo test -p rescue-sim`: 97 passed, 0 failed. `RESCUE_ROM=<dump> cargo test -p rescue-tests --test fixed_rooms_rom`: 1 passed, with the dump (the body ran).
+  - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `scripts/check-determinism.sh`: pass.
+- **Outcome:** the sim side covers the natural seed and the three forced seeds on every layout byte 0 to 11, and all rows match. Still not covered by a row: layout bytes 12 to 15, which take the standard generator as byte 0 does (checked by reading `GenerateFloor`'s `switch`, not by an oracle run). The fixed-room check is ROM-gated and passed on the supported dump.
+- **Fallback adopted:** none.
+- **Notes:** the nine values are hashes and counts from the `generateEnd` fields; the runs and their commands are in the coverage section of `re/dungeon-generation.md`.

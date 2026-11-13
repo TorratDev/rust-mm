@@ -6730,12 +6730,16 @@ mod tests {
     /// `floor_oracle.py --seeds 0x12345678,0xCAFEBABF,0x0BADF00D --layouts
     /// 0,8,11,2` plus the natural seed with `--layouts 1,0,8,11,2`, on the
     /// first floor of a new game. Layout 1 of the forced seeds is the floor
-    /// the step tests check. The layout 3 row (outer ring, seed `0x12345678`)
-    /// comes from the run in `docs/re/outer-ring-floor.md`. The layout 4, 6
-    /// and 7 rows (all three forced seeds) come from the run in
+    /// the step tests check. The layout 3 row of seed `0x12345678` (outer
+    /// ring) comes from the run in `docs/re/outer-ring-floor.md`. The layout
+    /// 4, 6 and 7 rows (all three forced seeds) come from the run in
     /// `docs/re/layout-cases-4-6-7.md`. The layout 5, 9 and 10 rows (all three
     /// forced seeds) come from the run in `docs/re/layout-cases-5-9.md` and
-    /// `docs/re/layout-case-10.md`.
+    /// `docs/re/layout-case-10.md`. The natural-seed rows of layouts 3 to 7, 9
+    /// and 10, and the layout 3 rows of seeds `0xCAFEBABF` and `0x0BADF00D`,
+    /// come from `floor_oracle.py --layouts 3,4,5,6,7,9,10` and `--seeds
+    /// 0xCAFEBABF,0x0BADF00D --layouts 3` (`docs/re/dungeon-generation.md`,
+    /// "Whole-floor golden test").
     #[rustfmt::skip]
     const ORACLE_FLOORS: &[OracleFloor] = &[
         OracleFloor { entry: NATURAL_ENTRY, layout: 1, steps: 1780, layout_fnv1a: 0xf56d_01ac_d18e_338a, stairs: (23, 8), rooms: 3, terrain: (1526, 266) },
@@ -6743,6 +6747,13 @@ mod tests {
         OracleFloor { entry: NATURAL_ENTRY, layout: 8, steps: 1993, layout_fnv1a: 0x47da_d695_6e5c_b4f6, stairs: (16, 5), rooms: 6, terrain: (1417, 375) },
         OracleFloor { entry: NATURAL_ENTRY, layout: 11, steps: 2965, layout_fnv1a: 0x257a_4406_0201_455e, stairs: (37, 25), rooms: 5, terrain: (1395, 397) },
         OracleFloor { entry: NATURAL_ENTRY, layout: 2, steps: 18931, layout_fnv1a: 0x59c2_502f_7ea4_d88a, stairs: (16, 25), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 3, steps: 1775, layout_fnv1a: 0xaf01_34a5_a457_49e0, stairs: (47, 11), rooms: 8, terrain: (1354, 438) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 4, steps: 1638, layout_fnv1a: 0xea68_80b4_2276_6966, stairs: (15, 27), rooms: 10, terrain: (1424, 368) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 5, steps: 4652, layout_fnv1a: 0xbbb7_c264_8b05_5f83, stairs: (17, 7), rooms: 2, terrain: (1309, 483) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 6, steps: 1422, layout_fnv1a: 0x6f63_9213_60dd_a212, stairs: (35, 9), rooms: 5, terrain: (1589, 203) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 7, steps: 1144, layout_fnv1a: 0xf833_754b_8eb8_b930, stairs: (26, 8), rooms: 5, terrain: (1597, 195) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 9, steps: 3670, layout_fnv1a: 0x9798_0ee1_5916_4d2c, stairs: (7, 4), rooms: 7, terrain: (1265, 527) },
+        OracleFloor { entry: NATURAL_ENTRY, layout: 10, steps: 2165, layout_fnv1a: 0x817b_4739_48e1_79c6, stairs: (5, 11), rooms: 12, terrain: (1412, 380) },
         OracleFloor { entry: 0x1234_5678, layout: 1, steps: 1741, layout_fnv1a: 0xeb41_617f_5f54_1eec, stairs: (7, 27), rooms: 4, terrain: (1544, 248) },
         OracleFloor { entry: 0x1234_5678, layout: 0, steps: 872, layout_fnv1a: 0x498c_795e_e834_0ccf, stairs: (28, 28), rooms: 4, terrain: (1531, 261) },
         OracleFloor { entry: 0x1234_5678, layout: 8, steps: 1669, layout_fnv1a: 0xefc9_74af_77dc_b079, stairs: (18, 15), rooms: 5, terrain: (1446, 346) },
@@ -6753,11 +6764,13 @@ mod tests {
         OracleFloor { entry: 0xCAFE_BABF, layout: 8, steps: 1910, layout_fnv1a: 0x4f27_2499_e9a4_fd91, stairs: (34, 12), rooms: 6, terrain: (1439, 353) },
         OracleFloor { entry: 0xCAFE_BABF, layout: 11, steps: 1146, layout_fnv1a: 0x6fb1_cb91_6744_3e8b, stairs: (10, 24), rooms: 3, terrain: (1547, 245) },
         OracleFloor { entry: 0xCAFE_BABF, layout: 2, steps: 18935, layout_fnv1a: 0xa4ef_8030_d758_ce02, stairs: (4, 5), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: 0xCAFE_BABF, layout: 3, steps: 1742, layout_fnv1a: 0x6a5f_f522_5979_25c2, stairs: (10, 20), rooms: 8, terrain: (1362, 430) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 1, steps: 1013, layout_fnv1a: 0xa628_96b1_0175_2769, stairs: (21, 14), rooms: 3, terrain: (1620, 172) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 0, steps: 2218, layout_fnv1a: 0x3f9a_bf88_082a_c4e8, stairs: (48, 25), rooms: 7, terrain: (1365, 427) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 8, steps: 2440, layout_fnv1a: 0x5dae_48b3_df0d_9138, stairs: (9, 22), rooms: 4, terrain: (1397, 395) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 11, steps: 1308, layout_fnv1a: 0x79a5_ecc5_4df8_d120, stairs: (7, 15), rooms: 4, terrain: (1564, 228) },
         OracleFloor { entry: 0x0BAD_F00D, layout: 2, steps: 18919, layout_fnv1a: 0x9303_2d63_0c77_26fe, stairs: (19, 15), rooms: 1, terrain: (336, 1456) },
+        OracleFloor { entry: 0x0BAD_F00D, layout: 3, steps: 1804, layout_fnv1a: 0x893d_ac19_7324_491c, stairs: (44, 22), rooms: 8, terrain: (1342, 450) },
         OracleFloor { entry: 0x1234_5678, layout: 3, steps: 1683, layout_fnv1a: 0xc32e_3bac_3f2c_7b7b, stairs: (32, 20), rooms: 8, terrain: (1357, 435) },
         OracleFloor { entry: 0x1234_5678, layout: 4, steps: 1982, layout_fnv1a: 0x2f53_38a1_6f6f_b9d7, stairs: (38, 4), rooms: 10, terrain: (1389, 403) },
         OracleFloor { entry: 0x1234_5678, layout: 6, steps: 1593, layout_fnv1a: 0x65f1_cdca_27a5_0909, stairs: (47, 6), rooms: 5, terrain: (1557, 235) },
@@ -6783,9 +6796,17 @@ mod tests {
     /// `GenerateFloor`'s entry, `generate_floor` with the ported steps must
     /// use the same number of RNG steps and leave the same tiles (by
     /// [`layout_fnv1a`]), stairs, room count and terrain counts as the game at
-    /// `GenerateFloor`'s return, for the natural seed and the forced seeds on
-    /// layouts 0, 1, 2, 3, 4 (crossroads), 5 (two rooms with a monster house),
-    /// 6 (line), 7 (cross), 8, 9 (beetle), 10 (outer rooms) and 11.
+    /// `GenerateFloor`'s return, for the natural seed and the three forced
+    /// seeds (`0x1234_5678`, `0xCAFE_BABF`, `0x0BAD_F00D`) on every layout byte
+    /// 0 to 11: 0, 1, 2, 3, 4 (crossroads), 5 (two rooms with a monster house),
+    /// 6 (line), 7 (cross), 8, 9 (beetle), 10 (outer rooms) and 11. Layout
+    /// bytes 12 to 15 have no row of their own (see
+    /// [`whole_floor_rows_cover_every_layout_variant`]).
+    ///
+    /// Fixed rooms are not in this test. Their whole-floor check is
+    /// `tests/tests/fixed_rooms_rom.rs` (ROM-gated; its rows are in
+    /// `docs/re/fixed-rooms.md`). The coverage table is in
+    /// `docs/re/dungeon-generation.md`, "Whole-floor golden test".
     #[test]
     fn whole_floors_match_the_floor_oracle() {
         assert_eq!(natural_entry(), NATURAL_ENTRY);
@@ -6827,6 +6848,66 @@ mod tests {
                 [want.terrain.0, want.terrain.1, 0, 0],
                 "{what}: terrain"
             );
+        }
+    }
+
+    /// Every `LayoutPlan` and `Layout` variant has a row in [`ORACLE_FLOORS`],
+    /// through the layout byte that `plan_layout` maps to it. The match in
+    /// `variant` is exhaustive, so a new variant fails to compile until it is
+    /// named; add it to `cases` and to `ORACLE_FLOORS` as well. Layout bytes
+    /// 12 to 15 take the standard generator like byte 0 and have no row of
+    /// their own.
+    #[test]
+    fn whole_floor_rows_cover_every_layout_variant() {
+        fn variant(plan: LayoutPlan) -> &'static str {
+            match plan {
+                LayoutPlan::Standard {
+                    mode: GridMode::Full,
+                    ..
+                } => "standard full",
+                LayoutPlan::Standard {
+                    mode: GridMode::LeftHalf,
+                    ..
+                } => "standard left half",
+                LayoutPlan::Standard {
+                    mode: GridMode::LeftThreeQuarters,
+                    ..
+                } => "standard left three quarters",
+                LayoutPlan::OuterRooms { .. } => "outer rooms",
+                LayoutPlan::Other(Layout::OneRoomMonsterHouse) => "one room monster house",
+                LayoutPlan::Other(Layout::OuterRing) => "outer ring",
+                LayoutPlan::Other(Layout::Crossroads) => "crossroads",
+                LayoutPlan::Other(Layout::TwoRoomsMonsterHouse) => "two rooms monster house",
+                LayoutPlan::Other(Layout::Line) => "line",
+                LayoutPlan::Other(Layout::Cross) => "cross",
+                LayoutPlan::Other(Layout::Beetle) => "beetle",
+            }
+        }
+        let cases = [
+            (0, "standard full"),
+            (8, "standard full"),
+            (1, "standard left half"),
+            (11, "standard left three quarters"),
+            (10, "outer rooms"),
+            (2, "one room monster house"),
+            (3, "outer ring"),
+            (4, "crossroads"),
+            (5, "two rooms monster house"),
+            (6, "line"),
+            (7, "cross"),
+            (9, "beetle"),
+        ];
+        for (layout, name) in cases {
+            let plan = plan_layout(layout, &mut DungeonRng::from_state(NATURAL_ENTRY));
+            assert_eq!(variant(plan), name, "layout byte {layout}");
+            for entry in [NATURAL_ENTRY, 0x1234_5678, 0xCAFE_BABF, 0x0BAD_F00D] {
+                assert!(
+                    ORACLE_FLOORS
+                        .iter()
+                        .any(|f| f.layout == layout && f.entry == entry),
+                    "layout byte {layout}, entry {entry:#x}: no whole-floor row"
+                );
+            }
         }
     }
 
