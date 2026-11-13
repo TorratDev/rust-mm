@@ -9,7 +9,7 @@ Start here. This folder is an [Obsidian](https://obsidian.md) vault: open `docs/
 
 ## Reverse engineering (Blue)
 - [Symbols](symbols.md): Blue function table, the universe for the coverage map.
-- [Execution model](re/execution-model.md), [turns](re/turns.md), [combat](re/combat.md), [RNG](re/rng.md), [structs](re/structs.md), [dungeon generation](re/dungeon-generation.md), [ground BPC](re/ground-bpc.md).
+- [Execution model](re/execution-model.md), [turns](re/turns.md), [combat](re/combat.md), [RNG](re/rng.md), [structs](re/structs.md), [dungeon generation](re/dungeon-generation.md), [ground BPC](re/ground-bpc.md), [visibility](re/visibility.md) (what the leader sees and what the map reveals).
 - [Ghidra setup](ghidra-setup.md) and [references](references.md).
 - [Blue vs Red](blue-vs-red.md): where the Red decomp is a hypothesis and where it is verified.
 
