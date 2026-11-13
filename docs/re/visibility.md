@@ -59,6 +59,7 @@ The leader's view state is one block of the dungeon struct. `0213C63C` resets it
 | P1. Room rule: a tile inside a room's record is seen when `x0-1 <= x <= x1` and `y0-1 <= y <= y1`, that is the room plus one wall ring. The room branch takes no range. | `ov_0001::0219C6BC` (tests `x < x1+1`, and the same for y); room table at dungeon `+0xE264`, 0x1C bytes per room | blue-verified |
 | Room record: `+1` revealed byte; `+2`/`+4` = x0/y0; `+6`/`+8` = x1/y1 (16-bit). | `ov_0001::02147DC4` reads and writes them | blue-verified |
 | P1. Darkness: `D` = floor props `+0x16` & 3 is copied to `+0x15FA1` on a fresh floor. `D = 0` is lit (`+0x15FA4 = 1`, corridor R becomes 2). `D` of 1 or 2 is dark (corridor R is 1 or 2). | `ov_0001::0213C63C`; props at dungeon `+0x1A30C` | blue-verified |
+| P1. The in-view test takes the room id from the viewer's tile (`param_1`) and tests the target's position against that room's rect, or against the range square when the viewer has no room. | `ov_0001::0219C6BC`; checked by the reviewer of #406 in the export (STAMP present), not at runtime | blue-verified |
 | P1. Sprite on a lit floor: visible when `\|dx\| <= 6` and `\|dy\| <= 5` from the leader. On a dark floor it also needs the room/range test. | `ov_0001::0213C4DC` | blue-verified |
 | P1 runtime: on the first floor the leader's room reveal matched the room rule. The corridor radius was not checked (no corridor was crossed). A dark floor was never entered. | Investigator c's probe. No script name or output hash was given. | lead |
 | The darkness bits take only the values 0, 1 and 2 across the floor-property records. 3 was not seen. | Investigator c's scan of the record table. No script recorded. | lead |
@@ -76,7 +77,7 @@ The leader's view state is one block of the dungeon struct. `0213C63C` resets it
 | P3. Dark floors hide sprites: `ov_0001::02141CC8` (draw predicate) and `ov_0001::02141E58` (leader sees monster) drop monsters, items and hidden traps that fail `0213C4DC` or `0219C6BC`. Team monsters are always drawn. Invisible monsters are drawn only with `+0x15FA7`. | `ov_0001::02141CC8`, `ov_0001::02141E58`, `ov_0001::0213C4DC` | blue-verified |
 | P3. Hypothesis: the BG overlay writer `ov_0001::0214814C` (called from menu code, cleared by `ov_0001::021480E4`) picks a visible or dark set per cell with `ov_0001::02141AE0`. It looks like a target-highlight for menus, not fog. | `ov_0001::0214814C`, `ov_0001::02141AE0` | lead |
 | P3. Windows: engine A has windows 0 and 1 enabled on the first floor. `+0x15FB2` changes `+0x15FA0` to 2 and moves a window origin through `ov_0001::02019658`. No register value was tied to visibility. | Investigator c's register probe. No hash recorded. See [io.md](io.md). | lead |
-| P4. `ov_0001::02180994` is a relation code, not a tile-visibility test. It returns 0 when both arguments are the same entity. It returns 2 for "not a target" (info `+8 == 1`, info `+0x98` of 4 or 1, and the `p3`/`p4` cases). Otherwise it looks up a 24-entry table. | `ov_0001::02180994`; 32 callers listed in [ai.md](ai.md) | blue-verified (structure) |
+| P4. `ov_0001::02180994` is a relation code, not a tile-visibility test. It returns 0 when both arguments are the same entity. It returns 2 for "not a target" (info `+8 == 1`, info `+0x98` of 4 or 1, and the `p3`/`p4` cases). Otherwise it looks up a 24-entry table. | `ov_0001::02180994`; 32 call sites (xrefs.tsv in the export, not listed here) | blue-verified (structure) |
 | P4. `02183FF0` returns the leader only when the relation is 0 and the follow test is true. Relation 0 is read as "not an opponent". The meaning of relation 1 against 2 is not known. | `ov_0001::02183FF0`, `ov_0001::02141B48` | lead |
 | P4. Monster-to-target visibility is `ov_0001::02141C08(a, b)`: both valid, target `+0x20` set; for monster viewers, fail when the viewer lacks `02180608` and the target is invisible, or when the viewer is blinded; then the in-view test `0219C6BC`. | `ov_0001::02141C08`, `ov_0001::0219C6BC` | blue-verified |
 | P4. The follow test `ov_0001::02141B48` ends in `ov_0001::0219C5C4`: the room rect with walls, or Chebyshev distance 0 or 1, or distance 2 with `ov_0001::0219C3CC` (not read). It uses a fixed range, not `+0x15FA1`. | `ov_0001::02141B48`, `ov_0001::0219C5C4` | blue-verified |
@@ -157,7 +158,6 @@ Not compared in this note. The investigator did not read `pmd-red`'s visibility 
 ## Open questions
 
 - **Room rect asymmetry.** `0219C6BC` tests `x0-1 <= x <= x1` (and y). The wall ring is one tile on the low side only. Check whether the stored `x1`/`y1` already include the far wall before implementing a far-side ring.
-- **Keying of the in-view test.** The reveal takes its branch from the leader's tile. The investigator's wording of `0219C6BC` says "the tile's room id". Confirm whether the room id is the viewer's or the target's.
 - **Bit 1.** Both reveal paths set it. No reader was found, so its meaning ("lit") is not established.
 - **Map bounds.** The findings do not say whether the room rect or the range square is clipped to the map.
 - **Dark floor and corridor radius.** No dark floor was entered and no corridor crossed at runtime. The dark-floor corridor range is from the static reading only. Why the setting uses only 2 bits is also unknown.
@@ -174,3 +174,4 @@ Not compared in this note. The investigator did not read `pmd-red`'s visibility 
 - Symbols: [symbols.md](../symbols.md)
 - Verification: [verification.md](../verification.md)
 - Related: [ai.md](ai.md) (relation code, relabelled for #354), [status.md](status.md), [io.md](io.md)
+- Follow-up (implementation of seen and revealed tiles for a leader with no status): [#407](https://github.com/TorratDev/rust-mm/issues/407)
