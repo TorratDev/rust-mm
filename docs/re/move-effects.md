@@ -8,7 +8,8 @@ Issue: [#50](https://github.com/TorratDev/rust-mm/issues/50). Part of the combat
 - Callers: `ov_0001::0215B384` (move executor) and `ov_0001::0215AB34`.
 - The switch has 413 case IDs. The other 406 IDs go to one of 262 handler addresses, and seven IDs have no handler. Handler bodies are not catalogued here.
 - Runtime (py-desmume, run by investigator C on the dump with SHA-1 `6f01887356268de39085df01490347bbcc3aa330`; 3,000 frames after the dungeon starts): the entry fired 68 times, with move IDs `0x09A`, `0x0D9`, `0x104` and `0x163`. That is the only runtime evidence here. The other IDs are static.
-- Not verified: the miss path (Red's `dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick), whether the "8 other switches" in the issue are the `goto switchD_..._default` jumps or something else, and the handler bodies. The hit/miss shape is in [`combat.md`](combat.md#dispatch-shape-and-hitmiss-branch-p2-186). `HandleDamagingMove` (`ov_0001::0215675C`) is the handler for 60 IDs in the catalogue below.
+- One `switch`, not nine. In `ov_0001::02156824` there is one `switch` on the move ID at `move+2`, with case values from 0 to 0x19C (**blue-verified**, investigator B's findings on [#355](https://github.com/TorratDev/rust-mm/issues/355)). The other eight text hits of `switch` are the default label and seven `goto`s to it (case IDs 0x166, 0x167, 0x192, 0x194, 0x195, 0x198 and 0x19B; case 0x164 falls into the label). All of them set a local to 0, so they have no effect. The ID checks before the switch are plain `if`s (for example 0x89 and 0xFC) and are not catalogued here.
+- Not verified: the miss path (Red's `dungeon_move.c` around line 290, Hi Jump Kick and Jump Kick), and the handler bodies. The hit/miss shape is in [`combat.md`](combat.md#dispatch-shape-and-hitmiss-branch-p2-186). `HandleDamagingMove` (`ov_0001::0215675C`) is the handler for 60 IDs in the catalogue below.
 
 ## Roll wrapper per move ID (P3, #186)
 
