@@ -8,7 +8,7 @@ use rescue_sim::command::{Command, Direction};
 /// The command the held buttons ask for, or `None`.
 ///
 /// Two D-pad bits make a diagonal; one bit a straight direction; opposite or three bits none.
-/// R held accepts only the diagonals. A+B is a turn in place (`Wait`), whatever else is held.
+/// R held accepts only the diagonals. A+B passes the turn (`Wait`), whatever else is held.
 /// B held with a direction runs. There is no repeat counter and no debounce: the caller asks
 /// again on each frame the leader is idle.
 pub fn command_for(held: ButtonState) -> Option<Command> {

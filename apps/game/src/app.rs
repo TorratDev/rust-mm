@@ -358,6 +358,8 @@ mod tests {
     use rescue_platform::DsButton;
     use rescue_sim::floor::{HEIGHT, TERRAIN_STAIRS, WIDTH};
 
+    use crate::walk::TILE_FRAMES;
+
     const RUN: RunConfig = RunConfig {
         seed: dungeon::SEED,
         dungeon: dungeon::DEFAULT_DUNGEON,
@@ -404,8 +406,8 @@ mod tests {
         app.game = Some(placed.with_floors(floors));
     }
 
-    /// The first tile of the run's floor that has the stairs flag.
-    fn stairs_tile(app: &App) -> (i16, i16) {
+    /// The tiles of the run's floor that have the stairs flag.
+    fn stairs_tiles(app: &App) -> Vec<(i16, i16)> {
         let map = app
             .game
             .as_ref()
@@ -414,12 +416,66 @@ mod tests {
             .floor();
         (0..HEIGHT)
             .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
-            .find(|&(x, y)| {
+            .filter(|&(x, y)| {
                 map.tile(x as i32, y as i32)
                     .is_some_and(|t| t.terrain & TERRAIN_STAIRS != 0)
             })
             .map(|(x, y)| (x as i16, y as i16))
-            .expect("the floor has stairs")
+            .collect()
+    }
+
+    /// The first stairs tile of the run's floor.
+    fn stairs_tile(app: &App) -> (i16, i16) {
+        *stairs_tiles(app).first().expect("the floor has stairs")
+    }
+
+    /// A tile next to a stairs tile, and the D-pad button that steps from it onto the stairs. The
+    /// sim decides which steps are valid, so each candidate is tried on a copy of the run.
+    fn approach_to_stairs(app: &App) -> ((i16, i16), DsButton) {
+        let steps = [
+            (DsButton::Up, (0, -1)),
+            (DsButton::Down, (0, 1)),
+            (DsButton::Left, (-1, 0)),
+            (DsButton::Right, (1, 0)),
+        ];
+        for stairs in stairs_tiles(app) {
+            for (button, (dx, dy)) in steps {
+                let start = (stairs.0 - dx, stairs.1 - dy);
+                let mut trial = app.clone();
+                place_leader(&mut trial, start);
+                trial.tick(held(button));
+                if leader(&trial) == Some(stairs) {
+                    return (start, button);
+                }
+            }
+        }
+        panic!("no tile next to the stairs steps onto them");
+    }
+
+    /// Walks the leader from a tile next to the stairs onto them, holding the direction the whole
+    /// way as a player does. Checks the walk on the way; the last tick ends the walk and the
+    /// stairs take the leader, so the caller checks the outcome.
+    fn walk_onto_the_stairs(app: &mut App) {
+        let (start, button) = approach_to_stairs(app);
+        place_leader(app, start);
+        let stairs = stairs_tile(app);
+        app.tick(held(button));
+        assert_eq!(
+            leader(app),
+            Some(stairs),
+            "the move puts the leader on the stairs"
+        );
+        assert!(app.walk.is_some(), "the move starts a walk");
+        for frame in 1..TILE_FRAMES {
+            app.tick(held(button));
+            assert_eq!(
+                app.scene,
+                Scene::Dungeon,
+                "the walk holds the scene, frame {frame}"
+            );
+            assert!(app.walk.is_some(), "the walk runs, frame {frame}");
+        }
+        app.tick(held(button));
     }
 
     #[test]
@@ -532,6 +588,15 @@ mod tests {
     }
 
     #[test]
+    fn a_held_move_onto_the_stairs_takes_them_after_the_walk() {
+        // The placeholder has no floor records, so its stairs clear the dungeon.
+        let mut app = App::new(&ready(), None, RUN, true);
+        walk_onto_the_stairs(&mut app);
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        assert!(app.dungeon().is_none(), "the dungeon is dropped");
+    }
+
+    #[test]
     fn the_sim_floors_start_at_the_start_floor() {
         let records: Vec<FloorRecord> = (0..4u8).map(|i| [i; FLOOR_PROPERTIES]).collect();
         assert_eq!(sim_floors(&records, 1), records);
@@ -547,11 +612,9 @@ mod tests {
         /// floor, and the ROM's floor and view follow (#347 P3).
         fn the_stairs_take_the_rom_floor_to_the_next(rom) {
             let mut app = App::new(&ready(), Some(rom.read()), RUN, true);
-            let tile = stairs_tile(&app);
-            place_leader(&mut app, tile);
-            app.tick(buttons(&[DsButton::A, DsButton::B]));
-            app.tick(buttons(&[DsButton::A, DsButton::B]));
+            walk_onto_the_stairs(&mut app);
             assert_eq!(app.scene, Scene::Dungeon);
+            assert!(app.walk.is_none(), "the walk has ended");
             assert_eq!(app.floor, 2, "the view is on floor 2");
             assert_eq!(app.game.as_ref().map(|g| g.floors_entered()), Some(2));
             assert!(app.dungeon().is_some(), "the floor view is rebuilt");
