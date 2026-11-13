@@ -137,6 +137,7 @@ pub fn command_for(action: &Action) -> Result<Command, ActionError> {
 pub const fn command_name(command: &Command) -> &'static str {
     match command {
         Command::Move(_) => "Move",
+        Command::Run(_) => "Run",
         Command::Attack(_) => "Attack",
         Command::UseMove { .. } => "UseMove",
         Command::UseItem { .. } => "UseItem",

@@ -55,6 +55,10 @@ pub enum MenuAction {
 pub enum Command {
     /// Move the leader one tile.
     Move(Direction),
+    /// Run in a direction: the first step is a move, then the leader keeps going while the run
+    /// checks hold (`docs/re/turns.md`, "Running and swapping"). With an empty belly it is one
+    /// step.
+    Run(Direction),
     /// Attack in a direction. Combat is not modelled yet.
     Attack(Direction),
     /// Use move slot `slot` (0 to 3), at a direction for moves that need one. Moves are not
@@ -82,7 +86,7 @@ pub enum Blocked {
     OutOfBounds,
     /// The target tile is an impassable wall (`0x10`).
     Wall,
-    /// Another monster stands on the target tile.
+    /// A wild monster stands on the target tile. A team ally there is swapped with instead.
     Occupied,
     /// The target is not ordinary ground (water, lava or a plain wall: `terrain & 3` is not 1).
     Terrain,
