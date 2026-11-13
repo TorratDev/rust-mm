@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 serde.workspace = true
+rescue-data.workspace = true
 rescue-formats.workspace = true
 
 [dev-dependencies]

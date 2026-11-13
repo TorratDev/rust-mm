@@ -16,4 +16,5 @@ rescue-formats.workspace = true
 [dev-dependencies]
 rescue-data.workspace = true
 rescue-nds.workspace = true
+rescue-sim.workspace = true
 rescue-tests = { path = "../../tests" }

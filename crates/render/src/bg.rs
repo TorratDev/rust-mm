@@ -11,7 +11,9 @@ use rescue_formats::gfx::{self, MapEntry, Rgba, TILE_PIXELS};
 use rescue_formats::graphics::Palette;
 use rescue_formats::ground::{Bma, Bpa, Bpc};
 use rescue_formats::read::{Error, Result};
+use rescue_formats::tileset::Tileset;
 
+use crate::autotile::{GRID_H, GRID_W};
 use crate::screens::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 /// One background layer.
@@ -200,6 +202,41 @@ pub fn ground_layer_at(
     BgLayer::new(tiles, map, cols, rows_t).ok_or(Error::Malformed("BMA map is empty"))
 }
 
+/// The floor's background layer: each cell of `cells` (the `GRID_W` x `GRID_H` metatile
+/// numbers from [`crate::autotile`]) drawn as its tileset metatile, 3x3 tiles per cell.
+/// Tiles and palette banks are the tileset's own; compose with `tileset.palettes`. The
+/// palette is static: no animation. `Err` if `cells` is not the grid, a cell names a
+/// metatile the tileset lacks, or an entry names a tile or palette bank the tileset lacks.
+pub fn floor_layer(tileset: &Tileset, cells: &[u8]) -> Result<BgLayer> {
+    if cells.len() != GRID_W * GRID_H {
+        return Err(Error::Malformed("floor cells are not the 56x32 grid"));
+    }
+    let tiles = gfx::decode_4bpp_tiles(&tileset.chr)?;
+    let (cols, rows) = (GRID_W * 3, GRID_H * 3);
+    let mut map = vec![MapEntry::from_raw(0); cols * rows];
+    for (i, &m) in cells.iter().enumerate() {
+        let metatile = tileset
+            .metatiles
+            .get(usize::from(m))
+            .ok_or(Error::Malformed(
+                "floor cell names a metatile the tileset lacks",
+            ))?;
+        let (x, y) = ((i % GRID_W) * 3, (i / GRID_W) * 3);
+        for (k, e) in metatile.iter().enumerate() {
+            if usize::from(e.tile) >= tiles.len() {
+                return Err(Error::Malformed("metatile names a tile past the tile data"));
+            }
+            if usize::from(e.palette) >= tileset.palettes.len() {
+                return Err(Error::Malformed(
+                    "metatile names a palette bank the tileset lacks",
+                ));
+            }
+            map[(y + k / 3) * cols + x + k % 3] = *e;
+        }
+    }
+    BgLayer::new(tiles, map, cols, rows).ok_or(Error::Malformed("floor layer is empty"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +389,54 @@ mod tests {
     fn layer_constructor_validates_size() {
         assert!(BgLayer::new(vec![], vec![], 0, 0).is_none());
         assert!(BgLayer::new(vec![], vec![cell(0, false, false)], 2, 1).is_none());
+    }
+
+    fn floor_tileset(tiles: usize, metatiles: Vec<[MapEntry; 9]>) -> Tileset {
+        Tileset {
+            chr: vec![0x11; tiles * 32],
+            metatiles,
+            palettes: banks(),
+            ..Tileset::default()
+        }
+    }
+
+    #[test]
+    fn floor_layer_draws_each_cell_as_its_metatile() {
+        // Metatile 1 has tile 1 at its centre (entry 4) and tile 0 elsewhere.
+        let plain: [MapEntry; 9] = std::array::from_fn(|_| cell(0, false, false));
+        let centre: [MapEntry; 9] = std::array::from_fn(|k| cell(u16::from(k == 4), false, false));
+        let t = floor_tileset(2, vec![plain, centre]);
+        let mut cells = vec![0u8; GRID_W * GRID_H];
+        cells[GRID_W + 2] = 1; // column 2, row 1
+        let l = floor_layer(&t, &cells).unwrap();
+        assert_eq!((l.cols, l.rows, l.tiles.len()), (GRID_W * 3, GRID_H * 3, 2));
+        // The centre entry of cell (2, 1) is map cell (2 * 3 + 1, 1 * 3 + 1).
+        assert_eq!(l.map[4 * l.cols + 7].tile, 1);
+        assert_eq!(l.map.iter().filter(|e| e.tile == 1).count(), 1);
+    }
+
+    #[test]
+    fn floor_layer_refuses_what_the_tileset_lacks() {
+        let plain: [MapEntry; 9] = std::array::from_fn(|_| cell(0, false, false));
+        let cells = vec![0u8; GRID_W * GRID_H];
+        let t = floor_tileset(1, vec![plain]);
+        assert!(floor_layer(&t, &cells).is_ok());
+        assert!(floor_layer(&t, &cells[1..]).is_err(), "short cell grid");
+        let mut past_metatiles = cells.clone();
+        past_metatiles[5] = 1;
+        assert!(
+            floor_layer(&t, &past_metatiles).is_err(),
+            "metatile past the list"
+        );
+        let far: [MapEntry; 9] = std::array::from_fn(|k| cell(9 * u16::from(k == 0), false, false));
+        let t = floor_tileset(1, vec![far]);
+        assert!(floor_layer(&t, &cells).is_err(), "tile past the tile data");
+        let mut bad_bank = plain;
+        bad_bank[0].palette = 3;
+        let t = floor_tileset(1, vec![bad_bank]);
+        assert!(
+            floor_layer(&t, &cells).is_err(),
+            "palette bank past the palettes"
+        );
     }
 }
