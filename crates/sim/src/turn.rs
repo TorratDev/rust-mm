@@ -149,7 +149,8 @@ impl Dungeon {
         // shortcut: the 1 HP of hunger is taken without a faint check; HP stops at 0 and the
         // faint exit (`HandleFaint_Async`) is not ported. The game's early exits after the
         // weather damage (export lines 206 to 213) would skip the roll; the sim has no weather,
-        // so it always draws it. A hunger faint does not skip it in the game either.
+        // so it always draws it. A faint from hunger skips the roll in the game too: the roll
+        // sits inside the `EntityIsValid && !IsFloorOver()` check at line 185.
         if let Some(leader) = self.team.first_mut() {
             let info = &mut leader.info;
             info.belly_empty = false;
