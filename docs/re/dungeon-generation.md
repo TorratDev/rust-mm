@@ -84,7 +84,7 @@ Results (2026-10-14, 5 seeds × 3 global RNG values, plus the floor's natural se
 
 `floor_oracle.py` also records the same hashes and counts at `GenerateFloor`'s return (`0x021525B4`, `generateEnd`), where `rescue_sim::floor_gen::generate_floor` ends, and can force the floor-properties layout byte (`--layouts`, written at dungeon `+0x1A2F6`, the properties `SpawnNonEnemies` gets in `r0`, at `GenerateFloor`'s entry). Its `layoutFnv1a`, the same as `rescue_sim::floor::layout_fnv1a`, is FNV-1a 64 over the first 12 bytes of each of the 56 × 32 tile records, row by row, with the graphics variant (`+0x04`) fed as 0. The last 8 bytes, the monster and object pointers, are left out: they are RAM addresses of entities the floor generator does not make. At `GenerateFloor`'s return the walkable-neighbour bytes are still all zero in the game, and the Rust floor never sets them.
 
-The test `whole_floors_match_the_floor_oracle` runs `generate_floor` from the recorded entry state and checks the RNG step count, `layoutFnv1a`, stairs, room count and terrain counts against the 39 rows of `ORACLE_FLOORS` (the natural seed and `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`, on the layout bytes below): 872 to 18,935 RNG steps, all matching. The expected values are committed in the test, so it runs without the ROM. `whole_floor_rows_cover_every_layout_variant` checks that each variant below is reached through its layout byte and has at least one row.
+The test `whole_floors_match_the_floor_oracle` runs `generate_floor` from the recorded entry state and checks the RNG step count, `layoutFnv1a`, stairs, room count and terrain counts against the 48 rows of `ORACLE_FLOORS` (the natural seed and `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`, on each layout byte 0 to 11: 4 rows per byte): 872 to 18,935 RNG steps, all matching. The expected values are committed in the test, so it runs without the ROM. `whole_floor_rows_cover_every_layout_variant` checks that each variant below is reached through its layout byte and has at least one row.
 
 Coverage (every `Layout` and `LayoutPlan` variant has a whole-floor row; the fixed rooms are checked by the ROM-gated test):
 
@@ -93,19 +93,28 @@ Coverage (every `Layout` and `LayoutPlan` variant has a whole-floor row; the fix
 | `LayoutPlan::Standard`, `GridMode::Full` (case 0; byte 8 changes the grid draw) | 0, 8 | 8 (4 each) | the runs below, this section |
 | `LayoutPlan::Standard`, `GridMode::LeftHalf` (case 1, the first floor) | 1 | 4 | this section |
 | `LayoutPlan::Standard`, `GridMode::LeftThreeQuarters` (case 11) | 11 | 4 | this section |
-| `LayoutPlan::OuterRooms` (case 10) | 10 | 3 | [`layout-case-10.md`](layout-case-10.md#emulator-check-floor-oracle) |
+| `LayoutPlan::OuterRooms` (case 10) | 10 | 4 (natural seed and 3 forced) | [`layout-case-10.md`](layout-case-10.md#emulator-check-floor-oracle) (forced seeds); natural seed: this section |
 | `Layout::OneRoomMonsterHouse` (case 2) | 2 | 4 | this section |
-| `Layout::OuterRing` (case 3) | 3 | 1 (seed `0x12345678` only) | [`outer-ring-floor.md`](outer-ring-floor.md#emulator-check-floor-oracle) |
-| `Layout::Crossroads` (case 4) | 4 | 3 | [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md#emulator-check-floor-oracle) |
-| `Layout::TwoRoomsMonsterHouse` (case 5) | 5 | 3 | [`layout-cases-5-9.md`](layout-cases-5-9.md#emulator-check-floor-oracle) |
-| `Layout::Line` (case 6) | 6 | 3 | [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md#emulator-check-floor-oracle) |
-| `Layout::Cross` (case 7) | 7 | 3 | [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md#emulator-check-floor-oracle) |
-| `Layout::Beetle` (case 9) | 9 | 3 | [`layout-cases-5-9.md`](layout-cases-5-9.md#emulator-check-floor-oracle) |
+| `Layout::OuterRing` (case 3) | 3 | 4 (natural seed and 3 forced) | [`outer-ring-floor.md`](outer-ring-floor.md#emulator-check-floor-oracle) (seed `0x12345678`); natural seed and seeds `0xCAFEBABF`, `0x0BADF00D`: this section |
+| `Layout::Crossroads` (case 4) | 4 | 4 (natural seed and 3 forced) | [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md#emulator-check-floor-oracle) (forced seeds); natural seed: this section |
+| `Layout::TwoRoomsMonsterHouse` (case 5) | 5 | 4 (natural seed and 3 forced) | [`layout-cases-5-9.md`](layout-cases-5-9.md#emulator-check-floor-oracle) (forced seeds); natural seed: this section |
+| `Layout::Line` (case 6) | 6 | 4 (natural seed and 3 forced) | [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md#emulator-check-floor-oracle) (forced seeds); natural seed: this section |
+| `Layout::Cross` (case 7) | 7 | 4 (natural seed and 3 forced) | [`layout-cases-4-6-7.md`](layout-cases-4-6-7.md#emulator-check-floor-oracle) (forced seeds); natural seed: this section |
+| `Layout::Beetle` (case 9) | 9 | 4 (natural seed and 3 forced) | [`layout-cases-5-9.md`](layout-cases-5-9.md#emulator-check-floor-oracle) (forced seeds); natural seed: this section |
 | Fixed rooms 1 to 66 (forced `+0x34B4`, layout 1) | 1 | ROM-gated | [`tests/tests/fixed_rooms_rom.rs`](../../tests/tests/fixed_rooms_rom.rs) (rows in [`fixed-rooms.md`](fixed-rooms.md#retail-whole-floor-check-p5)) |
 
 Layout bytes 12 to 15 take the standard generator like byte 0 (`plan_layout`'s `_` arm). No committed row uses them, so they have no whole-floor row of their own.
 
-To regenerate the rows, run `floor_oracle.py` from `verification/v7-trace/` with py-desmume and the supported dump (`OUT.jsonl` is not committed). The Rust side has no regeneration command: copy the values of each row into `ORACLE_FLOORS` by hand and note the run in the layout doc.
+To regenerate the rows, run `floor_oracle.py` from `verification/v7-trace/` with py-desmume and the supported dump (`OUT.jsonl` is not committed; keep it outside the repo). The natural-seed rows of layouts 3 to 7, 9 and 10 and the layout 3 rows of seeds `0xCAFEBABF` and `0x0BADF00D` (added with #110) come from these two runs:
+
+```
+python floor_oracle.py ROM OUT_natural.jsonl --layouts 3,4,5,6,7,9,10
+python floor_oracle.py ROM OUT_layout3.jsonl --seeds 0xCAFEBABF,0x0BADF00D --layouts 3
+```
+
+The Rust side has no regeneration command: for each row, copy `generateEnd`'s `rngSteps` (as `steps`), `layoutFnv1a`, `stairs`, `rooms` and the `terrainCounts` of `0` and `1` into `ORACLE_FLOORS` by hand, with `entry` set to `rngAtGenerate`. Use `generateEnd`, not the first-turn fields: the test checks the state at `GenerateFloor`'s return. Then run `cargo test -p rescue-sim whole_floor`.
+
+Run of 2026-11-13 (#110; dump SHA-1 `6f01887356268de39085df01490347bbcc3aa330`): the two runs above produced 9 rows, all of which match `generate_floor` (`whole_floors_match_the_floor_oracle` passes). Output SHA-1s: natural `024756e54b9432979ec3f996b483c19cae1150f6`, layout 3 seeds `1163534e0b4a2d6987c8f7c7f743fbcb45614933`. No mismatch.
 
 ```
 floor_oracle.py ROM out.jsonl --layouts 1,0,8,11,2
