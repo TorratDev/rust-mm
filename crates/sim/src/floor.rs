@@ -6,6 +6,8 @@
 //! checked against `verification/v7-trace/floor_stages.py`, which records the
 //! dungeon RNG state at every step of the game's generator.
 
+use serde::{Deserialize, Serialize};
+
 use crate::rng::DungeonRng;
 use rescue_formats::fixedmap::{FixedMapEntry, TileStream};
 
@@ -56,10 +58,27 @@ impl Tile {
     };
 }
 
+/// One room's record (`docs/re/visibility.md`, "Claims": room record, dungeon `+0xE264`, 0x1C
+/// bytes each). `(x0, y0)` is the room's first floor tile and `(x1, y1)` is one past its last,
+/// so the end is exclusive. Built at floor entry from the final tiles (`ov_0001::02147EB4`, see
+/// [`crate::visibility::enter_floor`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Room {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+    /// `+1`: the room has been entered (the revealed byte, 1 when set).
+    pub revealed: bool,
+}
+
 /// A floor map.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Floor {
     tiles: Vec<Tile>,
+    /// The room table, indexed by a tile's room number. Built at floor entry by
+    /// [`crate::visibility::enter_floor`], not by [`place_rooms`].
+    pub(crate) rooms: Vec<Room>,
     /// Stairs position, if placed.
     pub stairs: Option<(i16, i16)>,
 }
@@ -77,6 +96,7 @@ impl Floor {
     pub fn new() -> Self {
         let mut floor = Self {
             tiles: vec![Tile::EMPTY; WIDTH * HEIGHT],
+            rooms: Vec::new(),
             stairs: None,
         };
         for y in 0..HEIGHT {
@@ -100,6 +120,16 @@ impl Floor {
         Self::index(x, y).map(|i| &mut self.tiles[i])
     }
 
+    /// The room table (see [`Room`]).
+    #[must_use]
+    pub fn rooms(&self) -> &[Room] {
+        &self.rooms
+    }
+
+    /// Room `index` of the table, or `None` (a corridor tile holds [`NO_ROOM`]).
+    pub(crate) fn room_mut(&mut self, index: u8) -> Option<&mut Room> {
+        self.rooms.get_mut(usize::from(index))
+    }
     fn index(x: i32, y: i32) -> Option<usize> {
         let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
         (x < WIDTH && y < HEIGHT).then_some(y * WIDTH + x)
@@ -460,6 +490,7 @@ pub fn place_rooms(
 ) {
     let (grid_x, grid_y) = (grid.grid_x, grid.grid_y);
     let mut room_index: u8 = 0;
+    floor.rooms.clear();
     for y in 0..grid_y {
         for x in 0..grid_x {
             let cell = *grid.cell(x, y);

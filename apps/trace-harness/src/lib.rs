@@ -510,6 +510,7 @@ mod tests {
                 floor: FloorSnapshot {
                     tiles: Vec::new(),
                     stairs: None,
+                    rooms: Vec::new(),
                 },
                 team: row.team.iter().flatten().copied().map(monster).collect(),
                 wild: row.wild.iter().copied().map(monster).collect(),
@@ -523,6 +524,7 @@ mod tests {
                 player_spawn: None,
                 stairs_spawn: None,
                 stairs_pending: false,
+                darkness: 0,
             }),
         }
     }

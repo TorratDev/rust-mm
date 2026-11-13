@@ -25,7 +25,7 @@ Range for corridors: `R = D`, and `R = 2` when `D = 0` (a lit floor). Use the cl
 **Each turn** (skip everything when the leader is blinded, `+0x15FA2 = 1`):
 
 1. **Seen now.**
-   - If the leader stands in a room: every tile in `[x0-1, x1] x [y0-1, y1]` of that room's record.
+   - If the leader stands in a room: every tile in `[x0-1, x1] x [y0-1, y1]` of that room's record. `x1` and `y1` are exclusive ends (one past the last floor tile), so the set has a wall ring on every side.
    - Otherwise: every tile with `|dx| <= R` and `|dy| <= R` from the leader.
 2. **Reveal.** For the same set:
    - In a room: if the room record's revealed byte is 0, set it to 1 and set bit 0 (and bit 1) on the room rect. If it is already 1, do nothing.
@@ -57,7 +57,9 @@ The leader's view state is one block of the dungeon struct. `0213C63C` resets it
 |-------|----------|--------|
 | P1. Corridor range: a tile is seen when `\|dx\| <= R` and `\|dy\| <= R` from the viewer, with `R = +0x15FA1`, and 0 read as 2. | `ov_0001::02147DC4` (reveal), `ov_0001::0219C6BC` (in-view test), `ov_0001::0213C63C` (sets `+0x15FA1`); users `02193CC0`, `0219706C`, `0219C4F8` | blue-verified |
 | P1. Room rule: a tile inside a room's record is seen when `x0-1 <= x <= x1` and `y0-1 <= y <= y1`, that is the room plus one wall ring. The room branch takes no range. | `ov_0001::0219C6BC` (tests `x < x1+1`, and the same for y); room table at dungeon `+0xE264`, 0x1C bytes per room | blue-verified |
-| Room record: `+1` revealed byte; `+2`/`+4` = x0/y0; `+6`/`+8` = x1/y1 (16-bit). | `ov_0001::02147DC4` reads and writes them | blue-verified |
+| Room record: `+0` set to 1 when a tile carries the room; `+1` revealed byte; `+2`/`+4` = x0/y0 (min over the room's tiles); `+6`/`+8` = x1/y1 (16-bit), **exclusive**: max tile + 1. The record is built after generation from the final tiles, for each tile whose room byte is not `0xFF`, so merged cells, extra links and fixed rooms are included. The room count is written to `+0xE260` (highest room byte + 1). The reveal (`02147DC4`) and in-view test read the record as above. | `ov_0001::02147EB4` (builder, export read; STAMP 2026-11-12), `ov_0001::02147DC4` (reads and writes the record) | blue-verified (export) |
+| Floor entry, in order: `GenerateFloor` (`0206E390`), the room table (`02147EB4`), item spawns on tiles whose `+2` bit 1 is set (`02144714`), the clear of the whole `+2` word on every tile, 56 by 32 (`ov_0001::0214809C`), then the arrival reveal (`02177F74`, which calls `02147DC4`). So the generation markers are gone before visibility starts. The stairs marker is bit 0 and the item marker is bit 1, the same bits as the reveal. | `RunDungeon_Async` (`0206DC20`, ARM9 export, calls at its lines 285 to 315), `ov_0001::0214809C` | blue-verified (export) |
+| The room table's exclusive end gives the far wall ring. Investigator c's probe on the first floor (last floor tile x = 24, `x1` = 25, revealed through x = 25) agrees with it. The probe has no script name or hash. | `ov_0001::02147EB4` plus the probe | lead for the probe; the record is blue-verified |
 | P1. Darkness: `D` = floor props `+0x16` & 3 is copied to `+0x15FA1` on a fresh floor. `D = 0` is lit (`+0x15FA4 = 1`, corridor R becomes 2). `D` of 1 or 2 is dark (corridor R is 1 or 2). | `ov_0001::0213C63C`; props at dungeon `+0x1A30C` | blue-verified |
 | P1. The in-view test takes the room id from the viewer's tile (`param_1`) and tests the target's position against that room's rect, or against the range square when the viewer has no room. | `ov_0001::0219C6BC`; checked by the reviewer of #406 in the export (STAMP present), not at runtime | blue-verified |
 | P1. Sprite on a lit floor: visible when `\|dx\| <= 6` and `\|dy\| <= 5` from the leader. On a dark floor it also needs the room/range test. | `ov_0001::0213C4DC` | blue-verified |
@@ -99,6 +101,9 @@ The leader's view state is one block of the dungeon struct. `0213C63C` resets it
 | ov_0001::0213C0F8 | per-turn view refresh from the leader | #354 P1, P5 |
 | ov_0001::0213AD54 | writes `+0x15FA0` | #354 view block |
 | ov_0001::0213B460 | whole-floor reveal | #354 P2 |
+| ov_0001::02147EB4 | room table builder, from the final tiles (exclusive ends) | #407 review, export |
+| ov_0001::0214809C | clears the `+2` word on every tile (floor entry) | #407 review, export |
+| ov_0001::0206DC20 (ARM9, `RunDungeon_Async`) | floor entry order: generation, room table, item spawns, clear, arrival reveal | #407 review, export |
 | ov_0001::0216249C | caller of the whole-floor reveal | #354 P2 |
 | ov_0001::0213C4DC | sprite visibility (lit box, dark-floor test) | #354 P1 |
 | ov_0001::0213CD5C | minimap cell repaint | #354 P2 |
@@ -157,7 +162,8 @@ Not compared in this note. The investigator did not read `pmd-red`'s visibility 
 
 ## Open questions
 
-- **Room rect asymmetry.** `0219C6BC` tests `x0-1 <= x <= x1` (and y). The wall ring is one tile on the low side only. Check whether the stored `x1`/`y1` already include the far wall before implementing a far-side ring.
+- **Room rect asymmetry (resolved).** `0219C6BC` tests `x0-1 <= x <= x1` (and y), and the wall ring is on both sides because the stored `x1`/`y1` are exclusive: `ov_0001::02147EB4` writes max tile + 1, built from the final tiles (blue-verified in the export, not at runtime). The #407 implementation follows it.
+- **Hallway anchor (0xFE).** `02147EB4` runs its loop over every room byte other than `0xFF`, so a `0xFE` tile would index a record past the 32 Blue keeps. Whether Blue's tiles carry `0xFE` was not checked. The sim gives anchors no record.
 - **Bit 1.** Both reveal paths set it. No reader was found, so its meaning ("lit") is not established.
 - **Map bounds.** The findings do not say whether the room rect or the range square is clipped to the map.
 - **Dark floor and corridor radius.** No dark floor was entered and no corridor crossed at runtime. The dark-floor corridor range is from the static reading only. Why the setting uses only 2 bits is also unknown.

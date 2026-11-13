@@ -76,6 +76,11 @@ impl Dungeon {
             self.regenerate_leader();
         }
         act(self);
+        // The reveal follows the leader's move (`docs/re/turns.md`, #182 P4: `02147DC4`, then
+        // `0219635C(0)`, then `02165B00` in the moved branch). Blue runs it only after a move; here
+        // it runs after any action, which changes nothing after a wait: the reveal only sets bits
+        // that the arrival or the last move already set.
+        self.reveal_from_leader();
         // The stairs check runs right after the leader's step (`DisplayActions_Async`, which
         // sets `dungeon+1` on a 0x200 tile). The stairs action waits for the leader's next input.
         if self.leader_on_stairs() {
