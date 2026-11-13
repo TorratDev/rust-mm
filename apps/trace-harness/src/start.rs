@@ -121,13 +121,20 @@ pub fn state_from_row(
         .enumerate()
         .map(|(index, entity)| monster(entity, &format!("wild[{index}]"), true, false))
         .collect::<Result<Vec<_>, _>>()?;
-    let (tiles, stairs) = match properties {
+    let (tiles, stairs, rooms) = match properties {
         Some(props) => {
             let (floor, _layout) = generate(row.floor_seed, props).map_err(RowError::Floor)?;
-            (floor_tiles(&floor), floor.stairs)
+            (floor_tiles(&floor), floor.stairs, floor.rooms().to_vec())
         }
-        None => (vec![TileSnapshot::from(Tile::EMPTY); WIDTH * HEIGHT], None),
+        None => (
+            vec![TileSnapshot::from(Tile::EMPTY); WIDTH * HEIGHT],
+            None,
+            Vec::new(),
+        ),
     };
+    // shortcut: `FloorProperties` does not carry the darkness byte (`+0x16`), so a harness floor
+    // is lit (`darkness` 0) and its reveal uses the lit range. Pass the record's darkness here
+    // once the harness reads the record.
     // shortcut: the generated tiles are not checked against the row's tilesSha256 (deferred
     // to #366), and the walkable masks and graphics variants are not set, so a move can still
     // differ from the game. Upgrade with the tile-hash check.
@@ -146,7 +153,11 @@ pub fn state_from_row(
         floors: Vec::new(),
         dungeon: Some(DungeonSnapshot {
             rng: row.dungeon_rng,
-            floor: FloorSnapshot { tiles, stairs },
+            floor: FloorSnapshot {
+                tiles,
+                stairs,
+                rooms,
+            },
             team,
             wild,
             turn: 0,
@@ -162,6 +173,7 @@ pub fn state_from_row(
             player_spawn: None,
             stairs_spawn: None,
             stairs_pending: false,
+            darkness: 0,
         }),
     };
     GameState::restore(&snapshot).map_err(RowError::State)

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam};
 
 use crate::command::{Blocked, Command, Direction, Outcome};
-use crate::floor::{self, Floor, HEIGHT, Tile, WIDTH};
+use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
 use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
@@ -173,6 +173,9 @@ pub struct Dungeon {
     /// `dungeon+1`: the leader stands on stairs and its next input takes them (see
     /// [`crate::turn`]).
     pub(crate) stairs_pending: bool,
+    /// `+0x15FA1`: the darkness setting `D` of the floor (`props +0x16 & 3`), read by the
+    /// corridor range (see [`crate::visibility`]). 0 is a lit floor.
+    pub(crate) darkness: u8,
 }
 
 impl Dungeon {
@@ -633,9 +636,10 @@ impl GameState {
         self.dungeon.as_ref()
     }
 
-    /// Enters a floor (see [`GameState::in_dungeon`]). Private: a floor is entered only by
-    /// the constructor or through the state's own rules.
-    fn enter_dungeon(
+    /// Enters a floor (see [`GameState::in_dungeon`]). Crate-private: a floor is entered only by
+    /// the constructor or through the state's own rules. The floor's darkness comes from its
+    /// record (floor number `floors_entered`, see [`floor_records`]); with no record it is lit.
+    pub(crate) fn enter_dungeon(
         &mut self,
         floor: Floor,
         team: Vec<Monster>,
@@ -646,6 +650,7 @@ impl GameState {
         }
         let floor_seed = self.preseed.next_floor_seed();
         self.floors_entered = self.floors_entered.saturating_add(1);
+        let darkness = self.darkness_of_floor(self.floors_entered);
         self.dungeon = Some(Dungeon {
             floor,
             rng: DungeonRng::new(floor_seed),
@@ -661,8 +666,22 @@ impl GameState {
             player_spawn: None,
             stairs_spawn: None,
             stairs_pending: false,
+            darkness,
         });
+        // The arrival reveal (`docs/re/visibility.md`, P2): the leader's start is seen at once.
+        if let Some(dungeon) = self.dungeon.as_mut() {
+            dungeon.reveal_from_leader();
+        }
         Ok(())
+    }
+
+    /// The darkness setting of floor number `floor` in the run's records (0 when there is no
+    /// record for it, which is a lit floor).
+    fn darkness_of_floor(&self, floor: u32) -> u8 {
+        usize::try_from(floor)
+            .ok()
+            .and_then(|index| self.floors.get(index))
+            .map_or(0, crate::visibility::darkness)
     }
 
     /// Sets the leader's speed stage to one the caller observed (clamped to 0 to 4). The
@@ -765,6 +784,7 @@ impl GameState {
         place_team(&mut leaving.team, &floor, g.stairs_a);
         self.preseed = preseed;
         self.floors_entered = next;
+        let darkness = self.darkness_of_floor(next);
         self.dungeon = Some(Dungeon {
             floor,
             rng,
@@ -780,7 +800,11 @@ impl GameState {
             player_spawn: spawn_or_none(g.stairs_a),
             stairs_spawn: spawn_or_none(g.stairs_b),
             stairs_pending: false,
+            darkness,
         });
+        if let Some(dungeon) = self.dungeon.as_mut() {
+            dungeon.reveal_from_leader();
+        }
         Outcome::NextFloor
     }
 
@@ -807,6 +831,7 @@ impl GameState {
                 player_spawn: d.player_spawn,
                 stairs_spawn: d.stairs_spawn,
                 stairs_pending: d.stairs_pending,
+                darkness: d.darkness,
             }),
         }
     }
@@ -849,6 +874,8 @@ impl GameState {
                     player_spawn: d.player_spawn,
                     stairs_spawn: d.stairs_spawn,
                     stairs_pending: d.stairs_pending,
+                    // Clamped to the two bits the setting uses.
+                    darkness: d.darkness & 3,
                 })
             }
         };
@@ -900,11 +927,14 @@ impl From<TileSnapshot> for Tile {
     }
 }
 
-/// A floor as a snapshot: its tiles row by row, and the stairs.
+/// A floor as a snapshot: its tiles row by row, the stairs and the room table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FloorSnapshot {
     pub tiles: Vec<TileSnapshot>,
     pub stairs: Option<(i16, i16)>,
+    /// The room table (see [`Room`]). Absent in older snapshots: none.
+    #[serde(default)]
+    pub rooms: Vec<Room>,
 }
 
 impl FloorSnapshot {
@@ -920,6 +950,7 @@ impl FloorSnapshot {
         Self {
             tiles,
             stairs: floor.stairs,
+            rooms: floor.rooms().to_vec(),
         }
     }
 
@@ -937,6 +968,7 @@ impl FloorSnapshot {
             }
         }
         floor.stairs = self.stairs;
+        floor.rooms.clone_from(&self.rooms);
         Ok(floor)
     }
 }
@@ -964,6 +996,9 @@ pub struct DungeonSnapshot {
     /// `dungeon+1`: the leader's next input takes the stairs. Absent in older snapshots: false.
     #[serde(default)]
     pub stairs_pending: bool,
+    /// The darkness setting, 0 to 3 (see [`crate::visibility`]). Absent in older snapshots: 0.
+    #[serde(default)]
+    pub darkness: u8,
 }
 
 /// A whole run as a snapshot: the generator states and the dungeon, if any.
@@ -983,6 +1018,7 @@ mod tests {
     use super::*;
     use crate::command::MenuAction;
     use crate::floor::TERRAIN_FLOOR;
+    use crate::visibility::{LIT_BIT, REVEALED_BIT};
 
     fn info(level: u8) -> EntityInfo {
         EntityInfo {
@@ -1467,6 +1503,24 @@ mod tests {
         out
     }
 
+    /// The floor with the leader's reveal bits cleared: the tile bits (`+2`, bits 0 and 1) and
+    /// the room's revealed flag. A floor the stairs enter has its start square revealed, so the
+    /// layout comparisons below clear them on both sides.
+    fn without_reveal(floor: &Floor) -> Floor {
+        let mut out = floor.clone();
+        for room in &mut out.rooms {
+            room.revealed = false;
+        }
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                if let Some(t) = out.tile_mut(x as i32, y as i32) {
+                    t.spawn_or_visibility &= !(REVEALED_BIT | LIT_BIT);
+                }
+            }
+        }
+        out
+    }
+
     /// Floor `n` of the run `seed`, built the way the stairs build it: the chain's `n`th seed,
     /// the fixed draws, then `GenerateFloor`. Returns the floor, the generator after it, and the
     /// generator's stairs.
@@ -1600,16 +1654,16 @@ mod tests {
         let (floor2, rng2, g2) = chained_floor(seed, &recs, 2);
         let d = st.dungeon().unwrap();
         assert_eq!(
-            d.floor(),
-            &floor2,
+            without_reveal(d.floor()),
+            without_reveal(&floor2),
             "floor 2 is generated from the chain's second seed"
         );
         // Floor 2 takes record 2, not record 1 (an off-by-one in `take_stairs` would pass the
         // check above only if the two records made the same floor).
         let (floor2_from_record_1, _, _) = chained_floor_with(seed, &recs[1], 2);
         assert_ne!(
-            d.floor(),
-            &floor2_from_record_1,
+            without_reveal(d.floor()),
+            without_reveal(&floor2_from_record_1),
             "floor 2 is built from record 2, not record 1"
         );
         assert_eq!(
@@ -1638,7 +1692,11 @@ mod tests {
             assert_eq!(st.step(Command::Wait), Outcome::NextFloor, "to floor {n}");
             let (floor, rng, _) = chained_floor(seed, &recs, n);
             let d = st.dungeon().unwrap();
-            assert_eq!(d.floor(), &floor, "floor {n}");
+            assert_eq!(
+                without_reveal(d.floor()),
+                without_reveal(&floor),
+                "floor {n}"
+            );
             assert_eq!(d.rng(), &rng, "floor {n} generator");
         }
         // Floor 3 is the last: its stairs clear the dungeon.

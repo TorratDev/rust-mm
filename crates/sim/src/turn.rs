@@ -76,6 +76,9 @@ impl Dungeon {
             self.regenerate_leader();
         }
         act(self);
+        // shortcut: the reveal's place in the turn is not in `docs/re/turns.md`; it runs here,
+        // after the leader's action, so the tiles it sees are the ones it stands on.
+        self.reveal_from_leader();
         // The stairs check runs right after the leader's step (`DisplayActions_Async`, which
         // sets `dungeon+1` on a 0x200 tile). The stairs action waits for the leader's next input.
         if self.leader_on_stairs() {

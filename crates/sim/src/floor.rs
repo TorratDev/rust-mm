@@ -6,6 +6,8 @@
 //! checked against `verification/v7-trace/floor_stages.py`, which records the
 //! dungeon RNG state at every step of the game's generator.
 
+use serde::{Deserialize, Serialize};
+
 use crate::rng::DungeonRng;
 use rescue_formats::fixedmap::{FixedMapEntry, TileStream};
 
@@ -56,10 +58,30 @@ impl Tile {
     };
 }
 
+/// One room's record (`docs/re/visibility.md`, "Claims": room record, dungeon `+0xE264`, 0x1C
+/// bytes each). The rect is inclusive: `(x0, y0)` and `(x1, y1)` are the first and last tiles
+/// of the room's floor.
+// shortcut: the inclusive end is the generated cell's last tile. The #354 probe (first floor,
+// x1 = 25, revealed through x = 25) agrees, but the record's bytes were not read here; check a
+// record before the far-side wall ring is added.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Room {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+    /// `+1`: the room has been entered (the revealed byte, 1 when set).
+    pub revealed: bool,
+}
+
 /// A floor map.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Floor {
     tiles: Vec<Tile>,
+    /// The room table, indexed by a tile's room number. Filled by [`place_rooms`].
+    // shortcut: the rects are the cell bounds at placement; the extra-link pass later repaints
+    // some cells, and that does not update their record.
+    pub(crate) rooms: Vec<Room>,
     /// Stairs position, if placed.
     pub stairs: Option<(i16, i16)>,
 }
@@ -77,6 +99,7 @@ impl Floor {
     pub fn new() -> Self {
         let mut floor = Self {
             tiles: vec![Tile::EMPTY; WIDTH * HEIGHT],
+            rooms: Vec::new(),
             stairs: None,
         };
         for y in 0..HEIGHT {
@@ -100,6 +123,16 @@ impl Floor {
         Self::index(x, y).map(|i| &mut self.tiles[i])
     }
 
+    /// The room table (see [`Room`]).
+    #[must_use]
+    pub fn rooms(&self) -> &[Room] {
+        &self.rooms
+    }
+
+    /// Room `index` of the table, or `None` (a corridor tile holds [`NO_ROOM`]).
+    pub(crate) fn room_mut(&mut self, index: u8) -> Option<&mut Room> {
+        self.rooms.get_mut(usize::from(index))
+    }
     fn index(x: i32, y: i32) -> Option<usize> {
         let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
         (x < WIDTH && y < HEIGHT).then_some(y * WIDTH + x)
@@ -460,6 +493,7 @@ pub fn place_rooms(
 ) {
     let (grid_x, grid_y) = (grid.grid_x, grid.grid_y);
     let mut room_index: u8 = 0;
+    floor.rooms.clear();
     for y in 0..grid_y {
         for x in 0..grid_x {
             let cell = *grid.cell(x, y);
@@ -500,6 +534,13 @@ pub fn place_rooms(
                     open_tile(floor, tx, ty, room_index);
                 }
             }
+            floor.rooms.push(Room {
+                x0: start_x,
+                y0: start_y,
+                x1: end_x - 1,
+                y1: end_y - 1,
+                revealed: false,
+            });
 
             let mut flag_b = rng.int(100) < 80 && props_0c_set;
             let mut flag_a = props_0d & 0x4 != 0;
