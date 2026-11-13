@@ -559,7 +559,7 @@ impl FloorSteps for PortedSteps {
         number: i16,
         _props: &FloorProperties,
         floor: &mut Floor,
-        _rng: &mut DungeonRng,
+        rng: &mut DungeonRng,
         g: &mut GenState,
     ) {
         let entry = floor::fixed_map_entry(&self.fixed_map, number)
@@ -571,6 +571,15 @@ impl FloorSteps for PortedSteps {
         let (tileset, table) = (self.tileset, &self.fixed_table);
         floor::place_fixed_room(floor, number, &entry, tileset, table, &mut self.fixed_out);
         self.take_fixed_out(g);
+        // shortcut: one DungeonRandInt(8) per table monster, the wander-step draw
+        // of 02190854 (retail rooms 1-49 have no other dungeon draw); the setter's
+        // global-RNG draws stay unported, upgrade when a monster state other than the
+        // wander step is reached. Rooms 50-66 have no table monster, so no draw there.
+        for spawn in &self.fixed_out.spawns {
+            if matches!(spawn, floor::FixedSpawn::Monster { .. }) {
+                let _ = rng.int(8);
+            }
+        }
         floor::finalize_junctions(floor);
     }
     fn place_fixed_room_large(

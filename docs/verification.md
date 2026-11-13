@@ -648,3 +648,31 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** statically and unit-tested only. No emulator run covers P1 or P2: a forced staged room and a forced fixed room 4 with the tileset flag have not been run against the retail dump. The oracle rows are unchanged and do not run here (no ROM). Confidence: high for the flag set and the rectangle (decompile and ROM data, per the findings); medium for the scratch start state and the placeholder's field set, which are marked hypothesis in [`re/fixed-rooms.md`](re/fixed-rooms.md#staged-rooms-p1).
 - **Fallback adopted:** none.
 - **Notes:** P3 (the spawn draw table per setter) and P4 (`0214961C`, `+0xC65C`, cell `+0x1B` are dead stores, not ported) are recorded in [`re/fixed-rooms.md`](re/fixed-rooms.md#spawn-rng-draws-per-setter-p3). The reveal `0215277C` is not ported. Issue #342 stays open (PR uses `Refs #342`); the forcing needed for P5 is separate.
+
+---
+
+## #342 — Retail whole-floor check of forced fixed rooms 1 to 66 (P5)
+
+- **Assumption:** the Rust port of `GenerateFloor` with `ProcessFixedRoom` (`crates/sim`, `PortedSteps` with the `fixedmap` file and the `021AC208` table from the ROM) leaves the same stairs, room count, terrain counts, tiles (`layoutFnv1a`) and dungeon RNG state at `GenerateFloor`'s return as the retail game, when the fixed-room number is forced at entry (dungeon `+0x34B4`, layout byte 1, natural floor properties). This is the check the port was missing for #342 (the earlier notes said no emulator run covered P1 or P2).
+- **Date:** 2026-11-13.
+- **Environment:** rustc 1.97.0 on Linux 7.0.0. ROM: the supported dump `pmdb.nds` at the repo root (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`), `RESCUE_ROM` set to it and `RESCUE_REQUIRE_ROM=1`. Oracle values from the probe run in [`re/fixed-rooms.md`](re/fixed-rooms.md#retail-whole-floor-check-p5) (`~/rescue-re/scratch/342b/fx.py`, six processes, seeds `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`; the raw output is not committed). No Ghidra copy in this session.
+- **Evidence:**
+  - New file `tests/tests/fixed_rooms_rom.rs` (`fixed_rooms_match_the_retail_floors`, a `rom_test!`). Its 100 rows were copied from the generated row file by `cat`. No change to `crates/sim` was needed: every item the test uses is already `pub`.
+  - Command: `RESCUE_REQUIRE_ROM=1 RESCUE_ROM=<dump> cargo test -p rescue-tests --test fixed_rooms_rom`. **Result: FAILED**, 49 mismatches in 100 rows. Without a ROM the test prints `SKIPPED fixed_rooms_match_the_retail_floors: no ROM configured ...` and passes.
+  - Stairs, rooms and terrain counts: all 100 rows match.
+  - Dungeon RNG steps: numbers 1 to 49 except 6 differ on all seeds (the port takes 2 steps; the oracle takes 3 to 6). Number 6 matches (2 steps). Numbers 50 to 66 match on all three seeds.
+  - Tile hash: number 1 on seed `0x0BADF00D` differs (port `0x6473e7f0b4b5b711`, oracle `0xb2d08f29d84e66a9`). All other rows match.
+  - Number 4 (the number-4 rectangle, P2): **does not pass**. Tile hash, stairs, rooms and terrain counts match; the RNG steps differ (port 2, oracle 3).
+  - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass.
+  - `cargo test -p rescue-sim`: 95 passed, 0 failed (the port is unchanged, so the count is the same as before this PR)
+- **Outcome:** the whole-floor check does not pass. The port's fixed-room tiles and stairs match the retail floors on 99 of 100 rows (the exception is the tile hash of number 1 on one seed). The RNG steps differ on 48 of the numbers 1 to 49, which is consistent with the item, trap and monster draws of the fixed-room setters being unported (not isolated; see the notes in [`re/fixed-rooms.md`](re/fixed-rooms.md#retail-whole-floor-check-p5)). The rows were not changed. The test stays red until those draws and the number-1 tile difference are explained; the PR uses `Refs #342`.
+- **Fallback adopted:** none.
+- **Notes:** the test reads the tile table from the ARM9 overlay that holds `021AC208`, and `fixedmap` from `dungeon.sbin`. The tileset (`+0x34AE`) is left at 0, as in the whole-floor test of `crates/sim`, because the natural value was not recorded by the probe.
+
+### Re-run after P6 (code `0x44`) and P7 (monster draw), 2026-11-13
+- **Result: PASSES.** `RESCUE_REQUIRE_ROM=1 RESCUE_ROM=<dump> cargo test -p rescue-tests --test fixed_rooms_rom`: 1 passed, 0 mismatches in 100 rows. Before the change: 49 mismatches (RNG state on numbers 1-49, and number 1's tile hash on seed `0x0BADF00D`). The rows were not changed.
+- **Environment:** Windows 11 Pro (10.0.26200), rustc 1.97.0, the supported dump `pmdb.nds` (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`).
+- Fixes: code `0x44` clears tile `+2` bit 1 only (`02152B20`, [`re/fixed-rooms.md`](re/fixed-rooms.md#code-0x44-and-the-monster-draw-p6-p7)); the monster setter draws one `DungeonRandInt(8)` per table monster (`02153018`, LR `021909C4`), in `PortedSteps::place_fixed_room`.
+- `cargo test -p rescue-sim`: 96 passed, 0 failed (one new unit test, `fixed_tile_setter_code_44_clears_bit_1_only`).
+- `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets -- -D warnings`: pass. `scripts/check-determinism.sh`: pass.
+- Outcome: the whole-floor check passes on all 100 rows. The P7 draw is a shortcut: the setter's global-RNG draws stay unported; rooms 50-66 have no table monster, so no draw happens there. The test does not check the spawn lists, so the draw is checked only through the dungeon RNG state.

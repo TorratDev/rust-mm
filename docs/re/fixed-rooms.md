@@ -1,7 +1,7 @@
 # Fixed rooms: the fixed-room file and ProcessFixedRoom
 
 **Date:** 2026-11-12
-**Status:** partial. File format, decoder, tile setter, both placement paths, the number-4 rectangle and the staged stamp ported; spawn effects, the staged reveal and the RNG order of spawns still open. No emulator run covers the staged stamp or the number-4 rectangle yet (unit tests only).
+**Status:** partial. File format, decoder, tile setter, both placement paths, the number-4 rectangle and the staged stamp ported; spawn effects, the staged reveal and the RNG order of spawns still open. No emulator run covers the staged stamp or the number-4 rectangle yet (unit tests only). The retail whole-floor check of numbers 1 to 66 is in (see [Retail whole-floor check](#retail-whole-floor-check-p5)): it passes on all 100 rows after the P6 and P7 fixes (see [Code 0x44 and the monster draw](#code-0x44-and-the-monster-draw-p6-p7)). Before those fixes it failed on 49 rows (dungeon RNG steps and the tile hash of number 1 on one seed).
 **Subsystem:** dungeon floor generation (fixed rooms)
 
 Issue: [#342](https://github.com/TorratDev/rust-mm/issues/342), parent [#111](https://github.com/TorratDev/rust-mm/issues/111). Parent notes: [`dungeon-generation.md`](dungeon-generation.md).
@@ -41,7 +41,7 @@ Not ported, with the reason:
 - Cell byte `+0x1B` (set to 1 by `02150788`, meaning unknown): not modelled; a dead store (P4).
 - [hypothesis] `0214A3D0` differs from `place_rooms` (height margin 4 against 3, anchors 0xFF against 0xFE, no 80 % flag draw). Taken as the findings give it; no run compares the RNG count (the earlier run for number 60: std3 to std6 = 192 steps).
 - [hypothesis] After 64 missed picks the last pick's cell is stamped.
-- The numbers 1-66 are not checked against a retail tile hash.
+- The numbers 1-66 are checked against the retail hashes by the P5 test; the failures of the first run are fixed in the P6 and P7 section below.
 
 ## Staged rooms (P1)
 **Retail data** [blue-verified ROM data]: the flags byte (entry byte 2) is 1 for entries 50, 51, 52, 54, 55, 56, 57, 58, 59, 60, 62 and 63 (12 entries). No other entry has bit 0 set. The earlier hypothesis that no retail room is staged is false. Their sizes are 5 x 5 to 7 x 8, all within the 8 x 8 buffer, and each contains tile code `0xC` (sets terrain `0x1000`, which the reveal tests).
@@ -90,6 +90,50 @@ Open: room 5 (one unattributed draw in the earlier run). It holds exactly one se
 - **`0214961C`**: called only from code 7 of `02152B20`. It sets global `021B3ED0` to one of two 20-byte tile templates (`021ABDE0` or `021ABDCC`), chosen by `FUN_0206DBDC(+0x34AE)`. Both templates are byte-identical (terrain 0, `+4 = 1`, room `+5 = 0xFF`, rest 0), and `GetTile` reads `021B3ED0` only for coordinates outside 0..55 x 0..31, where it returns the template as a wall with room `0xFF`. [blue-verified static]. At the entry and end of generation on the first floor the global is already `0x021ABDE0` (runtime) and the call has no visible effect. Since both templates are identical the choice never changes behaviour [blue-verified runtime for the value; the early writer is unresolved]. Keep recording `tileset_flag` only; if out-of-bounds tiles are ever needed, return a wall tile with room `0xFF` and byte `+4 = 1`.
 - **Dungeon `+0xC65C`**: written only by `02149E80` (both branches, the room byte of the last stamped tile). A search of all 1710 decompiled `ov_0001` functions finds no reader. Medium-high confidence: decompiler constant folding could hide an access, and the ARM9 and other overlays were not searched. Do not model it.
 - **Cell byte `+0x1B`** (the 30-byte grid cell; `&stack+0x83 - &stack+0x68` in `02150788`): set to 1 for every cell `x < gx, y < gy` before the picks. The pick test reads `+0x0A` (has room), not `+0x1B`. A search of the 20 `ov_0001` functions with the `* 0x1E` cell stride finds no read of `+0x1B`. Medium-high confidence, same caveat. Do not model it.
+
+## Retail whole-floor check (P5)
+[blue-verified runtime, probe run; the check is in `tests/tests/fixed_rooms_rom.rs`, `fixed_rooms_match_the_retail_floors`]
+
+**Method.** At `GenerateFloor`'s entry (`ov_0001::02151E7C`) the probe writes the dungeon RNG seed and one byte at dungeon `+0x34B4` = N (the forced number). Layout byte 1, natural floor properties and the natural global state. Hashes and counts are read at `GenerateFloorEnd` (`021525B4`); `rngSteps` is the number of dungeon-RNG steps from the seed to there. The method and its caveats are in investigator b's findings for #342 (`~/rescue-re/scratch/findings/342-b.md`, P5).
+
+**Command** (probe copy of the ROM, a throwaway copy per process; the six processes split the numbers 1 to 66; output stays outside the repo):
+
+```sh
+~/venvs/desmume/bin/python -I ~/rescue-re/scratch/342b/fx.py ROM_COPY.nds OUT.jsonl 0x12345678,0xCAFEBABF,0x0BADF00D NUMBERS
+```
+
+- Seeds: `0x12345678`, `0xCAFEBABF`, `0x0BADF00D`. Numbers 1 to 49 have one row (the same result on all three seeds); numbers 50 to 66 have one row per seed. 100 rows in the test.
+- ROM: the probe copy of `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- The rows in the test are the probe's hashes and counts only. No grid bytes, no raw output in the repo.
+- The hash (`layoutFnv1a`) covers tile bytes 0 to 11 with `+0x04` zeroed, as `floor_oracle.py` does. It includes `spawn_or_visibility` (`+0x02`). It does not include the item, trap and monster lists, so it does not check the spawn RNG draws.
+
+**Test.** `RESCUE_ROM=<dump> cargo test -p rescue-tests --test fixed_rooms_rom`. The test reads `fixedmap` from `dungeon.sbin`, and the 220-entry tile-code table at `021AC208` from the ARM9 overlay whose RAM range holds it, then runs `generate_floor` for each row with `GenState::fixed_room` set to the row's number. It needs no change to `crates/sim` (every item it uses is already `pub`).
+
+**Result, first run** (2026-11-13, port at `c1f7be4`, `RESCUE_REQUIRE_ROM=1`): 49 mismatches in 100 rows. Stairs, rooms and terrain counts match on every row. The table fails in two ways:
+- **Dungeon RNG steps, numbers 1 to 49 except 6 (48 numbers, all seeds equal):** the port takes 2 steps; the oracle takes 3 to 6. Number 6 matches (2 steps). Numbers 50 to 66 match on all three seeds. Hypothesis, not isolated: the difference is the item, trap and monster draws of the setters, which are not ported (the "Not ported" list above; the per-setter draws are in P3). Number 6 is the one row whose RNG count matches, which fits a setter with no such draw, but the probe did not record which draws happen.
+- **Tile hash, number 1 on seed `0x0BADF00D` only:** port `0x6473e7f0b4b5b711`, oracle `0xb2d08f29d84e66a9`. Not isolated. The hash covers `+0x02` and `+0x0A`/`+0x0B`, which a spawn could write; the probe kept no per-tile dump, so the differing tile is not known.
+- **Number 4** (the number-4 rectangle, P2) **fails** the check: its row (one row, the same on every seed) matches on the tile hash, stairs, rooms and terrain counts, and differs only in the RNG steps (port 2, oracle 3). So the rectangle gives the retail tiles for the probe's state; the difference is in the spawn draws, as for the other numbers.
+
+Values were not changed to make rows pass.
+
+## Code 0x44 and the monster draw (P6, P7)
+**Result after the fix** (2026-11-13, this PR): `fixed_rooms_match_the_retail_floors` passes on all 100 rows, 0 mismatches (`RESCUE_ROM=<dump>`).
+
+**Code `0x44` (P6)** [blue-verified static, decompile of `02152B20`, case `param_2 == 0x44`; retail tile bytes checked by a grid dump of number 1, seed `0x0BADF00D`]:
+- `*p |= 0x800; *p &= 0xfffc; *p |= 1;` on terrain: type 1, flag `0x800`;
+- `p[1] &= 0xfffd` on tile `+2`: bit 1 cleared, bit 0 not set (no spawn marker);
+- `*(u8*)(p+5) = 0`: room 0.
+
+Codes 8 and `0x43` (label `02152D34`) do set bit 0 (`p[1] |= 1; p[1] &= 0xfffd`) and write the player spawn at dungeon `+0xC0BC`. The old port called the marker for `0x44` as well; that set bit 0 on four tiles of room 1, and `resolve_invalid_spawns` (`0214C1A8`) then added terrain `0x200`. Rust: `floor::set_fixed_tile`, branch `0x44` (unit test `fixed_tile_setter_code_44_clears_bit_1_only`).
+
+**Monster setter draw (P7)** [blue-verified runtime, probe at `GenerateFloor` (`02151E7C`) with the number forced; the call chain is observed at its last hop]:
+- Each call of the monster setter `02153018` (table monster, `+8 != 0`) makes exactly one `DungeonRandInt(8)` (`0219D058`), issued from LR `021909C4` inside `02190854` (the wander-target step: branch `+0xF0 == 0`, state byte `+0x70 != 4`, no waypoint). The result only sets monster AI fields.
+- Chain `02153018` -> `02179CFC` -> AI step `021918D4` -> `02191394` or `02190B80` -> `02190854`: the intermediate hops are [hypothesis]; the last LR is observed.
+- Order: for each table monster in setter order, the spawn, then the `DInt(8)`; then the common tail `DungeonRandInt(100)` (`0215241C`) and `DungeonRandRange(2, 4)` (`0214B370`, one step). Total dungeon steps = 2 + number of monster calls. That reproduces the oracle's steps on all 49 numbers below 50 (1-49 have 0 to 4 monster calls each; number 6 has none).
+- No other dungeon draw happens in rooms 1-49. Items (`02153190`) and traps (`02152FAC`, code `0x45`) draw nothing in these rooms. Rooms 50-66 have no monster call; their draws are the layout draws.
+- Not checked: other monster states (no retail room reaches them), and whether the setter's global-RNG draws (`RandInt(10)`, `RandInt(18)`, see the table in P3) affect the dungeon RNG (they do not; they are the global generator).
+
+Rust: `PortedSteps::place_fixed_room` (`crates/sim/src/floor_gen.rs`) draws `rng.int(8)` once per `FixedSpawn::Monster` in `FixedRoomOut::spawns`, in setter order, and discards the result. Shortcut comment there: one wander-step draw, valid for the retail monster states; the setter's global-RNG draws stay unported. Rooms 50-66 have no table monster, so no draw happens there.
 
 ## Evidence and verification status
 - Sources: investigator A's findings for #342 (`~/rescue-re/scratch/findings/342-a.md`): ROM data read from `fixedmap` in `dungeon.sbin` (`pmdb.nds`), static decompiles from a ghidra-cli copy, and one py-desmume probe for the `021B3ED0` value. Tags: ROM-data and static claims are [blue-verified]; the reveal details are read, not run.
