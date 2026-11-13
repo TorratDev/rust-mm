@@ -280,7 +280,8 @@ impl Dungeon {
         }
         // The map is at most 56 by 32, so the tile test above keeps both coordinates small.
         let target = (x as i16, y as i16);
-        if self.occupied(target.0, target.1) {
+        // A team ally on the target is swapped with (see `move_leader`); any other monster blocks.
+        if !self.team.iter().skip(1).any(|m| m.pos == target) && self.occupied(target.0, target.1) {
             return Err(Blocked::Occupied);
         }
         if tile.terrain & floor::TERRAIN_TYPE_MASK != TERRAIN_NORMAL {
@@ -299,6 +300,165 @@ impl Dungeon {
             }
         }
         Ok(target)
+    }
+}
+
+/// The eight directions in the game's table order (`Direction` declaration order).
+const DIRECTIONS: [Direction; 8] = [
+    Direction::Down,
+    Direction::DownRight,
+    Direction::Right,
+    Direction::UpRight,
+    Direction::Up,
+    Direction::UpLeft,
+    Direction::Left,
+    Direction::DownLeft,
+];
+
+/// The game's index (0 to 7) of `dir` in [`DIRECTIONS`].
+fn index_of(dir: Direction) -> usize {
+    DIRECTIONS.iter().position(|&d| d == dir).unwrap_or(0)
+}
+
+/// The direction `steps` places round the table from `dir` (7 is one step back).
+fn turned(dir: Direction, steps: usize) -> Direction {
+    DIRECTIONS[(index_of(dir) + steps) % DIRECTIONS.len()]
+}
+
+/// The natural-junction terrain bit (`0x8`), a room tile the run stops on (`docs/re/turns.md`,
+/// "Run continuation checks", check 5; the name is the note's).
+const TERRAIN_NATURAL_JUNCTION: u16 = 0x8;
+
+impl Dungeon {
+    /// Moves the leader onto `target` in one leader turn. A team ally on `target` swaps places
+    /// with the leader and faces back, `(dir + 4) & 7` (`docs/re/turns.md`, "Swap flags").
+    // shortcut: the other preconditions of the swap (`FUN_02165C80`: the statuses, confusion,
+    // `+0x99`, `0215A23C` and the walk check `02181264`) and the `1 << 5` normal-swap flag
+    // (`docs/re/turns.md`, hypothesis) are not checked. The sim has no statuses or those fields,
+    // so any team ally on a plain tile swaps. The Yes/No prompt is not modelled. Upgrade with
+    // #415, once statuses and the flag's writer are in.
+    fn move_leader(&mut self, dir: Direction, target: (i16, i16)) {
+        self.take_leader_turn(|d| {
+            let Some(leader) = d.team.first_mut() else {
+                return;
+            };
+            let from = leader.pos;
+            leader.pos = target;
+            if let Some(ally) = d.team.iter_mut().skip(1).find(|m| m.pos == target) {
+                ally.pos = from;
+                ally.info.direction = u8::try_from((index_of(dir) + 4) % 8).unwrap_or(0);
+            }
+        });
+    }
+
+    /// Runs the leader from the command's first step `first`, then takes each further step the
+    /// run checks allow. A belly of 0 at input makes the command one step (`docs/re/turns.md`,
+    /// "Run flag and belly test").
+    fn run_leader(&mut self, dir: Direction, first: (i16, i16)) {
+        let running = self.team.first().is_some_and(|l| l.info.belly != 0);
+        self.move_leader(dir, first);
+        if !running {
+            return;
+        }
+        while let Some(next) = self.run_ahead(dir) {
+            self.move_leader(dir, next);
+        }
+    }
+
+    /// The run continuation checks (`FUN_ov_0001__02165F78`, `docs/re/turns.md`, "Run
+    /// continuation checks (#181 P1)"), in the game's order. Returns the tile ahead when the run
+    /// goes on, and `None` when a stop condition holds.
+    // shortcut: check 2 (an object on the leader's tile), check 7 (items in the 3 by 3 scan) and
+    // check 8 (visible traps) need items and traps, which the sim does not model; the trap test
+    // also needs visibility (#407). A run passes those tiles. Upgrade with #415, once items and
+    // traps are in.
+    // shortcut: the other StopRunning events (a monster's attack, a trap, a menu) are not modelled.
+    fn run_ahead(&self, dir: Direction) -> Option<(i16, i16)> {
+        let leader = self.team.first()?;
+        let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
+        let (dx, dy) = dir.delta();
+        let at = |x: i32, y: i32| self.floor.tile(x, y);
+        // The helper of `FUN_021821E4`: off the floor, a wall, or terrain that is not plain ground.
+        let blocked = |x: i32, y: i32| {
+            at(x, y).is_none_or(|t| {
+                t.terrain & floor::TERRAIN_IMPASSABLE_WALL != 0
+                    || t.terrain & floor::TERRAIN_TYPE_MASK != TERRAIN_NORMAL
+            })
+        };
+        let monster_at = |x: i32, y: i32| {
+            i16::try_from(x)
+                .ok()
+                .zip(i16::try_from(y).ok())
+                .is_some_and(|(x, y)| self.occupied(x, y))
+        };
+        let (ax, ay) = (lx + dx, ly + dy);
+        let own = at(lx, ly)?;
+        let ahead = at(ax, ay)?;
+        // The stairs action waits for the leader's next input, and a belly at 0 stops a run.
+        if leader.info.belly_empty || self.stairs_pending {
+            return None;
+        }
+        // Check 3: the leader's own tile is plain ground.
+        if blocked(lx, ly) {
+            return None;
+        }
+        // Check 4: the tile ahead has no monster and the regular step to it is allowed.
+        if monster_at(ax, ay) || self.leader_target(dir).is_err() {
+            return None;
+        }
+        // Check 5: from a corridor into a room, or on a natural junction in a room.
+        if own.room == floor::NO_ROOM {
+            if ahead.room != floor::NO_ROOM {
+                return None;
+            }
+        } else if own.terrain & TERRAIN_NATURAL_JUNCTION != 0 {
+            return None;
+        }
+        // Check 6: a monster or stairs on the three tiles ahead (dir - 1, dir, dir + 1).
+        for steps in [7, 0, 1] {
+            let (ex, ey) = {
+                let (ddx, ddy) = turned(dir, steps).delta();
+                (lx + ddx, ly + ddy)
+            };
+            if monster_at(ex, ey)
+                || at(ex, ey).is_some_and(|t| t.terrain & floor::TERRAIN_STAIRS != 0)
+            {
+                return None;
+            }
+        }
+        // Check 9: an open cardinal neighbour that is not behind the leader is in another room.
+        for side in [
+            Direction::Down,
+            Direction::Right,
+            Direction::Up,
+            Direction::Left,
+        ] {
+            if side == turned(dir, 4) {
+                continue;
+            }
+            let (sx, sy) = side.delta();
+            let (nx, ny) = (lx + sx, ly + sy);
+            if own.room != floor::NO_ROOM
+                && !blocked(nx, ny)
+                && at(nx, ny).is_some_and(|t| t.room != own.room)
+            {
+                return None;
+            }
+        }
+        // Check 10: on a straight run, an open tile beside the leader with a blocked corner (ahead
+        // or behind, on that side) is a side opening.
+        if dx == 0 || dy == 0 {
+            for sign in [1, -1] {
+                let (px, py) = (dy * sign, dx * sign);
+                if !blocked(lx + px, ly + py)
+                    && (blocked(ax + px, ay + py) || blocked(lx - dx + px, ly - dy + py))
+                {
+                    return None;
+                }
+            }
+        }
+        // Check 11: the run goes on, onto the tile ahead.
+        i16::try_from(ax).ok().zip(i16::try_from(ay).ok())
     }
 }
 
@@ -535,11 +695,14 @@ impl GameState {
         match command {
             Command::Move(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
-                    dungeon.take_leader_turn(|d| {
-                        if let Some(leader) = d.team.first_mut() {
-                            leader.pos = target;
-                        }
-                    });
+                    dungeon.move_leader(dir, target);
+                    Outcome::Applied
+                }
+                Err(blocked) => Outcome::Blocked(blocked),
+            },
+            Command::Run(dir) => match dungeon.leader_target(dir) {
+                Ok(target) => {
+                    dungeon.run_leader(dir, target);
                     Outcome::Applied
                 }
                 Err(blocked) => Outcome::Blocked(blocked),
@@ -876,8 +1039,21 @@ mod tests {
         g
     }
 
+    /// [`run_with_leader`] with a full belly: the info helper leaves it at 0, and a run needs a
+    /// belly that is not 0 (`docs/re/turns.md`, "Run flag and belly test").
+    fn fed_run(seed: u32) -> GameState {
+        let mut g = run_with_leader(seed);
+        g.dungeon.as_mut().unwrap().team[0].info.belly = 100_000;
+        g
+    }
+
     fn leader_pos(g: &GameState) -> (i16, i16) {
         g.dungeon.as_ref().unwrap().team[0].pos
+    }
+
+    fn set_room(g: &mut GameState, x: i32, y: i32, room: u8) {
+        let d = g.dungeon.as_mut().unwrap();
+        d.floor.tile_mut(x, y).unwrap().room = room;
     }
 
     #[test]
@@ -939,6 +1115,171 @@ mod tests {
         assert_eq!(
             g.step(Command::Move(Direction::Right)),
             Outcome::Blocked(Blocked::Occupied)
+        );
+        assert_eq!(g, before);
+    }
+
+    #[test]
+    fn a_run_goes_on_until_a_wall_is_ahead() {
+        let mut g = fed_run(1);
+        set_terrain(&mut g, 9, 5, floor::TERRAIN_IMPASSABLE_WALL);
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (8, 5));
+        assert_eq!(g.dungeon().unwrap().turn(), 3);
+    }
+
+    #[test]
+    fn a_run_stops_at_a_monster_ahead() {
+        let mut g = fed_run(1);
+        g.dungeon.as_mut().unwrap().wild.push(monster(8, 5, 3));
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (7, 5));
+    }
+
+    #[test]
+    fn a_run_stops_for_a_monster_beside_the_next_tile() {
+        // (7, 4) is ahead and to the side of the leader at (6, 5): check 6.
+        let mut g = fed_run(1);
+        g.dungeon.as_mut().unwrap().wild.push(monster(7, 4, 3));
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (6, 5));
+        assert_eq!(g.dungeon().unwrap().turn(), 1);
+    }
+
+    #[test]
+    fn a_run_stops_before_stairs_in_reach() {
+        let mut g = fed_run(1);
+        set_terrain(&mut g, 8, 5, floor::TERRAIN_FLOOR | floor::TERRAIN_STAIRS);
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (7, 5));
+    }
+
+    #[test]
+    fn a_run_stops_at_the_edge_of_a_room_from_a_corridor() {
+        let mut g = fed_run(1);
+        g.dungeon
+            .as_mut()
+            .unwrap()
+            .floor
+            .tile_mut(8, 5)
+            .unwrap()
+            .room = 0;
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (7, 5));
+    }
+
+    #[test]
+    fn a_run_stops_on_a_natural_junction_in_a_room() {
+        // Check 5: the room tile at (6, 5) carries the natural-junction bit. The room block keeps
+        // check 9 from firing there.
+        let mut g = fed_run(1);
+        for y in 4..=6 {
+            for x in 4..=7 {
+                set_room(&mut g, x, y, 0);
+            }
+        }
+        set_terrain(
+            &mut g,
+            6,
+            5,
+            floor::TERRAIN_FLOOR | TERRAIN_NATURAL_JUNCTION,
+        );
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (6, 5));
+        assert_eq!(g.dungeon().unwrap().turn(), 1);
+    }
+
+    #[test]
+    fn a_room_run_stops_beside_a_tile_of_another_room() {
+        // Check 9: the leader in room 0 has an open cardinal neighbour below it in room 1, not
+        // behind it, so the run stops. With that tile in room 0 the run goes on.
+        let mut g = fed_run(1);
+        for y in 4..=6 {
+            for x in 4..=7 {
+                set_room(&mut g, x, y, 0);
+            }
+        }
+        set_room(&mut g, 5, 6, 1);
+        assert_eq!(g.dungeon().unwrap().run_ahead(Direction::Right), None);
+        set_room(&mut g, 5, 6, 0);
+        assert_eq!(
+            g.dungeon().unwrap().run_ahead(Direction::Right),
+            Some((6, 5))
+        );
+    }
+
+    #[test]
+    fn a_corridor_run_stops_beside_a_side_opening() {
+        // Check 10: the corridor on row 5 has a gap in its lower wall at (6, 6), with a wall at
+        // the corner ahead, (7, 6). The first step lands on (6, 5), beside the gap, and the run
+        // stops there. Checks 5 and 9 do not fire: the tiles are not in a room.
+        let mut g = fed_run(1);
+        for x in 5..=8 {
+            set_terrain(&mut g, x, 4, floor::TERRAIN_IMPASSABLE_WALL);
+        }
+        for x in [5, 7, 8] {
+            set_terrain(&mut g, x, 6, floor::TERRAIN_IMPASSABLE_WALL);
+        }
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (6, 5));
+        assert_eq!(g.dungeon().unwrap().turn(), 1);
+    }
+
+    #[test]
+    fn a_run_does_not_continue_from_water_under_the_leader() {
+        // Check 3: the leader's own tile must be plain ground. A step cannot reach water, so
+        // `run_ahead` is called directly. With plain ground under the leader the run goes on.
+        let mut g = fed_run(1);
+        set_terrain(&mut g, 5, 5, 2);
+        assert_eq!(g.dungeon().unwrap().run_ahead(Direction::Right), None);
+        set_terrain(&mut g, 5, 5, TERRAIN_FLOOR);
+        assert_eq!(
+            g.dungeon().unwrap().run_ahead(Direction::Right),
+            Some((6, 5))
+        );
+    }
+
+    #[test]
+    fn a_run_is_one_step_with_an_empty_belly() {
+        let mut g = run_with_leader(1);
+        g.dungeon.as_mut().unwrap().team[0].info.belly = 0;
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (6, 5));
+        assert_eq!(g.dungeon().unwrap().turn(), 1);
+    }
+
+    #[test]
+    fn a_run_stops_when_the_belly_runs_out() {
+        // 0.2 of belly: the first step leaves 0.1, the second empties it and stops the run.
+        let mut g = fed_run(1);
+        g.set_speed_stage(1);
+        g.dungeon.as_mut().unwrap().team[0].info.belly = 200;
+        assert_eq!(g.step(Command::Run(Direction::Right)), Outcome::Applied);
+        assert_eq!(leader_pos(&g), (7, 5));
+        assert!(g.dungeon().unwrap().team()[0].info.belly_empty);
+    }
+
+    #[test]
+    fn a_move_into_a_team_ally_swaps_places_and_the_ally_faces_back() {
+        let mut g = run_with_leader(1);
+        g.dungeon.as_mut().unwrap().team.push(monster(6, 5, 8));
+        assert_eq!(g.step(Command::Move(Direction::Right)), Outcome::Applied);
+        let team = g.dungeon().unwrap().team();
+        assert_eq!((team[0].pos, team[1].pos), ((6, 5), (5, 5)));
+        // Right is 2; (2 + 4) & 7 is 6, Left.
+        assert_eq!(team[1].info.direction, 6);
+        assert_eq!(g.dungeon().unwrap().turn(), 1);
+    }
+
+    #[test]
+    fn a_team_ally_on_water_is_not_swapped_with() {
+        let mut g = run_with_leader(1);
+        g.dungeon.as_mut().unwrap().team.push(monster(6, 5, 8));
+        set_terrain(&mut g, 6, 5, 2);
+        let before = g.clone();
+        assert_eq!(
+            g.step(Command::Move(Direction::Right)),
+            Outcome::Blocked(Blocked::Terrain)
         );
         assert_eq!(g, before);
     }
