@@ -41,7 +41,7 @@ Not ported, with the reason:
 - Cell byte `+0x1B` (set to 1 by `02150788`, meaning unknown): not modelled; a dead store (P4).
 - [hypothesis] `0214A3D0` differs from `place_rooms` (height margin 4 against 3, anchors 0xFF against 0xFE, no 80 % flag draw). Taken as the findings give it; no run compares the RNG count (the earlier run for number 60: std3 to std6 = 192 steps).
 - [hypothesis] After 64 missed picks the last pick's cell is stamped.
-- The numbers 1-66 are not checked against a retail tile hash.
+- The numbers 1-66 are checked against the retail hashes by the P5 test; the failures of the first run are fixed in the P6 and P7 section below.
 
 ## Staged rooms (P1)
 **Retail data** [blue-verified ROM data]: the flags byte (entry byte 2) is 1 for entries 50, 51, 52, 54, 55, 56, 57, 58, 59, 60, 62 and 63 (12 entries). No other entry has bit 0 set. The earlier hypothesis that no retail room is staged is false. Their sizes are 5 x 5 to 7 x 8, all within the 8 x 8 buffer, and each contains tile code `0xC` (sets terrain `0x1000`, which the reveal tests).
@@ -115,6 +115,25 @@ Open: room 5 (one unattributed draw in the earlier run). It holds exactly one se
 - **Number 4** (the number-4 rectangle, P2) **fails** the check: its row (one row, the same on every seed) matches on the tile hash, stairs, rooms and terrain counts, and differs only in the RNG steps (port 2, oracle 3). So the rectangle gives the retail tiles for the probe's state; the difference is in the spawn draws, as for the other numbers.
 
 Values were not changed to make rows pass.
+
+## Code 0x44 and the monster draw (P6, P7)
+**Result after the fix** (2026-11-13, this PR): `fixed_rooms_match_the_retail_floors` passes on all 100 rows, 0 mismatches (`RESCUE_ROM=<dump>`).
+
+**Code `0x44` (P6)** [blue-verified static, decompile of `02152B20`, case `param_2 == 0x44`; retail tile bytes checked by a grid dump of number 1, seed `0x0BADF00D`]:
+- `*p |= 0x800; *p &= 0xfffc; *p |= 1;` on terrain: type 1, flag `0x800`;
+- `p[1] &= 0xfffd` on tile `+2`: bit 1 cleared, bit 0 not set (no spawn marker);
+- `*(u8*)(p+5) = 0`: room 0.
+
+Codes 8 and `0x43` (label `02152D34`) do set bit 0 (`p[1] |= 1; p[1] &= 0xfffd`) and write the player spawn at dungeon `+0xC0BC`. The old port called the marker for `0x44` as well; that set bit 0 on four tiles of room 1, and `resolve_invalid_spawns` (`0214C1A8`) then added terrain `0x200`. Rust: `floor::set_fixed_tile`, branch `0x44` (unit test `fixed_tile_setter_code_44_clears_bit_1_only`).
+
+**Monster setter draw (P7)** [blue-verified runtime, probe at `GenerateFloor` (`02151E7C`) with the number forced; the call chain is observed at its last hop]:
+- Each call of the monster setter `02153018` (table monster, `+8 != 0`) makes exactly one `DungeonRandInt(8)` (`0219D058`), issued from LR `021909C4` inside `02190854` (the wander-target step: branch `+0xF0 == 0`, state byte `+0x70 != 4`, no waypoint). The result only sets monster AI fields.
+- Chain `02153018` -> `02179CFC` -> AI step `021918D4` -> `02191394` or `02190B80` -> `02190854`: the intermediate hops are [hypothesis]; the last LR is observed.
+- Order: for each table monster in setter order, the spawn, then the `DInt(8)`; then the common tail `DungeonRandInt(100)` (`0215241C`) and `DungeonRandRange(2, 4)` (`0214B370`, one step). Total dungeon steps = 2 + number of monster calls. That reproduces the oracle's steps on all 49 numbers below 50 (1-49 have 0 to 4 monster calls each; number 6 has none).
+- No other dungeon draw happens in rooms 1-49. Items (`02153190`) and traps (`02152FAC`, code `0x45`) draw nothing in these rooms. Rooms 50-66 have no monster call; their draws are the layout draws.
+- Not checked: other monster states (no retail room reaches them), and whether the setter's global-RNG draws (`RandInt(10)`, `RandInt(18)`, see the table in P3) affect the dungeon RNG (they do not; they are the global generator).
+
+Rust: `PortedSteps::place_fixed_room` (`crates/sim/src/floor_gen.rs`) draws `rng.int(8)` once per `FixedSpawn::Monster` in `FixedRoomOut::spawns`, in setter order, and discards the result. Shortcut comment there: one wander-step draw, valid for the retail monster states; the setter's global-RNG draws stay unported. Numbers 50 and up are not run through this path (no monster tile there).
 
 ## Evidence and verification status
 - Sources: investigator A's findings for #342 (`~/rescue-re/scratch/findings/342-a.md`): ROM data read from `fixedmap` in `dungeon.sbin` (`pmdb.nds`), static decompiles from a ghidra-cli copy, and one py-desmume probe for the `021B3ED0` value. Tags: ROM-data and static claims are [blue-verified]; the reveal details are read, not run.

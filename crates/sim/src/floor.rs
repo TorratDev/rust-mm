@@ -3608,9 +3608,10 @@ pub fn set_fixed_tile(
             tile.terrain |= 0x1810;
         }
         0x44 => {
+            // `02152B20` case 0x44 clears tile +2 bit 1 only: no spawn marker.
             tile.terrain |= 0x800;
             set_type(tile, 1);
-            spawn_marker(tile);
+            tile.spawn_or_visibility &= !2;
         }
         0x45 => {
             out.trap_pos = Some((x, y));
@@ -7696,6 +7697,20 @@ mod tests {
     }
 
     #[test]
+    fn fixed_tile_setter_code_44_clears_bit_1_only() {
+        // `02152B20` case 0x44: `p[1] &= 0xfffd`, no spawn marker (bit 0 kept).
+        for (before, after) in [(0x0, 0x0), (0x2, 0x0), (0x1, 0x1), (0x3, 0x1)] {
+            let mut t = Tile::EMPTY;
+            t.spawn_or_visibility = before;
+            let mut out = FixedRoomOut::default();
+            set_fixed_tile(&mut t, 0x44, (3, 4), true, &[], &mut out);
+            assert_eq!(t.spawn_or_visibility, after, "before {before:#x}");
+            assert_eq!(t.terrain & 0x800, 0x800);
+            assert!(out.spawns.is_empty() && out.player_spawn.is_none());
+        }
+    }
+
+    #[test]
     fn fixed_tile_setter_codes() {
         // (code, terrain, room, spawn word) after the wrapper's 0x100 and room 0.
         let rows = [
@@ -7712,7 +7727,7 @@ mod tests {
             (0x0B, 0x901, 0, 0),
             (0x0C, 0x1911, 0, 0),
             (0x0D, 0x110, NO_ROOM, 0),
-            (0x44, 0x901, 0, 1),
+            (0x44, 0x901, 0, 0),
             (0x0F, 0x100, 0, 0),
             (0xDC, 0x101, 0, 0),
         ];
