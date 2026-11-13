@@ -59,11 +59,9 @@ impl Tile {
 }
 
 /// One room's record (`docs/re/visibility.md`, "Claims": room record, dungeon `+0xE264`, 0x1C
-/// bytes each). The rect is inclusive: `(x0, y0)` and `(x1, y1)` are the first and last tiles
-/// of the room's floor.
-// shortcut: the inclusive end is the generated cell's last tile. The #354 probe (first floor,
-// x1 = 25, revealed through x = 25) agrees, but the record's bytes were not read here; check a
-// record before the far-side wall ring is added.
+/// bytes each). `(x0, y0)` is the room's first floor tile and `(x1, y1)` is one past its last,
+/// so the end is exclusive. Built at floor entry from the final tiles (`ov_0001::02147EB4`, see
+/// [`crate::visibility::enter_floor`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Room {
     pub x0: i32,
@@ -78,9 +76,8 @@ pub struct Room {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Floor {
     tiles: Vec<Tile>,
-    /// The room table, indexed by a tile's room number. Filled by [`place_rooms`].
-    // shortcut: the rects are the cell bounds at placement; the extra-link pass later repaints
-    // some cells, and that does not update their record.
+    /// The room table, indexed by a tile's room number. Built at floor entry by
+    /// [`crate::visibility::enter_floor`], not by [`place_rooms`].
     pub(crate) rooms: Vec<Room>,
     /// Stairs position, if placed.
     pub stairs: Option<(i16, i16)>,
@@ -534,13 +531,6 @@ pub fn place_rooms(
                     open_tile(floor, tx, ty, room_index);
                 }
             }
-            floor.rooms.push(Room {
-                x0: start_x,
-                y0: start_y,
-                x1: end_x - 1,
-                y1: end_y - 1,
-                revealed: false,
-            });
 
             let mut flag_b = rng.int(100) < 80 && props_0c_set;
             let mut flag_a = props_0d & 0x4 != 0;

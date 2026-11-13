@@ -123,7 +123,9 @@ pub fn state_from_row(
         .collect::<Result<Vec<_>, _>>()?;
     let (tiles, stairs, rooms) = match properties {
         Some(props) => {
-            let (floor, _layout) = generate(row.floor_seed, props).map_err(RowError::Floor)?;
+            let (mut floor, _layout) = generate(row.floor_seed, props).map_err(RowError::Floor)?;
+            // The floor entry step: the generation markers are cleared and the room table built.
+            rescue_sim::visibility::enter_floor(&mut floor);
             (floor_tiles(&floor), floor.stairs, floor.rooms().to_vec())
         }
         None => (

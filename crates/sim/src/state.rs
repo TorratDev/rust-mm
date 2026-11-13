@@ -641,13 +641,14 @@ impl GameState {
     /// record (floor number `floors_entered`, see [`floor_records`]); with no record it is lit.
     pub(crate) fn enter_dungeon(
         &mut self,
-        floor: Floor,
+        mut floor: Floor,
         team: Vec<Monster>,
         leader_speed: i32,
     ) -> Result<(), StateError> {
         if team.len() > TEAM_SLOTS {
             return Err(StateError::TeamTooLarge(team.len()));
         }
+        crate::visibility::enter_floor(&mut floor);
         let floor_seed = self.preseed.next_floor_seed();
         self.floors_entered = self.floors_entered.saturating_add(1);
         let darkness = self.darkness_of_floor(self.floors_entered);
@@ -781,6 +782,7 @@ impl GameState {
         if g.stairs_a == UNSET {
             return Outcome::NotModelled;
         }
+        crate::visibility::enter_floor(&mut floor);
         place_team(&mut leaving.team, &floor, g.stairs_a);
         self.preseed = preseed;
         self.floors_entered = next;
@@ -1503,10 +1505,12 @@ mod tests {
         out
     }
 
-    /// The floor with the leader's reveal bits cleared: the tile bits (`+2`, bits 0 and 1) and
-    /// the room's revealed flag. A floor the stairs enter has its start square revealed, so the
-    /// layout comparisons below clear them on both sides.
-    fn without_reveal(floor: &Floor) -> Floor {
+    /// A run's floor for the layout comparisons: the arrival reveal is undone. Every tile must
+    /// carry no marker outside the reveal bits (a stairs or trap marker left by generation would
+    /// fail here); the reveal bits (0 and 1) are then cleared, and the rooms' revealed flags too.
+    // The reveal bits also carry the item marker (bit 1); the item case is checked on its own in
+    // `visibility::entry_clears_the_markers_and_builds_the_room_table_from_the_tiles`.
+    fn layout_of(floor: &Floor) -> Floor {
         let mut out = floor.clone();
         for room in &mut out.rooms {
             room.revealed = false;
@@ -1514,11 +1518,24 @@ mod tests {
         for y in 0..HEIGHT {
             for x in 0..WIDTH {
                 if let Some(t) = out.tile_mut(x as i32, y as i32) {
-                    t.spawn_or_visibility &= !(REVEALED_BIT | LIT_BIT);
+                    assert_eq!(
+                        t.spawn_or_visibility & !(REVEALED_BIT | LIT_BIT),
+                        0,
+                        "a generation marker survived the entry at ({x}, {y})"
+                    );
+                    t.spawn_or_visibility = 0;
                 }
             }
         }
         out
+    }
+
+    /// A generated floor after the entry step, in the form [`layout_of`] compares: no markers, and
+    /// the room table built from its tiles.
+    fn expected_layout(floor: &Floor) -> Floor {
+        let mut out = floor.clone();
+        crate::visibility::enter_floor(&mut out);
+        layout_of(&out)
     }
 
     /// Floor `n` of the run `seed`, built the way the stairs build it: the chain's `n`th seed,
@@ -1654,16 +1671,16 @@ mod tests {
         let (floor2, rng2, g2) = chained_floor(seed, &recs, 2);
         let d = st.dungeon().unwrap();
         assert_eq!(
-            without_reveal(d.floor()),
-            without_reveal(&floor2),
+            layout_of(d.floor()),
+            expected_layout(&floor2),
             "floor 2 is generated from the chain's second seed"
         );
         // Floor 2 takes record 2, not record 1 (an off-by-one in `take_stairs` would pass the
         // check above only if the two records made the same floor).
         let (floor2_from_record_1, _, _) = chained_floor_with(seed, &recs[1], 2);
         assert_ne!(
-            without_reveal(d.floor()),
-            without_reveal(&floor2_from_record_1),
+            layout_of(d.floor()),
+            expected_layout(&floor2_from_record_1),
             "floor 2 is built from record 2, not record 1"
         );
         assert_eq!(
@@ -1692,11 +1709,7 @@ mod tests {
             assert_eq!(st.step(Command::Wait), Outcome::NextFloor, "to floor {n}");
             let (floor, rng, _) = chained_floor(seed, &recs, n);
             let d = st.dungeon().unwrap();
-            assert_eq!(
-                without_reveal(d.floor()),
-                without_reveal(&floor),
-                "floor {n}"
-            );
+            assert_eq!(layout_of(d.floor()), expected_layout(&floor), "floor {n}");
             assert_eq!(d.rng(), &rng, "floor {n} generator");
         }
         // Floor 3 is the last: its stairs clear the dungeon.
