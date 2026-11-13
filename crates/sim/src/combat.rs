@@ -2,16 +2,17 @@
 //! (`docs/re/combat.md`, "Damaging moves (#419)"). Integer math only: the game's 24.8 and 48.16
 //! fixed point, with its rounding.
 //!
-//! Scope. The leader uses one of [`DAMAGING`]. Its target is the wild monster on the tile the
+//! Scope. The leader uses one of [`DAMAGING`], or Regular Attack ([`REGULAR_ATTACK`], the attack
+//! action `0x32`, `docs/re/combat.md`, P8). Its target is the wild monster on the tile the
 //! command faces; nothing beyond that tile is targeted (#420). The HP changes and nothing else
-//! does: no defeat (#422), no secondary effect (#421). Regular Attack is not here, because its
-//! route to the dispatcher is not traced. Items, statuses, weather and the Deoxys adjustment are
-//! not modelled; each is a `shortcut:` note below.
+//! does: no defeat (#422), no secondary effect (#421). Items, statuses, weather and the Deoxys
+//! adjustment are not modelled; each is a `shortcut:` note below.
 //!
-//! Draw order of one use (`docs/re/combat.md`, P6): the slot-0 hit check, then `CalcDamage`'s
-//! boost roll, critical roll and variance roll, then the slot-1 hit check. The critical roll is
-//! not drawn for a target with Battle Armor or Shell Armor. A slot-0 miss stops after its one
-//! draw. The hit check always draws, even when its accuracy forces the result.
+//! Draw order of one use (`docs/re/combat.md`, P6 and P8): the slot-0 hit check, then
+//! `CalcDamage`'s boost roll, critical roll and variance roll, then the slot-1 hit check. The
+//! critical roll is not drawn for a target with Battle Armor or Shell Armor. A slot-0 miss stops
+//! after its one draw. The hit check always draws, even when its accuracy forces the result.
+//! Regular Attack draws in the same order, and takes no PP.
 
 use rescue_data::combat::CombatTables;
 use rescue_data::moves::Move;
@@ -19,10 +20,18 @@ use rescue_data::moves::Move;
 use crate::command::{Blocked, Direction, Outcome};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
 
-/// The moves this module runs: Tackle (`0x09A`) and Scratch (`0x104`). The dispatch hands them
-/// straight to `HandleDamagingMove` (`docs/re/move-effects.md`), and their `arg8` of 1.0 was
-/// checked on 14 captured hits (#185).
+/// The moves this module runs from a move slot: Tackle (`0x09A`) and Scratch (`0x104`). The
+/// dispatch hands them straight to `HandleDamagingMove` (`docs/re/move-effects.md`), and their
+/// `arg8` of 1.0 was checked on 14 captured hits (#185).
 pub const DAMAGING: [u16; 2] = [0x09A, 0x104];
+
+/// Regular Attack: the leader's attack action (`0218453C`, case `0x32`, which calls
+/// `02172ADC(entity, 0x163)`). It has no move slot and takes no PP. Its accuracy, power and
+/// critical odds are read from its move-data row, not written here.
+pub const REGULAR_ATTACK: u16 = 0x163;
+
+/// `arg8` of Regular Attack, 24.8: 0.5 (the dispatcher's case `0x163` passes `0x80`).
+const REGULAR_ATTACK_ARG8: i64 = 0x80;
 
 /// `arg8`, the damage scale in 24.8, for [`DAMAGING`] moves: 1.0.
 const ARG8: i64 = 0x100;
@@ -275,6 +284,18 @@ pub fn damage(
     target: &EntityInfo,
     rolls: Rolls,
 ) -> Damage {
+    damage_scaled(t, mv, ARG8, attacker, target, rolls)
+}
+
+/// [`damage`] with the move's `arg8` (24.8) given: a Regular Attack's is 0.5.
+fn damage_scaled(
+    t: &CombatTables,
+    mv: &Move,
+    arg8: i64,
+    attacker: &EntityInfo,
+    target: &EntityInfo,
+    rolls: Rolls,
+) -> Damage {
     let physical = is_physical(t, mv.kind);
     let split = usize::from(!physical);
 
@@ -326,7 +347,7 @@ pub fn damage(
 
     // arg8 (step 15), then the variance (step 16), then the integer (step 17).
     let value = mul48(base, multiplier);
-    let scaled = mul48(value, ARG8 << 8);
+    let scaled = mul48(value, arg8 << 8);
     let damage = to_int(mul48(scaled, VARIANCE_BASE + i64::from(rolls.variance)));
     Damage {
         value: i32::try_from(damage).unwrap_or(0),
@@ -368,6 +389,45 @@ impl Dungeon {
         if moves.pp == 0 {
             return Outcome::Blocked(Blocked::NoPp);
         }
+        let Some(index) = self.facing_foe(direction) else {
+            return Outcome::NotModelled;
+        };
+        let slot = usize::from(slot);
+        self.take_leader_turn(|d| d.strike(slot, index, mv, data));
+        Outcome::Applied
+    }
+
+    /// The leader's Regular Attack (action `0x32`) at `direction`: move `0x163` with no move slot
+    /// and no PP (`docs/re/combat.md`, P8). The wild monster on the facing tile is the target.
+    // shortcut: the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`) are not
+    // modelled: the sim keeps neither field.
+    // shortcut: the second strike of `02181D98` (weather or an ability) is not modelled.
+    // shortcut: the move's targeting is not read: only a foe on the facing tile is hit, as for
+    // the damaging moves.
+    pub(crate) fn regular_attack(
+        &mut self,
+        direction: Direction,
+        data: &CombatData<'_>,
+    ) -> Outcome {
+        if self.team.is_empty() {
+            return Outcome::Blocked(Blocked::NoLeader);
+        }
+        let Some(mv) = data.moves.get(usize::from(REGULAR_ATTACK)) else {
+            return Outcome::NotModelled;
+        };
+        // shortcut: a facing tile with no wild monster is not modelled: what the game does with
+        // an empty target is not read.
+        let Some(index) = self.facing_foe(Some(direction)) else {
+            return Outcome::NotModelled;
+        };
+        self.take_leader_turn(|d| d.resolve(index, mv, REGULAR_ATTACK_ARG8, data));
+        Outcome::Applied
+    }
+
+    /// The index of the wild monster on the tile the leader faces: `direction`, or the leader's
+    /// stored direction when it is `None`.
+    fn facing_foe(&self, direction: Option<Direction>) -> Option<usize> {
+        let leader = self.team.first()?;
         let facing =
             direction.unwrap_or(DIRECTIONS[usize::from(leader.info.direction) % DIRECTIONS.len()]);
         let (dx, dy) = facing.delta();
@@ -375,14 +435,7 @@ impl Dungeon {
             leader.pos.0.saturating_add(i16::try_from(dx).unwrap_or(0)),
             leader.pos.1.saturating_add(i16::try_from(dy).unwrap_or(0)),
         );
-        // shortcut: a facing tile with no wild monster is not modelled: what the game does with
-        // an empty target is not read.
-        let Some(index) = self.wild.iter().position(|m| m.pos == at) else {
-            return Outcome::NotModelled;
-        };
-        let slot = usize::from(slot);
-        self.take_leader_turn(|d| d.strike(slot, index, mv, data));
-        Outcome::Applied
+        self.wild.iter().position(|m| m.pos == at)
     }
 
     /// One use of the move in the leader's `slot` on wild monster `target`: the PP mark, the hit
@@ -392,6 +445,25 @@ impl Dungeon {
         if let Some(leader) = self.team.first_mut() {
             leader.info.moves[slot].flags2 |= MoveSlot::USE_MARK;
         }
+        self.resolve(target, mv, ARG8, data);
+
+        // The PP is taken at the end of the action, once per use (`02159B18`).
+        // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
+        // modelled, as their writers are not traced.
+        let marked = self
+            .team
+            .first_mut()
+            .and_then(|l| l.info.moves.get_mut(slot))
+            .filter(|m| m.flags2 & MoveSlot::USE_MARK != 0);
+        if let Some(mslot) = marked {
+            mslot.flags2 &= !MoveSlot::USE_MARK;
+            mslot.pp = mslot.pp.saturating_sub(1);
+        }
+    }
+
+    /// The hit checks and damage of one use by the leader on wild monster `target`, with the
+    /// move's `arg8` (24.8). It takes no PP; [`strike`](Self::strike) and Regular Attack add that.
+    fn resolve(&mut self, target: usize, mv: &Move, arg8: i64, data: &CombatData<'_>) {
         let Some(attacker) = self.team.first().map(|m| m.info.clone()) else {
             return;
         };
@@ -411,22 +483,13 @@ impl Dungeon {
                 },
                 variance: self.rng.int(0x4000),
             };
-            let dealt = damage(t, mv, &attacker, &defender, rolls);
+            let dealt = damage_scaled(t, mv, arg8, &attacker, &defender, rolls);
             let second = self.rng.int(100);
             if hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
                 // shortcut: no defeat (#422): HP stops at 0 and the faint is not run.
                 let hp = i32::from(defender.hp) - dealt.value;
                 self.wild[target].info.hp = i16::try_from(hp.max(0)).unwrap_or(i16::MAX);
             }
-        }
-
-        // The PP is taken at the end of the action, once per use (`02159B18`).
-        // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
-        // modelled, as their writers are not traced.
-        let mslot = &mut self.team[0].info.moves[slot];
-        if mslot.flags2 & MoveSlot::USE_MARK != 0 {
-            mslot.flags2 &= !MoveSlot::USE_MARK;
-            mslot.pp = mslot.pp.saturating_sub(1);
         }
     }
 }
@@ -517,7 +580,9 @@ mod tests {
 
     /// A move table indexed by move ID, with `moves` placed at their IDs.
     fn table(moves: &[Move]) -> Vec<Move> {
-        let mut table: Vec<Move> = (0..=0x104).map(|id| move_of(id, 0, 0, [0; 3], 0)).collect();
+        let mut table: Vec<Move> = (0..=REGULAR_ATTACK)
+            .map(|id| move_of(id, 0, 0, [0; 3], 0))
+            .collect();
         for mv in moves {
             table[usize::from(mv.id)] = mv.clone();
         }
@@ -946,5 +1011,118 @@ mod tests {
         };
         assert_eq!(plain.step(use_it), Outcome::NotModelled);
         assert_eq!(wild_hp(&plain), 100);
+    }
+
+    /// Regular Attack's move row for the tests: power 1, no critical odds, and the accuracy the
+    /// test passes (the dump's are 125 and 93, `docs/re/combat.md`, P8).
+    fn regular_attack_move(accuracy: [u8; 3]) -> Move {
+        move_of(REGULAR_ATTACK, 1, 0, accuracy, 0)
+    }
+
+    /// One Regular Attack resolved on the wild monster at the tile to the right, without the
+    /// leader's turn.
+    fn regular_hit(g: &mut GameState, mv: &Move, t: &CombatTables) {
+        let moves = table(std::slice::from_ref(mv));
+        let data = CombatData {
+            tables: t,
+            moves: &moves,
+        };
+        g.dungeon_mut()
+            .unwrap()
+            .resolve(0, mv, REGULAR_ATTACK_ARG8, &data);
+    }
+
+    #[test]
+    fn a_regular_attack_hit_draws_five_values_in_order_and_takes_no_pp() {
+        let t = tables();
+        // Both checks force a hit, so the five draws all run.
+        let mv = regular_attack_move([125, 125, 0]);
+        let mut g = battle([100; 3], 0);
+        let before = *g.dungeon().unwrap().rng();
+        let draws = five_draws(&before);
+        let attacker = g.dungeon().unwrap().team()[0].info.clone();
+        let target = g.dungeon().unwrap().wild()[0].info.clone();
+        let rolls = Rolls {
+            boost: draws[1],
+            crit: draws[2],
+            variance: draws[3],
+        };
+        let expected = damage_scaled(&t, &mv, REGULAR_ATTACK_ARG8, &attacker, &target, rolls).value;
+        regular_hit(&mut g, &mv, &t);
+        let mut rest = before;
+        for cap in [100, 100, 100, 0x4000, 100] {
+            rest.int(cap);
+        }
+        assert_eq!(g.dungeon().unwrap().rng(), &rest);
+        assert_eq!(i32::from(wild_hp(&g)), 100 - expected);
+        assert_eq!(leader_pp(&g), 10, "Regular Attack takes no PP");
+        let flags = g.dungeon().unwrap().team()[0].info.moves[0].flags2;
+        assert_eq!(flags & MoveSlot::USE_MARK, 0, "no PP mark is set");
+    }
+
+    #[test]
+    fn a_regular_attack_slot_zero_miss_draws_one_value_and_no_damage() {
+        let t = tables();
+        let draws = draws_at_start();
+        // The slot-0 roll is `draws[0]`; a threshold equal to it is a miss.
+        let mv = regular_attack_move([draws[0] as u8, 93, 0]);
+        let mut g = battle([100; 3], 0);
+        let before = *g.dungeon().unwrap().rng();
+        regular_hit(&mut g, &mv, &t);
+        let mut rest = before;
+        rest.int(100);
+        assert_eq!(g.dungeon().unwrap().rng(), &rest);
+        assert_eq!(wild_hp(&g), 100);
+        assert_eq!(leader_pp(&g), 10, "a miss takes no PP either");
+    }
+
+    #[test]
+    fn regular_attack_arg8_halves_the_damage_of_a_damaging_move() {
+        let t = tables();
+        let attacker = info([0, 0], [0, 0]);
+        let target = info([9, 0], [0, 0]);
+        let rolls = Rolls {
+            boost: 100,
+            crit: 0,
+            variance: 0x2000,
+        };
+        let mv = regular_attack_move([125, 125, 0]);
+        let full = damage(&t, &mv, &attacker, &target, rolls).value;
+        let half = damage_scaled(&t, &mv, REGULAR_ATTACK_ARG8, &attacker, &target, rolls).value;
+        assert!(half > 0 && half < full, "half {half}, full {full}");
+        // Each scaled value is rounded once, so the two may differ by a point.
+        assert!((full - 2 * half).abs() <= 2, "half {half}, full {full}");
+    }
+
+    #[test]
+    fn attack_is_modelled_on_a_foe_and_not_without_one() {
+        let t = tables();
+        let moves = table(&[regular_attack_move([125, 125, 0])]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+        };
+        let mut g = battle([100; 3], 0);
+        let out = g.step_with(Command::Attack(Direction::Right), &data);
+        assert_eq!(out, Outcome::Applied);
+        assert!(
+            wild_hp(&g) < 100,
+            "both checks hit, so the foe takes damage"
+        );
+        assert_eq!(leader_pp(&g), 10);
+
+        // Without the tables, or with no foe on the facing tile, nothing changes.
+        let mut plain = battle([100; 3], 0);
+        assert_eq!(
+            plain.step(Command::Attack(Direction::Right)),
+            Outcome::NotModelled
+        );
+        assert_eq!(wild_hp(&plain), 100);
+        let mut open = battle([100; 3], 0);
+        assert_eq!(
+            open.step_with(Command::Attack(Direction::Left), &data),
+            Outcome::NotModelled
+        );
+        assert_eq!(wild_hp(&open), 100);
     }
 }
