@@ -11,6 +11,7 @@
 
 mod app;
 mod boot;
+mod combat;
 mod draw;
 mod dungeon;
 mod input;
@@ -216,7 +217,7 @@ impl Game for App {
     }
 
     fn draw(&mut self, screen: Screen, p: &mut Painter<'_>) -> Result<(), PlatformError> {
-        draw::screen(self.scene, self.dungeon(), screen, p)
+        draw::screen(self.scene, self.dungeon(), self.menu(), screen, p)
     }
 }
 

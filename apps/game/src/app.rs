@@ -6,16 +6,36 @@
 //! step did starts a walk (a move), moves on to the next floor (the stairs) or goes back to the
 //! menu (the dungeon is cleared).
 
+use std::collections::BTreeMap;
+
 use rescue_platform::{ButtonState, Flow};
 use rescue_render::anim::AnimPlayer;
 use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster, MoveSlot};
 
 use crate::boot::RomCheck;
-use crate::dungeon::{self, Dungeon, FloorData, IDLE_GROUP, WALK_GROUP};
-use crate::input;
+use crate::combat::{self, LOG_LINES, Tables};
+use crate::dungeon::{self, Dungeon, Figure, FloorData, IDLE_GROUP, MonsterArt, WALK_GROUP};
+use crate::input::{self, MenuInput};
 use crate::scene::Scene;
 use crate::walk::Walk;
+
+/// The leader's attack pose: group 2, the close-range strike (docs/formats/sprites.md).
+// shortcut: Regular Attack's own group is `GetMoveAnimId`'s answer for move `0x163`, which is not
+// read from the move table; the close strike stands in.
+const ATTACK_GROUP: usize = 2;
+/// A struck monster's pose: group 6, the hit reaction (docs/formats/sprites.md).
+const HIT_GROUP: usize = 6;
+/// The move the leader starts with in slot 0.
+// shortcut: the leader's moves are not read from its learnset; Tackle (`0x09A`) stands in.
+const START_MOVE: usize = 0x09A;
+
+/// A hit reaction playing on the monster at `pos`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HitAnim {
+    pos: (i16, i16),
+    anim: AnimPlayer,
+}
 
 /// Where a run starts: its seed, the dungeon and floor of the options, and the leader's species.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +66,20 @@ pub struct App {
     anim: Option<AnimPlayer>,
     /// The way the leader last moved, which it stands facing.
     facing: Direction,
+    /// The sim's combat tables, once read from the dump.
+    tables: Option<Tables>,
+    /// The leader's attack pose, while it plays.
+    strike: Option<AnimPlayer>,
+    /// Hit reactions of struck monsters, while they play.
+    hits: Vec<HitAnim>,
+    /// Sprites of the wild species met on this floor.
+    art: BTreeMap<u16, MonsterArt>,
+    /// Logic ticks in the dungeon, which time the monsters' idle poses.
+    ticks: u32,
+    /// The move menu's cursor while it is open.
+    menu: Option<usize>,
+    /// The last lines of the message log.
+    log: Vec<String>,
 }
 
 impl App {
@@ -74,6 +108,13 @@ impl App {
             walk: None,
             anim: None,
             facing: Direction::Down,
+            tables: None,
+            strike: None,
+            hits: Vec::new(),
+            art: BTreeMap::new(),
+            ticks: 0,
+            menu: None,
+            log: Vec::new(),
         };
         if app.scene == Scene::Dungeon {
             app.enter_dungeon();
@@ -84,6 +125,18 @@ impl App {
     /// The floor view while the dungeon scene is up.
     pub fn dungeon(&self) -> Option<&Dungeon> {
         self.dungeon.as_ref()
+    }
+
+    /// The message log's last lines, oldest first.
+    // shortcut: no text is drawn yet (`draw`), so new lines are printed, not shown on screen.
+    #[cfg(test)]
+    fn log(&self) -> &[String] {
+        &self.log
+    }
+
+    /// The move menu's cursor, while it is open.
+    pub fn menu(&self) -> Option<usize> {
+        self.menu
     }
 
     /// One logic tick with the buttons held now.
@@ -106,7 +159,7 @@ impl App {
                 self.enter_dungeon();
             }
             if self.scene == Scene::Dungeon {
-                self.step_dungeon(buttons);
+                self.step_dungeon(buttons, pressed);
             }
         } else {
             self.leave_dungeon();
@@ -143,7 +196,18 @@ impl App {
             None => (0, 0, &[][..]),
         };
         let floors = sim_floors(records, floor);
-        let team = vec![leader_monster(leader, species)];
+        if self.tables.is_none() {
+            self.tables = self.rom.as_deref().and_then(|rom| {
+                Tables::from_rom(rom, species)
+                    .map_err(|e| eprintln!("rescue: attacks are not modelled, no tables: {e}"))
+                    .ok()
+            });
+        }
+        let mut leader = leader_monster(leader, species);
+        if let Some(mv) = self.tables.as_ref().and_then(|t| t.moves.get(START_MOVE)) {
+            leader.info.moves[0] = MoveSlot::new(mv);
+        }
+        let team = vec![leader];
         let Ok(game) = GameState::in_dungeon(self.config.seed, map, team, speed) else {
             return self.back_to_menu();
         };
@@ -165,6 +229,9 @@ impl App {
         };
         self.dungeon = Dungeon::new(map, self.data.as_ref());
         self.walk = None;
+        self.strike = None;
+        self.hits.clear();
+        self.art.clear();
         self.anim = self
             .data
             .as_ref()
@@ -173,12 +240,24 @@ impl App {
         self.dungeon.is_some()
     }
 
-    /// One logic tick of the dungeon: the animation runs, and a walk in progress is advanced.
-    /// When no walk is left after that (or it ends on this tick), the buttons held are read.
-    fn step_dungeon(&mut self, buttons: ButtonState) {
+    /// One logic tick of the dungeon: the animations run, and a walk in progress is advanced.
+    /// While the move menu is open it reads the presses. When no walk or attack is playing
+    /// (or it ends on this tick), the buttons held are read.
+    fn step_dungeon(&mut self, buttons: ButtonState, pressed: ButtonState) {
+        self.ticks = self.ticks.wrapping_add(1);
         if let Some(anim) = self.anim.as_mut() {
             anim.advance(1);
         }
+        if let Some(strike) = self.strike.as_mut() {
+            strike.advance(1);
+            if strike.finished() {
+                self.strike = None;
+            }
+        }
+        for hit in &mut self.hits {
+            hit.anim.advance(1);
+        }
+        self.hits.retain(|h| !h.anim.finished());
         if self.walk.as_mut().is_some_and(Walk::tick) {
             self.walk = None;
             self.anim = self
@@ -186,35 +265,155 @@ impl App {
                 .as_ref()
                 .and_then(|d| d.leader_anim(IDLE_GROUP, self.facing));
         }
-        if self.walk.is_none() {
-            self.take_turn(buttons);
+        let idle = self.walk.is_none() && self.strike.is_none() && self.hits.is_empty();
+        if let Some(cursor) = self.menu {
+            self.menu_tick(cursor, pressed);
+        } else if idle && input::opens_menu(pressed) {
+            self.menu = Some(0);
+        } else if idle && let Some(command) = input::command_for(buttons, self.facing) {
+            self.take_turn(command);
         }
         self.redraw();
     }
 
-    /// Reads the buttons held as a command and steps the sim with it. What the step did is
-    /// shown: a move starts its walk, the stairs take the next floor, and a cleared dungeon goes
-    /// back to the menu.
-    fn take_turn(&mut self, buttons: ButtonState) {
-        let Some(command) = input::command_for(buttons) else {
-            return;
-        };
+    /// The move menu reads this tick's presses: the cursor moves, a slot is used, or it closes.
+    fn menu_tick(&mut self, cursor: usize, pressed: ButtonState) {
+        match input::menu_input(pressed, cursor) {
+            MenuInput::Stay => {}
+            MenuInput::Cursor(to) => self.menu = Some(to),
+            MenuInput::Close => self.menu = None,
+            MenuInput::Use(slot) => {
+                self.menu = None;
+                self.take_turn(Command::UseMove {
+                    slot: u8::try_from(slot).unwrap_or(0),
+                    direction: None,
+                });
+            }
+        }
+    }
+
+    /// Steps the sim with `command`. What the step did is shown: a move starts its walk, an
+    /// attack its poses and log lines, the stairs take the next floor, and a cleared dungeon
+    /// goes back to the menu.
+    fn take_turn(&mut self, command: Command) {
         let Some(game) = self.game.as_mut() else {
             return;
         };
         let before = game.dungeon().and_then(leader_tile);
-        let outcome = game.step(command);
+        let wild_before = game
+            .dungeon()
+            .map(|d| d.wild().to_vec())
+            .unwrap_or_default();
+        let outcome = match self.tables.as_ref() {
+            Some(t) => game.step_with(command, &t.data()),
+            None => game.step(command),
+        };
         let after = game.dungeon().and_then(leader_tile);
+        let wild_after = game
+            .dungeon()
+            .map(|d| d.wild().to_vec())
+            .unwrap_or_default();
         match outcome {
             Outcome::Applied => {
                 if let (Some(from), Some(to), Some(dir)) = (before, after, moved_in(command)) {
                     self.start_walk(from, to, dir);
+                } else if let Some(dir) = attacked_in(command, self.facing) {
+                    self.show_attack(dir, &wild_before, &wild_after);
                 }
             }
             Outcome::NextFloor => self.next_floor(),
             Outcome::DungeonCleared | Outcome::LeaderDefeated => self.back_to_menu(),
             Outcome::Blocked(_) | Outcome::NotModelled => {}
         }
+    }
+
+    /// Shows an attack facing `dir`: the leader's strike, a hit reaction on each monster that
+    /// lost HP, and the log lines. A defeated monster is gone from the sim's list, so it is no
+    /// longer drawn. An attack that changed nothing missed.
+    fn show_attack(&mut self, dir: Direction, before: &[Monster], after: &[Monster]) {
+        self.facing = dir;
+        self.strike = self
+            .data
+            .as_ref()
+            .and_then(|d| d.leader_strike(ATTACK_GROUP, dir));
+        let mut lines = combat::attack_messages(before, after);
+        if lines.is_empty() {
+            // shortcut: a placeholder line, as the ROM's strings are not read (`combat`).
+            lines.push(String::from("The attack missed."));
+        }
+        for pos in combat::hit_tiles(before, after) {
+            let species = before.iter().find(|m| m.pos == pos).map(|m| m.info.species);
+            let anim = species
+                .and_then(|sp| self.art_of(sp))
+                .and_then(|a| a.anim(HIT_GROUP, 0, false));
+            if let Some(anim) = anim {
+                self.hits.push(HitAnim { pos, anim });
+            }
+        }
+        for line in &lines {
+            println!("rescue: {line}");
+        }
+        self.log.extend(lines);
+        let extra = self.log.len().saturating_sub(LOG_LINES);
+        self.log.drain(..extra);
+    }
+
+    /// The sprite of wild species `species`, read from the dump the first time it is asked for.
+    fn art_of(&mut self, species: u16) -> Option<&MonsterArt> {
+        if !self.art.contains_key(&species) {
+            let rom = self.rom.as_deref()?;
+            match MonsterArt::from_rom(rom, species) {
+                Ok(art) => {
+                    self.art.insert(species, art);
+                }
+                Err(e) => {
+                    eprintln!("rescue: species {species} is not drawn: {e}");
+                    return None;
+                }
+            }
+        }
+        self.art.get(&species)
+    }
+
+    /// The wild monsters in view, each at its idle pose or its hit reaction.
+    fn figures(&mut self) -> Vec<Figure> {
+        let wild: Vec<Monster> = self
+            .game
+            .as_ref()
+            .and_then(|g| g.dungeon())
+            .map(|d| d.wild().to_vec())
+            .unwrap_or_default();
+        let mut out = Vec::new();
+        for m in wild.iter().filter(|m| m.visible) {
+            let hit = self
+                .hits
+                .iter()
+                .find(|h| h.pos == m.pos)
+                .map(|h| h.anim.clone());
+            let ticks = self.ticks;
+            let dir = usize::from(m.info.direction) % 8;
+            let Some(art) = self.art_of(m.info.species) else {
+                continue;
+            };
+            let anim = hit.or_else(|| {
+                let mut idle = art.anim(IDLE_GROUP, dir, true)?;
+                idle.advance(ticks);
+                Some(idle)
+            });
+            let Some(anim) = anim else {
+                continue;
+            };
+            let Some(image) = art.image(&anim) else {
+                continue;
+            };
+            let step = anim.step().offset;
+            out.push(Figure {
+                cell: (i32::from(m.pos.0), i32::from(m.pos.1)),
+                offset: (i32::from(step.0), i32::from(step.1)),
+                image,
+            });
+        }
+        out
     }
 
     /// Starts the walk of the leader from `from` to `to`, one leg a tile, facing `dir`. The walk
@@ -254,14 +453,14 @@ impl App {
         }
     }
 
-    /// Draws the top screen with the leader at its pose: the walk's, or standing on the sim's
-    /// tile.
+    /// Draws the top screen with the leader at its pose (the walk's, or standing on the sim's
+    /// tile; the attack pose over either) and the wild monsters.
     fn redraw(&mut self) {
-        let (Some(view), Some(data), Some(anim)) = (
-            self.dungeon.as_mut(),
-            self.data.as_ref(),
-            self.anim.as_ref(),
-        ) else {
+        let figures = self.figures();
+        let (Some(view), Some(data)) = (self.dungeon.as_mut(), self.data.as_ref()) else {
+            return;
+        };
+        let Some(anim) = self.strike.as_ref().or(self.anim.as_ref()) else {
             return;
         };
         let (cell, sub) = match &self.walk {
@@ -275,7 +474,7 @@ impl App {
                 (tile.unwrap_or((0, 0)), (0, 0))
             }
         };
-        view.draw(data, anim, cell, sub);
+        view.draw(data, (anim, data.leader_image(anim)), cell, sub, &figures);
     }
 
     /// Drops the run and goes back to the menu's first entry.
@@ -291,6 +490,11 @@ impl App {
         self.data = None;
         self.walk = None;
         self.anim = None;
+        self.strike = None;
+        self.hits.clear();
+        self.art.clear();
+        self.menu = None;
+        self.log.clear();
     }
 }
 
@@ -304,6 +508,15 @@ fn leader_tile(run: &rescue_sim::state::Dungeon) -> Option<(i32, i32)> {
 fn moved_in(command: Command) -> Option<Direction> {
     match command {
         Command::Move(dir) | Command::Run(dir) => Some(dir),
+        _ => None,
+    }
+}
+
+/// The direction an attack command strikes in, if `command` is one.
+fn attacked_in(command: Command, facing: Direction) -> Option<Direction> {
+    match command {
+        Command::Attack(dir) => Some(dir),
+        Command::UseMove { direction, .. } => Some(direction.unwrap_or(facing)),
         _ => None,
     }
 }
@@ -627,5 +840,46 @@ mod tests {
             assert_eq!(app.game.as_ref().map(|g| g.floors_entered()), Some(2));
             assert!(app.dungeon().is_some(), "the floor view is rebuilt");
         }
+    }
+
+    #[test]
+    fn attack_with_no_target_changes_nothing_and_the_menu_opens_and_closes() {
+        let mut app = App::new(&ready(), None, RUN, true);
+        // No ROM: no tables, so an attack is not modelled; nothing is logged.
+        app.tick(held(DsButton::A));
+        assert!(app.log().is_empty());
+        app.tick(ButtonState::default());
+        tap(&mut app, DsButton::X);
+        assert_eq!(app.menu(), Some(0));
+        tap(&mut app, DsButton::Down);
+        assert_eq!(app.menu(), Some(1));
+        tap(&mut app, DsButton::B);
+        assert_eq!(app.menu(), None);
+    }
+
+    #[test]
+    fn an_attack_logs_hits_and_defeats_and_keeps_four_lines() {
+        use crate::combat::attack_messages;
+        let mut app = App::new(&ready(), None, RUN, true);
+        let mut a = leader_monster((1, 1), 5);
+        let mut b = a.clone();
+        a.info.hp = 20;
+        b.info.hp = 12;
+        app.show_attack(Direction::Right, &[a.clone()], &[b.clone()]);
+        assert_eq!(app.log(), attack_messages(&[a.clone()], &[b]).as_slice());
+        app.show_attack(Direction::Right, &[a.clone()], &[]);
+        assert_eq!(
+            app.log().last().map(String::as_str),
+            Some("Monster 5 was defeated!")
+        );
+        app.show_attack(Direction::Right, &[a.clone()], &[a.clone()]);
+        assert_eq!(
+            app.log().last().map(String::as_str),
+            Some("The attack missed.")
+        );
+        for _ in 0..5 {
+            app.show_attack(Direction::Left, &[], &[]);
+        }
+        assert_eq!(app.log().len(), 4);
     }
 }

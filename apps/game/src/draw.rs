@@ -15,15 +15,26 @@ const ROW: Rgb = Rgb(40, 90, 56);
 const ROW_CURSOR: Rgb = Rgb(250, 250, 250);
 const BOTTOM: Rgb = Rgb(16, 56, 32);
 
-/// Draws one screen of `scene`. `dungeon` is the floor while the dungeon scene is up.
+/// Draws one screen of `scene`. `dungeon` is the floor while the dungeon scene is up; `menu` is
+/// the move menu's cursor while it is open, drawn over the lower screen.
 pub fn screen(
     scene: Scene,
     dungeon: Option<&Dungeon>,
+    menu: Option<usize>,
     screen: Screen,
     p: &mut Painter<'_>,
 ) -> Result<(), PlatformError> {
     match screen {
         Screen::Top => top(scene, dungeon, p),
+        Screen::Bottom if scene == Scene::Dungeon && menu.is_some() => {
+            p.clear(BOTTOM);
+            // shortcut: no text is drawn yet, so a move's name is not shown: one row per slot.
+            for i in 0..crate::input::MENU_SLOTS {
+                let colour = if menu == Some(i) { ROW_CURSOR } else { ROW };
+                p.fill_rect(64, 40 + 24 * i as i32, 128, 16, colour)?;
+            }
+            Ok(())
+        }
         Screen::Bottom => match (scene, dungeon) {
             (
                 Scene::Dungeon,

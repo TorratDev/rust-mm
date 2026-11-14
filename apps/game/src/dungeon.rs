@@ -25,7 +25,7 @@ use rescue_render::SCREEN_WIDTH;
 use rescue_render::anim::AnimPlayer;
 use rescue_render::autotile::{GRID_H, GRID_W, autotile};
 use rescue_render::bg::{BgLayer, Frame, compose, floor_layer, solid_cells_layer};
-use rescue_render::camera::follow;
+use rescue_render::camera::{entity_pixel, follow};
 use rescue_render::minimap::{CANVAS_COLS, COLS, Cell, Patterns, ROWS, Settings, render};
 use rescue_render::sprite::{
     PlacedSprite, SpriteImage, compose_with_sprites, render_sprite, sprite_origin,
@@ -195,6 +195,12 @@ impl FloorData {
         AnimPlayer::new(&self.sprite, group, dir as usize, true)
     }
 
+    /// A one-shot animation of the leader's `group` facing `dir`. `None` if there is no such
+    /// pose.
+    pub fn leader_strike(&self, group: usize, dir: Direction) -> Option<AnimPlayer> {
+        AnimPlayer::new(&self.sprite, group, dir as usize, false)
+    }
+
     /// The leader's sprite on the frame `anim` is on.
     pub fn leader_image(&self, anim: &AnimPlayer) -> Option<SpriteImage> {
         render_sprite(
@@ -205,6 +211,68 @@ impl FloorData {
         )
         .ok()
     }
+}
+
+/// A wild monster's sprite and its palettes, read from `monster.sbin`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonsterArt {
+    pub sprite: Sprite,
+    palette: u8,
+    palettes: Vec<Palette>,
+}
+
+impl MonsterArt {
+    /// Reads species `species`' sprite and palette from the dump `rom`.
+    pub fn from_rom(rom: &[u8], species: u16) -> Result<Self, String> {
+        let header = Header::parse(rom).map_err(|e| e.to_string())?;
+        let fs = Filesystem::parse(rom, &header).map_err(|e| e.to_string())?;
+        let file = |name: &str| -> Result<&[u8], String> {
+            let id = fs
+                .get(name)
+                .ok_or_else(|| format!("{name} is not in the ROM"))?
+                .id;
+            fs.data(rom, id).map_err(|e| e.to_string())
+        };
+        let sys = file("system.sbin")?;
+        let arc = Archive::parse(sys).map_err(|e| e.to_string())?;
+        let monspara = arc.get(sys, "monspara").map_err(|e| e.to_string())?;
+        let table = parse_species(monspara).map_err(|e| e.to_string())?;
+        let entry = table
+            .get(usize::from(species))
+            .ok_or_else(|| format!("species {species} is not in the ROM"))?;
+        let mon = file("monster.sbin")?;
+        let marc = Archive::parse(mon).map_err(|e| e.to_string())?;
+        let palettes = rgbx_palettes16(marc.get(mon, "palet").map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        let sprite = Sprite::parse(
+            marc.get(mon, &format!("ax{species:03}"))
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(MonsterArt {
+            sprite,
+            palette: entry.palette,
+            palettes,
+        })
+    }
+
+    /// An animation of `group` facing `direction` (0 to 7), looping or once.
+    pub fn anim(&self, group: usize, direction: usize, looping: bool) -> Option<AnimPlayer> {
+        AnimPlayer::new(&self.sprite, group, direction, looping)
+    }
+
+    /// The sprite on the frame `anim` is on.
+    pub fn image(&self, anim: &AnimPlayer) -> Option<SpriteImage> {
+        render_sprite(&self.sprite, anim.frame(), self.palette, &self.palettes).ok()
+    }
+}
+
+/// A monster drawn on the floor: its tile, the animation step's offset and its sprite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Figure {
+    pub cell: (i32, i32),
+    pub offset: (i32, i32),
+    pub image: SpriteImage,
 }
 
 /// The two screens of one floor. The top is redrawn by [`Dungeon::draw`]; the lower is fixed.
@@ -358,19 +426,33 @@ impl Dungeon {
     /// Draws the top screen with the leader's sprite `anim` at tile `cell`, `sub` pixels off
     /// the tile's centre (a walk's offset, `walk::Walk::pose`). The floor scrolls so that point
     /// is at the leader's place on screen. Does nothing for the placeholder.
-    pub fn draw(&mut self, data: &FloorData, anim: &AnimPlayer, cell: (i32, i32), sub: (i32, i32)) {
+    pub fn draw(
+        &mut self,
+        data: &FloorData,
+        (anim, image): (&AnimPlayer, Option<SpriteImage>),
+        cell: (i32, i32),
+        sub: (i32, i32),
+        figures: &[Figure],
+    ) {
         let Some(layer) = self.layer.as_mut() else {
             return;
         };
         let camera = follow(cell, sub);
         // The layer wraps, so a scroll past its edge shows the far side of the floor.
         (layer.scroll_x, layer.scroll_y) = camera.scroll;
-        let image = data.leader_image(anim);
         let at = sprite_origin(camera.sprite_origin, anim.step());
-        let sprites: Vec<PlacedSprite<'_>> = image
+        // The leader is first in OAM order, then the monsters.
+        let mut sprites: Vec<PlacedSprite<'_>> = image
             .iter()
             .map(|image| PlacedSprite { image, at })
             .collect();
+        for f in figures {
+            let tile = camera.to_screen(entity_pixel(f.cell, (0, 0)));
+            sprites.push(PlacedSprite {
+                image: &f.image,
+                at: (tile.0 + f.offset.0, tile.1 + f.offset.1),
+            });
+        }
         self.frame = compose_with_sprites(
             std::slice::from_ref(&*layer),
             &data.tileset.palettes,
@@ -446,7 +528,13 @@ mod rom_tests {
         let anim = data
             .leader_anim(IDLE_GROUP, Direction::Down)
             .expect("the idle pose");
-        view.draw(data, &anim, (i32::from(cell.0), i32::from(cell.1)), (0, 0));
+        view.draw(
+            data,
+            (&anim, data.leader_image(&anim)),
+            (i32::from(cell.0), i32::from(cell.1)),
+            (0, 0),
+            &[],
+        );
         (view, anim)
     }
 
@@ -481,7 +569,7 @@ mod rom_tests {
                 .expect("the first floor loads");
             let (mut view, anim) = idle_at(&data, (20, 25));
             let rest = view.layer.as_ref().map(|l| (l.scroll_x, l.scroll_y));
-            view.draw(&data, &anim, (20, 25), (5, -3));
+            view.draw(&data, (&anim, data.leader_image(&anim)), (20, 25), (5, -3), &[]);
             let moved = view.layer.as_ref().map(|l| (l.scroll_x, l.scroll_y));
             assert_eq!(moved, rest.map(|(x, y)| (x + 5, y - 3)));
         }
