@@ -161,8 +161,6 @@ const HELPING_HAND_CHANGE: &[StageChange] = &[
 // their status codes and durations belong to #73 and #359.
 // shortcut: Absorb's ooze branch (a target with ability `0x3A`) damages the user through
 // `0217BCA4`, which is not read; `combat` refuses that use (#421).
-// shortcut: Struggle's trigger (every move at 0 PP, `02166B10` and `02192D24`) is not in the command
-// path: `use_move` refuses a move with 0 PP, and Struggle is reached only through `strike` (#421).
 // shortcut: the sport counters' effects in the game are not applied: the type factor's Fire and
 // Electric multipliers (`0217CE88`, value red-hypothesis) and the AI's and menu's checks
 // (`0217CB3C`, `021644B8`). The counters are kept and ticked (`turn.rs`), but nothing reads them

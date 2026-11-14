@@ -97,7 +97,8 @@ pub enum Blocked {
     CornerCut,
     /// The move slot is empty, or the slot is not one of the four.
     NoMove,
-    /// The move has no PP left, so the game does not use it (`docs/re/combat.md`, P3).
+    /// The move has no PP left, and another move still has PP, so the game does not use it
+    /// (`docs/re/combat.md`, P3). When every move has no PP the use is Struggle instead.
     NoPp,
 }
 

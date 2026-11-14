@@ -412,10 +412,13 @@ fn add_exp(info: &mut EntityInfo, amount: i32, levels: &[LevelData]) {
 impl Dungeon {
     /// The leader uses move slot `slot` at `direction` (its facing when `None`). The move must
     /// have an effect in [`move_effects::effect_of`], have PP, and its range picks at least one
-    /// monster. A refused use changes nothing and takes no time; a use takes the leader's turn
-    /// (see [`crate::turn`]).
+    /// monster. When every move the leader holds is at 0 PP, the use is Struggle instead, whatever
+    /// slot was picked (the trigger of `ov_0001::02166B10` and `02192D24`, #421). A refused use
+    /// changes nothing and takes no time; a use takes the leader's turn (see [`crate::turn`]).
     // shortcut: the leader does not turn to face `direction`, as the sim does not turn it on a
     // move either. With no facing direction in the command, the leader's stored direction is used.
+    // shortcut: the game picks the first slot with its set bit and runs the chain from it; the sim
+    // uses the slot the command names, so a chain's PP check is not modelled.
     pub(crate) fn use_move(
         &mut self,
         slot: u8,
@@ -431,15 +434,26 @@ impl Dungeon {
         if moves.flags & MoveSlot::HOLDS_MOVE == 0 {
             return Outcome::Blocked(Blocked::NoMove);
         }
-        let Some(effect) = move_effects::effect_of(moves.id) else {
-            return Outcome::NotModelled;
-        };
-        let Some(mv) = data.moves.get(usize::from(moves.id)) else {
-            return Outcome::NotModelled;
-        };
-        if moves.pp == 0 {
+        let struggle = moves.pp == 0
+            && leader
+                .info
+                .moves
+                .iter()
+                .all(|m| m.flags & MoveSlot::HOLDS_MOVE == 0 || m.pp == 0);
+        if moves.pp == 0 && !struggle {
             return Outcome::Blocked(Blocked::NoPp);
         }
+        let (id, effect) = if struggle {
+            (move_effects::STRUGGLE, Effect::Struggle)
+        } else {
+            let Some(effect) = move_effects::effect_of(moves.id) else {
+                return Outcome::NotModelled;
+            };
+            (moves.id, effect)
+        };
+        let Some(mv) = data.moves.get(usize::from(id)) else {
+            return Outcome::NotModelled;
+        };
         let facing = self.facing(direction);
         let targets = match effect {
             // A sport's and Withdraw's range is the user (`0x73`, the move row's executor value):
@@ -1371,7 +1385,10 @@ pub(crate) mod tests {
         };
         let right = Some(Direction::Right);
         let mut g = battle([100; 3], 0);
-        g.dungeon_mut().unwrap().team[0].info.moves[0].pp = 0;
+        // A move with PP left in slot 3 keeps slot 0's empty move a refusal, not Struggle.
+        let d = g.dungeon_mut().unwrap();
+        d.team[0].info.moves[0].pp = 0;
+        d.team[0].info.moves[3] = MoveSlot::new(&tackle([100; 3], 0));
         let before = g.clone();
         let no_pp = Command::UseMove {
             slot: 0,
@@ -1408,6 +1425,50 @@ pub(crate) mod tests {
         };
         assert_eq!(plain.step(use_it), Outcome::NotModelled);
         assert_eq!(wild_hp(&plain), 100);
+    }
+
+    #[test]
+    fn struggle_is_used_only_when_every_move_has_no_pp() {
+        let t = tables();
+        let tackle_mv = tackle([100; 3], 0);
+        let moves = table(&[
+            tackle_mv.clone(),
+            move_of(move_effects::STRUGGLE, 40, 1, [100; 3], 0),
+        ]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        // Slot 0 at 0 PP and slot 1 with PP left: the use is refused and nothing changes.
+        let mut g = battle([100; 3], 0);
+        let d = g.dungeon_mut().unwrap();
+        d.team[0].info.moves[0].pp = 0;
+        d.team[0].info.moves[1] = MoveSlot::new(&tackle_mv);
+        let before = g.clone();
+        assert_eq!(g.step_with(use_it, &data), Outcome::Blocked(Blocked::NoPp));
+        assert_eq!(g, before);
+
+        // Every move at 0 PP: the leader uses Struggle on the monster it faces, takes its recoil
+        // (100 / 4 = 25), and no PP is taken.
+        let mut g = battle([100; 3], 0);
+        let d = g.dungeon_mut().unwrap();
+        d.team[0].info.moves[0].pp = 0;
+        d.team[0].info.moves[1] = MoveSlot {
+            pp: 0,
+            ..MoveSlot::new(&tackle_mv)
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        assert!(wild_hp(&g) < 100, "Struggle hits the monster in front");
+        assert_eq!(g.dungeon().unwrap().team()[0].info.hp, 75);
+        assert_eq!(leader_pp(&g), 0);
+        assert_eq!(g.dungeon().unwrap().team()[0].info.moves[1].pp, 0);
     }
 
     /// Regular Attack's move row for the tests: power 1, no critical odds, and the accuracy the
