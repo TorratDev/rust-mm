@@ -1514,7 +1514,7 @@ mod tests {
     fn a_move_whose_area_is_not_modelled_changes_nothing() {
         let t = tables();
         let mut mv = tackle([100; 3], 0);
-        mv.targeting[0] = 0x40; // two tiles ahead: its rule is not in the notes
+        mv.targeting[0] = 0x90; // area nibble 9: not an area the notes list
         let moves = table(std::slice::from_ref(&mv));
         let data = CombatData {
             tables: &t,

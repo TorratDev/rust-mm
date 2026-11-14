@@ -288,7 +288,9 @@ Tags are for the role read in the export. The names are ours unless marked.
 - Argument 7 (`skipRelation`): when set, every class passes the relation test. The caller sets it when the user's `+0xAC` is 2 or 4, or `+0xC9 == 1`. The meaning of `+0xAC` is open.
 - A veto from `0215A054` can drop a target by its `+0xDC` value. The veto set depends on the move and on `+0xAE`. The field names are open.
 
-**Class 4 is decided before filtering**, in `0215A520`. If `0215A2C0(user, move)` returns 0, the targeting becomes `0x73` (class 3, self). Otherwise it becomes `0` (area `0x00`, class 0: a foe on the facing tile). So executor class 4 is a conditional self. `0215A2C0` is not decompiled.
+**Class 4 is decided before filtering**, in `0215A520` (#420 investigator b, P3, [blue-verified]). `match = 0215A2C0(user, move)`, then `if (move == 0x97 && 02195C48(user) == 1) match = 1` (export line 44; the Solarbeam exception, requested in the #425 review). If `match == 0` the targeting becomes `0x73` (class 3, self). Otherwise it becomes `0` (area `0x00`, class 0: a foe on the facing tile). So executor class 4 is a conditional self, and Solarbeam in sunny weather is always the foe branch.
+
+`0215A2C0(user, move)` (P3a, [blue-verified], live `rescue-arm9-b`): 0 if the user is not valid. Otherwise it scans a 9-row table at `0x021AD0B8` (4 bytes per row: `u16` move id, status byte, 2 bytes padding; a zero id ends it) and returns 1 when the move id matches a row and `info +0xAE` (`user+0x70`) equals that row's byte. The rows are the charge moves: Solarbeam 2, Sky Attack 3, Razor Wind 4, Focus Punch 5, Skull Bash 6, Fly 7, Bounce 8, Dive 9, Dig 10 (the byte values agree with [status.md](status.md) for `+0xAE`). Only a charging user returns 1.
 
 ### AI path (`02192274`, `02192728`)
 
@@ -309,12 +311,12 @@ Tags are for the role read in the export. The names are ours unless marked.
 | `0x00` | facing tile, only if `02180FFC(user, facing)` passes; the type-1 entity there | 8 neighbours, each through `02180FFC` | `TARGET_OTHER` |
 | `0x10` | a frontal cone of 3 tiles: facing −1, facing, facing +1 (wrapping); type-1 entities | 8 neighbours, no gate | `FRONTAL_CONE` |
 | `0x20` | 8 neighbours; type-1 entities | 8 neighbours, no gate | `AROUND` |
-| `0x30` | the 20 slots at `gDungeon+0x11364` in the same room or area (`02141AF0`); any valid entity, the user included | the 20 slots, relation from `02141C08` | `ROOM` |
-| `0x40` | facing tile (`021775F0`, rejected if `021820B0` says blocked); if no entity there, the tile two ahead (`021774FC`) | 8 offsets at twice the distance, each through `02180FFC` | `2_TILES_AHEAD` |
+| `0x30` | the 20 slots at `gDungeon+0x11364` that pass the room test `02141AF0` (visible, and in view of the user's tile: room rect plus ring, or the corridor range); the user included when visible | the 20 slots, relation from `02141C08` | `ROOM` |
+| `0x40` | facing tile's monster (`021775F0`: none when `021820B0` blocks the tile). If there is none, or the class filter drops it, the monster two tiles ahead (`021774FC`: needs the facing tile and the tile two ahead both unblocked by `021820B0`) | 8 offsets at twice the distance, each through `02180FFC` | `2_TILES_AHEAD` |
 | `0x50` | the line walked by `0215AB34`: up to 10 tiles in the facing direction, stopping at a wall; the first entity hit | the line test `02192618` (distance 10), then the path test `02191E70` | `LINE` |
 | `0x60` | all 20 slots; every valid entity, the user included | all 20 valid slots | `FLOOR` |
 | `0x70` | the user only | the user only | `SELF` |
-| `0x80` | facing tile, with the corner-cut check (`021775F0`); the type-1 entity there | distance 1 through `02192618` (limit 1) | `CUT_CORNERS` |
+| `0x80` | facing tile's monster (`021775F0`: none when `021820B0` blocks the tile). No corner-cut check: the diagonal's sides are not read | distance 1 through `02192618` (limit 1) | `CUT_CORNERS` |
 
 The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas that reach the user's own entity. The other areas touch neighbour tiles or a line, which never hold the user. This was checked on the executor path. On the AI path the class-1 relation test is the same, but the self case through `02141C08` was not checked separately.
 
@@ -327,7 +329,7 @@ The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas t
 
 ### Executor in the sim (#420)
 
-`crates/sim/src/targeting.rs` ports the executor path for the areas and classes below. The rows above are the source. Where the code goes beyond a row, or a row is incomplete, the item says so. The export lines are from the Ghidra text export (STAMP 2026-11-12). Tags: **[blue-verified]** means read in the export or live in the `rescue-arm9-r` project and cited with its lines; **[hypothesis]** means inferred, or not checked against the export. On the #430 review the reviewer spot-checked `0215A520` line 44, the `0x10`/`0x20` loop, the wall test of `0215AB34` and `02180FFC`, and read `021AE280` live.
+`crates/sim/src/targeting.rs` ports the executor path for the areas and classes below. The rows above are the source. Where the code goes beyond a row, or a row is incomplete, the item says so. The export lines are from the Ghidra text export (STAMP 2026-11-12). Tags: **[blue-verified]** means read in the export or live in the `rescue-arm9-r` project and cited with its lines; **[hypothesis]** means inferred, or not checked against the export. On the #430 review the reviewer spot-checked `0215A520` line 44, the `0x10`/`0x20` loop, the wall test of `0215AB34` and `02180FFC`, and read `021AE280` live. The #420 rows for areas `0x30`, `0x40`, `0x60` and `0x80`, the blocked test `021820B0`, the class-4 body `0215A2C0` and the `0x97` rule come from the two #420 investigator comments, which are live reads of the Ghidra copies `rescue-arm9-a` and `rescue-arm9-b` (the text export has no STAMP file on that machine). They are cited by their P-number above, not by export line.
 
 **Modelled**
 
@@ -340,17 +342,21 @@ The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas t
   - [hypothesis] Whether generated walls are always type 0 is not checked.
   - [blue-verified] The projectile helper `0215B060` and the frame actions in the walk are not modelled.
   - [hypothesis] No dungeon RNG draw was seen in the parts of the export read; not verified by a run.
+- **Area `0x30`** (room) [blue-verified, #420 investigator b, P2]. The 20 slots of `gDungeon+0x11364` in order, which `02141A08` builds as the valid team slots then the valid wild slots (the sim's `team` then `wild` vectors). A slot is kept when it is visible (`+0x20`) and `Dungeon::in_view` (`0219C6BC`) holds from the user's tile: the room rect plus its one-tile ring, or the corridor range. The user is kept when visible. Argument 7 for the user's own slot is the shortcut below. Tests: `the_room_area_keeps_the_visible_slots_in_the_users_room`.
+- **Area `0x60`** (floor) [blue-verified, #420 investigator b, P2]. Every valid slot in the same order, with no room test. Test: `the_floor_area_keeps_every_valid_slot_in_team_then_wild_order`.
+- **Area `0x40`** (two ahead) [blue-verified, #420 investigator a, P1]. `021775F0` gives the facing tile's monster when `021820B0` does not block that tile. The class filter is applied to it. If it gives no target (no monster, or the filter drops it), `021774FC` is tried: the monster two tiles ahead, needing the facing tile and the tile two ahead both unblocked. A kind-1 monster on the facing tile does not stop the shot. There is no corner test. Test: `the_two_ahead_area_takes_the_facing_monster_then_the_one_two_ahead`.
+- **Area `0x80`** (cut corners) [blue-verified, #420 investigator a, P1]. `021775F0` alone: the facing tile's monster when `021820B0` does not block it. **There is no corner-cut check** (the earlier row said there was): the `02180FFC` direction-open gate is absent from this path. Test: `the_cut_corners_area_takes_the_facing_monster_with_no_corner_test`.
+- **The blocked test `021820B0`** (`IsBlockedForCut`, #420 investigator a, P1a, [blue-verified] for the order of tests). Off the map, a wall (flag `0x10`), or a type-0 tile blocks, for classes 0 to 2. Only the destination tile is read. The sim uses class 2 for every user (see Shortcuts).
 - **Area `0x70`** (user) [blue-verified]. The user only (`0215A520` lines 129 to 131, export).
 - **Classes** [blue-verified], as `0215A3A8` lines 25 to 55: `0` and `4` a foe; `1` an ally or the user; `2` and `3` any; `5` any except the user; `6` an ally that is not the user; `7` and up nothing.
 - **Move `0xFC`** aimed at the user is rejected [blue-verified] (`0215A3A8` line 12, export).
 - **Move `0xED`** takes the self class `0x73` unless the user is a Ghost [blue-verified] (`02191A30`, the row above). [hypothesis] The sim checks either of the user's two types for Ghost (type 14). The row does not say whether it means either type.
-- **Class 4** [blue-verified] (`0215A520` lines 41 to 52, export). It becomes self (`0x73`) when `0215A2C0` returns 0, else the foe branch (area 0, class 0). **The `0x97` exception (requested on #420):** [blue-verified] export line 44 is `if (move == 0x97 && GetEffectiveWeather(user) == 1) iVar3 = 1;`. It runs after `0215A2C0` is called, and it forces the foe branch whatever `0215A2C0` returned. So Solarbeam (`0x97`, targeting byte `0x74`) in sunny weather is area 0, class 0. [hypothesis] The weather is `02195C48(user)` (the weather accessor above; item 45 open). The sim has no weather state, so the rewrite takes the sunny test as unknown, and Solarbeam is refused.
+- **Class 4** [blue-verified] (`0215A520` lines 41 to 52, export; P3b of #420). It becomes self (`0x73`) when `0215A2C0` returns 0, else the foe branch (area 0, class 0). **The `0x97` exception (requested on #420 and #425):** [blue-verified] export line 44 is `if (move == 0x97 && GetEffectiveWeather(user) == 1) iVar3 = 1;`. It runs after `0215A2C0` is called, and it forces the foe branch whatever `0215A2C0` returned. So Solarbeam (`0x97`, targeting byte `0x74`) in sunny weather is area 0, class 0. [hypothesis] The weather is `02195C48(user)` (P3c: the weather byte at `gDungeon+0xC104`, 0 when `021432E8(user, 0x2D)` holds; `== 1` as sunny is [hypothesis]). The sim has no weather state, so Solarbeam's sunny test is unknown and it is refused. The sim has no charge state either, so `+0xAE` is 0 and `0215A2C0` returns 0: every other class 4 move is self (see Shortcuts).
 
 **Not modelled.** The use is refused with `NotModelled`, and the state does not change:
 
-- **Areas `0x30` and `0x60`** (room, floor). [blue-verified] They walk the 20 slots of `gDungeon+0x11364` and need the room test `02141AF0`. The sim's team and wild vectors are not mapped to those slots.
-- **Areas `0x40` and `0x80`** (two ahead, cut corners). [blue-verified] They need `021775F0` (facing tile, with the corner-cut check for `0x80`) and `021774FC`, and neither is in the notes. `021820B0` (the blocked test for `0x40`) is not in the notes either.
-- **Class 4** other than Solarbeam in sunny weather. [blue-verified] `0215A2C0` is not decompiled in the notes. `ai.md` describes a function at that address as the bide match, which is a different source and is not used here.
+- **Solarbeam (`0x97`) with the weather unknown.** The sim passes `sunny = None`, and the rewrite needs the weather. Refused until the weather is modelled (P3c: [hypothesis] for `== 1` as sunny).
+- **Areas `0x90` and up.** The high nibble names no area in the notes (`from_nibble`).
 
 **Shortcuts** (each has a `shortcut:` note in the code):
 
@@ -359,12 +365,16 @@ The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas t
 - **The veto `0215A054`** (`+0xDC`, `+0xAE`) [blue-verified]. Not applied: the sim keeps neither field.
 - **Argument 7 (`skipRelation`).** [hypothesis] Read as 0. It is set from `+0xAC` and `+0xC9`, which the sim does not keep. Export line 36 also tests IQ 7, which only clears `skipRelation` further, so 0 is the same result.
 - **Relation 2** of `02180994` ("not a target", [visibility.md](visibility.md) P4) [blue-verified]. The sim has only relations 0 and 1.
+- **The class-3 cases of `021820B0`** (the blocked test for `0x40` and `0x80`). [blue-verified] Class 3 never blocks on type 0 (step 6 of the test), and the class is `0218267C`'s result, 2 or 3 from IQ `0xC` and `0xD` and `info +0xC7 == 3` and held item 9, the same inputs as the `02180FFC` shortcut above. The sim uses class 2, so a class-3 user is blocked on a type-0 tile where the game is not. The `FUN_0206d474` gate is not modelled either.
+- **Step 3 of `021820B0`** (a non-monster entity on the tile blocks) [blue-verified]. Not modelled: the sim's tile entity link holds monsters only, so the step cannot arise.
+- **Class 4 with `info +0xAE`** (`0215A2C0`, P3a). [blue-verified] The sim has no charge state, so `+0xAE` is 0 and `0215A2C0` returns 0. Every class 4 move but Solarbeam is self, which is right while no charge is in flight. A charging user (Fly, Dig, Dive, Bounce, Skull Bash, Sky Attack, Razor Wind, Focus Punch, Solarbeam) would take the foe branch on its release turn; that needs the charge state first.
 
 **Draw order of a multi-target move.** [hypothesis] The dispatch `02156824` runs the hit path for each target in its loop, so the slot-0 check and the `CalcDamage` draws sit inside the per-target switch. Each target in the list therefore takes its own five draws (or one, on a slot-0 miss), in list order. The PP mark and the PP take happen once per use. The game side is from the #356 notes and was not re-read here. The sim's `strike` does this, and the test `a_cone_move_hits_each_monster_in_cone_order_with_five_draws_each` checks the sim's order and count only. Regular Attack has one target on its facing tile, so it is unaffected.
 
 **Open** (new from this port)
 
-- The class-3 rule of the direction-open bit: `0218267C` and the `info +0xC7`, held item 9, IQ `0xC` and `0xD` cases, and the `FUN_0206d474` gate.
+- The class-3 rule of the direction-open bit: `0218267C` and the `info +0xC7`, held item 9, IQ `0xC` and `0xD` cases, and the `FUN_0206d474` gate. The same inputs decide the class of `021820B0`.
+- The charge state (`info +0xAE`) and the weather (`02195C48`, P3c): both are needed for class 4 beyond the self case and for Solarbeam. The sim has neither.
 - `021775F0`, `021774FC` and `021820B0`: their bodies (the `0x40` and `0x80` candidates).
 - `0215A2C0`, which decides class 4 except for Solarbeam in sunny weather.
 - Whether `0215B060` (the projectile helper) and `02017A60` (called in the walk when argument 4 is set) draw from the dungeon RNG.
