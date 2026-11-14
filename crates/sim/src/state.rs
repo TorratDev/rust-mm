@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam};
+use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam, MonsterSpawn};
 use rescue_data::moves::Move;
 use rescue_data::species::Species;
 
@@ -70,6 +70,56 @@ pub fn floor_records(map: &MapParam, dungeon: u8) -> Option<Vec<FloorRecord>> {
             map.floor_properties
                 .get(usize::from(entry.properties))
                 .copied()
+        })
+        .collect()
+}
+
+/// The wild monsters of a floor being entered: one on each enemy spawn mark (see
+/// [`floor::enemy_spawn_spots`]), in column order, up to [`WILD_SLOTS`]. Each takes the first
+/// entry of the floor's spawn list.
+// shortcut: every monster takes the first entry of the list. The game draws one by weight
+// (`GetRandomFloorMonsterId`), which is not ported.
+// shortcut: the stats are stand-ins (nonzero, so a hit has a damage term to take), as the
+// leader's are; the species' stats and the level table are not read, and no types or
+// abilities are copied.
+fn wild_monsters(floor: &Floor, spawns: &[MonsterSpawn]) -> Vec<Monster> {
+    let Some(&spawn) = spawns.first() else {
+        return Vec::new();
+    };
+    floor::enemy_spawn_spots(floor)
+        .into_iter()
+        .take(WILD_SLOTS)
+        .map(|pos| Monster {
+            pos,
+            visible: true,
+            info: EntityInfo {
+                species: spawn.species,
+                apparent_species: spawn.species,
+                not_team_member: true,
+                is_team_leader: false,
+                level: spawn.level,
+                iq: 0,
+                hp: 50,
+                max_hp: 50,
+                attack: [10, 10],
+                defence: [5, 5],
+                offensive_stages: [10, 10],
+                defensive_stages: [10, 10],
+                accuracy_stage: 10,
+                evasion_stage: 10,
+                types: [0, 0],
+                abilities: [0, 0],
+                moves: [MoveSlot::default(); 4],
+                speed_up: [0; 5],
+                speed_down: [0; 5],
+                direction: 0,
+                belly: 0,
+                belly_empty: false,
+                regen_acc: 0,
+                regen_speed: 0,
+                exp: 0,
+                exp_gained: 0,
+            },
         })
         .collect()
 }
@@ -692,8 +742,20 @@ impl GameState {
         team: Vec<Monster>,
         leader_speed: i32,
     ) -> Result<Self, StateError> {
+        Self::in_dungeon_with_spawns(seed, floor, team, leader_speed, &[])
+    }
+
+    /// [`GameState::in_dungeon`] with the floor's monster spawn list. Its enemy spawn marks
+    /// become the wild monsters on entry (see [`wild_monsters`]); `spawns` empty leaves none.
+    pub fn in_dungeon_with_spawns(
+        seed: u32,
+        floor: Floor,
+        team: Vec<Monster>,
+        leader_speed: i32,
+        spawns: &[MonsterSpawn],
+    ) -> Result<Self, StateError> {
         let mut state = Self::new(seed);
-        state.enter_dungeon(floor, team, leader_speed)?;
+        state.enter_dungeon(floor, team, leader_speed, spawns)?;
         Ok(state)
     }
 
@@ -735,10 +797,14 @@ impl GameState {
         mut floor: Floor,
         team: Vec<Monster>,
         leader_speed: i32,
+        spawns: &[MonsterSpawn],
     ) -> Result<(), StateError> {
         if team.len() > TEAM_SLOTS {
             return Err(StateError::TeamTooLarge(team.len()));
         }
+        // The spawn marks share the tile word with the visibility bits, which `enter_floor`
+        // clears: the wild monsters are read from the marks first.
+        let wild = wild_monsters(&floor, spawns);
         crate::visibility::enter_floor(&mut floor);
         let floor_seed = self.preseed.next_floor_seed();
         self.floors_entered = self.floors_entered.saturating_add(1);
@@ -747,7 +813,7 @@ impl GameState {
             floor,
             rng: DungeonRng::new(floor_seed),
             team,
-            wild: Vec::new(),
+            wild,
             turn: 0,
             fractional_turn: 0,
             pending_end_of_turns: 0,
@@ -1193,7 +1259,7 @@ mod tests {
         let mut g = GameState::new(seed);
         let mut leader = monster(5, 5, 8);
         leader.info.is_team_leader = true;
-        g.enter_dungeon(open_floor(), vec![leader], 0).unwrap();
+        g.enter_dungeon(open_floor(), vec![leader], 0, &[]).unwrap();
         g.set_speed_stage(MAX_SPEED_STAGE);
         g
     }
@@ -1256,7 +1322,7 @@ mod tests {
         let mut g = GameState::new(1);
         let mut leader = monster(0, 0, 8);
         leader.info.is_team_leader = true;
-        g.enter_dungeon(open_floor(), vec![leader], 0).unwrap();
+        g.enter_dungeon(open_floor(), vec![leader], 0, &[]).unwrap();
         g.set_speed_stage(MAX_SPEED_STAGE);
         let before = g.clone();
         assert_eq!(
@@ -1446,7 +1512,7 @@ mod tests {
     #[test]
     fn an_empty_team_has_no_leader_to_move() {
         let mut g = GameState::new(1);
-        g.enter_dungeon(open_floor(), Vec::new(), 0).unwrap();
+        g.enter_dungeon(open_floor(), Vec::new(), 0, &[]).unwrap();
         g.set_speed_stage(MAX_SPEED_STAGE);
         assert_eq!(
             g.step(Command::Move(Direction::Up)),
@@ -1594,7 +1660,7 @@ mod tests {
         let mut g = GameState::new(1);
         let team = (0..5).map(|i| monster(i, 5, 1)).collect();
         assert_eq!(
-            g.enter_dungeon(open_floor(), team, 0),
+            g.enter_dungeon(open_floor(), team, 0, &[]),
             Err(StateError::TeamTooLarge(5))
         );
         assert!(g.dungeon.is_none());
@@ -1604,12 +1670,12 @@ mod tests {
     fn the_floor_seed_comes_from_the_preseed() {
         let mut a = GameState::new(0x12_3457);
         let mut b = GameState::new(0x12_3457);
-        a.enter_dungeon(open_floor(), Vec::new(), 0).unwrap();
-        b.enter_dungeon(open_floor(), Vec::new(), 0).unwrap();
+        a.enter_dungeon(open_floor(), Vec::new(), 0, &[]).unwrap();
+        b.enter_dungeon(open_floor(), Vec::new(), 0, &[]).unwrap();
         assert_eq!(a, b);
         // A second floor takes the next seed, so its generator differs.
         let first = a.dungeon.as_ref().unwrap().rng.state();
-        a.enter_dungeon(open_floor(), Vec::new(), 0).unwrap();
+        a.enter_dungeon(open_floor(), Vec::new(), 0, &[]).unwrap();
         assert_ne!(a.dungeon.as_ref().unwrap().rng.state(), first);
     }
 
@@ -1703,7 +1769,7 @@ mod tests {
         let mut leader = monster(g.stairs_a.0, g.stairs_a.1, 8);
         leader.info.is_team_leader = true;
         let mut st = GameState::new(seed).with_floors(recs);
-        st.enter_dungeon(floor, vec![leader], 0).unwrap();
+        st.enter_dungeon(floor, vec![leader], 0, &[]).unwrap();
         st.set_speed_stage(MAX_SPEED_STAGE);
         st
     }
@@ -1873,7 +1939,8 @@ mod tests {
         let mut leader = monster(5, 5, 8);
         leader.info.is_team_leader = true;
         let mut st = GameState::new(0x0007_0007);
-        st.enter_dungeon(open_floor(), vec![leader], 0).unwrap();
+        st.enter_dungeon(open_floor(), vec![leader], 0, &[])
+            .unwrap();
         stand_on_stairs(&mut st);
         assert_eq!(st.step(Command::Wait), Outcome::DungeonCleared);
     }
@@ -2007,7 +2074,7 @@ mod tests {
         leader.info.is_team_leader = true;
         let mut team = vec![leader];
         team.push(monster(4, 4, 6));
-        g.enter_dungeon(open_floor(), team, 0).unwrap();
+        g.enter_dungeon(open_floor(), team, 0, &[]).unwrap();
         g.set_speed_stage(MAX_SPEED_STAGE);
         if let Some(d) = g.dungeon.as_mut() {
             d.wild.push(monster(20, 12, 3));

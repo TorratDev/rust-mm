@@ -211,7 +211,7 @@ mod tests {
         let mut record = [0u8; FLOOR_PROPERTIES];
         record[DARKNESS_OFFSET] = darkness;
         let mut g = GameState::new(1).with_floors(vec![[0; FLOOR_PROPERTIES], record]);
-        g.enter_dungeon(floor, vec![leader], 0)
+        g.enter_dungeon(floor, vec![leader], 0, &[])
             .expect("one leader fits");
         g
     }

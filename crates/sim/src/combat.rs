@@ -682,10 +682,12 @@ pub(crate) mod tests {
     use super::*;
     use crate::command::Command;
     use crate::floor::Floor;
-    use crate::floor::TERRAIN_FLOOR;
+    use crate::floor::{TERRAIN_FLOOR, TERRAIN_TYPE_MASK};
+    use crate::floor_gen::{FloorProperties, GenState, PortedSteps, generate_floor};
     use crate::rng::DungeonRng;
     use crate::state::{GameState, Monster};
     use rescue_data::combat::STAGES;
+    use rescue_data::dungeon::MonsterSpawn;
     use rescue_data::types;
 
     /// Hand-made tables. The values are the tests' own, not the game's: neutral stages are 256,
@@ -873,6 +875,79 @@ pub(crate) mod tests {
             mv,
             &Effect::Damage { arg8: ARG8 },
             &data,
+        );
+    }
+
+    /// A fresh floor, generated with monsters, gets wild monsters on its enemy spawn marks, and
+    /// the leader beside one reaches it with Regular Attack in a real run's order: the floor is
+    /// generated, the wild list is set on entry, then the leader attacks.
+    #[test]
+    fn a_fresh_floor_has_a_wild_target_the_attack_reaches() {
+        let props = FloorProperties {
+            byte_06: 8,
+            ..FloorProperties::default()
+        };
+        let mut floor = Floor::new();
+        let mut rng = DungeonRng::from_state(0x1234_5678);
+        let mut g = GenState::default();
+        generate_floor(
+            &props,
+            false,
+            &mut floor,
+            &mut rng,
+            &mut g,
+            &mut PortedSteps::default(),
+            false,
+        )
+        .expect("the floor generates");
+        let leader = Monster {
+            pos: (g.stairs_a.0, g.stairs_a.1),
+            visible: true,
+            info: info([0, 0], [0, 0]),
+        };
+        let spawn = MonsterSpawn {
+            species: 1,
+            level: 3,
+            weights: [1, 1],
+        };
+        let mut game =
+            GameState::in_dungeon_with_spawns(1, floor, vec![leader], 2, &[spawn]).unwrap();
+        let dungeon = game.dungeon().unwrap();
+        assert!(!dungeon.wild().is_empty(), "the floor has wild monsters");
+        let target = dungeon.wild()[0].pos;
+
+        // The tile one step from the target, in a direction whose tile is open ground.
+        let (dir, stand) = DIRECTIONS
+            .iter()
+            .find_map(|&d| {
+                let (dx, dy) = d.delta();
+                let stand = (i32::from(target.0) - dx, i32::from(target.1) - dy);
+                let tile = dungeon.floor().tile(stand.0, stand.1)?;
+                let open = tile.terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR;
+                let stand = (i16::try_from(stand.0).ok()?, i16::try_from(stand.1).ok()?);
+                let free = dungeon.wild().iter().all(|m| m.pos != stand);
+                (open && free).then_some((d, stand))
+            })
+            .expect("a wild monster has open ground beside it");
+        game.dungeon_mut().unwrap().team[0].pos = stand;
+
+        let tables = tables();
+        let moves = table(&[]);
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            levels: &[],
+        };
+        let turn = game.dungeon().unwrap().turn();
+        assert_eq!(
+            game.step_with(Command::Attack(dir), &data),
+            Outcome::Applied
+        );
+        assert_eq!(
+            game.dungeon().unwrap().turn(),
+            turn + 1,
+            "the attack takes a turn"
         );
     }
 
