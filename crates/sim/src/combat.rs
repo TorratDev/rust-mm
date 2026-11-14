@@ -20,7 +20,7 @@ use rescue_data::moves::Move;
 use rescue_data::species::LevelData;
 
 use crate::command::{Blocked, Direction, Outcome};
-use crate::move_effects::{self, Effect};
+use crate::move_effects::{self, Effect, SPORT_TURNS, Sport};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
 use crate::targeting::{self, Slot};
 
@@ -94,6 +94,9 @@ pub struct CombatData<'a> {
     pub moves: &'a [Move],
     /// The species' EXP yield, indexed by species ID (`Species::exp_yield`).
     pub exp_yields: &'a [i32],
+    /// The species' weight, indexed by species ID (`Species::weight`, species `+0x2C`). Low
+    /// Kick's `arg8` is the target's weight, at its apparent species (`ov_0001::0215C600`).
+    pub weights: &'a [u16],
     /// The level tables, indexed by species ID: the table for species `n` is the `lvmpNNN` file
     /// with `NNN = n`, one record per level from 1 (`rescue_data::species::parse_level_data`).
     pub levels: &'a [Vec<LevelData>],
@@ -178,7 +181,9 @@ pub fn type_factor(
     }
     let label = t.effectiveness[cells[0]][cells[1]];
     // shortcut: the weather (sun, rain, cloudy, fog), charging and the Wonder Guard branches of
-    // `sub_806E100` are not modelled: the sim has no weather or charge state.
+    // `sub_806E100` are not modelled: the sim has no weather or charge state. The sport counters
+    // (`Dungeon::mud_sport`, `water_sport`) are kept but not read here: the game's sport
+    // multiplier (`0217CE88`, value red-hypothesis) is not applied (#421).
     if kind != 0 && attacker.types.contains(&kind) && factor != 0 {
         factor = mul48(factor, i64::from(t.stab));
     }
@@ -435,7 +440,17 @@ impl Dungeon {
         if moves.pp == 0 {
             return Outcome::Blocked(Blocked::NoPp);
         }
-        let Some(targets) = self.targets_of(mv, self.facing(direction)) else {
+        let facing = self.facing(direction);
+        let targets = match effect {
+            // A sport's range is the user (`0x73`, the move row's executor value): its handler
+            // sets a floor counter and reads no target, so the user is its one target.
+            Effect::Sport(_) => {
+                targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)
+                    .filter(|t| t.as_slice() == [Slot::Team(0)])
+            }
+            _ => self.targets_of(mv, facing),
+        };
+        let Some(targets) = targets else {
             return Outcome::NotModelled;
         };
         // Absorb on a Liquid Ooze target takes the ooze branch, which damages the user through
@@ -444,6 +459,16 @@ impl Dungeon {
             && targets
                 .iter()
                 .any(|&t| self.info_of(t).is_some_and(|i| i.has_ability(LIQUID_OOZE)))
+        {
+            return Outcome::NotModelled;
+        }
+        // Low Kick needs the weight of each target's species; a species with no weight in the
+        // table is refused before any draw, rather than dealing a damage of 0.
+        if effect == Effect::LowKick
+            && targets.iter().any(|&t| {
+                self.info_of(t)
+                    .is_none_or(|i| weight_of(data, i.apparent_species).is_none())
+            })
         {
             return Outcome::NotModelled;
         }
@@ -666,9 +691,16 @@ impl Dungeon {
                 }
                 return false;
             }
+            // A sport's handler draws its turns once, after the slot-0 check, and no damage.
+            Effect::Sport(sport) => {
+                self.start_sport(*sport);
+                return false;
+            }
             Effect::Damage { arg8 } => *arg8,
             // Absorb's HDM is the normal one, `0x100` (`0215F314`); its heal follows the damage.
             Effect::Absorb => ARG8,
+            // Low Kick's HDM takes the target's weight as `arg8` (`0215C600`, P2 of #421).
+            Effect::LowKick => weight_of(data, defender.apparent_species).unwrap_or(0),
         };
         // The critical roll is drawn only where `CalcDamage` draws it (`crit_drawn`).
         let rolls = Rolls {
@@ -706,6 +738,26 @@ impl Dungeon {
             info.hp = i16::try_from(hp).unwrap_or(info.hp);
         }
     }
+
+    /// A sport's handler (`021617C0`, then `021955B0`): the floor counter of `sport` takes the
+    /// turns `CalculateStatusTurns(0, 10..12)` gives, one draw (`docs/re/move-effects.md`, P-c1
+    /// of #421). The counter is ticked by [`crate::turn`].
+    fn start_sport(&mut self, sport: Sport) {
+        let (low, high) = SPORT_TURNS;
+        let turns = u8::try_from(self.rng.range(low, high)).unwrap_or(0);
+        match sport {
+            Sport::Mud => self.mud_sport = turns,
+            Sport::Water => self.water_sport = turns,
+        }
+    }
+}
+
+/// The weight of the species at `species` (Low Kick's `arg8`, 24.8), or `None` for a species
+/// the table does not hold.
+fn weight_of(data: &CombatData<'_>, species: u16) -> Option<i64> {
+    data.weights
+        .get(usize::from(species))
+        .map(|&w| i64::from(w))
 }
 
 #[cfg(test)]
@@ -898,6 +950,7 @@ pub(crate) mod tests {
             tables: t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         g.dungeon_mut().unwrap().strike(
@@ -968,6 +1021,7 @@ pub(crate) mod tests {
             tables: &tables,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let turn = game.dungeon().unwrap().turn();
@@ -1262,6 +1316,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle([100; 3], 0);
@@ -1285,6 +1340,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let right = Some(Direction::Right);
@@ -1342,6 +1398,7 @@ pub(crate) mod tests {
             tables: t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         g.dungeon_mut().unwrap().resolve(
@@ -1424,6 +1481,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle([100; 3], 0);
@@ -1489,6 +1547,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         // The leader at (5, 5) faces Right. Foes stand on the three cone tiles, listed out of
@@ -1542,6 +1601,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         // The leader at (5, 5) faces Right. Foes stand on three neighbours, listed out of
@@ -1595,6 +1655,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         // The wild foe is past an ally on the line, so the ally is the first monster met.
@@ -1631,6 +1692,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         // The ally stands where the foe was: class 0 is a foe only, so the use is refused.
@@ -1680,6 +1742,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle_with_a_defeat();
@@ -1699,6 +1762,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle_with_a_defeat();
@@ -1717,6 +1781,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         // The cone order is (6, 6), (6, 5), (6, 4): wild 2, wild 0, wild 1. Wild 0 and wild 2 are
@@ -1762,6 +1827,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle_with_a_defeat();
@@ -1786,6 +1852,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle([100; 3], 0);
@@ -1833,6 +1900,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &yields,
+            weights: &[],
             levels: &[],
         };
         let use_it = Command::UseMove {
@@ -1896,6 +1964,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &yields,
+            weights: &[],
             levels: &by_species,
         };
         d.award_exp(&[Slot::Wild(0)], &data);
@@ -1915,6 +1984,7 @@ pub(crate) mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle([100; 3], 0);

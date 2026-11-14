@@ -33,8 +33,31 @@ pub(crate) const VINE_WHIP: u16 = 0x0B6;
 /// P1 of #421).
 pub(crate) const ABSORB: u16 = 0x087;
 
+/// Low Kick (`0x05C`): the damaging path with `arg8` the target's species weight (24.8), read at
+/// the target's apparent species (`ov_0001::0215C600`, `02002314`; `docs/re/move-effects.md`, P2
+/// of #421). The weight is the species table's `+0x2C` field, so `arg8` is that value unchanged.
+pub(crate) const LOW_KICK: u16 = 0x05C;
+
+/// Water Sport (`0x133`) and Mud Sport (`0x0D4`): a floor counter that runs out over a few turns
+/// (`ov_0001::021617C0`, `021955B0`; `docs/re/move-effects.md`, P-c1 of #421). The move row's
+/// executor targeting is the user (`0x73`), and the accuracy forces a hit.
+pub(crate) const WATER_SPORT: u16 = 0x133;
+pub(crate) const MUD_SPORT: u16 = 0x0D4;
+/// The turns a sport's counter is set to: `DungeonRandRange(10, 12)`, the bounds the handler
+/// passes (`low` inclusive, `high` exclusive, as `DungeonRng::range`).
+pub(crate) const SPORT_TURNS: (i32, i32) = (10, 12);
+
 /// The highest stage index: the stage table has 21 entries and 10 is neutral.
 const LAST_STAGE: i16 = (STAGES - 1) as i16;
+
+/// The floor counter a sport sets (`gDungeon+0xC117` for Mud, `+0xC118` for Water).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sport {
+    /// Mud Sport: the mud counter, which the game reads to weaken Electric moves.
+    Mud,
+    /// Water Sport: the water counter, which the game reads to weaken Fire moves.
+    Water,
+}
 
 /// A stat stage a handler changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +90,12 @@ pub(crate) enum Effect {
     /// Absorb: the damaging path with `arg8` 1.0 (`combat`), then the user heals (see
     /// [`ABSORB`]). The heal is in `combat`, which owns the attacker and the damage.
     Absorb,
+    /// Low Kick: the damaging path with `arg8` the target species' weight (see [`LOW_KICK`]),
+    /// read by `combat`, which owns the species table.
+    LowKick,
+    /// Water Sport and Mud Sport: one draw for the turns of `sport`'s floor counter, no damage
+    /// and no target change (see [`WATER_SPORT`]).
+    Sport(Sport),
 }
 
 // The block lists are the abilities the handler's own routine tests (`docs/re/move-effects.md`,
@@ -116,11 +145,11 @@ const HELPING_HAND_CHANGE: &[StageChange] = &[
 // fourth argument, which the export chain sets to 0 (`02172ADC` calls `0215B384(user, 1, 0, 0, 0, _)`,
 // which calls `02156824` with that third word). An `arg8` of 0 deals no damage, which the game does
 // not do, so one link of that reading is wrong. Settle it with a run of the HDM's `arg8` (#421).
-// shortcut: Low Kick (`05C`) needs the target species' weight (species `+0x2C`, `02002314`). The sim's
-// monsters carry no species table, and `CombatData` (built by `apps/game`) has no weights; both are
-// outside this slice's files (#421).
-// shortcut: Water Sport (`133`) and Mud Sport (`0D4`) set a floor counter that the weather step
-// (`turn.rs`) must tick. `turn.rs` is outside this slice's files, so they stay refused (#421).
+// shortcut: the sport counters' effects in the game are not applied: the type factor's Fire and
+// Electric multipliers (`0217CE88`, value red-hypothesis) and the AI's and menu's checks
+// (`0217CB3C`, `021644B8`). The counters are kept and ticked (`turn.rs`), but nothing reads them
+// (#421).
+// shortcut: the sport handler's end-of-effect message (`021953B4`, text only) is not modelled.
 // shortcut: Withdraw (`046`) raises the target's defence in the forced run. Its self-target hit rule
 // is open: the fifth argument of `AccuracyCalc` at the dispatch's call (`02156824`, decompile line 221)
 // is not in the decompile, and the sim's targeting refuses a self target (#421).
@@ -135,6 +164,9 @@ pub(crate) fn effect_of(id: u16) -> Option<Effect> {
         SAND_ATTACK => Some(Effect::Stages(ACCURACY_DOWN)),
         HELPING_HAND => Some(Effect::Stages(HELPING_HAND_CHANGE)),
         ABSORB => Some(Effect::Absorb),
+        LOW_KICK => Some(Effect::LowKick),
+        WATER_SPORT => Some(Effect::Sport(Sport::Water)),
+        MUD_SPORT => Some(Effect::Sport(Sport::Mud)),
         _ => None,
     }
 }
@@ -190,12 +222,24 @@ mod tests {
     /// The handler of `mv` on `target`, without the leader's turn, so the draws are the
     /// handler's alone.
     fn use_on(g: &mut GameState, mv: &Move, effect: &Effect, target: Slot) {
+        use_on_weighed(g, mv, effect, target, &[]);
+    }
+
+    /// [`use_on`] with the species weights `weights` in the data (Low Kick's `arg8`).
+    fn use_on_weighed(
+        g: &mut GameState,
+        mv: &Move,
+        effect: &Effect,
+        target: Slot,
+        weights: &[u16],
+    ) {
         let t = tables();
         let moves = table(std::slice::from_ref(mv));
         let data = CombatData {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights,
             levels: &[],
         };
         g.dungeon_mut()
@@ -400,6 +444,7 @@ mod tests {
                 tables: &t,
                 moves: &moves,
                 exp_yields: &[],
+                weights: &[],
                 levels: &[],
             };
             let mut g = battle_with(&mv);
@@ -419,8 +464,8 @@ mod tests {
 
     #[test]
     fn the_moves_not_ported_have_no_handler() {
-        // Thundershock, Hypnosis, Water Sport, Low Kick, Struggle and Withdraw (see the shortcuts).
-        for id in [0x0BC, 0x06F, 0x133, 0x0D4, 0x05C, 0x160, 0x046] {
+        // Thundershock, Hypnosis, Struggle and Withdraw (see the shortcuts).
+        for id in [0x0BC, 0x06F, 0x160, 0x046] {
             assert_eq!(effect_of(id), None, "move {id:#05X}");
         }
         // The damaging moves of the leader are ported.
@@ -499,6 +544,7 @@ mod tests {
             tables: &t,
             moves: &moves,
             exp_yields: &[],
+            weights: &[],
             levels: &[],
         };
         let mut g = battle_with(&mv);
@@ -529,5 +575,154 @@ mod tests {
             *battle_with(&mv).dungeon().unwrap().rng()
         };
         assert_eq!(rng, after_one_draw(&before));
+    }
+
+    /// The weights table with `weight` at species `species` and 0 elsewhere.
+    fn weights_with(species: usize, weight: u16) -> Vec<u16> {
+        let mut w = vec![0u16; species + 1];
+        w[species] = weight;
+        w
+    }
+
+    #[test]
+    fn low_kick_hit_is_the_damaging_path_with_the_target_species_weight_as_arg8() {
+        assert_eq!(effect_of(LOW_KICK), Some(Effect::LowKick));
+        let mv = move_of_power(LOW_KICK, [100; 3]);
+        let weights = weights_with(5, 0x180);
+        // The reference: the damaging path with `arg8` equal to the weight.
+        let mut reference = battle_with(&mv);
+        reference.dungeon_mut().unwrap().wild[0].info.species = 5;
+        reference.dungeon_mut().unwrap().wild[0]
+            .info
+            .apparent_species = 5;
+        use_on(
+            &mut reference,
+            &mv,
+            &Effect::Damage { arg8: 0x180 },
+            Slot::Wild(0),
+        );
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().wild[0].info.species = 5;
+        g.dungeon_mut().unwrap().wild[0].info.apparent_species = 5;
+        use_on_weighed(&mut g, &mv, &Effect::LowKick, Slot::Wild(0), &weights);
+        assert!(wild_hp(&g) < 100);
+        assert_eq!(wild_hp(&g), wild_hp(&reference));
+        assert_eq!(
+            g.dungeon().unwrap().rng(),
+            reference.dungeon().unwrap().rng()
+        );
+    }
+
+    #[test]
+    fn low_kick_miss_at_the_dispatch_draws_one_value_and_deals_nothing() {
+        let mv = move_of_power(LOW_KICK, [0; 3]);
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().wild[0].info.species = 5;
+        g.dungeon_mut().unwrap().wild[0].info.apparent_species = 5;
+        let before = *g.dungeon().unwrap().rng();
+        use_on_weighed(
+            &mut g,
+            &mv,
+            &Effect::LowKick,
+            Slot::Wild(0),
+            &weights_with(5, 0x180),
+        );
+        assert_eq!(wild_hp(&g), 100);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+    }
+
+    #[test]
+    fn low_kick_is_refused_before_any_draw_when_the_species_has_no_weight() {
+        let mv = move_of_power(LOW_KICK, [100; 3]);
+        let t = tables();
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().wild[0].info.species = 5;
+        g.dungeon_mut().unwrap().wild[0].info.apparent_species = 5;
+        let before = *g.dungeon().unwrap().rng();
+        let outcome = g.step_with(
+            Command::UseMove {
+                slot: 0,
+                direction: Some(Direction::Right),
+            },
+            &data,
+        );
+        assert_eq!(outcome, Outcome::NotModelled);
+        assert_eq!(g.dungeon().unwrap().rng(), &before);
+        assert_eq!(wild_hp(&g), 100);
+    }
+
+    #[test]
+    fn water_sport_sets_the_water_counter_from_one_range_draw_and_changes_nothing_else() {
+        assert_eq!(effect_of(WATER_SPORT), Some(Effect::Sport(Sport::Water)));
+        // Accuracy 125 forces the slot-0 check; the handler then draws the turns once.
+        let mv = move_of_power(WATER_SPORT, [125; 3]);
+        let effect = effect_of(WATER_SPORT).unwrap();
+        let mut g = battle_with(&mv);
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Team(0));
+        let mut expect = before;
+        expect.int(100);
+        let turns = expect.range(SPORT_TURNS.0, SPORT_TURNS.1);
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.rng(), &expect);
+        assert_eq!(i32::from(d.water_sport), turns);
+        assert!((10..=11).contains(&turns));
+        assert_eq!(d.mud_sport, 0);
+        assert_eq!(wild_hp(&g), 100);
+        assert_eq!(d.team()[0].info.offensive_stages, [10, 10]);
+    }
+
+    #[test]
+    fn mud_sport_sets_the_mud_counter_and_a_slot_0_miss_sets_nothing() {
+        assert_eq!(effect_of(MUD_SPORT), Some(Effect::Sport(Sport::Mud)));
+        let mv = move_of_power(MUD_SPORT, [125; 3]);
+        let mut g = battle_with(&mv);
+        use_on(&mut g, &mv, &Effect::Sport(Sport::Mud), Slot::Team(0));
+        let d = g.dungeon().unwrap();
+        assert!((10..=11).contains(&d.mud_sport));
+        assert_eq!(d.water_sport, 0);
+        // A miss stops after the slot-0 draw: no counter, one value drawn.
+        let mv = move_of_power(MUD_SPORT, [0; 3]);
+        let mut g = battle_with(&mv);
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &Effect::Sport(Sport::Mud), Slot::Team(0));
+        assert_eq!(g.dungeon().unwrap().mud_sport, 0);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+    }
+
+    #[test]
+    fn a_sport_use_takes_its_pp_and_its_user_is_its_only_target() {
+        // The move row's targeting: the executor's self class (`0x73`), then the room area.
+        let mut mv = move_of_power(WATER_SPORT, [125; 3]);
+        mv.targeting = [0x73, 0x30];
+        let t = tables();
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut g = battle_with(&mv);
+        let before_pp = leader_pp(&g);
+        let outcome = g.step_with(
+            Command::UseMove {
+                slot: 0,
+                direction: Some(Direction::Right),
+            },
+            &data,
+        );
+        assert_eq!(outcome, Outcome::Applied);
+        assert_eq!(leader_pp(&g), before_pp - 1);
+        assert!((10..=11).contains(&g.dungeon().unwrap().water_sport));
     }
 }
