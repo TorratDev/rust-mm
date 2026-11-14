@@ -90,8 +90,9 @@ pub struct CombatData<'a> {
     pub moves: &'a [Move],
     /// The species' EXP yield, indexed by species ID (`Species::exp_yield`).
     pub exp_yields: &'a [i32],
-    /// The level table, one record per level from 1 (`rescue_data::species::parse_level_data`).
-    pub levels: &'a [LevelData],
+    /// The level tables, indexed by species ID: the table for species `n` is the `lvmpNNN` file
+    /// with `NNN = n`, one record per level from 1 (`rescue_data::species::parse_level_data`).
+    pub levels: &'a [Vec<LevelData>],
 }
 
 /// Stage index, clamped to the table (0 to 20).
@@ -587,7 +588,13 @@ impl Dungeon {
             .collect();
         for amount in amounts {
             for member in &mut self.team {
-                add_exp(&mut member.info, amount, data.levels);
+                // Each member levels from its own species' table; a species with no table
+                // (missing from `levels`) gains EXP but does not level up.
+                let table = data
+                    .levels
+                    .get(usize::from(member.info.species))
+                    .map_or(&[][..], Vec::as_slice);
+                add_exp(&mut member.info, amount, table);
             }
         }
     }
@@ -1685,11 +1692,11 @@ pub(crate) mod tests {
         assert_eq!(g, before);
     }
 
-    /// `levels[i]` is the total for level `i + 1`: 100 EXP per level.
-    fn linear_levels() -> Vec<LevelData> {
+    /// `levels[i]` is the total for level `i + 1`: `step` EXP per level.
+    fn linear_levels(step: i32) -> Vec<LevelData> {
         (0..100)
             .map(|i| LevelData {
-                exp_required: i * 100,
+                exp_required: i * step,
                 hp: 0,
                 attack: [0; 2],
                 defense: [0; 2],
@@ -1735,7 +1742,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_level_up_follows_the_table_and_stops_at_the_next_threshold() {
-        let levels = linear_levels();
+        let levels = linear_levels(100);
         let mut info = info([0, 0], [0, 0]);
         info.level = 5;
         // 600 EXP reaches levels[5] (500) and levels[6] (600), not levels[7] (700).
@@ -1747,7 +1754,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_monster_at_level_100_gains_no_exp_and_the_total_is_capped() {
-        let levels = linear_levels();
+        let levels = linear_levels(100);
         let mut capped = info([0, 0], [0, 0]);
         capped.level = 100;
         add_exp(&mut capped, 500, &levels);
@@ -1759,6 +1766,39 @@ pub(crate) mod tests {
         add_exp(&mut near, 100, &[]);
         assert_eq!(near.exp, EXP_CAP, "the total stops at the cap");
         assert_eq!(near.exp_gained, 5, "the delta is what the cap let in");
+    }
+
+    #[test]
+    fn each_team_member_levels_from_its_own_species_table() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let mut g = battle_with_a_defeat();
+        let d = g.dungeon_mut().unwrap();
+        // The leader is species 1 (its table is too high to reach); the partner is species 2
+        // (its table is 10 EXP per level, so the 76 EXP award reaches level 8 and no further).
+        d.team[0].info.level = 5;
+        let mut partner = d.team[0].clone();
+        partner.info.species = 2;
+        partner.info.is_team_leader = false;
+        partner.pos = (4, 5);
+        d.team.push(partner);
+        let wild_info = d.wild[0].info.clone();
+        let amount = exp_amount(40, wild_info.level);
+        let by_species = vec![Vec::new(), linear_levels(1000), linear_levels(10)];
+        let yields = [0, 40, 0];
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &yields,
+            levels: &by_species,
+        };
+        d.award_exp(&[Slot::Wild(0)], &data);
+        let leader = &d.team()[0].info;
+        assert_eq!(leader.level, 5, "species 1's table does not reach 5000 EXP");
+        assert_eq!(leader.exp, amount);
+        let partner = &d.team()[1].info;
+        assert_eq!(partner.level, 8, "species 2's table reaches 70 EXP, not 80");
+        assert_eq!(partner.exp, amount);
     }
 
     #[test]

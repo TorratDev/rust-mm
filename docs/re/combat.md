@@ -652,8 +652,11 @@ check, then let the wild AI target the leader.
 
 **Level-up.** [hypothesis] A monster rises one level at a time while its total reaches the table
 threshold (`levels[level]`, from `rescue_data::species::parse_level_data`, where record `i` is
-the total for level `i + 1`). The trigger, the table index and the order of the checks are not
-checked at runtime (owner's P3 on the issue). The stat gains of a level (`hp`, `attack`,
+the total for level `i + 1`). The table is the monster's own species': the `lvmpNNN` file with
+`NNN` equal to the species ID ([data tables](data-tables.md)), so a team member levels from its
+species' table, not the leader's. A species with no table gains EXP and does not level up. The
+trigger, the table index and the order of the checks are not checked at runtime (owner's P3 on
+the issue). The stat gains of a level (`hp`, `attack`,
 `defense`) are not applied: they are not verified [shortcut].
 
 Tests: `a_move_that_takes_a_wild_monster_to_0_hp_removes_it`,
@@ -662,6 +665,7 @@ Tests: `a_move_that_takes_a_wild_monster_to_0_hp_removes_it`,
 `a_wild_defeat_awards_the_leader_the_formula_amount_for_its_level`,
 `the_exp_amount_is_the_yield_plus_a_tenth_per_level_above_1`,
 `a_level_up_follows_the_table_and_stops_at_the_next_threshold`,
+`each_team_member_levels_from_its_own_species_table`,
 `a_monster_at_level_100_gains_no_exp_and_the_total_is_capped`,
 `the_leaders_defeat_is_reported_and_its_hp_stops_at_0`.
 
