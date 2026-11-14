@@ -77,6 +77,9 @@ const COMPOUND_EYES: u8 = 0x33;
 /// The target's abilities that skip the critical roll (`CalcDamage`, the two `AbilityIsActive` tests).
 const BATTLE_ARMOR: u8 = 0x0C;
 const SHELL_ARMOR: u8 = 0x13;
+/// The target's ability that sends Absorb's heal to the user as damage (`0215F314`, the test
+/// `0218067C(target, 0x3A)`). The name is a hypothesis: Red's ID was not checked.
+const LIQUID_OOZE: u8 = 0x3A;
 /// The EXP total cap (`AddExpPoints`, `DAT_02183FE8`, 9,999,999; `docs/re/combat.md`).
 const EXP_CAP: i32 = 9_999_999;
 /// The level a monster stops gaining EXP at (`AddExpPoints`, the early return on level 100).
@@ -435,6 +438,15 @@ impl Dungeon {
         let Some(targets) = self.targets_of(mv, self.facing(direction)) else {
             return Outcome::NotModelled;
         };
+        // Absorb on a Liquid Ooze target takes the ooze branch, which damages the user through
+        // `0217BCA4`; that routine is not read, so the use is refused before any draw (#421).
+        if effect == Effect::Absorb
+            && targets
+                .iter()
+                .any(|&t| self.info_of(t).is_some_and(|i| i.has_ability(LIQUID_OOZE)))
+        {
+            return Outcome::NotModelled;
+        }
         let slot = usize::from(slot);
         let mut leader_down = false;
         self.take_leader_turn(|d| leader_down = d.strike(slot, &targets, mv, &effect, data));
@@ -577,6 +589,8 @@ impl Dungeon {
     // level and species yield. The formula is static (matches Red); which level it reads is not
     // checked at runtime.
     // shortcut: the EXP multiplier at `+0xD8` is read as 1 (its writer of 2 is not located).
+    // Absorb's write of `+0xD8` (0 to 1) is not stored: no entity field holds it, and the award
+    // reads 1 either way (#421).
     // shortcut: a team member's join-location lock (`'J'`, `'G'` at `+0x40`) is not modelled.
     fn award_exp(&mut self, defeated: &[Slot], data: &CombatData<'_>) {
         let amounts: Vec<i32> = defeated
@@ -653,6 +667,8 @@ impl Dungeon {
                 return false;
             }
             Effect::Damage { arg8 } => *arg8,
+            // Absorb's HDM is the normal one, `0x100` (`0215F314`); its heal follows the damage.
+            Effect::Absorb => ARG8,
         };
         // The critical roll is drawn only where `CalcDamage` draws it (`crit_drawn`).
         let rolls = Rolls {
@@ -675,7 +691,20 @@ impl Dungeon {
         if let Some(info) = self.info_mut(target) {
             info.hp = hp;
         }
+        if matches!(effect, Effect::Absorb) && dealt.value != 0 {
+            self.absorb_heal(dealt.value);
+        }
         hp == 0
+    }
+
+    /// Absorb's heal: the leader gains half of `dealt` (at least 1), up to its max HP
+    /// (`0215F314`, `0218DF38`, `docs/re/move-effects.md`). A miss or a 0 damage does not heal.
+    fn absorb_heal(&mut self, dealt: i32) {
+        let heal = (dealt / 2).max(1);
+        if let Some(info) = self.team.first_mut().map(|m| &mut m.info) {
+            let hp = (i32::from(info.hp) + heal).min(i32::from(info.max_hp));
+            info.hp = i16::try_from(hp).unwrap_or(info.hp);
+        }
     }
 }
 
