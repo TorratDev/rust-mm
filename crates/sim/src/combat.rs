@@ -17,6 +17,7 @@
 
 use rescue_data::combat::CombatTables;
 use rescue_data::moves::Move;
+use rescue_data::species::LevelData;
 
 use crate::command::{Blocked, Direction, Outcome};
 use crate::move_effects::{self, Effect};
@@ -75,6 +76,10 @@ const COMPOUND_EYES: u8 = 0x33;
 /// The target's abilities that skip the critical roll (`CalcDamage`, the two `AbilityIsActive` tests).
 const BATTLE_ARMOR: u8 = 0x0C;
 const SHELL_ARMOR: u8 = 0x13;
+/// The EXP total cap (`AddExpPoints`, `DAT_02183FE8`, 9,999,999; `docs/re/combat.md`).
+const EXP_CAP: i32 = 9_999_999;
+/// The level a monster stops gaining EXP at (`AddExpPoints`, the early return on level 100).
+const LEVEL_CAP: u8 = 100;
 
 /// The move data and the combat tables a move command reads (see [`crate::state::GameState::step_with`]).
 #[derive(Clone, Copy, Debug)]
@@ -83,6 +88,11 @@ pub struct CombatData<'a> {
     pub tables: &'a CombatTables,
     /// The move table, indexed by move ID (`rescue_data::moves::parse_moves`).
     pub moves: &'a [Move],
+    /// The species' EXP yield, indexed by species ID (`Species::exp_yield`).
+    pub exp_yields: &'a [i32],
+    /// The level tables, indexed by species ID: the table for species `n` is the `lvmpNNN` file
+    /// with `NNN = n`, one record per level from 1 (`rescue_data::species::parse_level_data`).
+    pub levels: &'a [Vec<LevelData>],
 }
 
 /// Stage index, clamped to the table (0 to 20).
@@ -358,6 +368,38 @@ fn damage_scaled(
     }
 }
 
+/// The EXP of one defeat: the yield plus `yield * (level - 1) / 10`, at least 1
+/// (`CalculateEXPGain`, `docs/re/combat.md`; the multiplier is 1).
+fn exp_amount(yield_: i32, level: u8) -> i32 {
+    let base = yield_ + yield_ * (i32::from(level) - 1) / 10;
+    base.max(1)
+}
+
+/// Adds `amount` to a monster's EXP, as `AddExpPoints` does (the cap, the level-100 lock), then
+/// raises its level while the total reaches the level table (`docs/re/combat.md`).
+// hypothesis: the level-up test reads `levels[level]` as the total needed for the next level
+// (record `i` is the total for level `i + 1`). The game's trigger is not checked at runtime.
+// shortcut: the stat gains of a level-up (`LevelData::hp`, `attack`, `defense`) are not applied:
+// the game's gains are not verified.
+fn add_exp(info: &mut EntityInfo, amount: i32, levels: &[LevelData]) {
+    if info.level >= LEVEL_CAP {
+        return;
+    }
+    let total = info.exp.saturating_add(amount).min(EXP_CAP);
+    let delta = total - info.exp;
+    info.exp = total;
+    info.exp_gained = info.exp_gained.saturating_add(delta);
+    while info.level < LEVEL_CAP {
+        let Some(needed) = levels.get(usize::from(info.level)) else {
+            break;
+        };
+        if info.exp < needed.exp_required {
+            break;
+        }
+        info.level += 1;
+    }
+}
+
 impl Dungeon {
     /// The leader uses move slot `slot` at `direction` (its facing when `None`). The move must
     /// be one of [`DAMAGING`], have PP, and its range picks at least one monster. A refused use
@@ -392,7 +434,11 @@ impl Dungeon {
             return Outcome::NotModelled;
         };
         let slot = usize::from(slot);
-        self.take_leader_turn(|d| d.strike(slot, &targets, mv, &effect, data));
+        let mut leader_down = false;
+        self.take_leader_turn(|d| leader_down = d.strike(slot, &targets, mv, &effect, data));
+        if leader_down {
+            return Outcome::LeaderDefeated;
+        }
         Outcome::Applied
     }
 
@@ -418,7 +464,11 @@ impl Dungeon {
         let effect = Effect::Damage {
             arg8: REGULAR_ATTACK_ARG8,
         };
-        self.take_leader_turn(|d| d.resolve_all(&targets, mv, &effect, data));
+        let mut leader_down = false;
+        self.take_leader_turn(|d| leader_down = d.resolve_all(&targets, mv, &effect, data));
+        if leader_down {
+            return Outcome::LeaderDefeated;
+        }
         Outcome::Applied
     }
 
@@ -456,11 +506,11 @@ impl Dungeon {
         mv: &Move,
         effect: &Effect,
         data: &CombatData<'_>,
-    ) {
+    ) -> bool {
         if let Some(leader) = self.team.first_mut() {
             leader.info.moves[slot].flags2 |= MoveSlot::USE_MARK;
         }
-        self.resolve_all(targets, mv, effect, data);
+        let leader_down = self.resolve_all(targets, mv, effect, data);
 
         // The PP is taken at the end of the action, once per use (`02159B18`).
         // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
@@ -474,6 +524,7 @@ impl Dungeon {
             mslot.flags2 &= !MoveSlot::USE_MARK;
             mslot.pp = mslot.pp.saturating_sub(1);
         }
+        leader_down
     }
 
     /// The info of the monster at `slot`, if there is one.
@@ -492,20 +543,60 @@ impl Dungeon {
         }
     }
 
-    /// One use's hits on each of `targets`, in order, then the defeat of the wild monsters that
-    /// the use took to 0 HP (see [`remove_defeated`](Self::remove_defeated)).
+    /// One use's hits on each of `targets`, in order, then the EXP of each wild monster the use
+    /// took to 0 HP (see [`award_exp`](Self::award_exp)), then their defeat (see
+    /// [`remove_defeated`](Self::remove_defeated)). Returns whether the leader was defeated.
     // shortcut: the game runs the faint of a target inside the damage path, as its hit takes it to
     // 0 HP, so the next target is hit after that faint. The sim removes the defeated monsters only
     // after the last hit, and does not run a faint's own draws or effects, so a use that defeats
     // one target and then hits another may differ from the game.
-    fn resolve_all(&mut self, targets: &[Slot], mv: &Move, effect: &Effect, data: &CombatData<'_>) {
+    fn resolve_all(
+        &mut self,
+        targets: &[Slot],
+        mv: &Move,
+        effect: &Effect,
+        data: &CombatData<'_>,
+    ) -> bool {
         let mut defeated = Vec::new();
         for &target in targets {
             if self.resolve(target, mv, effect, data) {
                 defeated.push(target);
             }
         }
+        let leader_down = defeated.contains(&Slot::Team(0));
+        self.award_exp(&defeated, data);
         self.remove_defeated(&defeated);
+        leader_down
+    }
+
+    /// The EXP of each wild monster in `defeated`, awarded to every team member
+    /// (`docs/re/combat.md`, "Defeat in the sim (#422)"). One award per defeated monster.
+    // hypothesis: the amount is `yield + yield * (level - 1) / 10` with the defeated monster's
+    // level and species yield. The formula is static (matches Red); which level it reads is not
+    // checked at runtime.
+    // shortcut: the EXP multiplier at `+0xD8` is read as 1 (its writer of 2 is not located).
+    // shortcut: a team member's join-location lock (`'J'`, `'G'` at `+0x40`) is not modelled.
+    fn award_exp(&mut self, defeated: &[Slot], data: &CombatData<'_>) {
+        let amounts: Vec<i32> = defeated
+            .iter()
+            .filter(|slot| matches!(slot, Slot::Wild(_)))
+            .filter_map(|&slot| {
+                let info = self.info_of(slot)?;
+                let yield_ = *data.exp_yields.get(usize::from(info.species))?;
+                Some(exp_amount(yield_, info.level))
+            })
+            .collect();
+        for amount in amounts {
+            for member in &mut self.team {
+                // Each member levels from its own species' table; a species with no table
+                // (missing from `levels`) gains EXP but does not level up.
+                let table = data
+                    .levels
+                    .get(usize::from(member.info.species))
+                    .map_or(&[][..], Vec::as_slice);
+                add_exp(&mut member.info, amount, table);
+            }
+        }
     }
 
     /// Removes the wild monsters in `defeated` from the wild list. The list is compacted: the
@@ -706,6 +797,8 @@ pub(crate) mod tests {
             belly_empty: false,
             regen_acc: 0,
             regen_speed: 200,
+            exp: 0,
+            exp_gained: 0,
             types,
             abilities,
             moves: [MoveSlot::default(); 4],
@@ -771,6 +864,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         g.dungeon_mut().unwrap().strike(
             0,
@@ -1060,6 +1155,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let mut g = battle([100; 3], 0);
         let out = g.step_with(
@@ -1081,6 +1178,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let right = Some(Direction::Right);
         let mut g = battle([100; 3], 0);
@@ -1136,6 +1235,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         g.dungeon_mut().unwrap().resolve(
             Slot::Wild(0),
@@ -1216,6 +1317,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let mut g = battle([100; 3], 0);
         let out = g.step_with(Command::Attack(Direction::Right), &data);
@@ -1279,6 +1382,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         // The leader at (5, 5) faces Right. Foes stand on the three cone tiles, listed out of
         // cone order, so only the cone order can give the draws to them in turn.
@@ -1330,6 +1435,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         // The leader at (5, 5) faces Right. Foes stand on three neighbours, listed out of
         // facing order: from Right on, the order is Right, UpRight, then DownRight last.
@@ -1381,6 +1488,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         // The wild foe is past an ally on the line, so the ally is the first monster met.
         let mut g = battle([100; 3], 0);
@@ -1415,6 +1524,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         // The ally stands where the foe was: class 0 is a foe only, so the use is refused.
         let mut g = battle([100; 3], 0);
@@ -1462,6 +1573,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let mut g = battle_with_a_defeat();
         let use_it = Command::UseMove {
@@ -1479,6 +1592,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let mut g = battle_with_a_defeat();
         let attack = Command::Attack(Direction::Right);
@@ -1495,6 +1610,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         // The cone order is (6, 6), (6, 5), (6, 4): wild 2, wild 0, wild 1. Wild 0 and wild 2 are
         // at 1 HP, so the use defeats both; wild 1 at 100 HP survives its own hit.
@@ -1538,6 +1655,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let mut g = battle_with_a_defeat();
         g.dungeon_mut().unwrap().wild[0].info.hp = 100;
@@ -1560,6 +1679,8 @@ pub(crate) mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         let mut g = battle([100; 3], 0);
         let before = g.clone();
@@ -1569,5 +1690,137 @@ pub(crate) mod tests {
         };
         assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
         assert_eq!(g, before);
+    }
+
+    /// `levels[i]` is the total for level `i + 1`: `step` EXP per level.
+    fn linear_levels(step: i32) -> Vec<LevelData> {
+        (0..100)
+            .map(|i| LevelData {
+                exp_required: i * step,
+                hp: 0,
+                attack: [0; 2],
+                defense: [0; 2],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_exp_amount_is_the_yield_plus_a_tenth_per_level_above_1() {
+        assert_eq!(exp_amount(15, 1), 15);
+        assert_eq!(exp_amount(15, 11), 30);
+        assert_eq!(exp_amount(40, 6), 60);
+        assert_eq!(exp_amount(0, 5), 1, "an award is at least 1");
+    }
+
+    #[test]
+    fn a_wild_defeat_awards_the_leader_the_formula_amount_for_its_level() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let mut g = battle_with_a_defeat();
+        let (species, level) = {
+            let wild = &g.dungeon().unwrap().wild()[0].info;
+            (usize::from(wild.species), wild.level)
+        };
+        let mut yields = vec![0; species + 1];
+        yields[species] = 40;
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &yields,
+            levels: &[],
+        };
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        let leader = &g.dungeon().unwrap().team()[0].info;
+        assert_eq!(leader.exp_gained, exp_amount(40, level));
+        assert_eq!(leader.exp, exp_amount(40, level));
+        assert_eq!(leader.level, level, "no level table, so no level-up");
+    }
+
+    #[test]
+    fn a_level_up_follows_the_table_and_stops_at_the_next_threshold() {
+        let levels = linear_levels(100);
+        let mut info = info([0, 0], [0, 0]);
+        info.level = 5;
+        // 600 EXP reaches levels[5] (500) and levels[6] (600), not levels[7] (700).
+        add_exp(&mut info, 600, &levels);
+        assert_eq!(info.level, 7);
+        assert_eq!(info.exp, 600);
+        assert_eq!(info.exp_gained, 600);
+    }
+
+    #[test]
+    fn a_monster_at_level_100_gains_no_exp_and_the_total_is_capped() {
+        let levels = linear_levels(100);
+        let mut capped = info([0, 0], [0, 0]);
+        capped.level = 100;
+        add_exp(&mut capped, 500, &levels);
+        assert_eq!(capped.exp, 0);
+        assert_eq!(capped.exp_gained, 0);
+
+        let mut near = info([0, 0], [0, 0]);
+        near.exp = EXP_CAP - 5;
+        add_exp(&mut near, 100, &[]);
+        assert_eq!(near.exp, EXP_CAP, "the total stops at the cap");
+        assert_eq!(near.exp_gained, 5, "the delta is what the cap let in");
+    }
+
+    #[test]
+    fn each_team_member_levels_from_its_own_species_table() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let mut g = battle_with_a_defeat();
+        let d = g.dungeon_mut().unwrap();
+        // The leader is species 1 (its table is too high to reach); the partner is species 2
+        // (its table is 10 EXP per level, so the 76 EXP award reaches level 8 and no further).
+        d.team[0].info.level = 5;
+        let mut partner = d.team[0].clone();
+        partner.info.species = 2;
+        partner.info.is_team_leader = false;
+        partner.pos = (4, 5);
+        d.team.push(partner);
+        let wild_info = d.wild[0].info.clone();
+        let amount = exp_amount(40, wild_info.level);
+        let by_species = vec![Vec::new(), linear_levels(1000), linear_levels(10)];
+        let yields = [0, 40, 0];
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &yields,
+            levels: &by_species,
+        };
+        d.award_exp(&[Slot::Wild(0)], &data);
+        let leader = &d.team()[0].info;
+        assert_eq!(leader.level, 5, "species 1's table does not reach 5000 EXP");
+        assert_eq!(leader.exp, amount);
+        let partner = &d.team()[1].info;
+        assert_eq!(partner.level, 8, "species 2's table reaches 70 EXP, not 80");
+        assert_eq!(partner.exp, amount);
+    }
+
+    #[test]
+    fn the_leaders_defeat_is_reported_and_its_hp_stops_at_0() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            levels: &[],
+        };
+        let mut g = battle([100; 3], 0);
+        let d = g.dungeon_mut().unwrap();
+        d.team[0].info.hp = 1;
+        let mv = tackle([100; 3], 0);
+        assert!(d.resolve_all(&[Slot::Team(0)], &mv, &Effect::Damage { arg8: ARG8 }, &data));
+        assert_eq!(d.team()[0].info.hp, 0);
+        assert_eq!(
+            d.wild().len(),
+            1,
+            "a leader's defeat removes no wild monster"
+        );
     }
 }

@@ -199,6 +199,8 @@ mod tests {
             belly_empty: false,
             regen_acc: 0,
             regen_speed: 200,
+            exp: 0,
+            exp_gained: 0,
         };
         let leader = Monster {
             pos,

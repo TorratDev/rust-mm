@@ -115,4 +115,7 @@ pub enum Outcome {
     /// The leader took the stairs of the last floor: the dungeon is cleared and no dungeon is
     /// loaded any more.
     DungeonCleared,
+    /// The leader's HP reached 0 (`docs/re/combat.md`, "Defeat in the sim (#422)"). The run ends:
+    /// no dungeon is loaded any more, as with [`Outcome::DungeonCleared`].
+    LeaderDefeated,
 }

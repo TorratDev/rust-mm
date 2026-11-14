@@ -173,6 +173,8 @@ mod tests {
         let data = CombatData {
             tables: &t,
             moves: &moves,
+            exp_yields: &[],
+            levels: &[],
         };
         g.dungeon_mut()
             .unwrap()
@@ -375,6 +377,8 @@ mod tests {
             let data = CombatData {
                 tables: &t,
                 moves: &moves,
+                exp_yields: &[],
+                levels: &[],
             };
             let mut g = battle_with(&mv);
             let before_pp = leader_pp(&g);
