@@ -26,7 +26,8 @@ use crate::targeting::{self, Slot};
 
 /// The moves this module runs from a move slot: Tackle (`0x09A`) and Scratch (`0x104`). The
 /// dispatch hands them straight to `HandleDamagingMove` (`docs/re/move-effects.md`), and their
-/// `arg8` of 1.0 was checked on 14 captured hits (#185).
+/// `arg8` of 1.0 was checked on 14 captured hits (#185). Razor Leaf and Vine Whip take the same
+/// path too; [`crate::move_effects::effect_of`] lists them.
 pub const DAMAGING: [u16; 2] = [0x09A, 0x104];
 
 /// Regular Attack: the leader's attack action (`0218453C`, case `0x32`, which calls
@@ -402,8 +403,9 @@ fn add_exp(info: &mut EntityInfo, amount: i32, levels: &[LevelData]) {
 
 impl Dungeon {
     /// The leader uses move slot `slot` at `direction` (its facing when `None`). The move must
-    /// be one of [`DAMAGING`], have PP, and its range picks at least one monster. A refused use
-    /// changes nothing and takes no time; a use takes the leader's turn (see [`crate::turn`]).
+    /// have an effect in [`move_effects::effect_of`], have PP, and its range picks at least one
+    /// monster. A refused use changes nothing and takes no time; a use takes the leader's turn
+    /// (see [`crate::turn`]).
     // shortcut: the leader does not turn to face `direction`, as the sim does not turn it on a
     // move either. With no facing direction in the command, the leader's stored direction is used.
     pub(crate) fn use_move(
