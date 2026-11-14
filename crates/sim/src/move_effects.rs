@@ -28,6 +28,11 @@ pub(crate) const HELPING_HAND: u16 = 0x0B9;
 pub(crate) const RAZOR_LEAF: u16 = 0x0FB;
 pub(crate) const VINE_WHIP: u16 = 0x0B6;
 
+/// Absorb (`0x087`): the damaging path with `arg8` 1.0, then the user heals half the damage, at
+/// least 1, up to its max HP (`ov_0001::0215F314`, heal `0218DF38`; `docs/re/move-effects.md`,
+/// P1 of #421).
+pub(crate) const ABSORB: u16 = 0x087;
+
 /// The highest stage index: the stage table has 21 entries and 10 is neutral.
 const LAST_STAGE: i16 = (STAGES - 1) as i16;
 
@@ -59,6 +64,9 @@ pub(crate) enum Effect {
     Damage { arg8: i64 },
     /// Stage changes, applied in order on the target.
     Stages(&'static [StageChange]),
+    /// Absorb: the damaging path with `arg8` 1.0 (`combat`), then the user heals (see
+    /// [`ABSORB`]). The heal is in `combat`, which owns the attacker and the damage.
+    Absorb,
 }
 
 // The block lists are the abilities the handler's own routine tests (`docs/re/move-effects.md`,
@@ -101,15 +109,21 @@ const HELPING_HAND_CHANGE: &[StageChange] = &[
 // shortcut: Thunder Wave (`0C0`), Disable (`03B`), Hypnosis (`06F`), Smokescreen (`025`), Focus
 // Energy (`04A`), Rage (`013`) and Leech Seed (`149`) call routines whose bodies are not read;
 // their status codes and durations belong to #73 and #359.
-// shortcut: Absorb (`087`) heals through `0218DF38`, which is not read, and sets user `+0xD8` (#421
-// lead).
-// shortcut: Struggle (`160`) is used when no PP is left; its trigger and its recoil routine
-// (`0217BB94`) are not read, and its HDM call has no `arg8` in the export decompile (#421 lead).
-// shortcut: Low Kick (`05C`) takes its multiplier from a species lookup that is not read (#421
-// lead).
-// shortcut: Water Sport (`133`) and Mud Sport (`0D4`) change floor state the sim does not read.
-// shortcut: Withdraw (`046`) raises the target's defence in the forced run; its self-target case
-// is a lead (#421).
+// shortcut: Absorb's ooze branch (a target with ability `0x3A`) damages the user through
+// `0217BCA4`, which is not read; `combat` refuses that use (#421).
+// shortcut: Struggle (`160`) is refused. Its trigger (every move at 0 PP) and its recoil (max HP / 4,
+// minimum 1, after the HDM, no type, no draw) are read, but the HDM gets `arg8` from the dispatch's
+// fourth argument, which the export chain sets to 0 (`02172ADC` calls `0215B384(user, 1, 0, 0, 0, _)`,
+// which calls `02156824` with that third word). An `arg8` of 0 deals no damage, which the game does
+// not do, so one link of that reading is wrong. Settle it with a run of the HDM's `arg8` (#421).
+// shortcut: Low Kick (`05C`) needs the target species' weight (species `+0x2C`, `02002314`). The sim's
+// monsters carry no species table, and `CombatData` (built by `apps/game`) has no weights; both are
+// outside this slice's files (#421).
+// shortcut: Water Sport (`133`) and Mud Sport (`0D4`) set a floor counter that the weather step
+// (`turn.rs`) must tick. `turn.rs` is outside this slice's files, so they stay refused (#421).
+// shortcut: Withdraw (`046`) raises the target's defence in the forced run. Its self-target hit rule
+// is open: the fifth argument of `AccuracyCalc` at the dispatch's call (`02156824`, decompile line 221)
+// is not in the decompile, and the sim's targeting refuses a self target (#421).
 #[must_use]
 pub(crate) fn effect_of(id: u16) -> Option<Effect> {
     match id {
@@ -120,6 +134,7 @@ pub(crate) fn effect_of(id: u16) -> Option<Effect> {
         LEER | TAIL_WHIP => Some(Effect::Stages(DEFENCE_DOWN)),
         SAND_ATTACK => Some(Effect::Stages(ACCURACY_DOWN)),
         HELPING_HAND => Some(Effect::Stages(HELPING_HAND_CHANGE)),
+        ABSORB => Some(Effect::Absorb),
         _ => None,
     }
 }
@@ -404,8 +419,8 @@ mod tests {
 
     #[test]
     fn the_moves_not_ported_have_no_handler() {
-        // Thundershock, Absorb, Hypnosis and Water Sport (see the shortcuts).
-        for id in [0x0BC, 0x087, 0x06F, 0x133] {
+        // Thundershock, Hypnosis, Water Sport, Low Kick, Struggle and Withdraw (see the shortcuts).
+        for id in [0x0BC, 0x06F, 0x133, 0x0D4, 0x05C, 0x160, 0x046] {
             assert_eq!(effect_of(id), None, "move {id:#05X}");
         }
         // The damaging moves of the leader are ported.
@@ -442,6 +457,63 @@ mod tests {
             *battle_with(&mv).dungeon().unwrap().rng()
         };
         assert_eq!(rng, after_one_draw(&before));
+    }
+
+    #[test]
+    fn absorb_is_the_damaging_path_then_the_user_heals_half_the_damage_at_least_one() {
+        assert_eq!(effect_of(ABSORB), Some(Effect::Absorb));
+        // The target loses what Tackle would take (same power, type and checks), and the same
+        // draws are taken: the heal draws nothing.
+        let mv = move_of_power(ABSORB, [100; 3]);
+        let effect = effect_of(ABSORB).unwrap();
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().team[0].info.hp = 50;
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        let dealt = 100 - wild_hp(&g);
+        assert!(dealt > 0);
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.team()[0].info.hp, 50 + (dealt / 2).max(1));
+        assert_eq!(d.rng(), &damage_use(0x09A, 100).1);
+        // A heal stops at the leader's max HP.
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().team[0].info.hp = 99;
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().team()[0].info.hp, 100);
+        // A slot-0 miss takes one draw and heals nothing.
+        let mv = move_of_power(ABSORB, [0; 3]);
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().team[0].info.hp = 50;
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().team()[0].info.hp, 50);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+    }
+
+    #[test]
+    fn absorb_on_a_liquid_ooze_target_is_refused_before_any_draw() {
+        // The ooze branch damages the user through `0217BCA4`, which is not read (see `combat`).
+        let mv = move_of_power(ABSORB, [100; 3]);
+        let t = tables();
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            levels: &[],
+        };
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().wild[0].info.abilities = [0x3A, 0];
+        let before = *g.dungeon().unwrap().rng();
+        let outcome = g.step_with(
+            Command::UseMove {
+                slot: 0,
+                direction: Some(Direction::Right),
+            },
+            &data,
+        );
+        assert_eq!(outcome, Outcome::NotModelled);
+        assert_eq!(g.dungeon().unwrap().rng(), &before);
+        assert_eq!(wild_hp(&g), 100);
     }
 
     #[test]
