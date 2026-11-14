@@ -36,7 +36,7 @@ Each role has one tab in your space. A role that needs more than one session get
 |------|-----------|----------|---------------|--------------|------------------------------------|
 | orchestrator | orchestrator | this session only | none | none | restart on opencode/glm-5.3-flash-free#high |
 | investigator | investigators | your call | investigator-a, investigator-b, investigator-c, ... | claude-sonnet-5-5 | opencode/beam-free#high |
-| executor | executors | your call, one per running task | executor-1, executor-2, executor-3, ... | claude-haiku-5-5 | opencode/glm-5.3-flash-free#high |
+| executor | executors | your call, one per running task | executor-1, executor-2, executor-3, ... | claude-sonnet-5-5 | opencode/glm-5.3-flash-free#high |
 | reviewer | reviewer | your call, one per running review | reviewer, reviewer-2, reviewer-3, ... | claude-opus-5-5 | opencode/beam-free#max |
 
 - Executors are interchangeable. Each runs one task in its sub-issue's worktree.
