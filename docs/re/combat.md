@@ -375,8 +375,6 @@ The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas t
 
 - The class-3 rule of the direction-open bit: `0218267C` and the `info +0xC7`, held item 9, IQ `0xC` and `0xD` cases, and the `FUN_0206d474` gate. The same inputs decide the class of `021820B0`.
 - The charge state (`info +0xAE`) and the weather (`02195C48`, P3c): both are needed for class 4 beyond the self case and for Solarbeam. The sim has neither.
-- `021775F0`, `021774FC` and `021820B0`: their bodies (the `0x40` and `0x80` candidates).
-- `0215A2C0`, which decides class 4 except for Solarbeam in sunny weather.
 - Whether `0215B060` (the projectile helper) and `02017A60` (called in the walk when argument 4 is set) draw from the dungeon RNG.
 
 ### AI condition (`0xF00` bits, read in `02192274`)
