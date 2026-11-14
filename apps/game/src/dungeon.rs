@@ -12,7 +12,7 @@
 //! leader's sprite, and `palet`). Not yet: palette animation (the tileset's `canm` is not
 //! applied) and the autotile variants' retail draws (#400 P3).
 
-use rescue_data::dungeon::parse_mapparam;
+use rescue_data::dungeon::{MonsterSpawn, parse_mapparam};
 use rescue_data::item::parse_items;
 use rescue_data::species::parse_species;
 use rescue_formats::archive::Archive;
@@ -89,6 +89,8 @@ pub struct FloorData {
     props: FloorProperties,
     /// The dungeon's floor records, placeholder first (`floor_records`).
     records: Vec<FloorRecord>,
+    /// The floor's monster spawn list (`mapparam`'s list of the floor), for the wild monsters.
+    wild: Vec<MonsterSpawn>,
     tileset_no: u8,
     tileset: Tileset,
     patterns: Patterns,
@@ -134,6 +136,13 @@ impl FloorData {
         let map = parse_mapparam(mapparam, items.len()).map_err(|e| e.to_string())?;
         let props = properties_for(&map, dungeon, floor).map_err(|e| e.to_string())?;
         let records = floor_records(&map, dungeon).ok_or("the dungeon has no floor list")?;
+        let wild = map
+            .dungeons
+            .get(usize::from(dungeon))
+            .and_then(|floors| floors.get(usize::from(floor)))
+            .and_then(|entry| map.monster_spawns.get(usize::from(entry.monsters)))
+            .cloned()
+            .ok_or("the floor has no monster spawn list")?;
         let record = map
             .dungeons
             .get(usize::from(dungeon))
@@ -168,6 +177,7 @@ impl FloorData {
         Ok(FloorData {
             props,
             records,
+            wild,
             tileset_no,
             tileset,
             patterns,
@@ -182,6 +192,11 @@ impl FloorData {
     /// The dungeon's floor records (see [`FloorData::from_rom`]).
     pub fn records(&self) -> &[FloorRecord] {
         &self.records
+    }
+
+    /// The floor's monster spawn list: the wild monsters of the floor are made from it.
+    pub fn wild_spawns(&self) -> &[MonsterSpawn] {
+        &self.wild
     }
 
     /// The leader species' movement speed.

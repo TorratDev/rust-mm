@@ -191,9 +191,14 @@ impl App {
         let Some((map, leader)) = dungeon::first_floor(self.config.seed, self.data.as_ref()) else {
             return self.back_to_menu();
         };
-        let (species, speed, records) = match self.data.as_ref() {
-            Some(d) => (self.config.species, d.leader_speed(), d.records()),
-            None => (0, 0, &[][..]),
+        let (species, speed, records, wild) = match self.data.as_ref() {
+            Some(d) => (
+                self.config.species,
+                d.leader_speed(),
+                d.records(),
+                d.wild_spawns(),
+            ),
+            None => (0, 0, &[][..], &[][..]),
         };
         let floors = sim_floors(records, floor);
         if self.tables.is_none() {
@@ -208,7 +213,8 @@ impl App {
             leader.info.moves[0] = MoveSlot::new(mv);
         }
         let team = vec![leader];
-        let Ok(game) = GameState::in_dungeon(self.config.seed, map, team, speed) else {
+        let Ok(game) = GameState::in_dungeon_with_spawns(self.config.seed, map, team, speed, wild)
+        else {
             return self.back_to_menu();
         };
         self.game = Some(game.with_floors(floors));

@@ -2552,6 +2552,17 @@ pub fn spawn_enemies(floor: &mut Floor, spawn: EnemySpawn, rng: &mut DungeonRng)
     mark_from_random(floor, &found, count, SPAWN_BLOCKED, rng);
 }
 
+/// The enemy spawn marks of `floor`: the tiles [`spawn_enemies`] marked with the blocked bit, in
+/// column order (x outer, y inner). Each one is a spot for a wild monster (see
+/// `wild_monsters` in `state.rs`).
+#[must_use]
+pub fn enemy_spawn_spots(floor: &Floor) -> Vec<(i16, i16)> {
+    tile_positions(floor, |_, s, _| s & SPAWN_BLOCKED != 0)
+        .into_iter()
+        .map(|(x, y)| (i16::from(x), i16::from(y)))
+        .collect()
+}
+
 /// Terrain bit `0x4`. Its meaning is not known yet. `StairsAlwaysReachable`
 /// treats a tile with it as open, and the last pass of `GenerateFloor` clears it.
 const TERRAIN_FLAG_04: u16 = 0x4;
