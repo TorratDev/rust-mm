@@ -22,6 +22,7 @@ pub struct Tables {
     tables: CombatTables,
     pub moves: Vec<Move>,
     exp_yields: Vec<i32>,
+    weights: Vec<u16>,
     levels: Vec<Vec<LevelData>>,
 }
 
@@ -50,6 +51,7 @@ impl Tables {
             .moves;
         let species = parse_species(file("monspara")?).map_err(|e| e.to_string())?;
         let exp_yields = species.iter().map(|s| s.exp_yield).collect();
+        let weights = species.iter().map(|s| s.weight).collect();
         let mut levels = vec![Vec::new(); species.len()];
         let own =
             parse_level_data(file(&format!("lvmp{leader:03}"))?).map_err(|e| e.to_string())?;
@@ -60,6 +62,7 @@ impl Tables {
             tables,
             moves,
             exp_yields,
+            weights,
             levels,
         })
     }
@@ -70,6 +73,7 @@ impl Tables {
             tables: &self.tables,
             moves: &self.moves,
             exp_yields: &self.exp_yields,
+            weights: &self.weights,
             levels: &self.levels,
         }
     }

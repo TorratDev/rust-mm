@@ -47,6 +47,9 @@ const fn next(k: u8) -> u8 {
 /// `0x021AA824`; `docs/re/turns.md`, "Per-turn effects", belly).
 const BELLY_PER_TURN: i32 = 100;
 
+/// The sport timers' value that never ends (`021953B4`): it stays when ticked.
+const SPORT_NO_END: u8 = 0x7F;
+
 /// The regeneration speed bounds (`TickStatusAndHealthRegen`; `docs/re/turns.md`, HP regen).
 const REGEN_SPEED_MIN: i32 = 30;
 const REGEN_SPEED_MAX: i32 = 500;
@@ -138,9 +141,25 @@ impl Dungeon {
     /// turn" step 7). It runs when `gSpeedTurns[1][k + 1]` is set, and its display pass runs the
     /// end-of-turn of one pending leader move.
     fn weather_step(&mut self, k: u8) {
-        if acts(1, next(k)) && self.pending_end_of_turns > 0 {
+        if !acts(1, next(k)) {
+            return;
+        }
+        if self.pending_end_of_turns > 0 {
             self.pending_end_of_turns -= 1;
             self.leader_end_of_turn();
+        }
+        self.tick_sport_timers();
+    }
+
+    /// The weather resolver's step 4, the mud and water-sport timers (`021953B4`,
+    /// `docs/re/turns.md`, "Weather"): each counter that is not 0 goes down by one, once per gated
+    /// turn. The game's `0x7F` (no end) stays. The end message is not modelled.
+    // shortcut: the end-of-sport message (text only) is not printed.
+    fn tick_sport_timers(&mut self) {
+        for timer in [&mut self.mud_sport, &mut self.water_sport] {
+            if *timer != 0 && *timer != SPORT_NO_END {
+                *timer -= 1;
+            }
         }
     }
 
@@ -366,5 +385,24 @@ mod tests {
         for k in 0..FRACTIONAL_TURNS {
             assert_eq!(acts(9, k), acts(MAX_SPEED_STAGE, k), "turn {k}");
         }
+    }
+
+    #[test]
+    fn each_sport_counter_ticks_once_per_gated_turn_and_stops_at_0() {
+        let mut g = GameState::in_dungeon(1, Floor::new(), Vec::new(), 2).unwrap();
+        let d = g.dungeon_mut().unwrap();
+        d.mud_sport = 2;
+        d.water_sport = 1;
+        // The step at `k` is gated when `k + 1` is a stage-1 turn (3, 7, 11, ...): `k` is 2, 6, ...
+        d.weather_step(0);
+        assert_eq!((d.mud_sport, d.water_sport), (2, 1));
+        d.weather_step(2);
+        assert_eq!((d.mud_sport, d.water_sport), (1, 0));
+        d.weather_step(3);
+        assert_eq!((d.mud_sport, d.water_sport), (1, 0));
+        d.weather_step(6);
+        assert_eq!((d.mud_sport, d.water_sport), (0, 0));
+        d.weather_step(10);
+        assert_eq!((d.mud_sport, d.water_sport), (0, 0));
     }
 }

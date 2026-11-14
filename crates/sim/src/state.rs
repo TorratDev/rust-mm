@@ -303,6 +303,11 @@ pub struct Dungeon {
     /// `+0x15FA1`: the darkness setting `D` of the floor (`props +0x16 & 3`), read by the
     /// corridor range (see [`crate::visibility`]). 0 is a lit floor.
     pub(crate) darkness: u8,
+    /// `+0xC117`: the Mud Sport turns left, 0 when none is active. Set by the sport's use and
+    /// ticked once per gated turn (see [`crate::turn`]).
+    pub(crate) mud_sport: u8,
+    /// `+0xC118`: the Water Sport turns left, 0 when none is active (as [`Self::mud_sport`]).
+    pub(crate) water_sport: u8,
 }
 
 impl Dungeon {
@@ -825,6 +830,8 @@ impl GameState {
             stairs_spawn: None,
             stairs_pending: false,
             darkness,
+            mud_sport: 0,
+            water_sport: 0,
         });
         // The arrival reveal (`docs/re/visibility.md`, P2): the leader's start is seen at once.
         if let Some(dungeon) = self.dungeon.as_mut() {
@@ -982,6 +989,8 @@ impl GameState {
             stairs_spawn: spawn_or_none(g.stairs_b),
             stairs_pending: false,
             darkness,
+            mud_sport: 0,
+            water_sport: 0,
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1057,6 +1066,11 @@ impl GameState {
                     stairs_pending: d.stairs_pending,
                     // Clamped to the two bits the setting uses.
                     darkness: d.darkness & 3,
+                    // shortcut: the sport timers are not in `DungeonSnapshot` (its literals in
+                    // `apps/trace-harness` would need the fields), so a restored floor has none
+                    // active (#421).
+                    mud_sport: 0,
+                    water_sport: 0,
                 })
             }
         };
