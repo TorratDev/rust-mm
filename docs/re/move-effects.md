@@ -72,30 +72,51 @@ Total: 26 move IDs (12 + 13 + Struggle). The names are the ones in the [catalogu
 
 Legend: **HDM** = `ov_0001::0215675C` (HandleDamagingMove). "Draws" are in order. Changed bytes are offsets into the target's `info` (or the user's) from the forced runs; the byte values are not copied. Each row is **blue-verified** unless a sub-claim is marked **lead**.
 
-| Move | Handler | Steps, in order | Draws | Observed change (forced run) |
-|------|---------|-----------------|-------|------------------------------|
-| `09A` Tackle, `104` Scratch, `163` Regular Attack, `0FB` Razor Leaf, `0B6` Vine Whip | `ov_0001::0215675C` (HDM, direct) | type lookup `GetMoveTypeForMonster`, power `GetMovePower`, `CalcDamage` (`ov_0001::0217BD94`) with the normal multiplier, then the second accuracy check `ov_0001::0215652C` (see miss paths) | `0217C02C` Int(100) (ability roll), `0217C698` Int(100) (critical), `0217C720` Int(0x4000) (variance), `0215A950` Int(100) (accuracy, slot 1) | target HP down (`info+0x0E`) |
-| `05C` Low Kick | `ov_0001::0215C600` | multiplier from a species lookup on the target's apparent ID (`02002314`), then HDM | as HDM | target HP down. **lead**: what the lookup classifies (probably weight) |
-| `0BC` Thundershock | `ov_0001::0215E314` | HDM; if it hits, the chance gate `ov_0001::02159F6C` with a table chance; if the gate passes, paralysis `021885A0(user, target, 0)` | as HDM, then one Int(100) for the gate | target HP down; no status in the run (gate failed) |
-| `106` Ember | `ov_0001::0215D040` | `0218F168()` (not read), HDM with the normal multiplier, gate, burn `0218A710(user, target, 0, 0)` | as HDM, then one Int(100) for the gate | target HP down. **lead**: `0218F168` |
-| `010` Bubble | `ov_0001::0215DD2C` | HDM, gate, `021882D0(user, target, 1, 0, arg4)` (speed lowering, see [symbols](../symbols.md)) | as HDM, then one Int(100) for the gate | target HP down |
-| `03F` Bite | `ov_0001::0215CCCC` | HDM, gate, `021887E0(user, target, 0)` (not read) | as HDM, then one Int(100) for the gate | target HP down. **lead**: the effect of `021887E0` |
-| `087` Absorb | `ov_0001::0215F314` | HDM with the normal multiplier; if it hits, heal of half the damage (minimum 1) through `0218DF38` (`HealTargetHP`, red-hypothesis name), or through `0217BCA4` (`DealDamageToEntity_Async`) on the ability branch; the check `02159F10(user, 0)` is a validity test that draws nothing | as HDM only | target HP down; user `+0xD8` set |
-| `160` Struggle | `ov_0001::02162C70` | HDM; then recoil of the user's max HP divided by 4 (minimum 1) through `sub_806F370_Async` (`ov_0001::0217BB94`) | as HDM only | target HP down; user HP down |
-| `0D9` Growl | `ov_0001::021616F0` | `02189534(user, target, stat 0, 1, 1, 1)`: attack stage down one | none | target `+0x1C` changed (one stage) |
-| `0E0` Leer, `07A` Tail Whip | `ov_0001::02161548` (shared, see P3) | `021893A4(user, target, 0, 1, 1, 1)`: defense stage down one | none | target `+0x20` changed (one stage) |
-| `08E` Sand-Attack | `ov_0001::0215EEF8` | `02188910(user, target, 0, 1)`: accuracy stage down one | none | target `+0x24` changed (one stage) |
-| `046` Withdraw | `ov_0001::0215CF7C` | `021890C4(user, target, 0, 1)`: defense stage up one | none | target `+0x20` changed (one stage). Run against the leader as target; the self-target effect is **lead** |
-| `0B9` Helping Hand | `ov_0001::0215E3C4` | if user is not target: `02189234` twice (stat 0 and stat 1, one stage up each); otherwise a fail message | none | target `+0x1C` and `+0x1E` changed |
-| `0C0` Thunder Wave, `03B` Disable | `ov_0001::0215E2F8` and `ov_0001::0215CF60` (same body, see P3) | `021885A0(user, target, 1)`: paralysis | `DungeonRandRange(1, 2)` (one Int(1)) | target `+0x9B`, `+0x9C` set, `+0xE0` cleared |
-| `06F` Hypnosis | `ov_0001::0215E07C` | `0219CF28` (`CalculateStatusTurns`, duration range; for team members halved or capped by IQ skill and ability), then `0218B2D0` (`SleepStatusTarget`) | `DungeonRandRange(3, 7)` | target `+0x99`, `+0x9A` set (sleep and turns) |
-| `025` Smokescreen | `ov_0001::0215D5BC` | `0219CF28` with a range, then `0218D778` (not read) | `DungeonRandRange(1, 6)` | target `+0xC4`, `+0xC5` set |
-| `04A` Focus Energy | `ov_0001::0215D5FC` | `0218D5F0()` (not read) | `DungeonRandRange(2, 4)`, drawn inside the call. **lead**: its position relative to the accuracy draw | target `+0xC4`, `+0xC5` set |
-| `013` Rage | `ov_0001::0215DCC8` | `0218E428(user, target, 0xC, ...)` (not read) | `DungeonRandRange(4, 10)` | target `+0xAE`, `+0xAF`, `+0x11C` set |
-| `149` Leech Seed | `ov_0001::02163204` | `0218DAE4(user, target, 1)`; user `+0xD8` set | `DungeonRandRange(10, 12)` | target `+0xB8`, `+0xBC`, `+0xBD`, `+0xC0`, `+0xC1` set; user `+0xD8` set |
-| `133` Water Sport (and `0D4` Mud Sport) | `ov_0001::021617C0` | `021955B0(1)` (Mud Sport: `021955B0(0)`): a floor-wide effect | `DungeonRandRange(10, 12)` | none on target or user (floor state, not read) |
+| Move | Handler | Steps, in order | Draws | Observed change (forced run) | Sim (#421) |
+|------|---------|-----------------|-------|------------------------------|---|
+| `09A` Tackle, `104` Scratch, `163` Regular Attack, `0FB` Razor Leaf, `0B6` Vine Whip | `ov_0001::0215675C` (HDM, direct) | type lookup `GetMoveTypeForMonster`, power `GetMovePower`, `CalcDamage` (`ov_0001::0217BD94`) with the normal multiplier, then the second accuracy check `ov_0001::0215652C` (see miss paths) | `0217C02C` Int(100) (ability roll), `0217C698` Int(100) (critical), `0217C720` Int(0x4000) (variance), `0215A950` Int(100) (accuracy, slot 1) | target HP down (`info+0x0E`) | Tackle, Scratch: ported (`combat`, #419). Regular Attack: ported (#419). Razor Leaf, Vine Whip: refused, `arg8` lead (#421) |
+| `05C` Low Kick | `ov_0001::0215C600` | multiplier from a species lookup on the target's apparent ID (`02002314`), then HDM | as HDM | target HP down. **lead**: what the lookup classifies (probably weight) | Refused: multiplier lookup is a lead (#421) |
+| `0BC` Thundershock | `ov_0001::0215E314` | HDM; if it hits, the chance gate `ov_0001::02159F6C` with a table chance; if the gate passes, paralysis `021885A0(user, target, 0)` | as HDM, then one Int(100) for the gate | target HP down; no status in the run (gate failed) | Refused: gate and status call (#73, #359) |
+| `106` Ember | `ov_0001::0215D040` | `0218F168()` (not read), HDM with the normal multiplier, gate, burn `0218A710(user, target, 0, 0)` | as HDM, then one Int(100) for the gate | target HP down. **lead**: `0218F168` | Refused: gate and burn call (#73, #359) |
+| `010` Bubble | `ov_0001::0215DD2C` | HDM, gate, `021882D0(user, target, 1, 0, arg4)` (speed lowering, see [symbols](../symbols.md)) | as HDM, then one Int(100) for the gate | target HP down | Refused: gate and speed call, not read (#421 lead) |
+| `03F` Bite | `ov_0001::0215CCCC` | HDM, gate, `021887E0(user, target, 0)` (not read) | as HDM, then one Int(100) for the gate | target HP down. **lead**: the effect of `021887E0` | Refused: gate and `021887E0`, not read (#421 lead) |
+| `087` Absorb | `ov_0001::0215F314` | HDM with the normal multiplier; if it hits, heal of half the damage (minimum 1) through `0218DF38` (`HealTargetHP`, red-hypothesis name), or through `0217BCA4` (`DealDamageToEntity_Async`) on the ability branch; the check `02159F10(user, 0)` is a validity test that draws nothing | as HDM only | target HP down; user `+0xD8` set | Refused: heal `0218DF38` not read (#421 lead) |
+| `160` Struggle | `ov_0001::02162C70` | HDM; then recoil of the user's max HP divided by 4 (minimum 1) through `sub_806F370_Async` (`ov_0001::0217BB94`) | as HDM only | target HP down; user HP down | Refused: trigger is a lead (#421) |
+| `0D9` Growl | `ov_0001::021616F0` | `02189534(user, target, stat 0, 1, 1, 1)`: attack stage down one | none | target `+0x1C` changed (one stage) | Ported: `growl_hit_*`, `growl_miss_*`, `a_stage_at_the_bottom_*`, `a_use_of_growl_*` (#421). Blocks: [stage-change blocks](#stage-change-blocks-421) |
+| `0E0` Leer, `07A` Tail Whip | `ov_0001::02161548` (shared, see P3) | `021893A4(user, target, 0, 1, 1, 1)`: defense stage down one | none | target `+0x20` changed (one stage) | Ported: `leer_and_tail_whip_*`, `leer_miss_*` (#421). Blocks: [stage-change blocks](#stage-change-blocks-421) |
+| `08E` Sand-Attack | `ov_0001::0215EEF8` | `02188910(user, target, 0, 1)`: accuracy stage down one | none | target `+0x24` changed (one stage) | Ported: `sand_attack_*` (#421). Blocks: [stage-change blocks](#stage-change-blocks-421) |
+| `046` Withdraw | `ov_0001::0215CF7C` | `021890C4(user, target, 0, 1)`: defense stage up one | none | target `+0x20` changed (one stage). Run against the leader as target; the self-target effect is **lead** | Refused: self-target case is a lead (#421) |
+| `0B9` Helping Hand | `ov_0001::0215E3C4` | if user is not target: `02189234` twice (stat 0 and stat 1, one stage up each); otherwise a fail message | none | target `+0x1C` and `+0x1E` changed | Ported: `helping_hand_*` (#421). Targeting taken from the move row, not run |
+| `0C0` Thunder Wave, `03B` Disable | `ov_0001::0215E2F8` and `ov_0001::0215CF60` (same body, see P3) | `021885A0(user, target, 1)`: paralysis | `DungeonRandRange(1, 2)` (one Int(1)) | target `+0x9B`, `+0x9C` set, `+0xE0` cleared | Refused: paralysis call (#73, #359) |
+| `06F` Hypnosis | `ov_0001::0215E07C` | `0219CF28` (`CalculateStatusTurns`, duration range; for team members halved or capped by IQ skill and ability), then `0218B2D0` (`SleepStatusTarget`) | `DungeonRandRange(3, 7)` | target `+0x99`, `+0x9A` set (sleep and turns) | Refused: sleep and duration (#359, #73) |
+| `025` Smokescreen | `ov_0001::0215D5BC` | `0219CF28` with a range, then `0218D778` (not read) | `DungeonRandRange(1, 6)` | target `+0xC4`, `+0xC5` set | Refused: `0218D778` not read (#421 lead) |
+| `04A` Focus Energy | `ov_0001::0215D5FC` | `0218D5F0()` (not read) | `DungeonRandRange(2, 4)`, drawn inside the call. **lead**: its position relative to the accuracy draw | target `+0xC4`, `+0xC5` set | Refused: `0218D5F0` not read (#421 lead) |
+| `013` Rage | `ov_0001::0215DCC8` | `0218E428(user, target, 0xC, ...)` (not read) | `DungeonRandRange(4, 10)` | target `+0xAE`, `+0xAF`, `+0x11C` set | Refused: `0218E428` not read (#421 lead) |
+| `149` Leech Seed | `ov_0001::02163204` | `0218DAE4(user, target, 1)`; user `+0xD8` set | `DungeonRandRange(10, 12)` | target `+0xB8`, `+0xBC`, `+0xBD`, `+0xC0`, `+0xC1` set; user `+0xD8` set | Refused: `0218DAE4` and seed status (#73) |
+| `133` Water Sport (and `0D4` Mud Sport) | `ov_0001::021617C0` | `021955B0(1)` (Mud Sport: `021955B0(0)`): a floor-wide effect | `DungeonRandRange(10, 12)` | none on target or user (floor state, not read) | Refused: floor state not read (#421 lead) |
 
 `DungeonRandRange(a, b)` draws one `DungeonRandInt(b - a)` and adds `a` ([rng.md](rng.md#dungeon-lcg-blue-verified)). **blue-verified.** The bounds are the constants the handler passes. Roll results are not recorded here.
+
+### Sim status after #421
+
+Of the 26 move IDs in the P1 list, 8 are ported to `rescue-sim`: Tackle (`09A`), Scratch (`104`) and Regular Attack (`163`) through the damaging path (#419), and Growl (`0D9`), Leer (`0E0`), Tail Whip (`07A`), Sand-Attack (`08E`) and Helping Hand (`0B9`) through the stage handlers of `crates/sim/src/move_effects.rs`. Each ported handler keeps the dispatch's slot-0 hit check (one draw, no handler on a miss), and a test covers its draws and its stage change.
+
+Not ported (18 IDs), each a refused use with a `shortcut:` at `effect_of`:
+
+- Need a status or a stat routine whose body is not read: Thundershock (`0BC`), Ember (`106`), Bubble (`010`), Bite (`03F`), Thunder Wave (`0C0`), Disable (`03B`), Hypnosis (`06F`), Smokescreen (`025`), Focus Energy (`04A`), Rage (`013`), Leech Seed (`149`). The status codes belong to [#73](https://github.com/TorratDev/rust-mm/issues/73) and [#359](https://github.com/TorratDev/rust-mm/issues/359).
+- A lead: Razor Leaf (`0FB`) and Vine Whip (`0B6`) (the `arg8` of their dispatch case is not read), Low Kick (`05C`), Absorb (`087`), Struggle (`160`), Withdraw (`046`, self-target).
+- Floor state the sim does not read: Water Sport (`133`).
+
+### Stage-change blocks (#421)
+
+A stage-lowering change can be blocked after its hit check. The block draws nothing and changes nothing. These are **static reads** (decompile on the reviewer's copy of `rescue-arm9-r`, not run in the emulator), so they are **lead** until a run confirms them.
+
+- **`ov_0001::02180798(user, target, msg)`.** Called by Growl's routine `02189534`, by Leer and Tail Whip's `021893A4` (when its `param_5` is 1, as the handler passes it) and by Sand-Attack's `02188910`. It returns 1 (no change) when the target's `info+0xB1` is `0x0E` (a status, not named here), or when the target has ability `0x0F` or `0x18`. The ability test is `0218067C(target, id)`, which compares `info+0x58` and `+0x59`.
+- **Growl, `02189534`.** Also stops when ability `0x09` is present and the stat is 0 (the attack stat, which Growl passes). It also stops when the held-item check `021432E8(target, 0x0B)` is true (`+0x5A` bit 0 set, bit 3 clear, `+0x5C == 0x0B`). The held-item check is not modelled (#359).
+- **Sand-Attack, `02188910`.** Also stops when ability `0x1E` is present and `param_3` is 0 (the handler passes 0).
+- **Helping Hand, `02189234`.** No block check. The raise is not blocked by any of the above.
+
+The sim's `change_stages` models the ability blocks (tests `growl_is_blocked_by_*`, `leer_is_blocked_by_*`, `sand_attack_is_blocked_by_*`, `each_block_applies_only_*`, `helping_hand_is_not_blocked_*`). The status check and the held-item check are `shortcut:` notes, linked to [#73](https://github.com/TorratDev/rust-mm/issues/73) and [#359](https://github.com/TorratDev/rust-mm/issues/359). The ability IDs are kept as numbers; no ability name is given here.
 
 ### Miss paths (#357, P2)
 
@@ -130,6 +151,7 @@ Cross-references from the catalogue, outside the list and not checked: `0215CCCC
 9. **Chance values** come from table words. The findings give them; they are not copied here.
 10. **Chance-gate name.** The findings call `02159F6C` by the name of its roll (DungeonRandOutcome). The gate is `02159F6C`; the roll it makes is `0219CFCC`.
 11. **Reproducibility.** The runtime scripts (the natural capture, the forced captures and the probe) are in the investigator's scratch folder, not in the repo. [`verification/v7-trace/`](../../verification/v7-trace/) was not used. **lead**: add them under `verification/` to rerun the runs.
+12. **Helping Hand (#421).** The sim takes its targeting from the move row, as for every move. The unit test passes its own row, so the targeting is not checked against the dump here. **lead** until a ROM-gated test runs it.
 
 ## Catalogue
 
