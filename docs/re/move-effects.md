@@ -82,9 +82,9 @@ Legend: **HDM** = `ov_0001::0215675C` (HandleDamagingMove). "Draws" are in order
 | `03F` Bite | `ov_0001::0215CCCC` | HDM, gate, `021887E0(user, target, 0)` (not read) | as HDM, then one Int(100) for the gate | target HP down. **lead**: the effect of `021887E0` | Refused: gate and `021887E0`, not read (#421 lead) |
 | `087` Absorb | `ov_0001::0215F314` | HDM with the normal multiplier; if it hits, heal of half the damage (minimum 1) through `0218DF38` (`HealTargetHP`, red-hypothesis name), or through `0217BCA4` (`DealDamageToEntity_Async`) on the ability branch; the check `02159F10(user, 0)` is a validity test that draws nothing | as HDM only | target HP down; user `+0xD8` set | Refused: heal `0218DF38` not read (#421 lead) |
 | `160` Struggle | `ov_0001::02162C70` | HDM; then recoil of the user's max HP divided by 4 (minimum 1) through `sub_806F370_Async` (`ov_0001::0217BB94`) | as HDM only | target HP down; user HP down | Refused: trigger is a lead (#421) |
-| `0D9` Growl | `ov_0001::021616F0` | `02189534(user, target, stat 0, 1, 1, 1)`: attack stage down one | none | target `+0x1C` changed (one stage) | Ported: `growl_hit_*`, `growl_miss_*`, `a_stage_at_the_bottom_*`, `a_use_of_growl_*` (#421) |
-| `0E0` Leer, `07A` Tail Whip | `ov_0001::02161548` (shared, see P3) | `021893A4(user, target, 0, 1, 1, 1)`: defense stage down one | none | target `+0x20` changed (one stage) | Ported: `leer_and_tail_whip_*`, `leer_miss_*` (#421) |
-| `08E` Sand-Attack | `ov_0001::0215EEF8` | `02188910(user, target, 0, 1)`: accuracy stage down one | none | target `+0x24` changed (one stage) | Ported: `sand_attack_*` (#421) |
+| `0D9` Growl | `ov_0001::021616F0` | `02189534(user, target, stat 0, 1, 1, 1)`: attack stage down one | none | target `+0x1C` changed (one stage) | Ported: `growl_hit_*`, `growl_miss_*`, `a_stage_at_the_bottom_*`, `a_use_of_growl_*` (#421). Blocks: [stage-change blocks](#stage-change-blocks-421) |
+| `0E0` Leer, `07A` Tail Whip | `ov_0001::02161548` (shared, see P3) | `021893A4(user, target, 0, 1, 1, 1)`: defense stage down one | none | target `+0x20` changed (one stage) | Ported: `leer_and_tail_whip_*`, `leer_miss_*` (#421). Blocks: [stage-change blocks](#stage-change-blocks-421) |
+| `08E` Sand-Attack | `ov_0001::0215EEF8` | `02188910(user, target, 0, 1)`: accuracy stage down one | none | target `+0x24` changed (one stage) | Ported: `sand_attack_*` (#421). Blocks: [stage-change blocks](#stage-change-blocks-421) |
 | `046` Withdraw | `ov_0001::0215CF7C` | `021890C4(user, target, 0, 1)`: defense stage up one | none | target `+0x20` changed (one stage). Run against the leader as target; the self-target effect is **lead** | Refused: self-target case is a lead (#421) |
 | `0B9` Helping Hand | `ov_0001::0215E3C4` | if user is not target: `02189234` twice (stat 0 and stat 1, one stage up each); otherwise a fail message | none | target `+0x1C` and `+0x1E` changed | Ported: `helping_hand_*` (#421). Targeting taken from the move row, not run |
 | `0C0` Thunder Wave, `03B` Disable | `ov_0001::0215E2F8` and `ov_0001::0215CF60` (same body, see P3) | `021885A0(user, target, 1)`: paralysis | `DungeonRandRange(1, 2)` (one Int(1)) | target `+0x9B`, `+0x9C` set, `+0xE0` cleared | Refused: paralysis call (#73, #359) |
@@ -106,6 +106,17 @@ Not ported (18 IDs), each a refused use with a `shortcut:` at `effect_of`:
 - Need a status or a stat routine whose body is not read: Thundershock (`0BC`), Ember (`106`), Bubble (`010`), Bite (`03F`), Thunder Wave (`0C0`), Disable (`03B`), Hypnosis (`06F`), Smokescreen (`025`), Focus Energy (`04A`), Rage (`013`), Leech Seed (`149`). The status codes belong to [#73](https://github.com/TorratDev/rust-mm/issues/73) and [#359](https://github.com/TorratDev/rust-mm/issues/359).
 - A lead: Razor Leaf (`0FB`) and Vine Whip (`0B6`) (the `arg8` of their dispatch case is not read), Low Kick (`05C`), Absorb (`087`), Struggle (`160`), Withdraw (`046`, self-target).
 - Floor state the sim does not read: Water Sport (`133`).
+
+### Stage-change blocks (#421)
+
+A stage-lowering change can be blocked after its hit check. The block draws nothing and changes nothing. These are **static reads** (decompile on the reviewer's copy of `rescue-arm9-r`, not run in the emulator), so they are **lead** until a run confirms them.
+
+- **`ov_0001::02180798(user, target, msg)`.** Called by Growl's routine `02189534`, by Leer and Tail Whip's `021893A4` (when its `param_5` is 1, as the handler passes it) and by Sand-Attack's `02188910`. It returns 1 (no change) when the target's `info+0xB1` is `0x0E` (a status, not named here), or when the target has ability `0x0F` or `0x18`. The ability test is `0218067C(target, id)`, which compares `info+0x58` and `+0x59`.
+- **Growl, `02189534`.** Also stops when ability `0x09` is present and the stat is 0 (the attack stat, which Growl passes). It also stops when the held-item check `021432E8(target, 0x0B)` is true (`+0x5A` bit 0 set, bit 3 clear, `+0x5C == 0x0B`). The held-item check is not modelled (#359).
+- **Sand-Attack, `02188910`.** Also stops when ability `0x1E` is present and `param_3` is 0 (the handler passes 0).
+- **Helping Hand, `02189234`.** No block check. The raise is not blocked by any of the above.
+
+The sim's `change_stages` models the ability blocks (tests `growl_is_blocked_by_*`, `leer_is_blocked_by_*`, `sand_attack_is_blocked_by_*`, `each_block_applies_only_*`, `helping_hand_is_not_blocked_*`). The status check and the held-item check are `shortcut:` notes, linked to [#73](https://github.com/TorratDev/rust-mm/issues/73) and [#359](https://github.com/TorratDev/rust-mm/issues/359). The ability IDs are kept as numbers; no ability name is given here.
 
 ### Miss paths (#357, P2)
 

@@ -36,11 +36,13 @@ pub(crate) enum Stat {
     Accuracy,
 }
 
-/// One stage change of a handler: the stat and the number of stages it moves by.
+/// One stage change of a handler: the stat, the number of stages it moves by, and the abilities
+/// of the target that stop it. A blocked change moves nothing and draws nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StageChange {
     pub(crate) stat: Stat,
     pub(crate) stages: i16,
+    pub(crate) blocked_by: &'static [u8],
 }
 
 /// What a move does after its slot-0 hit check (see the module comment).
@@ -53,26 +55,36 @@ pub(crate) enum Effect {
     Stages(&'static [StageChange]),
 }
 
+// The block lists are the abilities the handler's own routine tests (`docs/re/move-effects.md`,
+// "Stage-change blocks"). The lowering routine `02180798` stops a change on abilities 0x0F and 0x18,
+// and each handler adds its own: 0x09 for the attack change (`02189534`), 0x1E for the accuracy
+// change (`02188910`). The status check and the held-item check are not modelled (see
+// `change_stages`).
 const GROWL_CHANGE: &[StageChange] = &[StageChange {
     stat: Stat::Attack(0),
     stages: -1,
+    blocked_by: &[0x0F, 0x18, 0x09],
 }];
 const DEFENCE_DOWN: &[StageChange] = &[StageChange {
     stat: Stat::Defence(0),
     stages: -1,
+    blocked_by: &[0x0F, 0x18],
 }];
 const ACCURACY_DOWN: &[StageChange] = &[StageChange {
     stat: Stat::Accuracy,
     stages: -1,
+    blocked_by: &[0x0F, 0x18, 0x1E],
 }];
 const HELPING_HAND_CHANGE: &[StageChange] = &[
     StageChange {
         stat: Stat::Attack(0),
         stages: 1,
+        blocked_by: &[],
     },
     StageChange {
         stat: Stat::Attack(1),
         stages: 1,
+        blocked_by: &[],
     },
 ];
 
@@ -106,10 +118,18 @@ pub(crate) fn effect_of(id: u16) -> Option<Effect> {
 }
 
 /// Applies `changes` to `info` in order. Each stage moves by its change and is kept in 0 to 20.
+/// A change is skipped when `info` has one of its `blocked_by` abilities.
 // shortcut: at a limit the game may print a message and take another path; the message is not
 // modelled, and the notes record no draw there (#421 lead).
+// shortcut: the game also stops a lowering change when the target's status byte `+0xB1` is `0x0E`
+// (`02180798`, which Growl, Leer and Sand-Attack call), and Growl also stops when the target holds
+// item `0x0B` (`021432E8`, in `02189534`). The sim has no statuses (#73) or held items (#359), so
+// those two blocks are not modelled.
 pub(crate) fn change_stages(info: &mut EntityInfo, changes: &[StageChange]) {
     for change in changes {
+        if change.blocked_by.iter().any(|&id| info.has_ability(id)) {
+            continue;
+        }
         let stage = match change.stat {
             Stat::Attack(split) => info.offensive_stages.get_mut(split),
             Stat::Defence(split) => info.defensive_stages.get_mut(split),
@@ -176,6 +196,18 @@ mod tests {
         (g, before)
     }
 
+    /// Runs the handler of `id` on the wild monster, with its abilities set to `abilities` and a
+    /// hit check of 100. Returns the state and the rng before the use.
+    fn run_on_wild_with_abilities(id: u16, abilities: [u8; 2]) -> (GameState, DungeonRng) {
+        let mv = stat_move(id, [100; 3]);
+        let effect = effect_of(id).unwrap();
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().wild[0].info.abilities = abilities;
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        (g, before)
+    }
+
     #[test]
     fn growl_hit_lowers_the_target_attack_stage_on_split_0_and_draws_one_value() {
         let (g, before) = run_on_wild(GROWL, [100; 3]);
@@ -189,6 +221,76 @@ mod tests {
         let (g, before) = run_on_wild(GROWL, [0; 3]);
         assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
         assert_eq!(wild_stages(&g), ([10, 10], [10, 10], 10));
+    }
+
+    #[test]
+    fn growl_is_blocked_by_abilities_0x0f_0x18_and_0x09_and_still_draws_one_value() {
+        for ability in [0x0F, 0x18, 0x09] {
+            let (g, before) = run_on_wild_with_abilities(GROWL, [0, ability]);
+            assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+            assert_eq!(
+                wild_stages(&g),
+                ([10, 10], [10, 10], 10),
+                "ability {ability:#04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn leer_is_blocked_by_abilities_0x0f_and_0x18_and_still_draws_one_value() {
+        for ability in [0x0F, 0x18] {
+            let (g, before) = run_on_wild_with_abilities(LEER, [ability, 0]);
+            assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+            assert_eq!(
+                wild_stages(&g),
+                ([10, 10], [10, 10], 10),
+                "ability {ability:#04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn sand_attack_is_blocked_by_abilities_0x0f_0x18_and_0x1e_and_still_draws_one_value() {
+        for ability in [0x0F, 0x18, 0x1E] {
+            let (g, before) = run_on_wild_with_abilities(SAND_ATTACK, [0, ability]);
+            assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+            assert_eq!(
+                wild_stages(&g),
+                ([10, 10], [10, 10], 10),
+                "ability {ability:#04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_block_applies_only_to_the_stage_change_it_is_listed_for() {
+        // 0x1E stops the accuracy change only, so Growl still lowers the attack stage.
+        let (g, _) = run_on_wild_with_abilities(GROWL, [0x1E, 0]);
+        assert_eq!(wild_stages(&g), ([9, 10], [10, 10], 10));
+        // 0x09 stops the attack change only, so Leer and Sand-Attack still take effect.
+        let (g, _) = run_on_wild_with_abilities(LEER, [0x09, 0]);
+        assert_eq!(wild_stages(&g), ([10, 10], [9, 10], 10));
+        let (g, _) = run_on_wild_with_abilities(SAND_ATTACK, [0x09, 0]);
+        assert_eq!(wild_stages(&g), ([10, 10], [10, 10], 9));
+    }
+
+    #[test]
+    fn helping_hand_is_not_blocked_by_the_lowering_abilities() {
+        let mv = stat_move(HELPING_HAND, [100; 3]);
+        let effect = effect_of(HELPING_HAND).unwrap();
+        let mut g = battle_with(&mv);
+        let mut partner = Monster {
+            pos: (6, 5),
+            visible: true,
+            info: g.dungeon().unwrap().team()[0].info.clone(),
+        };
+        partner.info.abilities = [0x0F, 0x18];
+        g.dungeon_mut().unwrap().team.push(partner);
+        use_on(&mut g, &mv, &effect, Slot::Team(1));
+        assert_eq!(
+            g.dungeon().unwrap().team()[1].info.offensive_stages,
+            [11, 11]
+        );
     }
 
     #[test]
@@ -258,6 +360,7 @@ mod tests {
             &[StageChange {
                 stat: Stat::Accuracy,
                 stages: 3,
+                blocked_by: &[],
             }],
         );
         assert_eq!(info.accuracy_stage, 20);
