@@ -22,6 +22,12 @@ pub(crate) const SAND_ATTACK: u16 = 0x08E;
 /// fails in the game and is not modelled (see [`effect_of`]).
 pub(crate) const HELPING_HAND: u16 = 0x0B9;
 
+/// Razor Leaf (`0x0FB`) and Vine Whip (`0x0B6`): the damaging handler with `arg8` 1.0. The
+/// dispatcher's cases pass `0x100` to `HandleDamagingMove` (`ov_0001::02156824`, export read on
+/// #421), as they do for Tackle and Scratch.
+pub(crate) const RAZOR_LEAF: u16 = 0x0FB;
+pub(crate) const VINE_WHIP: u16 = 0x0B6;
+
 /// The highest stage index: the stage table has 21 entries and 10 is neutral.
 const LAST_STAGE: i16 = (STAGES - 1) as i16;
 
@@ -97,18 +103,19 @@ const HELPING_HAND_CHANGE: &[StageChange] = &[
 // their status codes and durations belong to #73 and #359.
 // shortcut: Absorb (`087`) heals through `0218DF38`, which is not read, and sets user `+0xD8` (#421
 // lead).
-// shortcut: Struggle (`160`) is used when no PP is left; the trigger is not read (#421 lead).
+// shortcut: Struggle (`160`) is used when no PP is left; its trigger and its recoil routine
+// (`0217BB94`) are not read, and its HDM call has no `arg8` in the export decompile (#421 lead).
 // shortcut: Low Kick (`05C`) takes its multiplier from a species lookup that is not read (#421
 // lead).
 // shortcut: Water Sport (`133`) and Mud Sport (`0D4`) change floor state the sim does not read.
 // shortcut: Withdraw (`046`) raises the target's defence in the forced run; its self-target case
 // is a lead (#421).
-// shortcut: Razor Leaf (`0FB`) and Vine Whip (`0B6`) take the direct damaging handler, but the
-// `arg8` of their dispatch case is not read (`docs/re/combat.md`, argument 8; #421 lead).
 #[must_use]
 pub(crate) fn effect_of(id: u16) -> Option<Effect> {
     match id {
-        id if DAMAGING.contains(&id) => Some(Effect::Damage { arg8: ARG8 }),
+        id if DAMAGING.contains(&id) || id == RAZOR_LEAF || id == VINE_WHIP => {
+            Some(Effect::Damage { arg8: ARG8 })
+        }
         GROWL => Some(Effect::Stages(GROWL_CHANGE)),
         LEER | TAIL_WHIP => Some(Effect::Stages(DEFENCE_DOWN)),
         SAND_ATTACK => Some(Effect::Stages(ACCURACY_DOWN)),
@@ -397,12 +404,58 @@ mod tests {
 
     #[test]
     fn the_moves_not_ported_have_no_handler() {
-        // Thundershock, Razor Leaf, Vine Whip, Absorb, Hypnosis and Water Sport (see the shortcuts).
-        for id in [0x0BC, 0x0FB, 0x0B6, 0x087, 0x06F, 0x133] {
+        // Thundershock, Absorb, Hypnosis and Water Sport (see the shortcuts).
+        for id in [0x0BC, 0x087, 0x06F, 0x133] {
             assert_eq!(effect_of(id), None, "move {id:#05X}");
         }
         // The damaging moves of the leader are ported.
         assert_eq!(effect_of(0x09A), Some(Effect::Damage { arg8: ARG8 }));
         assert_eq!(effect_of(0x104), Some(Effect::Damage { arg8: ARG8 }));
+    }
+
+    /// The wild monster's HP and the rng after one use of `id` on it, with power 40, physical
+    /// type 1 and hit check `accuracy`. Tackle's use is the reference for the damaging path.
+    fn damage_use(id: u16, accuracy: u8) -> (i16, DungeonRng) {
+        let mv = move_of_power(id, [accuracy; 3]);
+        let effect = effect_of(id).unwrap();
+        let mut g = battle_with(&mv);
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        (wild_hp(&g), *g.dungeon().unwrap().rng())
+    }
+
+    fn move_of_power(id: u16, accuracy: [u8; 3]) -> Move {
+        crate::combat::tests::move_of(id, 40, 1, accuracy, 0)
+    }
+
+    #[test]
+    fn razor_leaf_is_the_damaging_path_with_arg8_one_and_one_draw_on_a_miss() {
+        assert_eq!(effect_of(RAZOR_LEAF), Some(Effect::Damage { arg8: ARG8 }));
+        // A hit does what Tackle does with the same power, type and accuracy: same HP, same rng.
+        let (hp, rng) = damage_use(RAZOR_LEAF, 100);
+        assert_eq!((hp, rng), damage_use(0x09A, 100));
+        assert!(hp < 100);
+        // A slot-0 miss stops after its one draw: no damage, one value drawn.
+        let (hp, rng) = damage_use(RAZOR_LEAF, 0);
+        assert_eq!(hp, 100);
+        let before = {
+            let mv = move_of_power(RAZOR_LEAF, [0; 3]);
+            *battle_with(&mv).dungeon().unwrap().rng()
+        };
+        assert_eq!(rng, after_one_draw(&before));
+    }
+
+    #[test]
+    fn vine_whip_is_the_damaging_path_with_arg8_one_and_one_draw_on_a_miss() {
+        assert_eq!(effect_of(VINE_WHIP), Some(Effect::Damage { arg8: ARG8 }));
+        let (hp, rng) = damage_use(VINE_WHIP, 100);
+        assert_eq!((hp, rng), damage_use(0x09A, 100));
+        assert!(hp < 100);
+        let (hp, rng) = damage_use(VINE_WHIP, 0);
+        assert_eq!(hp, 100);
+        let before = {
+            let mv = move_of_power(VINE_WHIP, [0; 3]);
+            *battle_with(&mv).dungeon().unwrap().rng()
+        };
+        assert_eq!(rng, after_one_draw(&before));
     }
 }
