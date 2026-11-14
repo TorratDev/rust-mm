@@ -344,7 +344,7 @@ The weather source indices match Red **[red-hypothesis for the Red comparison]**
 **RNG per turn** (P6.6). Tag blue-verified, confidence medium: the end-of-turn block was read; the status chain was checked for RNG in #359 P3 (see [Per-turn order](status.md#per-turn-order)).
 
 - `DoEndOfTurnEffects` makes two `DungeonRandInt(100)` calls, in this order. First, Warp Scarf (item 22), only when the entity holds it and its turns-since counter (`+0x137`) is set; the roll is compared with the chance table. Second, Shed Skin, unconditionally, before the ability check (ability 0x21). Red does the same.
-- None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` is not checked in full (#51).
+- None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` was checked in #359 P3: it draws dungeon RNG only for the yawn-end roll. The `0219635C(1)` path is still open (see [Per-turn order](status.md#per-turn-order)).
 The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). Its callers are the wild loop, the team loop (two sites), `02140E14` (call at `02140EA0`) and the swap pass `02140ED0`; the leader never calls it (#353 P3).
 
 ### Per-turn effects in the sim (#344 P1, P2)

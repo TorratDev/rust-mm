@@ -768,8 +768,8 @@ Tag: **blue-verified** (decompile); **red-hypothesis** (the Red side, from the p
 - **Sleepless (2).** Writer `0218AC74` (#190 P4). Other `(10, 12)` tables are not identified (see #190 P4, not verified).
 - **Yawn-end range.** `0218FE64` case 4 uses `021AA2C0` (4, 8). Its source is unconfirmed. Check Red's `sub_804151C` path.
 - **Yawning per-turn function.** `0213F6B0` is not identified.
-- **Wake on hit.** `0217D5FC` and `0218F21C` disagree for nightmare and napping (P1.6). A trace at 127 turns is needed.
-- **Countdown gate.** Why only the call from `0x02140BA4` decrements (#191 P1).
+- **Wake on hit.** Both checks need `0x9A == 0x7F`; they differ only for nightmare and napping, and a finite sleep is not woken by damage (static, #359 P2; see [wake on hit](#sleep-wake-on-hit)). The runtime check is still open.
+- **Countdown gate.** Closed by #359 P2: there is no gate. Each caller ticks its own entity class (see [Per-turn order](#per-turn-order)).
 - **Ability and item IDs.** `IsSleeping` (`021818D0`), `HasIQSkill` (`021805B0`, IQ checks `0x11` and `0x12`) and `HasNegativeStatus` (`02181904`) are named (#359 P4; the names are red-hypothesis). The `0x14` check is `AbilityIsActive` (`0218067C`), an ability test, not the IQ test. Held items `0x14` and `0x15` are matched by value only.
 - **Calls with unknown arguments.** `0218DF38` (heal) argument order, `0217BCA4` (`…, 1, 0x208`) argument list, and `02190100` behaviour (inferred from its body).
 - **Burn-end and burn-apply conditions** in `021760B4`: `0x2A & 3 == 2` and the dungeon flag `0x34AE`, unnamed. Callers of `0215C774` and `0214650C` are unknown.
