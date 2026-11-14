@@ -3,14 +3,14 @@
 //! targeting byte) gives the candidates in the game's order, and the class (low nibble) keeps
 //! some of them.
 //!
-//! Only the areas whose rule is in the notes are modelled: facing (`0x00`), cone (`0x10`), around
-//! (`0x20`), line (`0x50`) and self (`0x70`). The others return `None` and the use is not
-//! modelled. The class-4 rewrite is modelled for Solarbeam (`0x97`), and only with the weather it needs.
-//! Integer math only.
+//! Every area of the executor path is modelled: facing (`0x00`), cone (`0x10`), around (`0x20`),
+//! room (`0x30`), two ahead (`0x40`), line (`0x50`), floor (`0x60`), self (`0x70`) and cut
+//! corners (`0x80`). The class-4 rewrite is modelled with no charge state (see
+//! [`rewrite_class_four`]). Integer math only.
 
 use crate::command::Direction;
 use crate::floor::{TERRAIN_IMPASSABLE_WALL, TERRAIN_TYPE_MASK};
-use crate::state::{DIRECTIONS, Dungeon, EntityInfo};
+use crate::state::{DIRECTIONS, Dungeon, EntityInfo, Monster};
 
 /// A monster a move can reach: team member `i` (0 is the leader) or wild monster `i`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub(crate) enum Area {
     Around,
     /// `0x30`: the slots in the same room.
     Room,
-    /// `0x40`: the facing tile, or the tile two ahead when it is empty.
+    /// `0x40`: the facing tile's monster, or the one two ahead when the first gives no target.
     TwoAhead,
     /// `0x50`: the first monster on the line in the facing direction.
     Line,
@@ -38,7 +38,7 @@ pub(crate) enum Area {
     Floor,
     /// `0x70`: the user only.
     User,
-    /// `0x80`: the facing tile, with the corner-cut check.
+    /// `0x80`: the facing tile's monster, with the blocked test and no corner check.
     CutCorners,
 }
 
@@ -75,21 +75,30 @@ const GHOST: u8 = 14;
 /// The self class byte of [`MOVE_SELF_CLASS`].
 const SELF_CLASS_BYTE: u8 = 0x73;
 
-/// The targeting byte the executor uses after its class-4 rewrite (`0215A520`, lines 41 to 52 of
-/// the export, `docs/re/combat.md`, "Class 4 is decided before filtering"). `None` when the
-/// rewrite needs `0215A2C0`, which the notes do not decode.
+/// The targeting byte the executor uses after its class-4 rewrite (`0215A520`, `docs/re/combat.md`,
+/// "Class 4 is decided before filtering"). `0215A2C0` returns 0 (self, `0x73`) unless the move is
+/// in the charge table with the user's `+0xAE` at its row. Solarbeam in sunny weather is the foe
+/// branch (`0x00`) whatever `0215A2C0` returned (export line 44). `None` when that needs the
+/// weather, which the caller does not know.
+// shortcut: `0215A2C0` reads `info +0xAE` (the charge state of Fly, Dig and the like). The sim has
+// no charge state, so that value is always 0 and the rewrite is self for every class 4 move, as
+// `0215A2C0` returns 0. Porting that is right only while no charge is in flight, which holds for
+// this sim.
 // shortcut: the sim has no weather state, so the caller passes `None` for the sunny test and
-// Solarbeam is refused. `0215A2C0` is open (not decompiled in the notes), so every other class 4
-// is refused too.
+// Solarbeam is refused. Solarbeam with the weather known is `Some(true)` (foe) or `Some(false)`
+// (self).
 #[must_use]
 pub(crate) const fn rewrite_class_four(move_id: u16, byte: u8, sunny: Option<bool>) -> Option<u8> {
     if byte & 0xF != 4 {
         return Some(byte);
     }
-    match (move_id == SOLARBEAM, sunny) {
-        // The foe branch, area 0 class 0, is forced for Solarbeam in sunny weather.
-        (true, Some(true)) => Some(0),
-        _ => None,
+    if move_id != SOLARBEAM {
+        return Some(SELF_CLASS_BYTE);
+    }
+    match sunny {
+        Some(true) => Some(0),
+        Some(false) => Some(SELF_CLASS_BYTE),
+        None => None,
     }
 }
 
@@ -114,8 +123,66 @@ fn monster_at(d: &Dungeon, x: i32, y: i32) -> Option<Slot> {
         .or_else(|| d.wild().iter().position(on).map(Slot::Wild))
 }
 
+/// The monster record at `slot`, or `None` for a slot that is not there.
+fn monster_of(d: &Dungeon, slot: Slot) -> Option<&Monster> {
+    match slot {
+        Slot::Team(i) => d.team().get(i),
+        Slot::Wild(i) => d.wild().get(i),
+    }
+}
+
+/// The 20 slots of `gDungeon+0x11364` in the game's order: the team, then the wild monsters.
+/// `02141A08` rebuilds that list this way (`docs/re/combat.md`, "Executor in the sim"), and the
+/// sim's vectors hold no gaps, so the list is the two vectors in turn.
+fn all_slots(d: &Dungeon) -> Vec<Slot> {
+    (0..d.team().len())
+        .map(Slot::Team)
+        .chain((0..d.wild().len()).map(Slot::Wild))
+        .collect()
+}
+
+/// `021820B0` (`IsBlockedForCut`, `docs/re/combat.md`): true when the tile at `(x, y)` blocks a
+/// step onto it. The tile is off the map, a wall (flag `0x10`), or of type 0. Only the
+/// destination counts: the user's own tile and the two sides of a diagonal are not read.
+// shortcut: the test uses class 2 for every user. Class 3 (movement type 3 species, `info +0xC7 ==
+// 3`, held item 9, IQ bit 0xD) never blocks on type 0, so a class-3 user may be blocked here
+// when the game is not. The gate `FUN_0206d474` is not modelled either.
+// shortcut: step 3 of `021820B0` (a non-monster entity on the tile blocks) is not modelled. The
+// sim keeps monsters only on the tile's entity link, so it cannot arise here.
+fn blocked_for_cut(d: &Dungeon, x: i32, y: i32) -> bool {
+    match d.floor().tile(x, y) {
+        None => true,
+        Some(t) => t.terrain & TERRAIN_IMPASSABLE_WALL != 0 || t.terrain & TERRAIN_TYPE_MASK == 0,
+    }
+}
+
+/// `021775F0` (`FacingTileMonster`): the monster on the facing tile, when `021820B0` does not
+/// block that tile. No corner test: a diagonal facing needs no open sides.
+fn facing_monster(d: &Dungeon, lx: i32, ly: i32, facing: Direction) -> Option<Slot> {
+    let (x, y) = step(lx, ly, facing);
+    if blocked_for_cut(d, x, y) {
+        return None;
+    }
+    monster_at(d, x, y)
+}
+
+/// `021774FC` (`TwoAheadMonster`): the monster two tiles ahead. Nothing is returned when the
+/// facing tile or the tile two ahead is blocked, so a wall or an empty map edge stops the shot.
+fn two_ahead_monster(d: &Dungeon, lx: i32, ly: i32, facing: Direction) -> Option<Slot> {
+    let (x1, y1) = step(lx, ly, facing);
+    if blocked_for_cut(d, x1, y1) {
+        return None;
+    }
+    let (x2, y2) = step(x1, y1, facing);
+    if blocked_for_cut(d, x2, y2) {
+        return None;
+    }
+    monster_at(d, x2, y2)
+}
+
 /// The candidates of `area` for the leader facing `facing`, in the game's order, before the class
-/// filter. `None` when the area's rule is not in the notes.
+/// filter. `None` when the leader is missing. For `0x40` this is the facing monster only: the
+/// tile two ahead is the fallback that [`executor_targets`] tries when that one is filtered out.
 fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
     let leader = d.team().first()?;
     let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
@@ -124,21 +191,16 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
         Area::Facing => {
             let (x, y) = step(lx, ly, facing);
             let (dx, dy) = facing.delta();
-            // `02180FFC` at class 2: the facing tile is not a wall (flag `0x10`) and has a type
-            // other than 0, and a diagonal step has both orthogonal neighbours open. The corner
-            // test is shared with the leader's step (`Dungeon::corner_open`).
+            // `02180FFC` at class 2: the facing tile is not blocked (`021820B0` at class 2: not a
+            // wall, not type 0), and a diagonal step has both orthogonal neighbours open. The
+            // corner test is shared with the leader's step (`Dungeon::corner_open`).
             // shortcut: class 2 is used for every user. Class 3 (movement type 3 species,
             // `info +0xC7 == 3`, held item 9, IQ bits 0xC and 0xD) and the gate `FUN_0206d474`
             // are not modelled, so a user in those cases may get a different answer here.
-            match d.floor().tile(x, y) {
-                Some(t)
-                    if t.terrain & TERRAIN_IMPASSABLE_WALL == 0
-                        && t.terrain & TERRAIN_TYPE_MASK != 0
-                        && d.corner_open(lx, ly, dx, dy) =>
-                {
-                    monster_at(d, x, y).into_iter().collect()
-                }
-                _ => Vec::new(),
+            if !blocked_for_cut(d, x, y) && d.corner_open(lx, ly, dx, dy) {
+                monster_at(d, x, y).into_iter().collect()
+            } else {
+                Vec::new()
             }
         }
         Area::Cone => [(dir + 7) % 8, dir, (dir + 1) % 8]
@@ -177,15 +239,35 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
             found
         }
         Area::User => vec![Slot::Team(0)],
-        // shortcut: these areas are not modelled, because their rule is not in the notes or
-        // needs the game's 20-slot order, which the sim does not keep. Each refuses the use.
-        // `0x30` and `0x60`: the 20 slots of `gDungeon+0x11364` and the room test `02141AF0`.
-        // `0x40` and `0x80`: the facing tile helper `021775F0` and the tile test `021774FC` are
-        // not read.
-        Area::Room | Area::TwoAhead | Area::Floor | Area::CutCorners => {
-            return None;
-        }
+        // `0x30`: the slots the room test `02141AF0` passes (`docs/re/combat.md`, the `0x30` row).
+        // The test needs the target to be visible (`+0x20`), and the room of the user's tile to
+        // hold the target's tile: `Dungeon::in_view` is `0219C6BC`. The user is in the list when
+        // it is visible, as `02141AF0(user, user)` passes then.
+        Area::Room => all_slots(d)
+            .into_iter()
+            .filter(|&slot| {
+                monster_of(d, slot).is_some_and(|m| m.visible && d.in_view(leader.pos, m.pos))
+            })
+            .collect(),
+        // `0x40`: the facing monster; the fallback (two ahead) is in `executor_targets`.
+        Area::TwoAhead => facing_monster(d, lx, ly, facing).into_iter().collect(),
+        // `0x60`: every valid slot, with no room test.
+        Area::Floor => all_slots(d),
+        // `0x80`: the facing monster, with the blocked test and no corner check (`0215A520`,
+        // branch `0x80`, calls `021775F0` alone).
+        Area::CutCorners => facing_monster(d, lx, ly, facing).into_iter().collect(),
     })
+}
+
+/// The fallback of `0x40` (`0215A520`): the monster two tiles ahead, through `021774FC`, when the
+/// facing monster gives no target. Its tile must not be blocked, and the facing one must not be
+/// either (`021774FC` returns nothing for a blocked facing tile).
+fn two_ahead_fallback(d: &Dungeon, facing: Direction) -> Vec<Slot> {
+    let Some(leader) = d.team().first() else {
+        return Vec::new();
+    };
+    let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
+    two_ahead_monster(d, lx, ly, facing).into_iter().collect()
 }
 
 /// Whether the class `class` keeps candidate `slot` (`0215A3A8`, the relation tests). Relation 1
@@ -235,12 +317,18 @@ pub(crate) fn executor_targets(
     let byte = rewrite_class_four(move_id, byte, sunny)?;
     let area = Area::from_nibble(byte >> 4)?;
     let class = byte & 0xF;
-    let list = candidates(d, area, facing)?;
-    Some(
+    let kept = |list: Vec<Slot>| -> Vec<Slot> {
         list.into_iter()
             .filter(|&slot| keeps(class, move_id, slot))
-            .collect(),
-    )
+            .collect()
+    };
+    let targets = kept(candidates(d, area, facing)?);
+    // `0215A520`, area `0x40`: the tile two ahead is tried only when the facing monster is
+    // missing or the class filter drops it. The list holds at most one monster.
+    if area == Area::TwoAhead && targets.is_empty() {
+        return Some(kept(two_ahead_fallback(d, facing)));
+    }
+    Some(targets)
 }
 
 #[cfg(test)]
@@ -286,12 +374,23 @@ mod tests {
     /// A dungeon with the leader at (10, 10) and a floor of open tiles, so every line tile is
     /// ground and none is a wall.
     fn dungeon(team: Vec<Monster>, wild: Vec<Monster>) -> GameState {
+        dungeon_with(team, wild, |_| {})
+    }
+
+    /// [`dungeon`], with `edit` applied to the floor before the dungeon is entered, so a room
+    /// table built from the tiles sees the edit.
+    fn dungeon_with(
+        team: Vec<Monster>,
+        wild: Vec<Monster>,
+        edit: impl FnOnce(&mut Floor),
+    ) -> GameState {
         let mut floor = Floor::new();
         for y in 1..31 {
             for x in 1..55 {
                 floor.tile_mut(x, y).unwrap().terrain = TERRAIN_FLOOR;
             }
         }
+        edit(&mut floor);
         let mut team = team;
         team[0].info.is_team_leader = true;
         let mut g = GameState::in_dungeon(1, floor, team, 2).unwrap();
@@ -496,29 +595,31 @@ mod tests {
     }
 
     #[test]
-    fn class_four_is_a_foe_only_for_solarbeam_in_sunny_weather() {
+    fn class_four_is_self_except_solarbeam_in_sunny_weather() {
         let g = dungeon(
             vec![monster((10, 10), false)],
             vec![monster((11, 10), true)],
         );
         let d = lead(&g);
-        // Solarbeam (0x97) in sunny weather: the foe branch, area 0 class 0.
+        // Another move with class 4: 0215A2C0 is 0 with no charge state, so the self class 0x73
+        // (the user only), whatever the weather.
+        assert_eq!(
+            executor_targets(d, 0x9A, 0x04, Direction::Right, None),
+            Some(vec![Slot::Team(0)])
+        );
+        // Solarbeam (0x97) in sunny weather: the foe branch, area 0 class 0 (export line 44).
         assert_eq!(
             executor_targets(d, SOLARBEAM, 0x74, Direction::Right, Some(true)),
             Some(vec![Slot::Wild(0)])
         );
-        // Not sunny, or not known: 0215A2C0 decides, and it is not in the notes.
+        // Not sunny: 0215A2C0 decides, which is self with no charge.
         assert_eq!(
             executor_targets(d, SOLARBEAM, 0x74, Direction::Right, Some(false)),
-            None
+            Some(vec![Slot::Team(0)])
         );
+        // The weather is not known in the sim, so Solarbeam is refused.
         assert_eq!(
             executor_targets(d, SOLARBEAM, 0x74, Direction::Right, None),
-            None
-        );
-        // Another move with class 4 has no weather rule, so it is refused too.
-        assert_eq!(
-            executor_targets(d, 0x9A, 0x04, Direction::Right, Some(true)),
             None
         );
     }
@@ -615,15 +716,170 @@ mod tests {
         );
     }
 
+    /// Sets the room of tile `(x, y)` to `room`.
+    fn set_room(floor: &mut Floor, x: i32, y: i32, room: u8) {
+        floor.tile_mut(x, y).unwrap().room = room;
+    }
+
     #[test]
-    fn areas_whose_rule_is_not_in_the_notes_are_not_modelled() {
+    fn the_room_area_keeps_the_visible_slots_in_the_users_room() {
+        // Room 0 covers (8..=12, 8..=12); the leader stands in it. The ring is one tile further.
+        let mut g = dungeon_with(
+            vec![monster((10, 10), false), monster((12, 8), false)],
+            vec![
+                monster((9, 11), true),  // in the room, visible: Wild(0)
+                monster((20, 10), true), // outside the room and its ring: out of view
+                monster((11, 11), true), // in the room, invisible: out
+            ],
+            |f| {
+                for x in 8..=12 {
+                    for y in 8..=12 {
+                        set_room(f, x, y, 0);
+                    }
+                }
+            },
+        );
+        g.dungeon_mut().unwrap().wild[2].visible = false;
+        // Class 2 keeps every candidate, so the list is the room test: the user (visible), the
+        // ally in the room, then the wild monster in the room, in slot order.
+        assert_eq!(
+            targets(&g, 0x32, Direction::Right),
+            Some(vec![Slot::Team(0), Slot::Team(1), Slot::Wild(0)])
+        );
+        // An invisible user drops out of the room list.
+        g.dungeon_mut().unwrap().team[0].visible = false;
+        assert_eq!(
+            targets(&g, 0x32, Direction::Right),
+            Some(vec![Slot::Team(1), Slot::Wild(0)])
+        );
+    }
+
+    #[test]
+    fn the_floor_area_keeps_every_valid_slot_in_team_then_wild_order() {
         let g = dungeon(
+            vec![monster((10, 10), false), monster((9, 10), false)],
+            vec![monster((30, 25), true), monster((2, 2), true)],
+        );
+        // Class 2 keeps all: the team first, then the wild monsters, with no room test.
+        assert_eq!(
+            targets(&g, 0x62, Direction::Right),
+            Some(vec![
+                Slot::Team(0),
+                Slot::Team(1),
+                Slot::Wild(0),
+                Slot::Wild(1)
+            ])
+        );
+        // Class 0 keeps the foes only.
+        assert_eq!(
+            targets(&g, 0x60, Direction::Right),
+            Some(vec![Slot::Wild(0), Slot::Wild(1)])
+        );
+    }
+
+    #[test]
+    fn the_two_ahead_area_takes_the_facing_monster_then_the_one_two_ahead() {
+        // Leader (10, 10) facing Right: the facing tile is (11, 10), two ahead is (12, 10).
+        let two_ahead = dungeon(
+            vec![monster((10, 10), false)],
+            vec![monster((12, 10), true)],
+        );
+        assert_eq!(
+            targets(&two_ahead, 0x40, Direction::Right),
+            Some(vec![Slot::Wild(0)])
+        );
+        // A foe on the facing tile is taken alone: the one two ahead is not reached.
+        let both = dungeon(
+            vec![monster((10, 10), false)],
+            vec![monster((11, 10), true), monster((12, 10), true)],
+        );
+        assert_eq!(
+            targets(&both, 0x40, Direction::Right),
+            Some(vec![Slot::Wild(0)])
+        );
+        // An ally on the facing tile is filtered out by class 0, so the foe two ahead is tried.
+        let ally_ahead = dungeon(
+            vec![monster((10, 10), false), monster((11, 10), false)],
+            vec![monster((12, 10), true)],
+        );
+        assert_eq!(
+            targets(&ally_ahead, 0x40, Direction::Right),
+            Some(vec![Slot::Wild(0)])
+        );
+        // A wall on the facing tile blocks both: the shot stops there, even with a foe behind.
+        let walled = dungeon_with(
+            vec![monster((10, 10), false)],
+            vec![monster((12, 10), true)],
+            |f| set_wall(f, 11, 10),
+        );
+        assert_eq!(targets(&walled, 0x40, Direction::Right), Some(vec![]));
+        // A type-0 tile on the facing tile is blocked too.
+        let type_zero = dungeon_with(
+            vec![monster((10, 10), false)],
+            vec![monster((12, 10), true)],
+            |f| f.tile_mut(11, 10).unwrap().terrain = TERRAIN_FLOOR & !TERRAIN_TYPE_MASK,
+        );
+        assert_eq!(targets(&type_zero, 0x40, Direction::Right), Some(vec![]));
+        // A wall on the tile two ahead blocks the foe standing on it.
+        let walled_far = dungeon_with(
+            vec![monster((10, 10), false)],
+            vec![monster((12, 10), true)],
+            |f| set_wall(f, 12, 10),
+        );
+        assert_eq!(targets(&walled_far, 0x40, Direction::Right), Some(vec![]));
+        // No corner test: a diagonal two ahead with both sides walled still reaches the foe.
+        let mut diagonal = dungeon(vec![monster((10, 10), false)], vec![monster((12, 8), true)]);
+        set_terrain(
+            &mut diagonal,
+            11,
+            10,
+            TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL,
+        );
+        set_terrain(
+            &mut diagonal,
+            10,
+            9,
+            TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL,
+        );
+        assert_eq!(
+            targets(&diagonal, 0x40, Direction::UpRight),
+            Some(vec![Slot::Wild(0)])
+        );
+    }
+
+    /// Makes tile `(x, y)` an impassable wall.
+    fn set_wall(f: &mut Floor, x: i32, y: i32) {
+        f.tile_mut(x, y).unwrap().terrain = TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL;
+    }
+
+    #[test]
+    fn the_cut_corners_area_takes_the_facing_monster_with_no_corner_test() {
+        // A diagonal foe with walls on both sides of the step: `0x00` refuses it (the corner
+        // test), `0x80` takes it (`021775F0` has no corner test).
+        let mut g = dungeon(vec![monster((10, 10), false)], vec![monster((11, 9), true)]);
+        set_terrain(&mut g, 11, 10, TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL);
+        set_terrain(&mut g, 10, 9, TERRAIN_FLOOR | TERRAIN_IMPASSABLE_WALL);
+        assert_eq!(targets(&g, 0x00, Direction::UpRight), Some(vec![]));
+        assert_eq!(
+            targets(&g, 0x80, Direction::UpRight),
+            Some(vec![Slot::Wild(0)])
+        );
+        // The monster must be on the facing tile: one tile further is out of reach.
+        let far = dungeon(vec![monster((10, 10), false)], vec![monster((12, 8), true)]);
+        assert_eq!(targets(&far, 0x80, Direction::UpRight), Some(vec![]));
+        // The blocked test applies to the facing tile: a wall or a type-0 tile gives no target.
+        let walled = dungeon_with(
+            vec![monster((10, 10), false)],
+            vec![monster((11, 10), true)],
+            |f| set_wall(f, 11, 10),
+        );
+        assert_eq!(targets(&walled, 0x80, Direction::Right), Some(vec![]));
+        let mut type_zero = dungeon(
             vec![monster((10, 10), false)],
             vec![monster((11, 10), true)],
         );
-        for byte in [0x30u16, 0x40, 0x60, 0x80] {
-            assert_eq!(targets(&g, byte, Direction::Right), None, "{byte:#x}");
-        }
+        set_terrain(&mut type_zero, 11, 10, 0);
+        assert_eq!(targets(&type_zero, 0x80, Direction::Right), Some(vec![]));
     }
 
     #[test]
