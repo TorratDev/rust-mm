@@ -2,7 +2,7 @@
 
 How each status is applied, how long it lasts, what it does each turn, how it ends and is cured, and which RNG calls it makes. Issue: [#51](https://github.com/TorratDev/rust-mm/issues/51), part of Epic #5. Names, addresses and tags are in [`symbols.md`](../symbols.md). The turn loop that calls these checks is in [`turns.md`](turns.md).
 
-**Evidence.** Most rows come from Ghidra decompile and cross-reference queries on the retail ARM9 and overlay 1, from the overlay 1 bytes (file offset = RAM address − `0x02138860`), and from comparison with the pinned `pmd-red` commit `013475aa04f5be3191e5527c186d9bfceae7cae0`. The findings from #189, #190 and #191 are at the end of this page. Their runtime checks used py-desmume on the supported dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`); each is marked runtime. Read every "partial", "not verified" and "open" note as a limit on what this page shows.
+**Evidence.** Most rows come from Ghidra decompile and cross-reference queries on the retail ARM9 and overlay 1, from the overlay 1 bytes (file offset = RAM address − `0x02138860`), and from comparison with the pinned `pmd-red` commit `013475aa04f5be3191e5527c186d9bfceae7cae0`. The findings from #189, #190 and #191 are at the end of this page. The #359 findings (the first dungeon's nine statuses and their setters, the RNG walk of the status chain, and the renames) are in [First dungeon statuses](#first-dungeon-statuses-359) and [Per-turn order](#per-turn-order). Their runtime checks used py-desmume on the supported dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`); each is marked runtime. Read every "partial", "not verified" and "open" note as a limit on what this page shows.
 
 Tags: **blue-verified** means the role was read in Blue's code. **red-hypothesis** means the name or mapping comes from `pmd-red` and Blue has not matched it yet. **tentative** means our own name, with the role only partly known. Confidence is high, medium or low.
 
@@ -34,7 +34,9 @@ Each class has a status byte and a turns or counter byte. The offsets are in [`s
 
 `TickStatusAndHealthRegen` (`ov_0001::02185C70`) runs the countdowns and the status chain. The chain is in the table below. Each step re-checks that the entity is valid and that the floor is not over before it runs. The order was read from the decompile and matches Red's `TickStatusAndHealthRegen` step for step (red-hypothesis for the names, blue-verified for the order).
 
-**Call sites (four).** The function is called from `02140BA0` (in `sub_8044574_Async`), `021409CC` (in `sub_8044820_Async`), `02140F40` (in `FUN_02140ED0`) and `021410A4` (in `RunLeaderTurn_Async`). **Runtime (#191 P1): the countdown bytes decremented on each call returning to `0x02140BA4` (the call from `02140BA0`) while the counter was above 0, and on no call returning to `0x021409D0` or `0x021410A8`. Calls returning to `0x02140BA4` came every 4 or 5 ticks, not every fifth call. The call from `02140F40` is not in that trace.** So the counters do not tick once per call from each site. Not verified: whether the `0x02140BA4`-only decrement is a gate in `TickStatus` or a property of the call site (need a read of `02185C70` around its countdown calls). Position in the turn matters for #49, see [`turns.md`](turns.md).
+**Call sites (four).** The function is called from `02140BA0` (in `sub_8044574_Async`), `021409CC` (in `sub_8044820_Async`), `02140F40` (in `FUN_02140ED0`) and `021410A4` (in `RunLeaderTurn_Async`). **Runtime (#191 P1): the countdown bytes decremented on each call returning to `0x02140BA4` (the call from `02140BA0`) while the counter was above 0, and on no call returning to `0x021409D0` or `0x021410A8`. Calls returning to `0x02140BA4` came every 4 or 5 ticks, not every fifth call. The call from `02140F40` is not in that trace.**
+
+**Corrected by #359 P2: there is no gate.** `02185C70` has no per-call-site check; its only early outs are an invalid entity and the floor-over flag `0214067C`. Each caller ticks its own entity class once per turn of that entity, and every call decrements that entity's counters. Runtime (`run3.py`, 1500 frames from a floor-1 savestate, a sure-shot counter set to 100 on every valid entity; scratch script outside the repo): the calls returning to `021410A8` (leader) were 34, with 33 decrements; those returning to `02140BA4` (partner) were 33, with 32; those returning to `021409D0` (wild monsters) were 3, 33 and 33, all decrementing. The #191 result was a property of the partner that trace watched, not a gate. **[blue-verified]** (static and runtime; `tick-owners.out`, first 16 hex of sha256 `847ff42999a2aad4`), high. Position in the turn matters for #49, see [`turns.md`](turns.md).
 
 | # | Step | Blue flag or timer | Handler | Red counterpart (red-hypothesis) |
 |---|------|--------------------|---------|----------------------------------|
@@ -56,14 +58,79 @@ Each class has a status byte and a turns or counter byte. The offsets are in [`s
 
 - **Countdown helper** `0219BF1C` (`DecrementStatusTurns` in [`symbols.md`](../symbols.md)) leaves a byte alone if it is `0x7F` or 0, and decrements a nonzero value otherwise; the class end runs when it reaches 0. This is static (#190 P4) and matches the runtime sentinel (#191 P1). Red's `sub_80838EC` is the same routine (red-hypothesis).
 - **Speed message:** if a counter in step 14 reaches 0 and `CalcSpeedStage` (`0x02181E58`, no RNG) changes the speed stage, the speed-stage message is logged.
-- **RNG reached from the chain.** Depth-limited x-ref walk (depth 2; indirect calls not followed); confidence medium-high. `TickStatusAndHealthRegen` calls no RNG directly. The walk reaches these RNG calls:
-  - step 2, case 4 (yawn): `0219CF28` → `DungeonRandRange` `0219D014` → `DungeonRandInt` `0219D058`;
-  - step 2, case 3 (nightmare, fourth argument nonzero): `0217BCA4` → `0217E890` (`HandleDealingDamage_Async`) → `DungeonRandInt`;
-  - step 7, curse case 2 (decoy end): `0217AF58` → **global** `Rand32Bit` `0201198C` (`& 3` = facing);
-  - step 10, `+0xC7` case 2: the same `0217AF58` → `Rand32Bit` path;
-  - all other steps: none; step 0: none visible (indirect).
+- **RNG reached from the chain (corrected, #359 P3).** A full transitive walk of the export's call graph from `02185C70` (`xrefs.tsv`: unconditional calls and jumps, computed calls; indirect calls not followed) reaches four RNG entries: `DungeonRandInt` `0219D058`, `DungeonRandRange` `0219D014`, global `RandInt` `02011968` and global `Rand32Bit` `0201198C`. This replaces the depth-2 list that stood here before, which overstated the draws. `TickStatusAndHealthRegen` calls no RNG directly. Per step:
+  - step 2, case 4 (yawn end): one `DungeonRandRange` on `021AA2C0`, through `0219CF28`, per yawn expiry. **Dungeon stream.** [blue-verified], high.
+  - step 2, case 3 (nightmare): `0217BCA4` passes `param_7 = 0` to `0217E890` (`HandleDealingDamage_Async`), and the ten `DungeonRandInt` sites in `0217E890` (`100` and `3`) sit in the block gated on `param_7 != 0`. **No draw in this call.** [blue-verified] for the gate; medium-high for the absence of a draw. The damage path reaches global `RandInt` (`0217E890` → `0217D5FC` → `021448A0` → `02008458` → `02011924`); whether that draw is cosmetic is a **[hypothesis]**.
+  - steps 7 and 10 (curse decoy end, and `+0xC7` case 2): `0217AF58` calls `Rand32Bit & 3`, passed to `020128DC` with the sprite. **Global stream, facing only.** [blue-verified], high.
+  - expiry messages that show a sprite (steps 3 to 6, 7 to 9, 11, 12 and the inline terrified step): `02154BF0` or `02154B8C` → `02154910` → `0213AFA8` → `0213AD54` → `02142504` → `02155760` → `Rand32Bit & 3`. Global only. [blue-verified], high.
+  - step 10, case 1 (ends invisible): `0219635C(1)` reaches dungeon-RNG calls statically (`021938C8` → `0219BFE0` → `0219D058`; `0219037C` → `0219D014`). Whether they run on this path is not read. **[hypothesis]**, low.
+  - steps 0, 1, 13 and 14: none found (step 0 is an indirect call).
+
+  So the chain consumes **dungeon RNG only for the yawn-end roll**, plus the open step 10 case 1 path. The facing draws are global and do not move the dungeon stream. Settling the open path needs a trace of `gDungeonRngState` (`021B3F58`) around a `02185C70` call, with a monster whose `+0xC7` is 1; neither that nor a `+0x99 = 3` monster is a first-dungeon status, so it is not a priority.
 
 **Per-turn blocks in `021861E8`** (`DoEndOfTurnEffects_Async`, red-hypothesis name). This function runs once per monster at the end of the turn and holds the burn, poison and bad-poison damage, the yawning branch and Shed Skin. Its callers are `02140DD8` (in `sub_8044574_Async`), `02140A84` (in `sub_8044820_Async`), `02187B68` (`DisplayActions_Async`) and `02184DF8` (in `FUN_0218453C`). The per-class sections give the detail.
+
+## First dungeon statuses (#359)
+
+Which statuses the first dungeon can give a monster, and how each is set, lasts, acts and ends. The source is the 26 move IDs in [First dungeon: move list](move-effects.md#first-dungeon-move-list-handlers-and-draws-357), plus the traps of dungeon 0. Investigator A ran the setters at runtime on the supported dump: a floor-1 savestate of dungeon 0 under py-desmume, `gDungeonRngState` (`021B3F58`) set to a different value per sample, the message printers `02154B8C` and `02154BF0` patched to return (so message text is not checked), and 24 samples per setter. The scratch scripts are outside the repo and not in `verification/` yet, so the runtime rows cannot be rerun from the repo; the output hash is `setters.out` 752245e3dd3c620a (first 16 hex of sha256). Static rows are from the export (STAMP 2026-11-14).
+
+### Traps on floors 1 to 3
+
+**None.** `mapparam` gives dungeon 0 four floor records (index 0 is a placeholder). Floors 1 to 3 use trap list 0, whose only non-zero entry is trap 17 (the wonder tile), and the floor's trap count (`+0x10`, see [`dungeon-generation.md`](dungeon-generation.md)) is 0. So `SpawnNonEnemies` calls `DungeonRandRange(0, 0)`, which makes no draw, and spawns no trap. **[blue-verified]** (static data), high. Not verified: that no fixed room is used on floors 1 to 3 (floor 1 has none, per `dungeon-generation.md`); floors 2 and 3 were not generated.
+
+### The nine statuses
+
+| # | Status | Blue field and value | Moves | Setter |
+|---|--------|----------------------|-------|--------|
+| 1 | Paralysis | `+0x9B` = 4 | `0BC` Thundershock (chance gate), `0C0` Thunder Wave, `03B` (same body as Thunder Wave: both call `021885A0(user, target, 1)`) | `021885A0` |
+| 2 | Burn | `+0x9B` = 1 | `106` Ember (chance gate) | `0218A710` |
+| 3 | Sleep | `+0x99` = 1 | `06F` Hypnosis | `0218B2D0`, then `0218B420` |
+| 4 | Flinch (cringe class value 1) | `+0xAC` = 1 | `03F` Bite (chance gate) | `021887E0` |
+| 5 | Whiffer (sure-shot class value 2: the target's attacks always miss) | `+0xC4` = 2 | `025` Smokescreen | `0218D778` |
+| 6 | Focus Energy (sure-shot class value 4) | `+0xC4` = 4 | `04A` Focus Energy | `0218D5F0` |
+| 7 | Enraged (bide class value 0xC) | `+0xAE` = 0xC | `013` Rage | `0218E428` |
+| 8 | Leech Seed | `+0xB8` = 1 | `149` Leech Seed | `0218DAE4` |
+| 9 | Speed lowered (counters `+0xE9` to `+0xED`) | speed-down counter | `010` Bubble (chance gate) | `021882D0` |
+
+Tags: **[blue-verified]** for the setter rows and the move IDs. **[hypothesis]** for the rule that every learnset move up to the level cap is in play (inherited from #357). Confidence high for the move rows, medium for completeness.
+
+Not statuses, so not in the list: the stat-stage moves already ported (Growl, Leer, Tail Whip, Sand-Attack, Helping Hand, Withdraw), Water Sport (floor state), Absorb (heal), Struggle (recoil) and Low Kick. **No move of the 26 sets yawning, confusion, or any other status in the sections below that is not in the table**, so those stay open here.
+
+**Lead, not checked:** abilities of the spawned species that set a status when they hit (on contact, for example) are outside this list, which covers moves and traps only. Pikachu's and Exeggcute's abilities would need a look for an exact floor-3 status list.
+
+### Duration roll (all rows)
+
+- `CalculateStatusTurns` (`0219CF28`) rolls `DungeonRandRange(min, max)` (`0219D014`), which is `min + DungeonRandInt(max - min)`, and **makes no draw when min equals max**. The setters store roll + 1, except sleep (stored = roll). **[blue-verified]**, high.
+- The flag adjusts the roll only for a team member: IQ skill `0x12` halves it, ability `0x14` caps it at 5 above 4, and the result is at least 1. Neither applies to `0x7F` (see [Sleep: duration and roll](#sleep-duration-and-roll)). **[blue-verified]**, high.
+- Flag per setter, from the runtime call log: Hypnosis 1, paralysis 1, burn 1, Bubble 1, Smokescreen 1, Bite 1, Rage 0, Focus Energy 0. Leech Seed passes 1 in the flag register (its decompile shows an extra third argument); treat it as 1. The flag matters only for team-member targets.
+
+### Setters, durations and effects
+
+Each duration row is from 24 runtime samples with different RNG states, flag as above. "Draws" counts `DungeonRandInt` calls in the setter.
+
+| Status | Setter and application | Pair, draws, stored turns | Per-turn effect | End |
+|--------|------------------------|---------------------------|-----------------|-----|
+| Paralysis (`+0x9B` = 4, `+0x9C`) | `021885A0(user, target, msgFlag)`. Thundershock after the chance gate `02159F6C` (msgFlag 0); Thunder Wave and `03B` (msgFlag 1). Safeguard `02180870`; Limber (`0x16`) blocks. | (1, 2), 1 draw `DungeonRandInt(1)`; `+0x9C` = 2 in 24 of 24. | `CalcSpeedStage` (`02181E58`) −1 while `+0x9B == 4`; `02172ADC` refuses the move; `02181530` counts it as cannot act normally. In-game effect not observed (medium). | Countdown in the chain (`0218FD80`); Limber in `02175850`. |
+| Burn (`+0x9B` = 1, `+0x9C`) | `0218A710(user, target, msgFlag, ...)`. Ember after its chance gate, args 0, 0. Safeguard, Water Veil (`0x42`), fire type and water tile block. | (127, 127), flag 1, **0 draws**; `+0x9C` = 128 in 24 of 24. The first tick leaves 127, which `0219BF1C` never decrements. | Damage and regeneration as in the [burn section](#burn-and-poison-per-turn-damage). | Only cures (Water Veil, items, Shed Skin's cure-all). Does not expire by countdown. |
+| Sleep (`+0x99` = 1, `+0x9A`) | Hypnosis: `0215E07C` → `0218B2D0` → `0218B420`. Immunity `0218B140` (Safeguard, IQ `0x11`, Insomnia `0x36`, Vital Spirit `0x49`, held item `0x15`); Early Bird (`0x2F`) halves unless `0x7F`. | (3, 7), flag 1, 1 draw `DungeonRandInt(4)`; `+0x9A` = 3 to 6 (no +1). | `0217FD78` returns 1 for `+0x99` in {1, 3, 5}: the monster does not act. | `Tick` decrements `+0x9A` at the monster's own turn; at 0, `0218FE64(e, e, 1, 1)` wakes it. Damage wakes only a `0x7F` sleep (see [wake on hit](#sleep-wake-on-hit)). |
+| Flinch (`+0xAC` = 1, `+0xAD`) | `021887E0(user, target, msgFlag)`: needs a valid target, Safeguard, and no ability `0x1F` (blocks with a message). Bite after its chance gate, msgFlag 0. | (1, 1), flag 1, **0 draws**; `+0xAD` = 2 in 24 of 24. | `02172ADC` refuses the move at `+0xAC == 1` (flinch message). `0217FD78` does not skip the turn for value 1. | `Tick`: `+0xAD` goes 2 to 1 at the target's turn, then 1 to 0 at its next turn, and `0218FA80` clears it. The turn-order consequence is a **[hypothesis]** (derived from read order, not run on a monster; medium). |
+| Whiffer (`+0xC4` = 2, `+0xC5`) | `0218D778(user, target, turns)` via Smokescreen (`0215D5BC`), with `turns = CalculateStatusTurns(target, pair, 1)`. Safeguard gate (with message); already 2 gives the message only. | (1, 6), flag 1, 1 draw `DungeonRandInt(5)`; `+0xC5` = 2 to 6. | `AccuracyCalc` (`0215A928`) reads the **user's** `+0xC4`: 2 returns miss before any accuracy arithmetic. The `DungeonRandInt(100)` draw still happens first. | `Tick` step 9 counts `+0xC5` down and calls `0218F510` at 0 (clears `+0xC4`). |
+| Focus Energy (`+0xC4` = 4, `+0xC5`) | `0218D5F0(user, target)` via `04A`. No Safeguard gate; already 4 gives the message only. | (2, 4), flag 0, 1 draw `DungeonRandInt(2)`; `+0xC5` = 3 or 4. The draw sits inside the setter, after the dispatch's accuracy draw. | `CalcDamage` reads `+0xC4 == 4` (`0217BD94`; see [`combat.md`](combat.md)). Medium; not re-read here. | As whiffer (`0218F510`). |
+| Enraged (`+0xAE` = 0xC, `+0xAF`) | `0218E428(user, target, 0xC, move, msg)` via Rage (`0215DCC8`). Returns if already 0xC. Sets `+0xB0` (move slot) and `+0x11C` = 1. | (4, 10), flag 0, 1 draw `DungeonRandInt(6)`; `+0xAF` = 5 to 10; `+0xAE` = 12 in every sample. | In `0217E890` (line 40), each hit on the enraged monster calls `02189234(attacker, target, <stat constant at 0217EEF0>, 1)`, a one-stage raise. Which stat is a **[hypothesis]** (medium; the constant was not read). | End-of-turn block in `021861E8` (not in the `Tick` chain): counts `+0xAF` with `0219BF1C`; at 0 clears `+0xAE` and `+0x11C` and prints a message. |
+| Leech Seed (`+0xB8` = 1, `+0xC1`) | `0218DAE4(user, target, 1)` via `02163204`. Refuses user = target, Safeguard, a Grass target (`02180644(target, 4)`), and an existing seed. Sets `+0xC0` to the user's slot and `+0xBC` to the user's `info+0x8C`. | (10, 12), flag 1, 1 draw `DungeonRandInt(2)`; `+0xC1` = 11 or 12. | The per-turn drain (HP taken by the seeder) is **[lead]**: not located in this pass. | `Tick` step 8 counts `+0xC1` down and ends it through `0218F610`. Removal when the seeder leaves: `0218DA68`. |
+| Speed lowered (`+0xE9` to `+0xED`, cached stage `+0xE0`) | `021882D0(user, target, n, msgFlag, ...)` via Bubble (`010`, after its chance gate), n = 1, msgFlag 0. Safeguard gate; at stage 0 the message only; else the first free down counter `+0xE9 + i` gets roll + 1. | (6, 8), flag 1, 1 draw `DungeonRandInt(2)`; counter `+0xE9` = 7 or 8. | `CalcSpeedStage` subtracts 1 per nonzero down counter and adds 1 per nonzero up counter (`+0xE4` on), clamped 0 to 4, stored in `+0xE0`. | `Tick` step 14 counts each counter down; at 0 with a stage change, the speed message. In the one check, `+0xE0` read 0 before and after; the start stage was not examined. |
+
+Tags for the table: the setter and draw columns are **[blue-verified]** (setter bodies static, duration runtime), high. The effect column is static, medium where stated.
+
+### Open items for these statuses
+
+- Wake on hit at runtime (a damage call on a sleeper). Static read only; see [wake on hit](#sleep-wake-on-hit).
+- Leech Seed's per-turn drain and its timing.
+- The stat an enraged monster raises when it is hit (the constant at `0217EEF0`).
+- A real paralysed or flinched monster's behaviour in play (static reads only).
+- Whether Bubble's lowered speed stage changes `+0xE0` from a non-zero starting stage.
+- Ability-caused statuses (see the lead above).
+- Message text and IDs (patched out in the runs).
 
 ## Sleep class (`+0x99`, `+0x9A`)
 
@@ -87,14 +154,16 @@ Sleep, nightmare, napping and yawning share one byte. A status can be set only w
 | Yawning | `0215E0C0` | `021AA2BC` = (2, 2) | `gYawnTurnRange` {2, 2} | yes |
 | Napping | `02161370` | `021AA344` = (2, 4) | `gNappingTurnRange` {2, 4} | yes |
 
-- The roll itself is `CalculateStatusTurns` (`0219CF28`), which rolls `DungeonRandRange` on a (min, max) pair. For a monster it also adjusts the roll: a check with argument `0x12` halves it, and a check with argument `0x14` caps it at 5 when it is above 4. The checks come from `021805B0`. `0x12` is an IQ skill bit and `0x14` is an ability. The roll gives `0x7F` for permanent and is never below 1 (blue-verified behaviour, #166 P2b). The name `CalculateStatusTurns` is red-hypothesis.
+- **Runtime (#359 P2, 24 samples).** Hypnosis (`0218B2D0`, `0218B420`): pair (3, 7), flag 1, one `DungeonRandInt(4)` draw in every sample; `+0x9A` took 3 to 6 (8, 4, 5 and 7 of 24) and gets no +1. The nightmare duration is **not** checked at runtime; sleep is the only one of these four that was. Scratch script, not in the repo.
+
+- The roll itself is `CalculateStatusTurns` (`0219CF28`), which rolls `DungeonRandRange` on a (min, max) pair. For a team member with the flag set, it also adjusts the roll: IQ skill `0x12` halves it (through `HasIQSkill`, `021805B0`), and ability `0x14` caps it at 5 when it is above 4 (through `AbilityIsActive`, `0218067C`, which tests the species' ability bytes `+0x58` and `+0x59`). Neither adjustment applies to `0x7F`. The `0x14` check is an ability, not an IQ bit: #359 P4 read it as an IQ bit through `021805B0`, which the decompile of `0219CF28` does not support. The roll gives `0x7F` for permanent and is never below 1 (blue-verified behaviour, #166 P2b). The name `CalculateStatusTurns` is red-hypothesis.
 - **Yawn-end roll.** `0218FE64` case 4 rolls `021AA2C0` = (4, 8), then sleeps for roll + 1 turns. The value equals Red's nightmare range, but the source is not confirmed. Red's yawn end goes through `sub_80420B8` → `sub_804151C(0x19, 1)`, which is not a sleep-range call (low).
 
 ### Sleep: countdown and per-turn
 
 - **Countdown.** In the chain (step 2), if `0x99 != 0` and `0x9A` reaches 0 after `0219BF1C`, the code calls the sleep expiry `0218FE64(entity, entity, 1, 1)`. A turns value of `0x7F` never expires: the sleep lasts until it is woken or cured. **blue-verified, high.**
 - **Per-turn yawning.** If `0x99 == 4`, `021861E8` calls `0213F6B0`. Red's `dungeon_turn_effects.c:200` to `202` calls `sub_80420B8`. The name of `0213F6B0` was not confirmed (medium).
-- **Shed Skin** (ability `0x21`) runs `DungeonRandInt(100) < 50` (value `021AA090` = 50) and the negative-status check `FUN_02181904`, then calls the cure-all `02190100`. The roll runs once per monster per end of turn, whether or not the monster has a status. **blue-verified, high.**
+- **Shed Skin** (ability `0x21`) runs `DungeonRandInt(100) < 50` (value `021AA090` = 50) and the negative-status check `HasNegativeStatus` (`02181904`), then calls the cure-all `02190100`. The roll runs once per monster per end of turn, whether or not the monster has a status. **blue-verified, high.**
 
 ### Sleep: expiry
 
@@ -108,18 +177,20 @@ Sleep, nightmare, napping and yawning share one byte. A status can be set only w
 | 4 yawning | Clear `0x99`, roll `021AA2C0` = (4, 8), then `0218B2D0(entity, roll + 1, 1)`. |
 | 5 napping | Message, heal 999 (`021AA1D0`) through `0218DF38`, clear `0x99`, then the cure-all `02190100`. |
 
-- The switch is blue-verified (high). The targets are medium: the napping heal's argument order was not checked. `02190100` is treated as the cure-all, inferred from its body (it runs `FUN_02181904` first and calls `0218FE64`, `0218FD80` and other class enders).
+- The switch is blue-verified (high). The targets are medium: the napping heal's argument order was not checked. `02190100` is treated as the cure-all, inferred from its body (it runs `HasNegativeStatus` (`02181904`) first and calls `0218FE64`, `0218FD80` and other class enders).
 
 ### Sleep: wake on hit
 
-Two checks, and they disagree:
+Both checks need `0x9A == 0x7F` (static read, #359 P2):
 
-- `0217D5FC` (the damage path): if `0x99` is 1, 3 or 5 and `0x9A == 0x7F`, it calls the wake `0218F1EC`. This matches Red's `dungeon_damage.c:279` to `280` (sleep, napping, nightmare). **blue-verified, medium.**
-- `0218F21C`: wakes only when `0x99 == 1` and `0x9A == 0x7F`, through `0218FE64(…, 0, 1)`. It is called from `021861E8` and from the move resolver `02156824`. It does **not** cover nightmare or napping, so it disagrees with `0217D5FC`. Needs a trace or a second look before either is relied on (medium).
+- `0217D5FC` (the damage path): if `0x99` is 1, 3 or 5 and `0x9A == 0x7F`, it calls the silent wake `0218F1EC`. This matches Red's `dungeon_damage.c:279` to `280` (sleep, napping, nightmare). **blue-verified, high (static).**
+- `0218F21C`: wakes only when `0x99 == 1` and `0x9A == 0x7F`, through `0218FE64(…, 0, 1)`. It is called from `021861E8` and from the move resolver `02156824`.
+
+The two disagree only for nightmare and napping (`0x99` 3 and 5), which no first-dungeon move sets. So a finite Hypnosis sleep (3 to 6 turns) is **not** woken by damage; only a `0x7F` sleep is. **Runtime check: not done.** It needs a damage call on a target with `0x99 = 1` and `0x9A = 4` (and one with `0x7F`), then a read of `0x99`.
 
 ### Sleep: cures
 
-- **Insomnia** (`0x36`) and **Vital Spirit** (`0x49`) are checked in `02175850` (ability cures). They call the sleep expiry when `FUN_021818D0` is nonzero or the status is yawning (`0x99 == 4`). So yawning is woken by these abilities. `FUN_021818D0` was not identified (medium).
+- **Insomnia** (`0x36`) and **Vital Spirit** (`0x49`) are checked in `02175850` (ability cures). They call the sleep expiry when `IsSleeping` (`021818D0`) is true or the status is yawning (`0x99 == 4`). So yawning is woken by these abilities. `IsSleeping` is true for `0x99` 1, 3 or 5 (#359 P4; blue-verified body, red-hypothesis name).
 - **Cure-all** `02190100`: Shed Skin and the napping end call it. It clears the negative statuses (inferred, medium).
 
 ### Sleep: RNG
@@ -186,6 +257,7 @@ Cures through `02175850` are blue-verified (medium). The three callers of the cu
 
 - **Write.** `021885A0` writes `0x9B = 4` and the `0x9C` turns. Overlay dispatcher `0215BAF8` calls it when bit 8 of the entity's flags at `+0x144` is set. **blue-verified, medium**.
 - **Conflict resolved.** `021885A0` is the setter (#190 P4). It reads the range `0x021AA304` = (1, 2) at runtime. Red's setter (`move_orb_effects_1.c:1311`, `gParalysisTurnRange`) is not matched to `021885A0` (open).
+- **Runtime (#359 P2, 24 samples):** pair (1, 2), flag 1, one `DungeonRandInt(1)` draw in every sample, so `+0x9C` = 2. See [First dungeon statuses](#first-dungeon-statuses-359).
 - Expiry is by countdown and by Limber. The speed effect (`CalcSpeedStage` reads `0x9B == 4`) is outside this page.
 - The bit meanings of `+0x144` are in [#190 P4](#paralysis-sleepless-the-0x7f-sentinel-and-0x144-190-p4). Their writers are not located.
 
@@ -384,7 +456,7 @@ Static findings from Ghidra copies A, B and C, with runtime checks where marked.
 
 **Status: partial.** Muzzled, transform and blinker are blue-verified. Invisible and mobile were found by the decimal-offset scan.
 
-- **Muzzled** (`+0xCB` flag, `+0xCC` turns). Setter `FUN_ov_0001__0218C1AC(user, target)`: Safeguard gate `FUN_02180870(user, target, 1)` (returns when set, and shows the Safeguard message); if `+0xCB == 1`, message only; else `+0xCB = 1` and `+0xCC = roll(0x021AA2B0) + 1`. Pool `0x021AA2B0` = (10, 10), matching Red's `gMuzzledTurnRange`. End `FUN_ov_0001__0218F27C` (chain step 12): if `+0xCB == 1`, message; then clears `+0xCB`. Readers of `+0xCB`: `FUN_0215B384`, `FUN_021457B0`, `FUN_021816EC`, `FUN_0218410C`, `FUN_021842D8`, `FUN_02181904`, not analysed (likely the move-block checks).
+- **Muzzled** (`+0xCB` flag, `+0xCC` turns). Setter `FUN_ov_0001__0218C1AC(user, target)`: Safeguard gate `FUN_02180870(user, target, 1)` (returns when set, and shows the Safeguard message); if `+0xCB == 1`, message only; else `+0xCB = 1` and `+0xCC = roll(0x021AA2B0) + 1`. Pool `0x021AA2B0` = (10, 10), matching Red's `gMuzzledTurnRange`. End `FUN_ov_0001__0218F27C` (chain step 12): if `+0xCB == 1`, message; then clears `+0xCB`. Readers of `+0xCB`: `FUN_0215B384`, `FUN_021457B0`, `FUN_021816EC`, `FUN_0218410C`, `FUN_021842D8`, `HasNegativeStatus` (`02181904`), not analysed (likely the move-block checks).
 - **Transform** (`+0xC7` status, `+0xC8` turns). Setter `FUN_ov_0001__0218BFA8(user, target)`, status 2:
   - if already 2, message;
   - picks a species at random: up to 20 tries, `DungeonRandInt(cap)` each, using `FUN_02175BA0`, `FUN_02178C04` and the species list from `FUN_02138A5C`. This is a use of the dungeon RNG;
@@ -698,7 +770,7 @@ Tag: **blue-verified** (decompile); **red-hypothesis** (the Red side, from the p
 - **Yawning per-turn function.** `0213F6B0` is not identified.
 - **Wake on hit.** `0217D5FC` and `0218F21C` disagree for nightmare and napping (P1.6). A trace at 127 turns is needed.
 - **Countdown gate.** Why only the call from `0x02140BA4` decrements (#191 P1).
-- **Ability and item IDs.** `FUN_021818D0`, `FUN_021805B0` (IQ and flag checks `0x11`, `0x12`, `0x14`), `FUN_02181904` (negative-status check): not named. Held item `0x14`, `0x15` and the IQ bit are matched by value only.
+- **Ability and item IDs.** `IsSleeping` (`021818D0`), `HasIQSkill` (`021805B0`, IQ checks `0x11` and `0x12`) and `HasNegativeStatus` (`02181904`) are named (#359 P4; the names are red-hypothesis). The `0x14` check is `AbilityIsActive` (`0218067C`), an ability test, not the IQ test. Held items `0x14` and `0x15` are matched by value only.
 - **Calls with unknown arguments.** `0218DF38` (heal) argument order, `0217BCA4` (`…, 1, 0x208`) argument list, and `02190100` behaviour (inferred from its body).
 - **Burn-end and burn-apply conditions** in `021760B4`: `0x2A & 3 == 2` and the dungeon flag `0x34AE`, unnamed. Callers of `0215C774` and `0214650C` are unknown.
 - **Residual-damage reason tags** mapped in [#191 P3](#residual-damage-tags-191-p3).

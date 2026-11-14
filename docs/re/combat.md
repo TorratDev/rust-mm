@@ -19,7 +19,7 @@ Every function below matches its `pmd-red` counterpart in `src/dungeon_damage.c`
 | `WeightWeakTypePicker` `ov_0001::0217CB3C` | Uses the chart to weigh move types against a target (AI). |
 | `AbilityIsActive` `ov_0001::0218067C` | Ability check. |
 | `AccuracyCalc` `ov_0001::0215A928` | Hit check. See [accuracy and evasion](#accuracy-and-evasion). |
-| `IqSkillIsEnabled` `ov_0001::021805B0` | Bit test on the IQ bitfield. See [accuracy and evasion](#accuracy-and-evasion). |
+| `HasIQSkill` `ov_0001::021805B0` | Bit test on the IQ bitfield. See [accuracy and evasion](#accuracy-and-evasion). |
 | `HandleDamagingMove` `ov_0001::0215675C` | Damage handler for 60 move IDs in the dispatch. See [move effects](#move-effects). |
 
 Red has a fifth reader of the type chart, `TargetNotImmuneTo`, marked unused; Blue has no matching code reference.
@@ -175,7 +175,7 @@ The hit check is `AccuracyCalc`, at `ov_0001::0215A928`. It is the Blue counterp
   - Hustle (`0x30`) with a physical move: **+2 to the target's evasion stage** (`info+0x26`, static). That lowers the hit chance. See [P5](#p5-static-leftovers).
 - Penalties: a target holding the Detect Band (item 35) takes −30. A target with the Quick Dodger IQ skill (IQ bit 5) takes −30. For move `0x163` (Regular Attack), an attacker with IQ bit 4 (Sure Hit) is a sure-hit case.
 - Stage tables: accuracy at `ov_0001::021AA8C4` (pointer slot `ov_0001::0215AB2C`) and evasion at `ov_0001::021AA918` (pointer slot `ov_0001::0215AB30`). Both have 21 entries and match Red's `gAccEvsStatStageMultipliers` entry by entry. Blue stores integers where Red's table holds s24.8 values. The stage is clamped to 0 to 20, and the multiplier to a cap of `0x6400`.
-- `IqSkillIsEnabled` at `ov_0001::021805B0` tests bit `n` of the info's 24-bit IQ bitfield, at `+0x87` to `+0x89`. It calls the helper `02004250` (`IsIQSkillSet`) through the pointer `PTR_FUN_021805C8` (blue-verified). The bit numbers 4, 5 and 8 match Red's IQ skill indices.
+- `HasIQSkill` (formerly `IqSkillIsEnabled`, #359 P4) at `ov_0001::021805B0` tests bit `n` of the info's 24-bit IQ bitfield, at `+0x87` to `+0x89`. It calls the helper `02004250` (`IsIQSkillSet`) through the pointer `PTR_FUN_021805C8` (blue-verified). The bit numbers 4, 5 and 8 match Red's IQ skill indices.
 - Callers of the random outcome functions and their chance sources are in [P4](#p4-outcome-wrappers-and-ai-chance-sources). Of the 63 move-side wrapper calls in overlay 1, 19 pass a literal 0 and draw nothing, and 44 draw. The AI chance sources are open.
 
 ## Basic attack at runtime (#356)
@@ -271,8 +271,8 @@ Tags are for the role read in the export. The names are ours unless marked.
 | `ov_0001::02191E70` | `IsProjectilePathClear` | Projectile path test `(user, target, dir, maxdist)`. The distance is clamped to `maxdist` first. If IQ bit 3 is clear, the function returns true, because the clamp makes the test always pass. If set, it walks from the user in `dir` for up to dist + 1 steps: false when it leaves the map (x 1 to 0x36, y 1 to 0x1E) or meets a tile with `flags & 3 == 0`, true on reaching the target, false on any other entity. Callers: `021853CC`, `02192728`. | blue-verified; IQ bit 3 name open |
 | `ov_0001::02141C08` | `IsInSameRoomAI` | AI relation `(a, b)`. False if b's `+0x20` byte is 0. For two monsters, false when the `+0xC7` and `+0xC9` flags exclude b. Otherwise `0219C6BC(a+4, b+4)`: the same room, or within 2 tiles in a corridor (the limit is `gDungeon+0x15FA1`, or 2 if that is 0). 15 callers. The executor's room test `02141AF0` is the same without the two flag exclusions. | blue-verified |
 | `ov_0001::021818A4` | `IsHpBelowQuarter` | True when HP (`info+0xE`) is at or below `0208625C(max HP, 4)`. Callers: `021644B8`, `02192274` (2 sites). | blue-verified; the "quarter" depends on `0208625C`, not decompiled |
-| `ov_0001::02181904` | `HasAnyStatus` | True when any of a fixed set of info fields holds its listed value: `+0x99`, `+0x9B`, `+0xA0`, `+0xAC`, `+0xB3`, `+0xB8`, `+0xC4`, `+0xC9`, `+0xCB`, `+0xD2`, `+0xDA`, a six-byte entry block at `+0xF4`, and five bytes at `+0xE9` to `+0xED`. 8 callers. | blue-verified; the meanings of `+0x99` and `+0xA0` are medium confidence |
-| `ov_0001::021818D0` | `IsSleepLike` | True when `info+0x99` is 1, 3 or 5. 11 callers. | blue-verified |
+| `ov_0001::02181904` | `HasNegativeStatus` | True when any status field holds its listed value: `+0x99` is 1, 3 or 4; `+0x9B` is nonzero; `+0xA0` is neither 0 nor 5; `+0xAC` is nonzero; `+0xB3` is 1 or 2; `+0xB8` is 1; `+0xC4` is 2; `+0xC9` is 1 or 2; `+0xCB` is 1; `+0xD2` is nonzero; `+0xDA` is nonzero; entry `i` (0 to 3) of the six-byte block at `+0xF4 + 6i` has bit 0 set in both its first and second byte; or any of `+0xE9` to `+0xED` is nonzero. Yawning counts, sleepless does not. 8 callers. Replaces `HasAnyStatus` (#359 P4). | blue-verified body; name red-hypothesis; the roles of `+0xA0`, `+0xC9`, `+0xD2` and `+0xDA` are guessed (medium) |
+| `ov_0001::021818D0` | `IsSleeping` | True when `info+0x99` is 1, 3 or 5 (sleep, nightmare, napping). Not sleepless (2) or yawning (4). 11 callers. Replaces `IsSleepLike` (#359 P4). | blue-verified body; name red-hypothesis |
 | `ov_0001::02180994` | `GetTreatmentBetweenMonsters` | Returns 0 for an ally or the same entity, 1 for a foe, 2 to ignore. The name is Red's (red-hypothesis); the return values are read in Blue. Used by `0215A3A8` and `02192274`. | blue-verified |
 
 ### Executor path (`0215A520`, `0215A3A8`)
@@ -381,11 +381,11 @@ The user can be a candidate only in areas `0x30`, `0x60` and `0x70`, the areas t
 
 - `0x100`: random. The chance is the move entry byte at `+0x10`, which is `accuracy[2]`. `FUN_0200B3C4(move, i)` reads the byte at the move entry plus `0xE` plus `i`, with entries `0x24` bytes apart, so `i = 2` gives `+0x10`. The chance is compared with `DungeonRandInt(100)`. `+0x13` is crit chance, a different byte. The port reads this as `accuracy[2]` in `crates/data/src/moves.rs`. Red's name `ACCURACY_AI_CONDITION_RANDOM_CHANCE` is a red-hypothesis.
 - `0x200`: HP at or below 25% (`021818A4`).
-- `0x300`: has a status (`02181904`).
-- `0x400`: asleep (`021818D0`).
+- `0x300`: has a negative status (`HasNegativeStatus`, `02181904`).
+- `0x400`: asleep (`IsSleeping`, `021818D0`).
 - `0x500`: HP at or below 25% or has a status.
 - `0x600`: ghost target (type `0x0E`) with `+0xD2 == 0`.
-- The condition is checked only when the attacker has the Status Checker IQ skill (IQ bit 8, through `IqSkillIsEnabled`). Without it, only `0x100` applies.
+- The condition is checked only when the attacker has the Status Checker IQ skill (IQ bit 8, through `HasIQSkill`). Without it, only `0x100` applies.
 
 ### Candidate selection (P1, #186)
 
@@ -396,7 +396,7 @@ Investigator A's findings for the area classes. Tag: **blue-verified** (decompil
 - **Other classes.** `0x30`: 20 slots at `gDungeon + 0x11364`, kept when `FUN_02141C08(user, e) != 0`. `0x40`: 8 offsets at twice the distance, with the direction gate. `0x50` and `0x80`: all 20 slots; `FUN_02192618(user, target, limit)` keeps targets within Chebyshev distance `limit` (10 for `0x50`, 1 for `0x80`) and a direction; then `FUN_02191E70` checks the path. `0x60`: all 20 valid slots. `0x70`: the user only.
 - **Single candidate.** If `user.info + 0xC9 == 1`, there is one candidate: the tile in the user's facing direction (`info + 0x44`), with no entity (pointer 0) and weight 99. This applies only for classes `0x00`, `0x10` and `0x20`, because the `info+0xC9 == 1` check sits inside that branch of `ov_0001::02192728`.
 - **Choice.** Candidates are picked by a weighted `DungeonRandInt(sum of weights)`. The weights come from `FUN_021921B0`.
-- **Target filter.** `FUN_02192274(flags, user, target, ...)`: the low nibble of `flags` is a relation filter (`0`: `FUN_02180994 == 1`; `1`: `== 0`; `2` and `5`: refuse when the target's `info+8` or `info+0x98` is set; `6`: not self and `== 0`; `3` and `4`: always pass). The `0xF00` nibble adds the AI checks listed above (`0x100` through `0x600`, using `FUN_0200B3C4`, `FUN_021818A4`, `FUN_02181904`, `FUN_021818D0` and a type check on `info +0x56`/`+0x57` against `0x0E`).
+- **Target filter.** `FUN_02192274(flags, user, target, ...)`: the low nibble of `flags` is a relation filter (`0`: `FUN_02180994 == 1`; `1`: `== 0`; `2` and `5`: refuse when the target's `info+8` or `info+0x98` is set; `6`: not self and `== 0`; `3` and `4`: always pass). The `0xF00` nibble adds the AI checks listed above (`0x100` through `0x600`, using `FUN_0200B3C4`, `FUN_021818A4`, `HasNegativeStatus` (`02181904`), `IsSleeping` (`021818D0`) and a type check on `info +0x56`/`+0x57` against `0x0E`).
 - **Direction.** `FUN_02192508(count, flags, user, target, ...)`: the direction is `info+0x44` when user and target share a tile, or when the class is `0x30`, `0x60` or `0x70`. Otherwise it is `FUN_0201187C(user, target)`. It adds a candidate when `FUN_02192274` passes and the slot is empty.
 
 **Confidence:** high for the branch table. Medium for the names given to `info+0xC9` (player control, from its use as a gate in `FUN_02141C08`), to the `0x30` slot list, and to the `0x0E` type check.
