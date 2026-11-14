@@ -212,7 +212,7 @@ impl App {
                 }
             }
             Outcome::NextFloor => self.next_floor(),
-            Outcome::DungeonCleared => self.back_to_menu(),
+            Outcome::DungeonCleared | Outcome::LeaderDefeated => self.back_to_menu(),
             Outcome::Blocked(_) | Outcome::NotModelled => {}
         }
     }
@@ -352,6 +352,8 @@ fn leader_monster(pos: (i16, i16), species: u16) -> Monster {
             belly_empty: false,
             regen_acc: 0,
             regen_speed: 0,
+            exp: 0,
+            exp_gained: 0,
         },
     }
 }

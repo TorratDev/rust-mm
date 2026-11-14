@@ -253,6 +253,8 @@ fn monster(
             // as with `leader_speed`), so HP regeneration runs at the clamp's floor of 30 until
             // the table is loaded.
             regen_speed: 0,
+            exp: 0,
+            exp_gained: 0,
         },
     })
 }

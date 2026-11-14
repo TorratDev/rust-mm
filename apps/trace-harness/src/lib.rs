@@ -549,6 +549,8 @@ mod tests {
                 belly_empty: false,
                 regen_acc: 0,
                 regen_speed: 0,
+                exp: 0,
+                exp_gained: 0,
             },
         }
     }

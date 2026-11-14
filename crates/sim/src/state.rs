@@ -140,6 +140,16 @@ pub struct EntityInfo {
     /// The species regeneration speed: `Species::regen_speed` in `rescue-data` (already shifted
     /// left by one). Read for team members only; clamped to 30 to 500 when used.
     pub regen_speed: u8,
+    /// `+0x18`: the EXP total. The sim adds each award here (`combat`, "Experience"). The game's
+    /// writer of this field is not located (`docs/re/combat.md`, "Defeat in the sim (#422)").
+    // shortcut: the total is raised by the award itself, not by the game's writer of `+0x18`.
+    #[serde(default)]
+    pub exp: i32,
+    /// `+0x1C8`: the EXP gained by the awards (`AddExpPoints` adds its delta here).
+    // shortcut: the reset of `+0x1C8` is not modelled, as its writer is not located: the sim
+    // keeps the sum of every award.
+    #[serde(default)]
+    pub exp_gained: i32,
 }
 
 /// One move slot of a monster: the six bytes at `info + 0xF4 + 6 * slot` (`docs/re/combat.md`,
@@ -805,7 +815,7 @@ impl GameState {
         let Some(dungeon) = self.dungeon.as_mut() else {
             return Outcome::Blocked(Blocked::NoDungeon);
         };
-        match command {
+        let outcome = match command {
             Command::Move(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
                     dungeon.move_leader(dir, target);
@@ -833,7 +843,12 @@ impl GameState {
                 None => Outcome::NotModelled,
             },
             Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
+        };
+        // The leader's defeat ends the run: the dungeon is dropped, as the cleared one is.
+        if outcome == Outcome::LeaderDefeated {
+            self.dungeon = None;
         }
+        outcome
     }
 
     /// The stairs action: the next floor is loaded, or the dungeon is cleared when the next floor
@@ -1146,6 +1161,8 @@ mod tests {
             belly_empty: false,
             regen_acc: 0,
             regen_speed: 0,
+            exp: 0,
+            exp_gained: 0,
         }
     }
 

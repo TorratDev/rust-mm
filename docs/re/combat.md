@@ -622,13 +622,52 @@ removes the defeated monsters only after the last hit, and does not run the fain
 effects. So a use that defeats one target and then hits another may differ from the game. The
 `// shortcut:` note on `resolve_all` in `combat.rs` marks the same point.
 
+**Leader defeat.** A hit that takes the leader to 0 HP makes the use return
+`Outcome::LeaderDefeated`, and `GameState` drops the dungeon, as the cleared run is dropped.
+[hypothesis] The run ends with this outcome: the game's leader faint (`HandleFaint_Async`, the
+leader branch) is not run, and its effects (the exit reason, the screen) are not modelled. The sim
+never targets the leader (`targets_of` refuses it, and no wild AI attacks in the sim), so the path
+is reached only by `resolve_all` directly, in the unit test. The runtime check the issue asks for
+(force the leader to 0 HP on floor 1, record the state after) was not run. Upgrade path: run that
+check, then let the wild AI target the leader.
+
+**Experience.** A wild defeat awards its amount to each team member, through the award function
+(`AddExpPoints`).
+- The award goes to each recipient, the attacker and each team member, once per defeat:
+  [blue-verified] (the callers; the logic is static, and the cap is confirmed at runtime).
+- The cap, 9,999,999 (`0x02183FE8`): the total stops at the cap, and the gained delta is what the
+  cap let in: [blue-verified] (the cap value is read at runtime; the logic is static).
+- A monster at level 100 gets no EXP: [blue-verified] (static, `0x02183F7C`).
+- The multiplier at `+0xD8`: `0` halves the amount, `1` leaves it, `2` multiplies by 3/2:
+  [blue-verified] for `0` and `1` (runtime, species 290 at level 1 gave 7 and 15). The writer of
+  `2` is not located. The sim reads the multiplier as 1 ([shortcut](#defeat-in-the-sim-422)).
+- The formula, `yield + yield * (level - 1) / 10`: the amount at level 1 is [blue-verified] (15 for
+  species 290, runtime). The level term is static and matches Red, but the level it reads (the
+  defeated monster's or the leader's) is [hypothesis]. The sim uses the defeated monster's level.
+  The sim takes the amount at least 1, as the game does after the multiplier.
+- The join-location lock (`'J'`, `'G'` at `+0x40`): not modelled. The sim has no such byte.
+- Writes: the delta goes to `+0x1C8` (EXP gained). The total at `+0x18` is written outside
+  `AddExpPoints`, and its writer is not located. The sim adds each award to the total
+  [shortcut]. Whether `+0x1C8` is reset each turn is not located; the sim keeps the sum.
+
+**Level-up.** [hypothesis] A monster rises one level at a time while its total reaches the table
+threshold (`levels[level]`, from `rescue_data::species::parse_level_data`, where record `i` is
+the total for level `i + 1`). The trigger, the table index and the order of the checks are not
+checked at runtime (owner's P3 on the issue). The stat gains of a level (`hp`, `attack`,
+`defense`) are not applied: they are not verified [shortcut].
+
 Tests: `a_move_that_takes_a_wild_monster_to_0_hp_removes_it`,
 `a_regular_attack_that_takes_a_wild_monster_to_0_hp_removes_it`,
-`one_use_that_defeats_two_wild_monsters_removes_both_and_keeps_the_middle_one`.
+`one_use_that_defeats_two_wild_monsters_removes_both_and_keeps_the_middle_one`,
+`a_wild_defeat_awards_the_leader_the_formula_amount_for_its_level`,
+`the_exp_amount_is_the_yield_plus_a_tenth_per_level_above_1`,
+`a_level_up_follows_the_table_and_stops_at_the_next_threshold`,
+`a_monster_at_level_100_gains_no_exp_and_the_total_is_capped`,
+`the_leaders_defeat_is_reported_and_its_hp_stops_at_0`.
 
 Not in the sim yet, each for a reason the notes give:
 
-- **Leader defeat and the `Outcome` for it.** The sim has no leader-faint path: a move never targets the leader (`targets_of`), and no wild AI attacks it. A new `Outcome` variant would be in `command.rs`, which the sim's #422 change does not cover.
-- **Experience.** The award (`AddExpPoints`) needs the species' EXP yield (`Species::exp_yield` in `rescue-data`, read from the species table at offset `0x20`) and a per-monster EXP-gained field (`+0x1C8`). The sim has neither, and adding the field changes the public `EntityInfo`. The offset `0x20` is static (the EXP formula bullet above); `+0x1C8` is blue-verified in the Award bullet above. The multiplier's writer of `2` and `0` is not located, so the sim would use 1. The formula row is static, not blue-verified.
-- **Level-up.** No row in the notes is blue-verified for it, and the sim does not take the level table.
 - **Item drop, Reviver Seed, recruit and join.** The sim has no items, revive or join path.
+- **Runtime checks P1 to P3 of the issue** (leader defeat, EXP base at two species and levels,
+  level-up trigger): not run in this PR. The rows above that depend on them are marked
+  [hypothesis].
