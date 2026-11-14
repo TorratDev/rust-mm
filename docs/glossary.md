@@ -43,6 +43,7 @@ Tags used in the topic pages and in [`symbols.md`](symbols.md) also exist: `tent
 | Key state | 0x10 each (current at `0x020F2790`, previous at `0x020F2780`) | ARM9 | `[blue-verified]` | Per-frame button state: held keys, pressed edge, D-pad repeat output, B and R tap flags, D-pad group and hold counter. | [`re/io.md`](re/io.md#key-state) |
 | Touch state | see topic page | ARM9 | `[blue-verified]` (layout read in `LoadBufferedInputs`) | Touch position, tap, drag and hold output, and the gesture state at `+0x20`. At `0x020F27B0`. | [`re/io.md`](re/io.md#touch-state) |
 | Status class | — | heap | `[blue-verified]` for the byte offsets (`+0xAC` inferred); the class names are Red's and only partly confirmed | A group of status bytes in the entity info: sleep `+0x99`, burn `+0x9B`, frozen `+0xA0`, cringe `+0xAC`, reflect `+0xB1`. Each class has a status byte and a turns or counter byte. Partial catalogue. | [`re/status.md`](re/status.md#status-classes) |
+| Negative status test | — | overlay 1 | `[blue-verified]` for the body; `[red-hypothesis]` for the name | `HasNegativeStatus` (`ov_0001::02181904`): true when a monster holds a negative status (the test the cure-all `02190100` runs first). Yawning counts; sleepless does not. The sleep test `IsSleeping` (`ov_0001::021818D0`) is true for sleep, nightmare and napping. | [`re/status.md`](re/status.md#first-dungeon-statuses-359) |
 
 ### Fields
 
