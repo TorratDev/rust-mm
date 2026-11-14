@@ -11,6 +11,7 @@ pub mod combat;
 pub mod command;
 pub mod floor;
 pub mod floor_gen;
+mod move_effects;
 pub mod rng;
 pub mod state;
 mod targeting;

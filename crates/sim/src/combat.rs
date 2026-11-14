@@ -5,8 +5,9 @@
 //! Scope. The leader uses one of [`DAMAGING`], or Regular Attack ([`REGULAR_ATTACK`], the attack
 //! action `0x32`, `docs/re/combat.md`, P8). Its targets are the monsters the move's range picks
 //! (`crate::targeting`, the executor's areas and classes), each hit in the game's order. The HP
-//! changes and nothing else does: no defeat (#422), no secondary effect (#421). Items, statuses,
-//! weather and the Deoxys adjustment are not modelled; each is a `shortcut:` note below.
+//! changes, and the stage changes of [`crate::move_effects`] do: no defeat (#422), no secondary
+//! effect (#421). Items, statuses, weather and the Deoxys adjustment are not modelled; each is a
+//! `shortcut:` note below.
 //!
 //! Draw order of one use (`docs/re/combat.md`, P6 and P8): the slot-0 hit check, then
 //! `CalcDamage`'s boost roll, critical roll and variance roll, then the slot-1 hit check. The
@@ -18,6 +19,7 @@ use rescue_data::combat::CombatTables;
 use rescue_data::moves::Move;
 
 use crate::command::{Blocked, Direction, Outcome};
+use crate::move_effects::{self, Effect};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
 use crate::targeting::{self, Slot};
 
@@ -35,7 +37,7 @@ pub const REGULAR_ATTACK: u16 = 0x163;
 const REGULAR_ATTACK_ARG8: i64 = 0x80;
 
 /// `arg8`, the damage scale in 24.8, for [`DAMAGING`] moves: 1.0.
-const ARG8: i64 = 0x100;
+pub(crate) const ARG8: i64 = 0x100;
 
 /// One in 48.16 (`0x10000`).
 const ONE: i64 = 1 << 16;
@@ -377,9 +379,9 @@ impl Dungeon {
         if moves.flags & MoveSlot::HOLDS_MOVE == 0 {
             return Outcome::Blocked(Blocked::NoMove);
         }
-        if !DAMAGING.contains(&moves.id) {
+        let Some(effect) = move_effects::effect_of(moves.id) else {
             return Outcome::NotModelled;
-        }
+        };
         let Some(mv) = data.moves.get(usize::from(moves.id)) else {
             return Outcome::NotModelled;
         };
@@ -390,7 +392,7 @@ impl Dungeon {
             return Outcome::NotModelled;
         };
         let slot = usize::from(slot);
-        self.take_leader_turn(|d| d.strike(slot, &targets, mv, data));
+        self.take_leader_turn(|d| d.strike(slot, &targets, mv, &effect, data));
         Outcome::Applied
     }
 
@@ -413,7 +415,10 @@ impl Dungeon {
         let Some(targets) = self.targets_of(mv, direction) else {
             return Outcome::NotModelled;
         };
-        self.take_leader_turn(|d| d.resolve_all(&targets, mv, REGULAR_ATTACK_ARG8, data));
+        let effect = Effect::Damage {
+            arg8: REGULAR_ATTACK_ARG8,
+        };
+        self.take_leader_turn(|d| d.resolve_all(&targets, mv, &effect, data));
         Outcome::Applied
     }
 
@@ -442,13 +447,20 @@ impl Dungeon {
     }
 
     /// One use of the move in the leader's `slot` on each of `targets`, in order: the PP mark, the
-    /// hit checks and damage of each target, then the PP taken at the end (`docs/re/combat.md`,
+    /// hit checks and effect of each target, then the PP taken at the end (`docs/re/combat.md`,
     /// P1, P3, P6). A miss takes PP too.
-    fn strike(&mut self, slot: usize, targets: &[Slot], mv: &Move, data: &CombatData<'_>) {
+    pub(crate) fn strike(
+        &mut self,
+        slot: usize,
+        targets: &[Slot],
+        mv: &Move,
+        effect: &Effect,
+        data: &CombatData<'_>,
+    ) {
         if let Some(leader) = self.team.first_mut() {
             leader.info.moves[slot].flags2 |= MoveSlot::USE_MARK;
         }
-        self.resolve_all(targets, mv, ARG8, data);
+        self.resolve_all(targets, mv, effect, data);
 
         // The PP is taken at the end of the action, once per use (`02159B18`).
         // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
@@ -486,10 +498,10 @@ impl Dungeon {
     // 0 HP, so the next target is hit after that faint. The sim removes the defeated monsters only
     // after the last hit, and does not run a faint's own draws or effects, so a use that defeats
     // one target and then hits another may differ from the game.
-    fn resolve_all(&mut self, targets: &[Slot], mv: &Move, arg8: i64, data: &CombatData<'_>) {
+    fn resolve_all(&mut self, targets: &[Slot], mv: &Move, effect: &Effect, data: &CombatData<'_>) {
         let mut defeated = Vec::new();
         for &target in targets {
-            if self.resolve(target, mv, arg8, data) {
+            if self.resolve(target, mv, effect, data) {
                 defeated.push(target);
             }
         }
@@ -521,10 +533,11 @@ impl Dungeon {
         }
     }
 
-    /// The hit checks and damage of one use by the leader on monster `target`, with the move's
-    /// `arg8` (24.8). It takes no PP; [`strike`](Self::strike) and Regular Attack add that.
-    /// Returns whether a hit took the target to 0 HP.
-    fn resolve(&mut self, target: Slot, mv: &Move, arg8: i64, data: &CombatData<'_>) -> bool {
+    /// The slot-0 hit check of one use by the leader on monster `target`, then the effect of
+    /// `effect`: the damage with its second hit check, or the stage changes (`move_effects`). It
+    /// takes no PP; [`strike`](Self::strike) and Regular Attack add that. Returns whether a hit
+    /// took the target to 0 HP.
+    fn resolve(&mut self, target: Slot, mv: &Move, effect: &Effect, data: &CombatData<'_>) -> bool {
         let Some(attacker) = self.team.first().map(|m| m.info.clone()) else {
             return false;
         };
@@ -535,35 +548,46 @@ impl Dungeon {
         let t = data.tables;
 
         let first = self.rng.int(100);
-        if hits(t, first, mv.accuracy[0], &attacker, &defender, physical) {
-            // The critical roll is drawn only where `CalcDamage` draws it (`crit_drawn`).
-            let rolls = Rolls {
-                boost: self.rng.int(100),
-                crit: if crit_drawn(&defender) {
-                    self.rng.int(100)
-                } else {
-                    0
-                },
-                variance: self.rng.int(0x4000),
-            };
-            let dealt = damage_scaled(t, mv, arg8, &attacker, &defender, rolls);
-            let second = self.rng.int(100);
-            if hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
-                // HP stops at 0; a monster at 0 is defeated (`remove_defeated`).
-                let hp = i32::from(defender.hp) - dealt.value;
-                let hp = i16::try_from(hp.max(0)).unwrap_or(i16::MAX);
-                if let Some(info) = self.info_mut(target) {
-                    info.hp = hp;
-                }
-                return hp == 0;
-            }
+        if !hits(t, first, mv.accuracy[0], &attacker, &defender, physical) {
+            return false;
         }
-        false
+        let arg8 = match effect {
+            // The dispatch's slot-0 check is the only one a stage change makes.
+            Effect::Stages(changes) => {
+                if let Some(info) = self.info_mut(target) {
+                    move_effects::change_stages(info, changes);
+                }
+                return false;
+            }
+            Effect::Damage { arg8 } => *arg8,
+        };
+        // The critical roll is drawn only where `CalcDamage` draws it (`crit_drawn`).
+        let rolls = Rolls {
+            boost: self.rng.int(100),
+            crit: if crit_drawn(&defender) {
+                self.rng.int(100)
+            } else {
+                0
+            },
+            variance: self.rng.int(0x4000),
+        };
+        let dealt = damage_scaled(t, mv, arg8, &attacker, &defender, rolls);
+        let second = self.rng.int(100);
+        if !hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
+            return false;
+        }
+        // HP stops at 0; a monster at 0 is defeated (`remove_defeated`).
+        let hp = i32::from(defender.hp) - dealt.value;
+        let hp = i16::try_from(hp.max(0)).unwrap_or(i16::MAX);
+        if let Some(info) = self.info_mut(target) {
+            info.hp = hp;
+        }
+        hp == 0
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::command::Command;
     use crate::floor::Floor;
@@ -575,7 +599,7 @@ mod tests {
 
     /// Hand-made tables. The values are the tests' own, not the game's: neutral stages are 256,
     /// the pool is 1/4, 3/4, 1 and 2, and a pair is super when either cell is 3.
-    fn tables() -> CombatTables {
+    pub(crate) fn tables() -> CombatTables {
         let mut type_chart = [[2i16; types::TYPES]; types::TYPES];
         type_chart[1][2] = 3; // Normal is super effective against type 2
         type_chart[1][3] = 0; // and the immune class against type 3
@@ -618,7 +642,7 @@ mod tests {
         }
     }
 
-    fn move_of(id: u16, power: i16, kind: u8, accuracy: [u8; 3], crit: u8) -> Move {
+    pub(crate) fn move_of(id: u16, power: i16, kind: u8, accuracy: [u8; 3], crit: u8) -> Move {
         Move {
             id,
             name: String::new(),
@@ -648,7 +672,7 @@ mod tests {
     }
 
     /// A move table indexed by move ID, with `moves` placed at their IDs.
-    fn table(moves: &[Move]) -> Vec<Move> {
+    pub(crate) fn table(moves: &[Move]) -> Vec<Move> {
         let mut table: Vec<Move> = (0..=REGULAR_ATTACK)
             .map(|id| move_of(id, 0, 0, [0; 3], 0))
             .collect();
@@ -689,10 +713,14 @@ mod tests {
     }
 
     /// The leader with Tackle in slot 0 and a wild monster on the tile to its right.
-    fn battle(accuracy: [u8; 3], crit: u8) -> GameState {
-        let mv = tackle(accuracy, crit);
+    pub(crate) fn battle(accuracy: [u8; 3], crit: u8) -> GameState {
+        battle_with(&tackle(accuracy, crit))
+    }
+
+    /// The leader with `mv` in slot 0 and a wild monster on the tile to its right.
+    pub(crate) fn battle_with(mv: &Move) -> GameState {
         let mut leader_info = info([9, 0], [0, 0]);
-        leader_info.moves[0] = MoveSlot::new(&mv);
+        leader_info.moves[0] = MoveSlot::new(mv);
         let leader = Monster {
             pos: (5, 5),
             visible: true,
@@ -744,16 +772,20 @@ mod tests {
             tables: t,
             moves: &moves,
         };
-        g.dungeon_mut()
-            .unwrap()
-            .strike(0, &[Slot::Wild(0)], mv, &data);
+        g.dungeon_mut().unwrap().strike(
+            0,
+            &[Slot::Wild(0)],
+            mv,
+            &Effect::Damage { arg8: ARG8 },
+            &data,
+        );
     }
 
-    fn wild_hp(g: &GameState) -> i16 {
+    pub(crate) fn wild_hp(g: &GameState) -> i16 {
         g.dungeon().unwrap().wild()[0].info.hp
     }
 
-    fn leader_pp(g: &GameState) -> u8 {
+    pub(crate) fn leader_pp(g: &GameState) -> u8 {
         g.dungeon().unwrap().team()[0].info.moves[0].pp
     }
 
@@ -1105,9 +1137,14 @@ mod tests {
             tables: t,
             moves: &moves,
         };
-        g.dungeon_mut()
-            .unwrap()
-            .resolve(Slot::Wild(0), mv, REGULAR_ATTACK_ARG8, &data);
+        g.dungeon_mut().unwrap().resolve(
+            Slot::Wild(0),
+            mv,
+            &Effect::Damage {
+                arg8: REGULAR_ATTACK_ARG8,
+            },
+            &data,
+        );
     }
 
     #[test]
@@ -1265,7 +1302,9 @@ mod tests {
             targeting::executor_targets(g.dungeon().unwrap(), 0x9A, 0x10, Direction::Right, None)
                 .unwrap();
         assert_eq!(targets, vec![Slot::Wild(2), Slot::Wild(0), Slot::Wild(1)]);
-        g.dungeon_mut().unwrap().strike(0, &targets, &mv, &data);
+        g.dungeon_mut()
+            .unwrap()
+            .strike(0, &targets, &mv, &Effect::Damage { arg8: ARG8 }, &data);
         let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
         // DownRight (6, 6) is wild 2, Right (6, 5) is wild 0, UpRight (6, 4) is wild 1.
         assert_eq!(hp(&g, 2), 100 - dealt(blocks[0]));
@@ -1313,7 +1352,9 @@ mod tests {
             targeting::executor_targets(g.dungeon().unwrap(), 0xA0, 0x20, Direction::Right, None)
                 .unwrap();
         assert_eq!(targets, vec![Slot::Wild(1), Slot::Wild(2), Slot::Wild(0)]);
-        g.dungeon_mut().unwrap().strike(0, &targets, &mv, &data);
+        g.dungeon_mut()
+            .unwrap()
+            .strike(0, &targets, &mv, &Effect::Damage { arg8: ARG8 }, &data);
         let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
         // Right (6, 5) is wild 1 and takes the first block, UpRight (6, 4) is wild 2 and takes
         // the second, DownRight (6, 6) is wild 0 and takes the third.
