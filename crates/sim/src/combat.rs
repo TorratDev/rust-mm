@@ -442,9 +442,10 @@ impl Dungeon {
         }
         let facing = self.facing(direction);
         let targets = match effect {
-            // A sport's range is the user (`0x73`, the move row's executor value): its handler
-            // sets a floor counter and reads no target, so the user is its one target.
-            Effect::Sport(_) => {
+            // A sport's and Withdraw's range is the user (`0x73`, the move row's executor value):
+            // a sport's handler sets a floor counter and reads no target, and Withdraw's raises
+            // the user's stage, so the user is the one target of each.
+            Effect::Sport(_) | Effect::SelfStages(_) => {
                 targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)
                     .filter(|t| t.as_slice() == [Slot::Team(0)])
             }
@@ -601,6 +602,10 @@ impl Dungeon {
             if self.resolve(target, mv, effect, data) {
                 defeated.push(target);
             }
+            // Struggle's recoil is the only thing that takes the leader down here (`resolve`).
+            if self.team.first().is_some_and(|m| m.info.hp == 0) {
+                defeated.push(Slot::Team(0));
+            }
         }
         let leader_down = defeated.contains(&Slot::Team(0));
         self.award_exp(&defeated, data);
@@ -680,12 +685,17 @@ impl Dungeon {
         let t = data.tables;
 
         let first = self.rng.int(100);
-        if !hits(t, first, mv.accuracy[0], &attacker, &defender, physical) {
+        // Withdraw on the user always hits after its one draw: `AccuracyCalc` returns early for
+        // user == target when its fifth argument is 1, which the dispatch passes for Withdraw
+        // (`02156824`, P-withdraw of #421). The sports' self hit rule is not read here: their
+        // accuracy forces a hit already.
+        let self_hit = matches!(effect, Effect::SelfStages(_)) && target == Slot::Team(0);
+        if !self_hit && !hits(t, first, mv.accuracy[0], &attacker, &defender, physical) {
             return false;
         }
         let arg8 = match effect {
             // The dispatch's slot-0 check is the only one a stage change makes.
-            Effect::Stages(changes) => {
+            Effect::Stages(changes) | Effect::SelfStages(changes) => {
                 if let Some(info) = self.info_mut(target) {
                     move_effects::change_stages(info, changes);
                 }
@@ -697,8 +707,8 @@ impl Dungeon {
                 return false;
             }
             Effect::Damage { arg8 } => *arg8,
-            // Absorb's HDM is the normal one, `0x100` (`0215F314`); its heal follows the damage.
-            Effect::Absorb => ARG8,
+            // Absorb's and Struggle's HDM is the normal one, `0x100` (`0215F314`, `02162C70`).
+            Effect::Absorb | Effect::Struggle => ARG8,
             // Low Kick's HDM takes the target's weight as `arg8` (`0215C600`, P2 of #421).
             Effect::LowKick => weight_of(data, defender.apparent_species).unwrap_or(0),
         };
@@ -726,6 +736,11 @@ impl Dungeon {
         if matches!(effect, Effect::Absorb) && dealt.value != 0 {
             self.absorb_heal(dealt.value);
         }
+        // The recoil follows a hit that dealt damage: the HDM returns 0 on a second-check miss
+        // (no damage, so no recoil here) and when the damage word is 0 (`02162C70`, P2 of #421).
+        if matches!(effect, Effect::Struggle) && dealt.value != 0 {
+            self.struggle_recoil();
+        }
         hp == 0
     }
 
@@ -736,6 +751,17 @@ impl Dungeon {
         if let Some(info) = self.team.first_mut().map(|m| &mut m.info) {
             let hp = (i32::from(info.hp) + heal).min(i32::from(info.max_hp));
             info.hp = i16::try_from(hp).unwrap_or(info.hp);
+        }
+    }
+
+    /// Struggle's recoil on the leader: max HP / 4 (truncated), at least 1, down to 0
+    /// (`02162C70`, `0217BB94`, `docs/re/move-effects.md`). It has no type and draws nothing. The
+    /// leader's 0 HP is read by [`resolve_all`](Self::resolve_all).
+    fn struggle_recoil(&mut self) {
+        if let Some(info) = self.team.first_mut().map(|m| &mut m.info) {
+            let amount = (i32::from(info.max_hp) / 4).max(1);
+            let hp = (i32::from(info.hp) - amount).max(0);
+            info.hp = i16::try_from(hp).unwrap_or(0);
         }
     }
 

@@ -47,6 +47,15 @@ pub(crate) const MUD_SPORT: u16 = 0x0D4;
 /// passes (`low` inclusive, `high` exclusive, as `DungeonRng::range`).
 pub(crate) const SPORT_TURNS: (i32, i32) = (10, 12);
 
+/// Struggle (`0x160`): the damaging path with `arg8` 1.0 (`ov_0001::02162C70` passes `0x100`, P-arg8
+/// of #421), then a recoil on the user of max HP / 4, at least 1, when the hit does damage. The
+/// recoil is in `combat`, which owns the user's HP.
+pub(crate) const STRUGGLE: u16 = 0x160;
+
+/// Withdraw (`0x046`): the user's defence stage goes up one (`ov_0001::0215CF7C`, P3 of #421). The
+/// move's range is the user (`0x73`), so its one target is the user.
+pub(crate) const WITHDRAW: u16 = 0x046;
+
 /// The highest stage index: the stage table has 21 entries and 10 is neutral.
 const LAST_STAGE: i16 = (STAGES - 1) as i16;
 
@@ -96,6 +105,12 @@ pub(crate) enum Effect {
     /// Water Sport and Mud Sport: one draw for the turns of `sport`'s floor counter, no damage
     /// and no target change (see [`WATER_SPORT`]).
     Sport(Sport),
+    /// Struggle: the damaging path with `arg8` 1.0, then the user's recoil (see [`STRUGGLE`]).
+    /// `combat` reads the variant for the damage scale and the recoil.
+    Struggle,
+    /// Stage changes on the user, whose range is the user (see [`WITHDRAW`]). The one target is
+    /// the user, and its slot-0 check always hits.
+    SelfStages(&'static [StageChange]),
 }
 
 // The block lists are the abilities the handler's own routine tests (`docs/re/move-effects.md`,
@@ -117,6 +132,12 @@ const ACCURACY_DOWN: &[StageChange] = &[StageChange {
     stat: Stat::Accuracy,
     stages: -1,
     blocked_by: &[0x0F, 0x18, 0x1E],
+}];
+// Withdraw's raise has no block check (`021890C4`, P3 of #421).
+const WITHDRAW_CHANGE: &[StageChange] = &[StageChange {
+    stat: Stat::Defence(0),
+    stages: 1,
+    blocked_by: &[],
 }];
 const HELPING_HAND_CHANGE: &[StageChange] = &[
     StageChange {
@@ -140,25 +161,21 @@ const HELPING_HAND_CHANGE: &[StageChange] = &[
 // their status codes and durations belong to #73 and #359.
 // shortcut: Absorb's ooze branch (a target with ability `0x3A`) damages the user through
 // `0217BCA4`, which is not read; `combat` refuses that use (#421).
-// shortcut: Struggle (`160`) is refused. Its trigger (every move at 0 PP) and its recoil (max HP / 4,
-// minimum 1, after the HDM, no type, no draw) are read, but the HDM gets `arg8` from the dispatch's
-// fourth argument, which the export chain sets to 0 (`02172ADC` calls `0215B384(user, 1, 0, 0, 0, _)`,
-// which calls `02156824` with that third word). An `arg8` of 0 deals no damage, which the game does
-// not do, so one link of that reading is wrong. Settle it with a run of the HDM's `arg8` (#421).
+// shortcut: Struggle's trigger (every move at 0 PP, `02166B10` and `02192D24`) is not in the command
+// path: `use_move` refuses a move with 0 PP, and Struggle is reached only through `strike` (#421).
 // shortcut: the sport counters' effects in the game are not applied: the type factor's Fire and
 // Electric multipliers (`0217CE88`, value red-hypothesis) and the AI's and menu's checks
 // (`0217CB3C`, `021644B8`). The counters are kept and ticked (`turn.rs`), but nothing reads them
 // (#421).
 // shortcut: the sport handler's end-of-effect message (`021953B4`, text only) is not modelled.
-// shortcut: Withdraw (`046`) raises the target's defence in the forced run. Its self-target hit rule
-// is open: the fifth argument of `AccuracyCalc` at the dispatch's call (`02156824`, decompile line 221)
-// is not in the decompile, and the sim's targeting refuses a self target (#421).
 #[must_use]
 pub(crate) fn effect_of(id: u16) -> Option<Effect> {
     match id {
         id if DAMAGING.contains(&id) || id == RAZOR_LEAF || id == VINE_WHIP => {
             Some(Effect::Damage { arg8: ARG8 })
         }
+        STRUGGLE => Some(Effect::Struggle),
+        WITHDRAW => Some(Effect::SelfStages(WITHDRAW_CHANGE)),
         GROWL => Some(Effect::Stages(GROWL_CHANGE)),
         LEER | TAIL_WHIP => Some(Effect::Stages(DEFENCE_DOWN)),
         SAND_ATTACK => Some(Effect::Stages(ACCURACY_DOWN)),
@@ -220,9 +237,9 @@ mod tests {
     }
 
     /// The handler of `mv` on `target`, without the leader's turn, so the draws are the
-    /// handler's alone.
-    fn use_on(g: &mut GameState, mv: &Move, effect: &Effect, target: Slot) {
-        use_on_weighed(g, mv, effect, target, &[]);
+    /// handler's alone. Returns whether the use defeated the leader.
+    fn use_on(g: &mut GameState, mv: &Move, effect: &Effect, target: Slot) -> bool {
+        use_on_weighed(g, mv, effect, target, &[])
     }
 
     /// [`use_on`] with the species weights `weights` in the data (Low Kick's `arg8`).
@@ -232,7 +249,7 @@ mod tests {
         effect: &Effect,
         target: Slot,
         weights: &[u16],
-    ) {
+    ) -> bool {
         let t = tables();
         let moves = table(std::slice::from_ref(mv));
         let data = CombatData {
@@ -244,7 +261,7 @@ mod tests {
         };
         g.dungeon_mut()
             .unwrap()
-            .strike(0, &[target], mv, effect, &data);
+            .strike(0, &[target], mv, effect, &data)
     }
 
     /// The wild monster's stages: (offensive, defensive, accuracy).
@@ -464,8 +481,8 @@ mod tests {
 
     #[test]
     fn the_moves_not_ported_have_no_handler() {
-        // Thundershock, Hypnosis, Struggle and Withdraw (see the shortcuts).
-        for id in [0x0BC, 0x06F, 0x160, 0x046] {
+        // Thundershock and Hypnosis (see the shortcuts).
+        for id in [0x0BC, 0x06F] {
             assert_eq!(effect_of(id), None, "move {id:#05X}");
         }
         // The damaging moves of the leader are ported.
@@ -502,6 +519,63 @@ mod tests {
             *battle_with(&mv).dungeon().unwrap().rng()
         };
         assert_eq!(rng, after_one_draw(&before));
+    }
+
+    #[test]
+    fn struggle_is_the_damaging_path_at_arg8_one_then_a_recoil_of_a_quarter_of_max_hp() {
+        assert_eq!(effect_of(STRUGGLE), Some(Effect::Struggle));
+        // The target loses what Tackle takes at arg8 1.0 (same power, type and checks), and the
+        // same draws are taken; the leader takes max HP / 4 (100 / 4 = 25) after the hit.
+        let mv = move_of_power(STRUGGLE, [100; 3]);
+        let effect = effect_of(STRUGGLE).unwrap();
+        let mut g = battle_with(&mv);
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(
+            (wild_hp(&g), *g.dungeon().unwrap().rng()),
+            damage_use(0x09A, 100)
+        );
+        assert!(wild_hp(&g) < 100);
+        assert_eq!(g.dungeon().unwrap().team()[0].info.hp, 75);
+    }
+
+    #[test]
+    fn struggle_second_check_miss_deals_nothing_and_takes_no_recoil() {
+        // Accuracy 100 on the first check, 0 on the second: the first hits and the second misses.
+        let mut mv = move_of_power(STRUGGLE, [100; 3]);
+        mv.accuracy = [100, 0, 100];
+        let effect = effect_of(STRUGGLE).unwrap();
+        let mut g = battle_with(&mv);
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        let d = g.dungeon().unwrap();
+        assert_eq!(wild_hp(&g), 100);
+        assert_eq!(d.team()[0].info.hp, 100);
+        // Five draws: the slot-0 check, the three CalcDamage draws, then the slot-1 check.
+        let mut expect = before;
+        expect.int(100);
+        expect.int(100);
+        expect.int(100);
+        expect.int(0x4000);
+        expect.int(100);
+        assert_eq!(d.rng(), &expect);
+    }
+
+    #[test]
+    fn struggle_recoil_is_at_least_one_and_a_recoil_that_takes_the_leader_to_0_is_a_defeat() {
+        // Max HP 3: a quarter is 0, so the recoil is the minimum of 1.
+        let mv = move_of_power(STRUGGLE, [100; 3]);
+        let effect = effect_of(STRUGGLE).unwrap();
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().team[0].info.max_hp = 3;
+        g.dungeon_mut().unwrap().team[0].info.hp = 2;
+        assert!(!use_on(&mut g, &mv, &effect, Slot::Wild(0)));
+        assert_eq!(g.dungeon().unwrap().team()[0].info.hp, 1);
+        // At 1 HP the recoil takes the leader to 0: the use reports the leader's defeat.
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().team[0].info.max_hp = 3;
+        g.dungeon_mut().unwrap().team[0].info.hp = 1;
+        assert!(use_on(&mut g, &mv, &effect, Slot::Wild(0)));
+        assert_eq!(g.dungeon().unwrap().team()[0].info.hp, 0);
     }
 
     #[test]
@@ -657,6 +731,57 @@ mod tests {
         assert_eq!(outcome, Outcome::NotModelled);
         assert_eq!(g.dungeon().unwrap().rng(), &before);
         assert_eq!(wild_hp(&g), 100);
+    }
+
+    #[test]
+    fn withdraw_raises_the_users_defence_stage_and_always_hits_the_user_after_one_draw() {
+        assert_eq!(
+            effect_of(WITHDRAW),
+            Some(Effect::SelfStages(WITHDRAW_CHANGE))
+        );
+        // Accuracy 0 would miss a foe; on the user the check hits after its one draw, and the
+        // stage goes up one with no block check.
+        let mv = stat_move(WITHDRAW, [0; 3]);
+        let effect = effect_of(WITHDRAW).unwrap();
+        let mut g = battle_with(&mv);
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Team(0));
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.rng(), &after_one_draw(&before));
+        assert_eq!(d.team()[0].info.defensive_stages, [11, 10]);
+        assert_eq!(d.team()[0].info.offensive_stages, [10, 10]);
+        assert_eq!(wild_hp(&g), 100);
+    }
+
+    #[test]
+    fn withdraw_use_targets_the_user_and_takes_its_pp() {
+        // The move row's targeting is the self class (`0x73`), as read from the dump (#421).
+        let mut mv = stat_move(WITHDRAW, [125; 3]);
+        mv.targeting = [0x73, 0x0];
+        let t = tables();
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut g = battle_with(&mv);
+        let before_pp = leader_pp(&g);
+        let outcome = g.step_with(
+            Command::UseMove {
+                slot: 0,
+                direction: Some(Direction::Right),
+            },
+            &data,
+        );
+        assert_eq!(outcome, Outcome::Applied);
+        assert_eq!(leader_pp(&g), before_pp - 1);
+        assert_eq!(
+            g.dungeon().unwrap().team()[0].info.defensive_stages,
+            [11, 10]
+        );
     }
 
     #[test]
