@@ -1,8 +1,9 @@
 //! The leader's replay of a local combat trace (#424): the leader attacks an adjacent wild
 //! monster until it faints. The trace is a capture from the retail dump (see
 //! `docs/golden-traces.md`), so it is not in the repository. The test runs only when
-//! `RESCUE_TRACE_COMBAT` names the trace; otherwise it prints SKIPPED and passes. Target HP is
-//! not compared yet (#424).
+//! `RESCUE_TRACE_COMBAT` names the trace; otherwise it prints SKIPPED and passes. It compares
+//! the leader's HP and the target's HP (`Scope::AttackHp`), with the attack tables read from
+//! the same dump.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -11,10 +12,11 @@ use std::path::{Path, PathBuf};
 use rescue_nds::rom::{
     CONFIG_FILE_NAME, ROM_PATH_ENV, SUPPORTED_DUMPS, identify_bytes, resolve_rom_path,
 };
+use rescue_trace_harness::combat::Tables;
 use rescue_trace_harness::floor::start_properties;
 use rescue_trace_harness::scenario::parse_scenario;
 use rescue_trace_harness::{
-    Replay, Scope, check_rom, render_divergence, render_sim_gap, replay_with,
+    Replay, Scope, check_rom, render_divergence, render_sim_gap, replay_combat,
 };
 
 const TRACE_VAR: &str = "RESCUE_TRACE_COMBAT";
@@ -58,9 +60,18 @@ fn leader_matches_every_row_of_the_combat_trace() {
     let scenario = parse_scenario(&text).unwrap_or_else(|e| panic!("{scenario_path:?}: {e}"));
     let floor = start_properties(&rom, scenario).unwrap_or_else(|e| panic!("{e}"));
 
-    match replay_with(&trace.rows, Some(&floor), Scope::Leader).expect("replay") {
+    let leader = trace
+        .rows
+        .first()
+        .and_then(|row| row.team[0])
+        .unwrap_or_else(|| panic!("the trace's first row has no leader"));
+    let leader = u16::try_from(leader.species).unwrap_or_else(|_| panic!("leader species"));
+    let tables = Tables::from_rom(&rom, leader).unwrap_or_else(|e| panic!("{e}"));
+    let data = tables.data();
+
+    match replay_combat(&trace.rows, Some(&floor), Scope::AttackHp, Some(&data)).expect("replay") {
         Replay::Match { rows } => {
-            eprintln!("{TEST}: no leader difference over {rows} trace rows (gate rows compared)");
+            eprintln!("{TEST}: no HP difference over {rows} trace rows (gate rows compared)");
         }
         Replay::Divergence(d) => panic!("{}", render_divergence(&d)),
         Replay::SimGap { row, command } => panic!("{}", render_sim_gap(row, command)),
