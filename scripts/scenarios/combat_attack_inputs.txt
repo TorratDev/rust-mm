@@ -1,0 +1,56 @@
+# Combat turn inputs (#424), from the floor-1 save state (capture_golden.py --make-state).
+# A is pressed every 30 frames, held 4 frames, 26 times; no D-pad. The leader stays at (20,25);
+# wild species 290 walks to (21,24) and faints on the second hit.
+# Used with capture_golden.py --turn-inputs scripts/scenarios/combat_attack_inputs.txt --frames 800 --scenario combat_attack.
+0 A
+4 -
+30 A
+34 -
+60 A
+64 -
+90 A
+94 -
+120 A
+124 -
+150 A
+154 -
+180 A
+184 -
+210 A
+214 -
+240 A
+244 -
+270 A
+274 -
+300 A
+304 -
+330 A
+334 -
+360 A
+364 -
+390 A
+394 -
+420 A
+424 -
+450 A
+454 -
+480 A
+484 -
+510 A
+514 -
+540 A
+544 -
+570 A
+574 -
+600 A
+604 -
+630 A
+634 -
+660 A
+664 -
+690 A
+694 -
+720 A
+724 -
+750 A
+754 -

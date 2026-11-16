@@ -278,26 +278,9 @@ pub fn replay_combat(
     let mut target: Option<(i16, i16)> = None;
     for (index, row) in rows.iter().enumerate() {
         let number = index + 1;
-        let diffs = match state.dungeon() {
-            Some(d) if i16::from(d.fractional_turn()) != row.fractional_turn => {
-                let gate = u8::try_from(row.fractional_turn).is_ok_and(|k| d.leader_gate(k));
-                if !gate {
-                    Vec::new()
-                } else if !applied {
-                    compare(scope, row, &state.snapshot(), target)
-                } else {
-                    let mut clock = Vec::new();
-                    push(
-                        &mut clock,
-                        "fractionalTurn",
-                        &row.fractional_turn.to_string(),
-                        &d.fractional_turn().to_string(),
-                    );
-                    clock
-                }
-            }
-            _ => compare(scope, row, &state.snapshot(), target),
-        };
+        let diffs = clock_check(&state, row, applied, || {
+            compare(scope, row, &state.snapshot(), target)
+        });
         if !diffs.is_empty() {
             return Ok(Replay::Divergence(Divergence {
                 row: number,
@@ -329,6 +312,36 @@ pub fn replay_combat(
         }
     }
     Ok(Replay::Match { rows: rows.len() })
+}
+
+/// The diffs of one row at the sim's clock (see [`replay`]). `compare` runs only when the row is
+/// compared: on a gate row, or on any row when the sim's clock is the row's.
+pub(crate) fn clock_check(
+    state: &GameState,
+    row: &TurnRow,
+    applied: bool,
+    compare: impl FnOnce() -> Vec<FieldDiff>,
+) -> Vec<FieldDiff> {
+    match state.dungeon() {
+        Some(d) if i16::from(d.fractional_turn()) != row.fractional_turn => {
+            let gate = u8::try_from(row.fractional_turn).is_ok_and(|k| d.leader_gate(k));
+            if !gate {
+                Vec::new()
+            } else if !applied {
+                compare()
+            } else {
+                let mut clock = Vec::new();
+                push(
+                    &mut clock,
+                    "fractionalTurn",
+                    &row.fractional_turn.to_string(),
+                    &d.fractional_turn().to_string(),
+                );
+                clock
+            }
+        }
+        _ => compare(),
+    }
 }
 
 /// Compares the rows in order and returns the first divergent one, or `None` on a match.

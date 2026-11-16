@@ -163,6 +163,32 @@ cargo test -p rescue-trace-harness --test movement_trace -- --nocapture
 
 The scenario file holds `{"dungeonId":0,"floorId":0}`. With `--nocapture`, a run that compared the trace prints `no leader difference over N trace rows`; a run that skipped prints `SKIPPED`. Check that it did not skip. The full replay (`rescue-trace-harness movement.jsonl --scenario ...`) still stops at the first monster row.
 
+## Combat replay (#424)
+
+`rescue_trace_harness::combat::replay_combat` replays the leader's Regular Attacks with the sim's combat (`step_with`), and compares the leader and the target on each row. The tables are read from the dump, as `apps/game/src/combat.rs` reads them, and the start state gets each monster's species types, abilities and regeneration speed (`EntityInfo::apply_species`).
+
+**What is compared, and what is not (#73).** The other monsters' turns are not run, so the replay sets the target's position from the trace before each row, and it sets the leader's HP from the trace when the trace's HP changed since the row before (a monster's hit). The target's position is not a check. Compared on every row: the leader (every field) and the target's species, level, HP and max HP, or its absence after the kill. The dungeon RNG is not compared on attack rows (moved to [#73](https://github.com/TorratDev/rust-mm/issues/73)). An attack with no monster on its tile is not modelled by the sim, so the replay applies it as a wait (the turn passes either way; the clock is still compared).
+
+**The inputs.** `scripts/scenarios/combat_attack_inputs.txt` is the turn-input file: A every 30 frames, 26 presses, from the floor-1 save state. The scenario is `scripts/scenarios/combat_attack.json` (`{"dungeonId":0,"floorId":0}`).
+
+**How to capture the combat trace** (from your own dump, into a folder outside the repository):
+
+```
+py scripts\capture_golden.py C:\roms\dump.nds --make-state C:\work\floor1.sav
+py scripts\capture_golden.py C:\roms\dump.nds C:\work\combat.jsonl --state C:\work\floor1.sav --turn-inputs scripts\scenarios\combat_attack_inputs.txt --frames 800 --scenario combat_attack
+```
+
+Then run the test (PowerShell):
+
+```
+$env:RESCUE_ROM = "C:\roms\dump.nds"
+$env:RESCUE_TRACE_COMBAT = "C:\work\combat.jsonl"
+$env:RESCUE_TRACE_COMBAT_SCENARIO = "scripts\scenarios\combat_attack.json"
+cargo test -p rescue-trace-harness --test combat_trace -- --nocapture
+```
+
+The test skips (prints `SKIPPED`, passes) unless `RESCUE_TRACE_COMBAT` names the trace. With it set it needs `RESCUE_ROM` (or `rom_path` in `rescue.toml`) for the trace's own dump, and it fails on a divergence or a sim gap. Keep the trace out of the repository.
+
 ## Links
 
 - Epic and tasks: [#54](https://github.com/TorratDev/rust-mm/issues/54), parent [#5](https://github.com/TorratDev/rust-mm/issues/5).
