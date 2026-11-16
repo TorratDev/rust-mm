@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod actions;
+pub mod combat;
 pub mod floor;
 pub mod scenario;
 pub mod start;
@@ -21,9 +22,10 @@ use std::fmt;
 use std::io::{self, BufRead};
 
 use rescue_nds::rom::KnownDump;
-use rescue_sim::command::Outcome;
+use rescue_sim::combat::CombatData;
+use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::floor_gen::FloorProperties;
-use rescue_sim::state::{Monster, Snapshot};
+use rescue_sim::state::{GameState, Monster, Snapshot};
 use rescue_trace::{Entity, Header, TurnRow};
 
 use crate::actions::{ActionError, command_for, command_name};
@@ -209,6 +211,9 @@ pub enum Scope {
     All,
     /// The leader only, see [`compare_leader`].
     Leader,
+    /// The leader's HP and the HP of the wild monster its attack lands on, see
+    /// [`compare_attack_hp`] (#424).
+    AttackHp,
 }
 
 /// The result of [`replay`].
@@ -253,11 +258,24 @@ pub fn replay_with(
     properties: Option<&FloorProperties>,
     scope: Scope,
 ) -> Result<Replay, HarnessError> {
+    replay_combat(rows, properties, scope, None)
+}
+
+/// [`replay_with`] with the attack path: with `combat`, an attack command runs through
+/// `step_with` and its damage is modelled (#424); without it, an attack is a sim gap.
+pub fn replay_combat(
+    rows: &[TurnRow],
+    properties: Option<&FloorProperties>,
+    scope: Scope,
+    combat: Option<&CombatData<'_>>,
+) -> Result<Replay, HarnessError> {
     let Some(first) = rows.first() else {
         return Ok(Replay::Match { rows: 0 });
     };
     let mut state = state_from_row(first, properties).map_err(HarnessError::Start)?;
     let mut applied = false;
+    // The tile the last attack lands on, read before it ran (see `leader_target`).
+    let mut target: Option<(i16, i16)> = None;
     for (index, row) in rows.iter().enumerate() {
         let number = index + 1;
         let diffs = match state.dungeon() {
@@ -266,7 +284,7 @@ pub fn replay_with(
                 if !gate {
                     Vec::new()
                 } else if !applied {
-                    compare(scope, row, &state.snapshot())
+                    compare(scope, row, &state.snapshot(), target)
                 } else {
                     let mut clock = Vec::new();
                     push(
@@ -278,7 +296,7 @@ pub fn replay_with(
                     clock
                 }
             }
-            _ => compare(scope, row, &state.snapshot()),
+            _ => compare(scope, row, &state.snapshot(), target),
         };
         if !diffs.is_empty() {
             return Ok(Replay::Divergence(Divergence {
@@ -295,7 +313,14 @@ pub fn replay_with(
                 source,
             })?;
             applied = true;
-            if state.step(command) == Outcome::NotModelled {
+            if let Command::Attack(dir) = command {
+                target = leader_target(&state, dir);
+            }
+            let outcome = match combat {
+                Some(data) => state.step_with(command, data),
+                None => state.step(command),
+            };
+            if outcome == Outcome::NotModelled {
                 return Ok(Replay::SimGap {
                     row: number,
                     command: command_name(&command),
@@ -388,10 +413,78 @@ pub fn render_sim_gap(row: usize, command: &str) -> String {
     )
 }
 
-fn compare(scope: Scope, row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
+fn compare(
+    scope: Scope,
+    row: &TurnRow,
+    state: &Snapshot,
+    target: Option<(i16, i16)>,
+) -> Vec<FieldDiff> {
     match scope {
         Scope::All => compare_row(row, state),
         Scope::Leader => compare_leader(row, state),
+        Scope::AttackHp => compare_attack_hp(row, state, target),
+    }
+}
+
+/// The tile a Regular Attack in `dir` from the leader lands on (#424). The leader does not move
+/// while it attacks, so the tile is read before the command runs. `None` without a dungeon or
+/// a leader, or when the tile is off the `i16` range.
+fn leader_target(state: &GameState, dir: Direction) -> Option<(i16, i16)> {
+    let leader = state.dungeon()?.team().first()?;
+    let (dx, dy) = dir.delta();
+    let x = i16::try_from(i32::from(leader.pos.0) + dx).ok()?;
+    let y = i16::try_from(i32::from(leader.pos.1) + dy).ok()?;
+    Some((x, y))
+}
+
+/// Compares the leader's HP (`team[0]`) and the HP of the wild monster on `target`, the tile the
+/// leader's attack lands on (#424). Only HP is compared: a row can match while the monsters'
+/// own attacks are unmodelled (#73), and the target is found by tile, since a monster the
+/// game removes is no longer in the trace's `wild` list. Used by [`Scope::AttackHp`].
+#[must_use]
+pub fn compare_attack_hp(
+    row: &TurnRow,
+    state: &Snapshot,
+    target: Option<(i16, i16)>,
+) -> Vec<FieldDiff> {
+    let mut diffs = Vec::new();
+    let Some(dungeon) = &state.dungeon else {
+        push(&mut diffs, "dungeon", "present", "absent");
+        return diffs;
+    };
+    let index = team_index(&row.team);
+    let leader = index[0].and_then(|i| dungeon.team.get(i));
+    compare_hp(&mut diffs, "team[0]", row.team[0], leader);
+    if let Some(tile) = target {
+        let expected = row.wild.iter().find(|e| (e.x, e.y) == tile).copied();
+        let actual = dungeon.wild.iter().find(|m| m.pos == tile);
+        compare_hp(
+            &mut diffs,
+            &format!("wild[{},{}]", tile.0, tile.1),
+            expected,
+            actual,
+        );
+    }
+    diffs
+}
+
+/// HP of one monster, or its absence, against the trace's entity.
+fn compare_hp(
+    diffs: &mut Vec<FieldDiff>,
+    path: &str,
+    expected: Option<Entity>,
+    actual: Option<&Monster>,
+) {
+    match (expected, actual) {
+        (None, None) => {}
+        (Some(_), None) => push(diffs, path, "present", "absent"),
+        (None, Some(_)) => push(diffs, path, "absent", "present"),
+        (Some(e), Some(m)) => check(
+            diffs,
+            &format!("{path}.hp"),
+            i64::from(e.hp),
+            i64::from(m.info.hp),
+        ),
     }
 }
 
