@@ -49,4 +49,5 @@ Run these as their own command, so the permission prompt shows what is written.
 | Command | Does |
 |---|---|
 | `scripts/gh-issue.sh --title T --body-file F [--label L]... [--assignee U\|none] [--parent N] [--blocked-by N]...` | creates the issue with labels, assignee (default `@me`), sub-issue link and blocked-by links. `--issue N` updates an existing issue instead. Never use bare `gh issue create`. |
+| `scripts/gh-pr.sh --title T --body-file F (--closes N \| --refs N \| --no-issue) [--draft]` | opens the PR with `Closes #N` or `Refs #N` as the first body line, assigned to `@me`, base `main`; refuses a Refs body with close/fix/resolve next to an issue number. Never use bare `gh pr create`. |
 | `gh_pr_finish PR WORKTREE ISSUE closes\|refs` | after a PASS: refuses unless the PR is ready with checks passing or none; squash-merges, deletes the branch, removes the worktree, and for `refs` reopens the issue if the merge closed it |

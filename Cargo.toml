@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "tests"]
-# `verification/` holds the standalone Phase 0 probes (built by verify.yml).
+# `verification/` holds the standalone Phase 0 probes (not built in CI; see docs/verification.md).
 # `fuzz/` needs a nightly toolchain (cargo-fuzz) and is built on its own.
 exclude = ["verification", "fuzz"]
 

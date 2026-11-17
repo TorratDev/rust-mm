@@ -48,3 +48,11 @@ scripts/gh-issue.sh --issue 451 --parent 73 --blocked-by 358 --blocked-by 437
 ```
 
 `--dry-run` prints the `gh` calls without running them.
+
+## Pull requests (`gh-pr.sh`)
+
+Opens a PR with `Closes #N` (`--closes N`) or `Refs #N` (`--refs N`) as the first line of the body, assigned to `@me`, against `main`. For `--refs` it refuses a title or body that says close, fix or resolve next to an issue number, because GitHub would close the issue on merge. `--dry-run` prints the call and the body.
+
+```
+scripts/gh-pr.sh --draft --title "sim: wild monster spawn" --body-file body.md --closes 451
+```

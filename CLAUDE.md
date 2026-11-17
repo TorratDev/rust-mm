@@ -22,3 +22,6 @@ decompiling from it gives correct addresses.
 GitHub and hc sessions. Chain them in one shell command and print only the result. Create issues
 with `scripts/gh-issue.sh`, never bare `gh issue create`, so the parent, blocked-by links,
 labels and assignee are set, not only mentioned in the body.
+Open PRs with `scripts/gh-pr.sh --closes <n>` (solves the issue) or `--refs <n>` (part of it),
+never bare `gh pr create`: it puts the `Closes`/`Refs` line first, assigns `@me`, and rejects
+a Refs body that would close the issue.
