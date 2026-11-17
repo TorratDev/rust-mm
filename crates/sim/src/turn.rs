@@ -8,7 +8,7 @@
 //! Integer math only.
 
 use crate::floor;
-use crate::state::{Dungeon, NO_MONSTER_HOUSE, WILD_SLOTS, wild_monster};
+use crate::state::{Dungeon, EntityInfo, NO_MONSTER_HOUSE, WILD_SLOTS, wild_monster};
 
 /// Fractional turns in one dungeon turn (`fractionalTurn` cycles 0 to 23).
 pub const FRACTIONAL_TURNS: u8 = 24;
@@ -257,16 +257,22 @@ impl Dungeon {
     }
 
     /// `TickStatusAndHealthRegen` for the leader, before its action (`docs/re/turns.md`, HP
-    /// regeneration). Skipped while the belly is empty. The status gate (status 2 or 3) is not
-    /// modelled, as the sim has no statuses.
+    /// regeneration; `docs/re/status.md`, "Per-turn order"): the HP regeneration, then the
+    /// status countdowns. The regeneration is skipped while the belly is empty or the leader is
+    /// poisoned (`+0x9B` of 2 or 3, which no first-dungeon move sets); the countdowns are not.
     fn regenerate_leader(&mut self) {
         let Some(leader) = self.team.first_mut() else {
             return;
         };
         let info = &mut leader.info;
-        if info.belly_empty {
-            return;
+        if !info.belly_empty && !matches!(info.status.burn_class, 2 | 3) {
+            Self::regenerate(info);
         }
+        info.tick_status();
+    }
+
+    /// The HP regeneration block of [`Self::regenerate_leader`].
+    fn regenerate(info: &mut EntityInfo) {
         // shortcut: the Heal Ribbon, Wish and Rain Dish terms are not modelled (no held item,
         // status or weather yet); each would add to the speed before the clamp.
         let speed = i32::from(info.regen_speed).clamp(REGEN_SPEED_MIN, REGEN_SPEED_MAX);
@@ -307,6 +313,9 @@ impl Dungeon {
             }
         }
         let _shed_skin = self.rng.int(100);
+        if let Some(leader) = self.team.first_mut() {
+            leader.info.end_of_turn_status();
+        }
     }
 }
 
@@ -360,6 +369,7 @@ mod tests {
             belly,
             belly_empty: false,
             regen_acc: 0,
+            status: Default::default(),
             regen_speed: 200,
             exp: 0,
             exp_gained: 0,
@@ -583,5 +593,42 @@ mod tests {
         assert_eq!(d.pick_spawn_species(), FALLBACK_SPECIES);
         d.spawns[0].weights = [5, 0];
         assert_eq!(d.pick_spawn_species(), 7);
+    }
+
+    #[test]
+    fn the_leaders_status_counts_down_in_its_tick_and_burn_hurts_in_its_end_of_turn() {
+        let mut g = leader_run(1);
+        let d = g.dungeon_mut().unwrap();
+        let s = &mut d.team[0].info.status;
+        s.burn_class = 1;
+        s.burn_turns = 128;
+        s.sure_shot = 4;
+        s.sure_shot_turns = 2;
+        d.team[0].info.speed_down[0] = 1;
+        let hp = d.team[0].info.hp;
+        d.regenerate_leader();
+        let info = &d.team[0].info;
+        assert_eq!(
+            (
+                info.status.burn_turns,
+                info.status.sure_shot_turns,
+                info.speed_down[0]
+            ),
+            (127, 1, 0)
+        );
+        d.leader_end_of_turn();
+        assert_eq!(d.team[0].info.hp, (hp - 5).max(0));
+        assert!(d.team[0].info.status.burn_countdown == 20);
+    }
+
+    #[test]
+    fn paralysis_lowers_the_leaders_gate_stage_by_one() {
+        let mut g = leader_run(1);
+        let d = g.dungeon_mut().unwrap();
+        d.speed_stage = None;
+        d.leader_speed = 2;
+        assert_eq!(d.leader_stage(), 2);
+        d.team[0].info.status.burn_class = 4;
+        assert_eq!(d.leader_stage(), 1);
     }
 }

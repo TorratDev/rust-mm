@@ -45,17 +45,17 @@ impl Dungeon {
     /// The wild loop of one fractional turn (`021408F8`): every wild monster acts once in slot
     /// order, and each one still flagged `aiAllySkip` at the end gets its end-of-turn effects.
     // shortcut: every wild monster is gated at speed stage 1 (the caller picks the gated turns);
-    // its own speed counters are not read. A sleeping, asleep-on-spawn or statused monster is not
-    // modelled, so every wild monster acts. The `0x8000` and `0x4000` flags never get set.
+    // its own speed counters and paralysis are not read. A monster that spawns asleep is not
+    // modelled. The `0x8000` and `0x4000` flags never get set.
     pub(crate) fn run_wild_monsters(&mut self) {
-        let mut deferred = 0;
+        let mut deferred = Vec::new();
         for i in 0..self.wild.len() {
             if self.wild_turn(i) {
-                deferred += 1;
+                deferred.push(i);
             }
         }
-        for _ in 0..deferred {
-            self.monster_end_of_turn();
+        for i in deferred {
+            self.monster_end_of_turn(i);
         }
     }
 
@@ -66,6 +66,18 @@ impl Dungeon {
             return false;
         };
         if self.team.is_empty() {
+            return false;
+        }
+        // `TickStatusAndHealthRegen` comes first in the gated monster's turn (`docs/re/turns.md`,
+        // "Other monsters' turns"). A wild monster has no HP regeneration (team members only).
+        self.wild[i].info.tick_status();
+        // A sleeper does not act (`0217FD78`).
+        // shortcut: its turn draws nothing but the end-of-turn roll; whether `RunMonsterAI`
+        // steps 1 to 9 draw for a sleeper is not read. A paralysed or flinching monster's attack
+        // is refused (`02172ADC`), but the sim does not resolve a wild attack yet (see below), so
+        // nothing is refused here.
+        if self.wild[i].info.is_asleep() {
+            self.monster_end_of_turn(i);
             return false;
         }
         // `RunMonsterAI` steps 1 to 9 draw nothing for a monster with no status or item.
@@ -80,7 +92,7 @@ impl Dungeon {
             // (`Dungeon::resolve`) takes the leader as the attacker, so an enemy swing needs it
             // generalised first. The monster faces the target; nothing else changes.
             self.wild[i].info.direction = direction_towards(me, t);
-            self.monster_end_of_turn();
+            self.monster_end_of_turn(i);
             return false;
         }
         let goal = target.unwrap_or_else(|| self.wander(i));
@@ -93,17 +105,18 @@ impl Dungeon {
             m.info.direction = dir as u8;
         }
         if !skip {
-            self.monster_end_of_turn();
+            self.monster_end_of_turn(i);
         }
         skip
     }
 
     /// `DoEndOfTurnEffects` for a wild monster: the one draw it makes, `DungeonRandInt(100)`
     /// (`02186894`).
-    // shortcut: a wild monster has no belly or status, so only the roll is kept (see
+    // shortcut: a wild monster has no belly, so the roll and the status part are kept (see
     // `leader_end_of_turn`).
-    fn monster_end_of_turn(&mut self) {
+    fn monster_end_of_turn(&mut self, i: usize) {
         let _roll = self.rng.int(100);
+        self.wild[i].info.end_of_turn_status();
     }
 
     /// `AIFindTarget` (`02191394`) for a wild monster at `me`: the nearest team member it sees,
@@ -289,6 +302,7 @@ mod tests {
             belly: 100_000,
             belly_empty: false,
             regen_acc: 0,
+            status: Default::default(),
             regen_speed: 200,
             exp: 0,
             exp_gained: 0,
@@ -397,5 +411,43 @@ mod tests {
             assert_eq!(g.step(Command::Wait), crate::command::Outcome::Applied);
         }
         assert!(g.dungeon().unwrap().wild()[0].pos.0 > 5);
+    }
+
+    #[test]
+    fn a_sleeping_monster_draws_only_the_end_of_turn_roll_and_stays_put() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.wild[0].info.status.sleep = 1;
+        d.wild[0].info.status.sleep_turns = 3;
+        let mut expected = d.rng;
+        d.run_wild_monsters();
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.wild[0].pos, (5, 5));
+        // Its countdown ran first, in its own turn.
+        assert_eq!(d.wild[0].info.status.sleep_turns, 2);
+    }
+
+    #[test]
+    fn a_monster_wakes_when_its_last_sleep_turn_is_ticked_and_acts_that_turn() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.wild[0].info.status.sleep = 1;
+        d.wild[0].info.status.sleep_turns = 1;
+        d.run_wild_monsters();
+        assert_eq!(d.wild[0].info.status.sleep, 0);
+        assert_eq!(d.wild[0].pos, (6, 5));
+    }
+
+    #[test]
+    fn a_burned_wild_monster_takes_5_after_its_end_of_turn_roll() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        let hp = d.wild[0].info.hp;
+        d.wild[0].info.status.burn_class = 1;
+        d.wild[0].info.status.burn_turns = 128;
+        d.run_wild_monsters();
+        assert_eq!(d.wild[0].info.hp, hp - 5);
+        assert_eq!(d.wild[0].info.status.burn_turns, 127);
     }
 }
