@@ -118,7 +118,7 @@ Before dispatching a task to an executor:
 The dispatch text:
 "Dispatch: you are executor <N>. Engine and model: <e.g. claude-haiku-5-5 or opencode/glm-5.3-flash-free#high>. Sub-issue #<n>. Worktree: <WT>. Branch: <n>-<short-slug>. Objective: <one line>. Files you may touch: <list>. Verification: <command>. Evidence to record: <docs/re note, docs/verification.md entry, test, or PR description>. Findings: <the investigator comments on #<n>, or none>. PR link: <Closes #<n> | Refs #<n>>. Start now."
 
-- PR link is "Closes #<n>" if the task finishes the sub-issue, or "Refs #<n>" if it covers only some of its points.
+- PR link is "Closes #<n>" if the task finishes the sub-issue, or "Refs #<n>" if it covers only some of its points. The executor puts that line first in the PR body.
 - The executor ends a first task by opening a draft PR. Later work on the same sub-issue goes to a fresh executor with the same dispatch text and one of these lines added before "Start now.":
   "Revise: PR #<PR>. The worktree and branch already hold the work. Read git log and the latest review comment on the PR, and make every change it lists."
   "Fix checks: PR #<PR>. The worktree and branch already hold the work. Failing check: <name and the failing output>."

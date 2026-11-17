@@ -22,4 +22,6 @@ decompiling from it gives correct addresses.
 GitHub and hc sessions. Chain them in one shell command and print only the result. Create issues
 with `scripts/gh-issue.sh`, never bare `gh issue create`, so the parent, blocked-by links,
 labels and assignee are set, not only mentioned in the body. Every issue and PR gets
-`--assignee @me` (`gh pr create --assignee @me`; `gh-issue.sh` does it by default).
+`--assignee @me` (`gh pr create --assignee @me`; `gh-issue.sh` does it by default). A PR that
+solves an issue starts its body with `Closes #<n>` on the first line; one that covers only part
+of it starts with `Refs #<n>` and never writes close, fix or resolve next to an issue number.
