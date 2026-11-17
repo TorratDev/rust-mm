@@ -220,10 +220,14 @@ impl Dungeon {
             .map_or(FALLBACK_SPECIES, |s| s.species)
     }
 
-    /// The other monsters' steps of fractional turn `k` (team non-leaders and wild monsters).
-    fn run_other_monsters(&mut self, _k: u8) {
-        // shortcut: no other monster acts yet, so a floor only moves with the leader; port
-        // their turns (#73) before any monster other than the leader is simulated.
+    /// The other monsters' steps of fractional turn `k`: the wild loop (`021408F8`, see
+    /// [`crate::ai`]). It runs in the gated turns of speed stage 1.
+    // shortcut: the team's non-leader members do not act yet (the team loop `02140AC0`); port
+    // them before a floor with allies is simulated.
+    fn run_other_monsters(&mut self, k: u8) {
+        if acts(1, k) {
+            self.run_wild_monsters();
+        }
     }
 
     /// The weather step of fractional turn `k` (`sub_8044AB4`, `docs/re/turns.md`, "One leader
