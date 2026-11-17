@@ -492,6 +492,11 @@ fn turned(dir: Direction, steps: usize) -> Direction {
 const TERRAIN_NATURAL_JUNCTION: u16 = 0x8;
 
 impl Dungeon {
+    /// Whether the leader is still up (the team is empty in no running dungeon).
+    pub(crate) fn leader_alive(&self) -> bool {
+        self.team.first().is_none_or(|l| l.info.hp > 0)
+    }
+
     /// Moves the leader onto `target` in one leader turn. A team ally on `target` swaps places
     /// with the leader and faces back, `(dir + 4) & 7` (`docs/re/turns.md`, "Swap flags").
     // shortcut: the other preconditions of the swap (`FUN_02165C80`: the statuses, confusion,
@@ -499,8 +504,8 @@ impl Dungeon {
     // (`docs/re/turns.md`, hypothesis) are not checked. The sim has no statuses or those fields,
     // so any team ally on a plain tile swaps. The Yes/No prompt is not modelled. Upgrade with
     // #415, once statuses and the flag's writer are in.
-    fn move_leader(&mut self, dir: Direction, target: (i16, i16)) {
-        self.take_leader_turn(|d| {
+    fn move_leader(&mut self, dir: Direction, target: (i16, i16), data: Option<&CombatData<'_>>) {
+        self.take_leader_turn(data, |d| {
             let Some(leader) = d.team.first_mut() else {
                 return;
             };
@@ -516,14 +521,15 @@ impl Dungeon {
     /// Runs the leader from the command's first step `first`, then takes each further step the
     /// run checks allow. A belly of 0 at input makes the command one step (`docs/re/turns.md`,
     /// "Run flag and belly test").
-    fn run_leader(&mut self, dir: Direction, first: (i16, i16)) {
+    fn run_leader(&mut self, dir: Direction, first: (i16, i16), data: Option<&CombatData<'_>>) {
         let running = self.team.first().is_some_and(|l| l.info.belly != 0);
-        self.move_leader(dir, first);
+        self.move_leader(dir, first, data);
         if !running {
             return;
         }
-        while let Some(next) = self.run_ahead(dir) {
-            self.move_leader(dir, next);
+        // A wild monster's attack that defeats the leader ends the run.
+        while let Some(next) = self.run_ahead(dir).filter(|_| self.leader_alive()) {
+            self.move_leader(dir, next, data);
         }
     }
 
@@ -905,25 +911,25 @@ impl GameState {
         let asleep = dungeon.team.first().is_some_and(|l| l.info.is_asleep());
         let outcome = match command {
             _ if asleep => {
-                dungeon.take_leader_turn(|_| {});
+                dungeon.take_leader_turn(data, |_| {});
                 Outcome::Applied
             }
             Command::Move(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
-                    dungeon.move_leader(dir, target);
+                    dungeon.move_leader(dir, target, data);
                     Outcome::Applied
                 }
                 Err(blocked) => Outcome::Blocked(blocked),
             },
             Command::Run(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
-                    dungeon.run_leader(dir, target);
+                    dungeon.run_leader(dir, target, data);
                     Outcome::Applied
                 }
                 Err(blocked) => Outcome::Blocked(blocked),
             },
             Command::Wait => {
-                dungeon.take_leader_turn(|_| {});
+                dungeon.take_leader_turn(data, |_| {});
                 Outcome::Applied
             }
             Command::UseMove { slot, direction } => match data {
@@ -935,6 +941,11 @@ impl GameState {
                 None => Outcome::NotModelled,
             },
             Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
+        };
+        // A wild monster's attack can defeat the leader in the turn the command took.
+        let outcome = match (&outcome, self.dungeon.as_ref()) {
+            (Outcome::Applied, Some(d)) if !d.leader_alive() => Outcome::LeaderDefeated,
+            _ => outcome,
         };
         // The leader's defeat ends the run: the dungeon is dropped, as the cleared one is.
         if outcome == Outcome::LeaderDefeated {
