@@ -21,4 +21,5 @@ decompiling from it gives correct addresses.
 [`docs/agent-api.md`](docs/agent-api.md) lists helpers (`source scripts/agent.sh`) for the export,
 GitHub and hc sessions. Chain them in one shell command and print only the result. Create issues
 with `scripts/gh-issue.sh`, never bare `gh issue create`, so the parent, blocked-by links,
-labels and assignee are set, not only mentioned in the body.
+labels and assignee are set, not only mentioned in the body. Every issue and PR gets
+`--assignee @me` (`gh pr create --assignee @me`; `gh-issue.sh` does it by default).
