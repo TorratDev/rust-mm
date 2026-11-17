@@ -22,7 +22,7 @@ Before the loop it clears `dungeon+0x648` (Red: `unk644.unk10`, the floor-end re
 
 `RunFractionalTurn_Async` (`021411BC`) runs these steps in order, calling `IsFloorOver` (`0214067C`) before each one and returning as soon as it is true. The order and call sites are blue-verified (x-refs from `021411BC`, matching Red `src/dungeon_engine.c:44-77`). Confidence high.
 
-1. `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), gated on `gSpeedTurns[1][fractionalTurn] != 0`.
+1. `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), gated on `gSpeedTurns[1][fractionalTurn] != 0`; it calls `021826A0` (see [Wild monster spawn](#wild-monster-spawn-358-p1)).
 2. `RunLeaderTurn_Async(param)` (`02140FAC`). See [Speed](#speed).
 3. Only if step 2 returned TRUE: `UpdateWindTurns` (`02195104`, called from `02141200`). See [Per-turn effects](#per-turn-effects).
 4. `sub_8044574_Async` (`02140AC0`): team non-leaders. See [Other monsters' turns](#other-monsters-turns).
@@ -41,7 +41,7 @@ The 24 fractional turns let monsters with different speeds act different numbers
 Tags: the call order and gates are blue-verified (decompiles of `021411BC` and `02140FAC` and their callees, plus the calls in investigator A's trace of 13 leader turns, which all ran in this order). Confidence high for the order, medium for completeness. Bracketed addresses are return addresses (`lr`) from that trace. The case: a stage 1 leader walking, one partner on the team, four wild monsters far away.
 
 1. **Row.** The V7 hook at the entry of `RunFractionalTurn_Async` (`021411BC`). See [For golden traces](#for-golden-traces-v7).
-2. **Spawn step** `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), only when `gSpeedTurns[1][k] != 0`. No spawn fired in the run, and `TryForcedLoss` (`0206D7B0`) [`021408E8`] followed without using RNG.
+2. **Spawn step** `TrySpawnMonsterAndActivatePlusMinus_Async` (`0214078C`), only when `gSpeedTurns[1][k] != 0`. No spawn fired in the run (the spawn routine and its RNG order are in [Wild monster spawn](#wild-monster-spawn-358-p1)), and `TryForcedLoss` (`0206D7B0`) [`021408E8`] followed without using RNG.
 3. **Leader turn** `RunLeaderTurn_Async` (`02140FAC`), in this order:
    1. `TryActivateArtificialWeatherAbilities` (`02176B54`).
    2. Gate: `gSpeedTurns[CalcSpeedStage(leader)][k] != 0` and `attacking == 0`.
@@ -123,15 +123,54 @@ Tags: the addresses, the write pattern and the stage checks are blue-verified, w
 - **Callers** (xref call sites). `BoostSpeed`: `0215C4A0`, `0215C508`, `02162E38`, `0218694C` (the end-of-turn boost inside `021861E8`), and a jump table entry at `021466E4` (pool word read by `021466D4`, computed jump at `021466E0`). `LowerSpeed`: `0215CA10`, `0215CB0C`, `0215D998`, `0215DD2C`, `0215FC54`, `021607C4`, `021624B4`, `0218D218` and `02197A4C`.
 - **Other readers and writers of the counters.** `FUN_ov_0001__02190100` clears `+0xE9` to `+0xED` and reports a stage change. `FUN_ov_0001__0217930C` clears `+0xE4` and `+0xE9`. `HasNegativeStatus` (`ov_0001::02181904`, `FUN_ov_0001__02181904` in the export; see [status.md](status.md#first-dungeon-statuses-359)) reads `+0xE9+i`.
 
+## Wild monster spawn (#358 P1)
+
+Static facts from the text export (`ov_0001`, STAMP 2026-11-14); runtime facts from one py-desmume run on the retail dump. Addresses are `ov_0001`. Tag: [blue-verified]; high for the forced case, no natural spawn was seen.
+
+**Per-turn step `0214078C`** is Red's `TrySpawnMonsterAndActivatePlusMinus_Async`. Gate: `gSpeedTurns[1][fractionalTurn] != 0` (table through the pool word `021408F4`, index from dungeon `+0x650`). When it passes it calls `021826A0` (the spawn). Then it clears dungeon `+0x3358` to `+0x335B` (plus and minus flags) and `+0x158C4`, sets `+0x158D0` to 2, and loops over the 20 entities (`+0x11364`): it clears info `+0x11A` (attacking), then tests abilities `0x32` (lightning rod: stores the entity at `+0x158C4` and its sprite id at `+0x158D0`), `0x3F` and `0x38` (the two plus and minus flag pairs, indexed by `info+6 == 0`). It ends with `TryForcedLoss` (`0206D7B0(0)`). `0214078C` has no RNG call of its own.
+
+**Spawn routine `021826A0`** (Red's `TrySpawnWildMonster`):
+
+1. Gate: `+0x654 != 0` (Red `enemyDensity`) and not (`+0x63C == 0x15` and `+0x335D != 0`). Otherwise it returns with no change.
+2. Counter `+0x652` (s16) is incremented and the function returns while it is below the threshold: the word at `0x021AA1D4` (36 at runtime) normally, the word at `0x021AA260` (5 at runtime) when `+0x65E != 0` (Red `stoleFromKecleon`).
+3. Counter above 900: the "blinker" message path (`+0x158CC`, gen id `+0x158D8`). Not exercised.
+4. The counter and `+0x158CC` reset to 0 before the cap check, so a capped spawn still resets the counter.
+5. Cap, only when `+0x65E == 0`: count wild entities (`+0x11324`, 16 slots) that are valid and whose tile word has bit `0x100` clear. The cap is the word at `0x021AA270` (10 at runtime) if `+0x34AC == 0xFF`, else the word at `0x021AA254` (4 at runtime). Returns if cap <= count.
+6. Species: `021388D4(0)`, or the fixed species `0x17C` when `+0x65E != 0`.
+7. Level: `02138860` (same species lookup; returns 1 if missing or 0).
+8. Validity gate `02175BA0(species, 0)` and the tile pick `0219BFE0` (must return 1). If either fails: no spawn and no more RNG.
+9. `RandInt(100)` below `020063DC(+0x63C)` (Red `GetRandomMovementChance`) sets the record's flag word; `02179CFC(record)` then spawns. Record: `+0` species (u16), `+2` 0, `+4` flag (u32), `+8` level (u16), `+10` and `+12` x and y from the tile pick, `+14` 0.
+
+**Species pick `021388D4`.** `RandInt(10000)` (literal `0x2710`). Walks the entries (count at dungeon `+0x3344`, 8 bytes each, 16-bit weights at `+0x2F9E + arg*2 + i*8`); the first non-zero weight at or above the roll wins, and the species is `02000EEC(dungeon + 0x2F9C + i*8)`. If none passes, the first entry with a non-zero weight; with an empty table, `0x17C`. Table values are not recorded.
+
+**Tile pick `0219BFE0`.** Up to 3 passes. Each draws `RandInt(0x38)` (x) and `RandInt(0x20)` (y), scans the map from (x, y) with wrap, collects up to `0x700` candidates and draws `RandInt(count)`; the first pass with any candidate returns. All passes need tile word `& 3 == 1` and the tile words at `+0xC` and `+0x10` zero. Passes 0 and 1 also need tile byte `+5 != 0xFF`. Pass 0 also needs a distance above 5 from the leader in x or y. Pass 2 drops the `+5` rule.
+
+**RNG order of one forced spawn** (probe `spawn_probe.py` in scratch, mode `force`: counter forced to 35 at the second call of `021826A0`, first floor, `boot_to_dungeon.txt` and `turn_inputs.txt`, 600 frames, dump SHA-1 starts `6f0188735626`; SHA-1 of the first 12 hook records after the forced entry `7b5e8ecd5ed2644aa32d9d200ee4f6d9808bd31c`). Sites are `bl` addresses:
+
+| # | Site | Draw |
+|---|------|------|
+| 1 | `021388E4` | `RandInt(10000)`, species |
+| 2 | `0219C034` | `RandInt(56)`, x |
+| 3 | `0219C040` | `RandInt(32)`, y |
+| 4 | `0219C1E0` | `RandInt(count)`, candidate index (110 in this run) |
+| 5 | `021828A0` | `RandInt(100)`, movement flag |
+| 6 | `02179CFC` | spawn call |
+| 7 | `02190A0C` | `RandInt(2)`, the new monster's setup (wander routine) |
+| 8 | `02179DEC` | `RandInt(100)`, inside `02179CFC` |
+
+So 5 draws before the spawn call and 2 inside it. Each extra tile-pick pass adds 3 draws (an empty pass adds 2). Unforced, the counter stepped 0, 1, 2 and so on per entered call, with no natural spawn in 3000 frames (threshold 36).
+
+**Not verified:** the draws in `02179CFC` for other species; the counter above 900 path; the `+0x65E` path; the `02175BA0` reject path; a natural spawn; the order of the spawn's draws against `Int(100)@02186894` of a turn. A spawn port also needs the floor's species table at dungeon `+0x2F9C`, which `crates/sim` does not expose, and the 9 spawn-list draws counted in [`rng.md`](rng.md).
+
 ## Other monsters' turns
 
-Tags: the order, the gates and the call sites are blue-verified, with high confidence. The writers of `aiAllySkip` are red-hypothesis, with medium confidence.
+Tags: the order, the gates and the call sites are blue-verified, with high confidence. The writers and readers of `aiAllySkip` are blue-verified (static, [below](#aiallyskip-writers-and-readers-358-p4)); only its name is red-hypothesis.
 
 Team loop, `sub_8044574_Async` (`02140AC0`). The team array is at `dungeon+0x11314`, 4 slots.
 
 **Phase 1** (slots 0 to 3, leader skipped). Per monster:
 
-- Gate: the speed gate, `!attacking` and `!(flags & 0x8000)`. Flag `0x8000` is the petrified-ally swap flag (see [Running and swapping](#running-and-swapping)).
+- Gate: the speed gate, `!attacking` and `!(flags & 0x8000)`. Flag `0x8000` is the ally-swap flag (see [Swap flags](#swap-flags-181-p2)).
 - If `flags & 0x4000`: clear it and skip this monster.
 - Otherwise: `recalculateFollow` (`+0x117`) = 0, `TickStatusAndHealthRegen`, `EnemyEvolution` (`02183BB4`), then up to 3 cycles of `RunMonsterAI(0)` (`02188030`) and `ExecuteEntityDungeonAction` (`0218453C`), repeating a cycle only while Execute returns TRUE. Then `FlushTempCutsceneFlags` (`0219DA90`, Red `sub_8086AC0`) and `TryForcedLoss` (`0206D7B0`).
 
@@ -148,7 +187,42 @@ Wild loop, `sub_8044820_Async` (`021408F8`). It has 16 slots at `dungeon+0x11324
 - If the gate passes: clear `flags & 0xC000`, then `recalculateFollow` = 0, `TickStatusAndHealthRegen`, `EnemyEvolution`, one cycle of `RunMonsterAI(0)`, Execute, `FlushTempCutsceneFlags` and `TryForcedLoss`. `IsFloorOver` is checked between steps, and the loop breaks when it is true.
 - End: if the floor is not over, each wild monster still flagged `aiAllySkip` gets `DoEndOfTurnEffects` and `EnemyEvolution` (if still valid), then the flag is cleared.
 
-**Who sets `aiAllySkip`** (red-hypothesis, from `pmd-red`'s `dungeon_ai_movement.c`, lines 310–448): `DecideMovement` sets it on allies at line 361 (team members only: `!isNotTeamMember`, not recalculating follow, a monster in front), and on any non-leader with `aiNotNextToTarget` at line 443, which includes wild monsters. Lines 436–441 clear it for the leader. The Blue writers were not located; they belong to the AI (#52).
+### One enemy turn (#358 P7)
+
+[blue-verified] for the sequences, from a 384-call combat run and a 101-call swap run (same sequences); high for the walk and attack sequences, medium for what the totals mean; the attack and wander counts are small. The mapping of `02190898`, `02190A10` and `02190A8C` to the first, fourth and fifth `DungeonRandInt` lines of `02190854` is [hypothesis] (address order and the observed caps 8, 3 and 8). Dungeon RNG only; the global `Rand32Bit` hits come from frame code at `0x02018B04` and are not part of a turn. Sites are return addresses (lr); the `bl` is 4 lower. Not observed: the confused roll `Outcome_2(70)`, item use, blinker and cross-eyed rolls, the rescue-branch `Int(8)`; no monster slept or used an item.
+
+| Case | Count | RNG sequence | Where |
+|------|-------|--------------|-------|
+| Wild, walk toward the leader | 150 (total 35), 13 (total 45) | `Int(35)@02193260` (or 45) | Tick, Evo and Exec draw nothing; the draw is the weighted pick in `02192D24` |
+| Wild, walk with a wander step | 12 | `Int(35)@02193260`, then `Int(8)@02190A8C`, `Int(8)@02190898` or `Int(3)@02190A10` (1 to 3 times) | `AIMovement` `021918D4` to `02190854`; `Int(3)` is the up-to-10-try candidate loop |
+| Attack (action 2 becomes 21) | 1 wild, 3 team | `Int(45 or 65)@02193260`, `Int(1)@02192CC0`; in `Exec`: `Int(100)@0215A950`, `Int(100)@0217C02C`, `Int(100)@0217C698`, `Int(16384)@0217C720`, `Int(100)@0215A950`; then `Int(100)@02186894` | `02192728` is the move selection, `0217BD94` the damage path, `0215A928` is called twice; a miss drew only the first `0215A950` |
+| After the action, any turn reaching `021861E8` | 388 in the combat run | `Int(100)@02186894` once, after `Exec` | per-turn effects; `Flush` and `Loss` draw nothing |
+| Team non-leader | 99 of 99, none wandered | `Int(65)@02193260`, `Exec`, `Int(65)@02193260`, `Exec`, then `Int(100)@02186894`, then `Evo` | two cycles because `Exec` returned TRUE after the first |
+
+The totals 35, 45 and 65 are the weight total passed to `DungeonRandInt` at `02193260` (`02192D24`); 65 appeared only for team monsters, 35 and 45 only for wild ones. What sets the total (which of the five move slots are enabled) was not decoded. Probe: py-desmume through `verification/v7-trace`, scratch script, hooks on `RunMonsterAI` entry, the four RNG entry points and the turn-phase functions; SHA-1 of the combat run's JSON output `e7271f79c5d995847821379ba2062b522701ad81` (`combat_inputs.txt`, 6000 turn frames; scratch format).
+
+### aiAllySkip writers and readers (#358 P4)
+
+[blue-verified], high. From a grep of the export for `0x116` and the ushort form `+ 0x8b` over `ov_0000`, `ov_0001`, `ov_0007` and `ram`; no trace was taken. The name `aiAllySkip` stays red-hypothesis (it comes from Red's `dungeon_ai_movement.c`). `02190B80` does not write it.
+
+| Address | Function | Write |
+|---------|----------|-------|
+| `021794CC` | monster init | 0 |
+| `02188030` | `RunMonsterAI`, action not NOTHING and not PASS_TURN | 0 (with `+0x71` and `+0x119`) |
+| `02190FEC` | `DecideMovement`, blocked in front (`+6 == 0`, `+0x117 == 0`) | 1 |
+| `02190FEC` | `DecideMovement` end, `+7 == 0` and `+0x71 != 0` | 1 |
+| `02190FEC` | `DecideMovement` end, leader (`+7 != 0`) | 0 |
+| `02140AC0` | team loop: 0 at the start of each non-leader's turn; 0 after the phase-2 and end passes (3 sites) | 0 |
+| `021408F8` | wild loop: 0 before the speed gate; 0 after the end-of-turn pass | 0 |
+
+| Address | Reader use |
+|---------|-----------|
+| `02140AC0` | phase 2 collects members with it set; the end pass reads it |
+| `021408F8` | end pass: set means `DoEndOfTurnEffects` (`021861E8`) and `EnemyEvolution` (`02183BB4`) |
+| `0218453C` | Execute tail: end-of-turn effects only when clear |
+| `0219ADFC` | save serializer (bool); no gameplay use |
+
+These agree with Red's `DecideMovement` writers (`dungeon_ai_movement.c` lines 361, 443 and 436 to 441). Blue sets it for a non-leader with `+0x71` (aiNotNextToTarget) set, which includes wild monsters.
 
 **Execute runs end-of-turn effects too.** Red's `ExecuteEntityDungeonAction_Async` runs `DoEndOfTurnEffects` and `EnemyEvolution` inside the action when `aiAllySkip` is clear (`dungeon_action_execution.c:312-313`). Blue `0218453C` has the same check on `+0x116` at its tail; the call is at `02184DF8`. So the phase-2 end-of-turn pass reaches only the monsters that stayed skipped. Tag blue-verified (call and gate, from the decompile), confidence high.
 
@@ -174,7 +248,7 @@ Tag blue-verified for the code path, confidence high. The IQ test (`021805B0`, b
 **Walk branch** (`0218453C`, case `ACTION_WALK` = 2). Tag blue-verified, confidence high for the branch structure and medium for the wall-break helper.
 
 - If a status blocks movement (shadow hold, constriction, ingrain, wrap, or wrapped), the walk does not move.
-- If the info flags have `0x8000` (swap with a petrified ally), the move check is skipped.
+- If the info flags have `0x8000` (the ally swap, not only a petrified ally), the move check is skipped.
 - Otherwise `CanMoveInDirection` is checked. If it is blocked, the action becomes `ACTION_NOTHING` and info `+0x119` (`waiting`) is set to 1.
 - Otherwise the move helper (`02177700`) runs, then the step animation (`02187EE0`). For a super mobile monster without a Mobile Scarf, `FUN_02147B9C` (Red `sub_804AE08`; identity not confirmed) runs the wall break.
 
@@ -276,12 +350,20 @@ Tag: **[blue-verified]** for the arithmetic and the shared use. **[red-hypothesi
 
 ### Swap flags (#181 P2)
 
-- **`0x8000`, the petrified-ally swap.** **[blue-verified]**, high for the writers in the swept range. Only `FUN_ov_0001__02165C80` (`ov_0001::02165C80`) ORs `0x8000` into the `u16` at `info+0x00`, of the walker (the leader) and of the adjacent ally. Its only caller is `FUN_ov_0001__02166B10` at `02167C68` (the player move and run path). It also sets `gDungeon+0xE` to 1.
+- **`0x8000`, the ally swap (#358 P5: not only petrified allies).** **[blue-verified]**, high for the writers in the swept range. Only `FUN_ov_0001__02165C80` (`ov_0001::02165C80`) ORs `0x8000` into the `u16` at `info+0x00`, of the walker (the leader) and of the adjacent ally. Its only caller is `FUN_ov_0001__02166B10` at `02167C68` (the player move and run path). It also sets `gDungeon+0xE` to 1.
   - Preconditions in the decompile of `02165C80`: the adjacent tile holds an entity of type 1; the statuses at `info+0xA0` of both are not in {1, 2, 3, 4, 5, 7}; the byte at `+0xAC` is not 2 for either; the byte at `+0x99` is in {0, 2, 4}; `0215A23C(ally, 0)` is zero; `02181264(walker, dir)` is nonzero; and when the second parameter is nonzero and `021822DC(...)` is nonzero, a Yes/No prompt is shown. Both actions are set to walk (`021418AC(..., 2)`), and the ally's direction is `(walker dir + 4) & 7`.
   - **Cleared** by `FUN_ov_0001__02140ED0`, called from the turn loop `FUN_ov_0001__02140FAC` at `02141148`. If `gDungeon+0xE` is nonzero, `02140ED0` clears it. Then, for each of the 20 entity slots at `gDungeon+0x11364` that is valid and has `0x8000`, it runs `02185C70`, `02183BB4`, `02188030(e, 0)`, `0218453C`, `0219DA90` and `0206D7B0(0)`, and then sets `info &= 0x7FFF` and `info |= 0x4000`. `02140ED0` returns early, with `0x8000` still set, when `FUN_0214067C()` is nonzero. So `0x8000` marks a one-turn swap in progress, and `0x4000` follows it. **[blue-verified]**
   - **The AI path does not set it** (**[blue-verified]** in the swept range only). No other `|= 0x8000` on an entity word appears in the swept range. The hit in `0214A760` is a tile flag flood fill, not an entity. ARM9 and the other overlays were not swept, so this is not excluded there.
   - **Open:** the menu writer `ov_0001::02175178`, which [ai.md](ai.md) lists as clearing `0x8000` and setting it on option 0. Investigator B's scan found no store from `02175178` under its patterns, so that claim is not confirmed here.
-- **`1 << 5`, the normal swap.** **[hypothesis]**: no Blue writer found. The scan covered the decompiled functions of `ov_0001` from `02138860` up to `021921B0`, about 1250 of 1710 (about 73%), searching for ORs and ANDs into the entity word. No `|= 0x20` is applied to `info+0x00`. Every `0x20` hit is a non-entity word (tile flags, move flags). Not excluded: writes in the unswept part of `ov_0001` (above `021921B0`), in ARM9 or other overlays, or in a form the decompiler folds differently. Red's source does not assign `MOVEMENT_FLAG_SWAPPING_PLACES` either, which is consistent. Confidence: medium. A write-watch trace of an ally swap on `info+0x00` bit 5 would settle it.
+- **Runtime trace of a swap (#358 P5).** **[blue-verified]**, high for the `0x8000` sequence. A swap with the starting partner was traced five times (frames 26440, 26548, 26764, 26872 and 26980; the positions of leader and partner exchange one frame later). Samples of the `u16` at `+0x00` of both team members at the hooks (`RunMonsterAI` entry, the four RNG entries and the turn-phase functions) gave the same sequence each time:
+  1. `02165C80` runs (lr `0x02167C6C`, in the player move path `02166B10`). Both words are 0.
+  2. After the `SetAction` calls (`02141878`, `021418AC`) inside it, both words are `0x8000`.
+  3. The leader's `Exec` (`0218453C`, lr `0x021410FC`), the move helper `02177700` and the step animation `02187EE0` run with `0x8000` set on both.
+  4. The swap pass `02140ED0` (lr `0x0214114C`) turns the leader's word to `0x4000`, and the partner's `0x8000` is cleared in the same pass.
+  - The frozen status byte `+0xA0` of both was 0 in all 3734 samples, so this is an ordinary swap with an ally. "Petrified" came from Red's `sub_805EC4C` name; the guard in `RunMonsterAI` step 1 (early return on `0x8000`, `0218FC18` only when `+0xA0 == 6`) still makes sense.
+  - Command: py-desmume on the retail dump through `verification/v7-trace` (`retail_trace.py` helpers, `boot_to_dungeon.txt`, an own input list of 3 steps one way and 3 back on each axis, twice; 6000 frames; dungeon frame 24960). Scratch script, not in the repo; SHA-1 of its JSON output `2bb2b44418fc91ed19341aa53135838ee8e05801` (reproducible only with that script).
+  - Not tried: a swap with a wild-turned ally, during a run, or with a sleeping or petrified ally.
+- **`1 << 5` (normal swap, `MOVEMENT_FLAG_SWAPPING_PLACES` in Red).** **[blue-verified]** for "not set in a swap": bit 5 of the word at `+0x00` was never set on either team member in 3734 samples (values seen: 0, `0x2000`, `0x4000`, `0x6000`, `0x8000`, `0xC000`) over 5 swaps and about 300 turns of walking and combat. **[hypothesis]** for "no writer exists": the write watches (`register_write` on `info+0`) never fired even for known-written fields, so no write-level trace was possible, and the samples are at 11 function entries only. Static: the sweep above covered about 73% of `ov_0001`, and no `|= 0x20` was found. Confidence: high for the `0x8000` sequence, medium for the absence of a writer.
 
 ## Per-turn effects
 
@@ -473,7 +555,7 @@ The full map is in [`structs.md`](structs.md).
 
 - **Stairs (#345 P1, P3).** Open: the stairs menu labels and the `0xC` entry (not read); the `0x335E` gate and dungeon id `0x15`; the source of the floor count (the byte table at `DAT_02006200`); the result-code conditions of `func_0x0219c81c` and `func_0x0219c868`.
 
-- **P2-4, `aiAllySkip` writers.** The Blue writers of `+0x116` were not located. Red's are in `DecideMovement` (`dungeon_ai_movement.c` lines 361, 443 and 436–441). This depends on the AI (#52).
+- **P2-4, `aiAllySkip` writers (closed, #358 P4).** The Blue writers and readers of `+0x116` are in [aiAllySkip writers and readers](#aiallyskip-writers-and-readers-358-p4).
 - **Speed counters (#353 P2).** The Blue addresses of `BoostSpeed` and `LowerSpeed` are found, and Blue's limit is stage-specific; see [Speed counters](#speed-counters-353-p2). Still open: whether Red's limit is the same (red-hypothesis; `pmd-red` was not checked). `GetMovementSpeed` is `FUN_020023A8`.
 - **P4.5, water and lava mobility.** Resolved for the mechanism (#184 P1, see [Mobility class source](#mobility-class-source-184-p1)): `GetCrossableTerrain` maps the species byte values 4 and 5 through the 8-byte table at `0x021B4834`, which dungeon setup writes from the tileset type. `DAT_0218269C` is the pool word for that address. Still open: the dungeon-setup caller chain of `0214969C`, and which tileset ids have type 1 (lava).
 - **Edge masks (closed, #353 P5).** All four edge cases are `bic` on `0xFF`. The `0x1F` for `x < 2` is the folded result of `bic 0xE0`, not a different operation. See [Movement](#movement).
