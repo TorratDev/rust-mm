@@ -900,7 +900,14 @@ impl GameState {
         let Some(dungeon) = self.dungeon.as_mut() else {
             return Outcome::Blocked(Blocked::NoDungeon);
         };
+        // A sleeper does not act (`0217FD78`): whatever the command, the turn passes.
+        // The sleep countdown runs in the turn's leader tick, so the sleeper wakes in time.
+        let asleep = dungeon.team.first().is_some_and(|l| l.info.is_asleep());
         let outcome = match command {
+            _ if asleep => {
+                dungeon.take_leader_turn(|_| {});
+                Outcome::Applied
+            }
             Command::Move(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
                     dungeon.move_leader(dir, target);

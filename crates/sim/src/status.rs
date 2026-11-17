@@ -291,6 +291,13 @@ impl EntityInfo {
         self.status.sleep != 0
     }
 
+    /// Whether `02172ADC` refuses the monster's attack: flinching (`+0xAC == 1`) or paralysed
+    /// (`+0x9B == 4`).
+    #[must_use]
+    pub(crate) fn attack_refused(&self) -> bool {
+        self.status.cringe == FLINCH || self.status.burn_class == PARALYSIS
+    }
+
     /// The countdowns of `TickStatusAndHealthRegen` (`02185C70`), in the chain's order: sleep
     /// (step 2), burn class (3), cringe (5), leech seed (8), sure shot (9) and the speed counters
     /// (14). A class ends when its turns reach 0. It draws nothing.
@@ -653,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn the_cap_ability_limits_a_team_rolls_to_5_only_with_the_flag() {
+    fn the_cap_ability_limits_rolls_to_5_only_with_the_flag() {
         let mut t = info();
         t.abilities = [TURNS_CAP, 0];
         let mut rng = DungeonRng::from_state(1);

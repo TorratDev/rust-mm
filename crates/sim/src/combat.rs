@@ -432,6 +432,8 @@ impl Dungeon {
     /// monster. When every move the leader holds is at 0 PP, the use is Struggle instead, whatever
     /// slot was picked (the trigger of `ov_0001::02166B10` and `02192D24`, #421). A refused use
     /// changes nothing and takes no time; a use takes the leader's turn (see [`crate::turn`]).
+    // shortcut: a flinching or paralysed leader's use is refused as `02172ADC` does, with no time
+    // taken and `NotModelled` returned; what the game spends on a refusal is not read.
     // shortcut: the leader does not turn to face `direction`, as the sim does not turn it on a
     // move either. With no facing direction in the command, the leader's stored direction is used.
     // shortcut: the game picks the first slot with its set bit and runs the chain from it; the sim
@@ -445,6 +447,9 @@ impl Dungeon {
         let Some(leader) = self.team.first() else {
             return Outcome::Blocked(Blocked::NoLeader);
         };
+        if leader.info.attack_refused() {
+            return Outcome::NotModelled;
+        }
         let Some(&moves) = leader.info.moves.get(usize::from(slot)) else {
             return Outcome::Blocked(Blocked::NoMove);
         };
@@ -520,8 +525,8 @@ impl Dungeon {
 
     /// The leader's Regular Attack (action `0x32`) at `direction`: move `0x163` with no move slot
     /// and no PP (`docs/re/combat.md`, P8). Its targets are the monsters its range picks.
-    // shortcut: the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`) are not
-    // modelled: the sim keeps neither field.
+    // shortcut: the refused attack of `02172ADC` (flinch or paralysis) changes nothing and takes
+    // no time here, and returns `NotModelled`: what the game spends on a refusal is not read.
     // shortcut: the second strike of `02181D98` (weather or an ability) is not modelled.
     // shortcut: an empty swing takes the turn with no draws and no PP: the note only shows that
     // no accuracy or damage call followed (P8). Its pose and the turn's cost are read from that.
@@ -530,8 +535,11 @@ impl Dungeon {
         direction: Direction,
         data: &CombatData<'_>,
     ) -> Outcome {
-        if self.team.is_empty() {
+        let Some(leader) = self.team.first() else {
             return Outcome::Blocked(Blocked::NoLeader);
+        };
+        if leader.info.attack_refused() {
+            return Outcome::NotModelled;
         }
         let Some(mv) = data.moves.get(usize::from(REGULAR_ATTACK)) else {
             return Outcome::NotModelled;
@@ -1456,6 +1464,61 @@ pub(crate) mod tests {
         assert_eq!(out, Outcome::Applied);
         assert!(wild_hp(&g) < 100);
         assert_eq!(leader_pp(&g), 9);
+    }
+
+    #[test]
+    fn a_flinching_or_paralysed_leader_has_its_move_and_attack_refused() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        for set in [
+            |i: &mut EntityInfo| i.status.cringe = crate::status::FLINCH,
+            |i: &mut EntityInfo| i.status.burn_class = crate::status::PARALYSIS,
+        ] {
+            let mut g = battle([100; 3], 0);
+            set(&mut g.dungeon_mut().unwrap().team[0].info);
+            assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
+            assert_eq!(
+                g.step_with(Command::Attack(Direction::Right), &data),
+                Outcome::NotModelled
+            );
+            assert_eq!(wild_hp(&g), 100);
+            assert_eq!(leader_pp(&g), 10);
+        }
+    }
+
+    #[test]
+    fn a_sleeping_leader_skips_its_turn_whatever_the_command() {
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut g = battle([100; 3], 0);
+        g.dungeon_mut().unwrap().team[0].info.status.sleep = 1;
+        let before = g.dungeon_mut().unwrap().turn;
+        let use_it = Command::UseMove {
+            slot: 0,
+            direction: Some(Direction::Right),
+        };
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        assert_eq!(wild_hp(&g), 100);
+        assert_eq!(leader_pp(&g), 10);
+        assert_eq!(g.dungeon_mut().unwrap().turn, before + 1);
     }
 
     #[test]
