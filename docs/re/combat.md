@@ -518,7 +518,7 @@ The sim runs a leader's damaging move (`crates/sim/src/combat.rs`). The findings
 - **Draws, slot-0 miss.** One draw, `rand(100)` at `0215A950`; no `CalcDamage`, no slot-1 check. Forced: the accuracy byte of `0x163` set to 1 at `AccuracyCalc` entry (run `75abd573`, ten leader attacks). **blue-verified** (runtime, patched memory).
 - **Critical.** The odds argument is 0, so a leader hit does not crit without Focus Energy or the IQ skill. In the six leader hits the roll was 41, 97, 0, 72, 83 and 29 with the odds at 0, and no hit was reported critical; the crit flag itself was not hooked. **medium** for "no natural crit"; the Focus Energy and IQ terms are not run ([P5](#p5-critical-hit-odds)).
 - **Natural miss.** Not seen. All 24 accuracy calls on `0x163` in the base run hit. The slot-1 miss path is the shared one. **open**.
-- **Empty swings.** Most action-50 executions in the script hit an empty tile: no accuracy call and no `CalcDamage` followed. The sim does not model them (see below). **open**.
+- **Empty swings.** Most action-50 executions in the script hit an empty tile: no accuracy call and no `CalcDamage` followed. The sim passes the turn with no draws and no PP. That is `[hypothesis]`, inferred from "no accuracy or `CalcDamage` call followed", not seen in a probe; the turn cost and the pose stay **open**.
 - **Sim.** `combat::REGULAR_ATTACK` (`0x163`, the row is read from `CombatData::moves`), `regular_attack` (the facing foe, the leader's turn) and `resolve` (the draws and damage, shared with `strike`). `strike` adds the PP mark and the PP take, which `resolve` does not do.
 
 ### What the sim runs, and what it leaves out
@@ -534,12 +534,12 @@ Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, 
 
 Left out, each as a `shortcut:` in the code:
 
-- Regular Attack (`0x163`): the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`), the second strike of `02181D98`, and the empty-tile swing ([P8](#p8-regular-attack-action-0x32)).
+- Regular Attack (`0x163`): the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`), the second strike of `02181D98`. The empty-tile swing takes the leader's turn with no draws and no PP; the note shows only that no accuracy or `CalcDamage` call followed. That the turn passes and the pose shows is inferred from this, not seen in a probe `[hypothesis]` ([P8](#p8-regular-attack-action-0x32)).
 - Targets beyond the facing tile (#420), defeat (#422), secondary effects (#421).
 - Held items, the Deoxys adjustment, Wonder Guard, the exposed flag, weather, charging, statuses, the offensive and defensive multipliers (`+0x2C`, `+0x34`, read as 1.0), the wild attacker's level term (`attack / 3`).
 - Guts, Marvel Scale and Plus/Minus (the [abilities table](#abilities-in-calcstatboosts)): they need a negative status or a dungeon flag.
 - The IQ type-advantage critical term (`FUN_021805b0(attacker, 1)`, [P5](#p5-critical-hit-odds)).
-- A facing tile with no wild monster: the game's result for an empty target is not read, so the use is not modelled.
+- A move other than Regular Attack on a facing tile with no wild monster: the game's result for an empty target is not read, so the use is not modelled.
 
 Checks: the damage steps were translated from `verification/v7-trace/combat_recompute.py`, which replays the 14 captured hits. Those hits are scratch data and were not re-run in this change.
 

@@ -276,7 +276,9 @@ impl App {
             self.menu_tick(cursor, pressed);
         } else if idle && input::opens_menu(pressed) {
             self.menu = Some(0);
-        } else if idle && let Some(command) = input::command_for(buttons, self.facing) {
+        } else if idle
+            && let Some(command) = input::command_for_press(buttons, pressed, self.facing)
+        {
             self.take_turn(command);
         }
         self.redraw();

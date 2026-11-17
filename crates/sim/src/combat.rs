@@ -465,7 +465,7 @@ impl Dungeon {
             }
             _ => self.targets_of(mv, facing),
         };
-        let Some(targets) = targets else {
+        let Some(targets) = targets.filter(|t| !t.is_empty()) else {
             return Outcome::NotModelled;
         };
         // Absorb on a Liquid Ooze target takes the ooze branch, which damages the user through
@@ -501,6 +501,8 @@ impl Dungeon {
     // shortcut: the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`) are not
     // modelled: the sim keeps neither field.
     // shortcut: the second strike of `02181D98` (weather or an ability) is not modelled.
+    // shortcut: an empty swing takes the turn with no draws and no PP: the note only shows that
+    // no accuracy or damage call followed (P8). Its pose and the turn's cost are read from that.
     pub(crate) fn regular_attack(
         &mut self,
         direction: Direction,
@@ -515,6 +517,10 @@ impl Dungeon {
         let Some(targets) = self.targets_of(mv, direction) else {
             return Outcome::NotModelled;
         };
+        if targets.is_empty() {
+            self.take_leader_turn(|_| {});
+            return Outcome::Applied;
+        }
         let effect = Effect::Damage {
             arg8: REGULAR_ATTACK_ARG8,
         };
@@ -538,13 +544,11 @@ impl Dungeon {
 
     /// The monsters a use of `mv` by the leader facing `facing` hits, in the game's order
     /// (`targeting`). `None` when the range is not modelled, or when no monster would be hit.
-    // shortcut: what the game does with an empty target is not read, so a use with no target
-    // is not modelled.
     // shortcut: a target that is the user is not modelled: the damage path against the user is
     // not in the notes.
     fn targets_of(&self, mv: &Move, facing: Direction) -> Option<Vec<Slot>> {
         let targets = targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)?;
-        if targets.is_empty() || targets.contains(&Slot::Team(0)) {
+        if targets.contains(&Slot::Team(0)) {
             return None;
         }
         Some(targets)
@@ -1587,12 +1591,15 @@ pub(crate) mod tests {
             Outcome::NotModelled
         );
         assert_eq!(wild_hp(&plain), 100);
+        // An empty swing passes the turn and draws nothing.
         let mut open = battle([100; 3], 0);
+        let turn = open.dungeon().map(|d| d.turn());
         assert_eq!(
             open.step_with(Command::Attack(Direction::Left), &data),
-            Outcome::NotModelled
+            Outcome::Applied
         );
         assert_eq!(wild_hp(&open), 100);
+        assert_ne!(open.dungeon().map(|d| d.turn()), turn, "the turn passed");
     }
 
     /// `count` five-draw blocks of a hit, from a copy of `rng`, in order.
