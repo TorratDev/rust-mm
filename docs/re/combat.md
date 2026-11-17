@@ -534,12 +534,12 @@ Order of draws, for a hit or a slot-1 miss: accuracy (slot 0), boost, critical, 
 
 Left out, each as a `shortcut:` in the code:
 
-- Regular Attack (`0x163`): the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`), the second strike of `02181D98`, and the empty-tile swing ([P8](#p8-regular-attack-action-0x32)).
+- Regular Attack (`0x163`): the refusals of `02172ADC` (`info + 0xAC == 1`, `info + 0x9B == 4`), the second strike of `02181D98`. The empty-tile swing takes the leader's turn with no draws and no PP; the note shows only that no accuracy or `CalcDamage` call followed, so that the turn passes and the pose shows is read from it, not seen ([P8](#p8-regular-attack-action-0x32)).
 - Targets beyond the facing tile (#420), defeat (#422), secondary effects (#421).
 - Held items, the Deoxys adjustment, Wonder Guard, the exposed flag, weather, charging, statuses, the offensive and defensive multipliers (`+0x2C`, `+0x34`, read as 1.0), the wild attacker's level term (`attack / 3`).
 - Guts, Marvel Scale and Plus/Minus (the [abilities table](#abilities-in-calcstatboosts)): they need a negative status or a dungeon flag.
 - The IQ type-advantage critical term (`FUN_021805b0(attacker, 1)`, [P5](#p5-critical-hit-odds)).
-- A facing tile with no wild monster: the game's result for an empty target is not read, so the use is not modelled.
+- A move other than Regular Attack on a facing tile with no wild monster: the game's result for an empty target is not read, so the use is not modelled.
 
 Checks: the damage steps were translated from `verification/v7-trace/combat_recompute.py`, which replays the 14 captured hits. Those hits are scratch data and were not re-run in this change.
 

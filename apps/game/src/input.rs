@@ -34,6 +34,19 @@ pub fn command_for(held: ButtonState, facing: Direction) -> Option<Command> {
     })
 }
 
+/// [`command_for`], but an attack needs a fresh A press (`pressed`): an A still held after the
+/// move menu closed does not attack.
+// shortcut: a press while a walk or attack plays is lost, not buffered; the game's buffering is
+// not measured.
+pub fn command_for_press(
+    held: ButtonState,
+    pressed: ButtonState,
+    facing: Direction,
+) -> Option<Command> {
+    command_for(held, facing)
+        .filter(|c| !matches!(c, Command::Attack(_)) || pressed.is_held(DsButton::A))
+}
+
 /// Move slots in the move menu.
 pub const MENU_SLOTS: usize = 4;
 
@@ -101,6 +114,19 @@ mod tests {
             s.set(*b, true);
         }
         s
+    }
+
+    #[test]
+    fn a_held_a_attacks_only_on_its_press() {
+        let a = held(&[DsButton::A]);
+        let face = Direction::Down;
+        assert_eq!(command_for_press(a, a, face), Some(Command::Attack(face)));
+        assert_eq!(command_for_press(a, ButtonState::default(), face), None);
+        let walk = held(&[DsButton::Left]);
+        assert_eq!(
+            command_for_press(walk, ButtonState::default(), face),
+            Some(Command::Move(Direction::Left))
+        );
     }
 
     #[test]
