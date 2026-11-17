@@ -249,6 +249,7 @@ fn monster(
             belly: 100_000,
             belly_empty: false,
             regen_acc: 0,
+            status: Default::default(),
             // shortcut: the row carries no regeneration speed (the species table is not read,
             // as with `leader_speed`), so HP regeneration runs at the clamp's floor of 30 until
             // the table is loaded.

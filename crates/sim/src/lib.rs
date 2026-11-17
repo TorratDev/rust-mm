@@ -15,6 +15,7 @@ pub mod floor_gen;
 mod move_effects;
 pub mod rng;
 pub mod state;
+pub mod status;
 mod targeting;
 pub mod turn;
 pub mod visibility;

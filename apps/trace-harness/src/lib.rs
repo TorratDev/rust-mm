@@ -654,6 +654,7 @@ mod tests {
                 belly: 100_000,
                 belly_empty: false,
                 regen_acc: 0,
+                status: Default::default(),
                 regen_speed: 0,
                 exp: 0,
                 exp_gained: 0,

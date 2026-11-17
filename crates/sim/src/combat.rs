@@ -22,6 +22,7 @@ use rescue_data::species::LevelData;
 use crate::command::{Blocked, Direction, Outcome};
 use crate::move_effects::{self, Effect, SPORT_TURNS, Sport};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
+use crate::status::{self, FOCUS_ENERGY, Inflict, WHIFFER};
 use crate::targeting::{self, Slot};
 
 /// The moves this module runs from a move slot: Tackle (`0x09A`) and Scratch (`0x104`). The
@@ -80,6 +81,12 @@ const SHELL_ARMOR: u8 = 0x13;
 /// The target's ability that sends Absorb's heal to the user as damage (`0215F314`, the test
 /// `0218067C(target, 0x3A)`). The name is a hypothesis: Red's ID was not checked.
 const LIQUID_OOZE: u8 = 0x3A;
+/// The ability that doubles a secondary effect's chance (`0x26`, '&') and the one that stops
+/// it (`0x4C`, 'L'), in `02159F6C` (`docs/re/move-effects.md`, "Roll wrapper per move ID").
+const SERENE_GRACE: u8 = 0x26;
+const SHIELD_DUST: u8 = 0x4C;
+/// The critical odds Focus Energy sets (`docs/re/combat.md`, "Critical hits").
+const FOCUS_ENERGY_ODDS: i64 = 999;
 /// The EXP total cap (`AddExpPoints`, `DAT_02183FE8`, 9,999,999; `docs/re/combat.md`).
 const EXP_CAP: i32 = 9_999_999;
 /// The level a monster stops gaining EXP at (`AddExpPoints`, the early return on level 100).
@@ -210,6 +217,11 @@ pub fn hits(
     target: &EntityInfo,
     physical: bool,
 ) -> bool {
+    // A whiffer's attacks always miss, before any accuracy arithmetic (`AccuracyCalc` reads the
+    // user's `+0xC4`; the draw has been made already, see `docs/re/status.md`).
+    if attacker.status.sure_shot == WHIFFER {
+        return false;
+    }
     if accuracy > 100 {
         return true;
     }
@@ -359,7 +371,12 @@ fn damage_scaled(
 
     // Type (step 13) and critical (step 14). The critical multiplier is the STAB one (1.5).
     let typing = type_factor(t, mv.kind, attacker, target).factor;
-    let crit_odds = i64::from(mv.crit_chance);
+    // Focus Energy sets the odds to 999 (`CalcDamage`, `docs/re/combat.md`, "Critical hits").
+    let crit_odds = if attacker.status.sure_shot == FOCUS_ENERGY {
+        FOCUS_ENERGY_ODDS
+    } else {
+        i64::from(mv.crit_chance)
+    };
     let crit = crit_drawn(target) && i64::from(rolls.crit) < crit_odds;
     let multiplier = if crit {
         mul48(typing, i64::from(t.stab))
@@ -458,8 +475,13 @@ impl Dungeon {
         let targets = match effect {
             // A sport's and Withdraw's range is the user (`0x73`, the move row's executor value):
             // a sport's handler sets a floor counter and reads no target, and Withdraw's raises
-            // the user's stage, so the user is the one target of each.
+            // the user's stage, so the user is the one target of each. Focus Energy and Rage
+            // are self moves too.
             Effect::Sport(_) | Effect::SelfStages(_) => {
+                targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)
+                    .filter(|t| t.as_slice() == [Slot::Team(0)])
+            }
+            Effect::Inflict(kind) if kind.on_user() => {
                 targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)
                     .filter(|t| t.as_slice() == [Slot::Team(0)])
             }
@@ -724,7 +746,13 @@ impl Dungeon {
                 self.start_sport(*sport);
                 return false;
             }
+            // A status move's setter follows the slot-0 check, and no damage.
+            Effect::Inflict(kind) => {
+                self.inflict(target, *kind);
+                return false;
+            }
             Effect::Damage { arg8 } => *arg8,
+            Effect::DamageInflict { .. } => ARG8,
             // Absorb's and Struggle's HDM is the normal one, `0x100` (`0215F314`, `02162C70`).
             Effect::Absorb | Effect::Struggle => ARG8,
             // Low Kick's HDM takes the target's weight as `arg8` (`0215C600`, P2 of #421).
@@ -759,7 +787,60 @@ impl Dungeon {
         if matches!(effect, Effect::Struggle) && dealt.value != 0 {
             self.struggle_recoil();
         }
+        if let Effect::DamageInflict { chance, inflict } = *effect {
+            self.secondary_status(target, &attacker, chance, inflict, hp);
+        }
         hp == 0
+    }
+
+    /// The secondary status of a damaging move (`02159F6C`, then the setter): no gate when the
+    /// hit took the target to 0 HP; else one `DungeonRandInt(100)` against `chance`, doubled for
+    /// an attacker with ability `0x26`, and a target with ability `0x4C` stops a status the roll
+    /// passed. The setter then runs on the target.
+    // shortcut: the gate's other test, the target's `info+0x12A` (set on a second-check miss in
+    // `0215652C`, its meaning on a hit not read), is read as passing. A hit that takes the target
+    // to 0 HP is read as ending the gate before the draw (the HP test comes first in the wrapper).
+    fn secondary_status(
+        &mut self,
+        target: Slot,
+        attacker: &EntityInfo,
+        chance: i32,
+        inflict: Inflict,
+        target_hp: i16,
+    ) {
+        if target_hp == 0 {
+            return;
+        }
+        let chance = if attacker.has_ability(SERENE_GRACE) {
+            chance * 2
+        } else {
+            chance
+        };
+        if self.rng.int(100) >= chance {
+            return;
+        }
+        if target != Slot::Team(0)
+            && self
+                .info_of(target)
+                .is_some_and(|i| i.has_ability(SHIELD_DUST))
+        {
+            return;
+        }
+        self.inflict(target, inflict);
+    }
+
+    /// The setter of `kind` on `target` (`status::inflict`), with the draws it makes.
+    fn inflict(&mut self, target: Slot, kind: Inflict) {
+        let same = target == Slot::Team(0);
+        let base = match target {
+            Slot::Team(_) => self.leader_speed,
+            Slot::Wild(_) => status::WILD_BASE_STAGE,
+        };
+        let mut rng = self.rng;
+        if let Some(info) = self.info_mut(target) {
+            status::inflict(kind, &mut rng, info, same, base);
+        }
+        self.rng = rng;
     }
 
     /// Absorb's heal: the leader gains half of `dealt` (at least 1), up to its max HP
@@ -925,6 +1006,7 @@ pub(crate) mod tests {
             belly: 100_000,
             belly_empty: false,
             regen_acc: 0,
+            status: Default::default(),
             regen_speed: 200,
             exp: 0,
             exp_gained: 0,

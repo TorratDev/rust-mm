@@ -9,6 +9,7 @@ use rescue_data::combat::STAGES;
 
 use crate::combat::{ARG8, DAMAGING};
 use crate::state::EntityInfo;
+use crate::status::Inflict;
 
 /// Growl (`0x0D9`): the target's attack stage on split 0 goes down one.
 pub(crate) const GROWL: u16 = 0x0D9;
@@ -55,6 +56,20 @@ pub(crate) const STRUGGLE: u16 = 0x160;
 /// Withdraw (`0x046`): the user's defence stage goes up one (`ov_0001::0215CF7C`, P3 of #421). The
 /// move's range is the user (`0x73`), so its one target is the user.
 pub(crate) const WITHDRAW: u16 = 0x046;
+
+/// The first dungeon's status moves (`docs/re/move-effects.md`, P2 of #357; `docs/re/status.md`,
+/// "First dungeon statuses (#359)"). `0x03B` (Disable) has Thunder Wave's body (`0215CF60`).
+pub(crate) const THUNDERSHOCK: u16 = 0x0BC;
+pub(crate) const THUNDER_WAVE: u16 = 0x0C0;
+pub(crate) const DISABLE: u16 = 0x03B;
+pub(crate) const EMBER: u16 = 0x106;
+pub(crate) const HYPNOSIS: u16 = 0x06F;
+pub(crate) const BITE: u16 = 0x03F;
+pub(crate) const SMOKESCREEN: u16 = 0x025;
+pub(crate) const FOCUS_ENERGY: u16 = 0x04A;
+pub(crate) const RAGE: u16 = 0x013;
+pub(crate) const LEECH_SEED: u16 = 0x149;
+pub(crate) const BUBBLE: u16 = 0x010;
 
 /// The highest stage index: the stage table has 21 entries and 10 is neutral.
 const LAST_STAGE: i16 = (STAGES - 1) as i16;
@@ -111,6 +126,12 @@ pub(crate) enum Effect {
     /// Stage changes on the user, whose range is the user (see [`WITHDRAW`]). The one target is
     /// the user, and its slot-0 check always hits.
     SelfStages(&'static [StageChange]),
+    /// A status move: after the slot-0 check, the setter of the status (`status::inflict`).
+    Inflict(Inflict),
+    /// A damaging hit with a secondary status: the damaging path with `arg8` 1.0, then, if the
+    /// hit leaves the target above 0 HP, the chance gate (`02159F6C`, one `DungeonRandInt(100)`
+    /// against `chance`) and the setter.
+    DamageInflict { chance: i32, inflict: Inflict },
 }
 
 // The block lists are the abilities the handler's own routine tests (`docs/re/move-effects.md`,
@@ -154,11 +175,9 @@ const HELPING_HAND_CHANGE: &[StageChange] = &[
 
 /// The effect of move `id`, or `None` for a move whose handler is not ported. A `None` is a
 /// refused use, and each refused move below has a `shortcut:` for the part its notes leave open.
-// shortcut: Thundershock (`0BC`), Ember (`106`), Bubble (`010`) and Bite (`03F`) draw a chance
-// gate, then call a status or stat routine whose body is not read (#73 for the status codes).
-// shortcut: Thunder Wave (`0C0`), Disable (`03B`), Hypnosis (`06F`), Smokescreen (`025`), Focus
-// Energy (`04A`), Rage (`013`) and Leech Seed (`149`) call routines whose bodies are not read;
-// their status codes and durations belong to #73 and #359.
+// shortcut: the status moves (#453) follow the setters of `status`; Ember's first call
+// (`0218F168()`, no arguments, not read) is not modelled. Disable (`03B`) is Thunder Wave's body
+// in the game's dispatch (`0215CF60`), and is ported as such.
 // shortcut: Absorb's ooze branch (a target with ability `0x3A`) damages the user through
 // `0217BCA4`, which is not read; `combat` refuses that use (#421).
 // shortcut: the sport counters' effects in the game are not applied: the type factor's Fire and
@@ -182,6 +201,30 @@ pub(crate) fn effect_of(id: u16) -> Option<Effect> {
         LOW_KICK => Some(Effect::LowKick),
         WATER_SPORT => Some(Effect::Sport(Sport::Water)),
         MUD_SPORT => Some(Effect::Sport(Sport::Mud)),
+        // The gate chances are the words the handlers read: `021AA17C` (10), `021AA24C` (10),
+        // `021AA0A4` (10) and `021AA188` (20), read from the overlay.
+        THUNDERSHOCK => Some(Effect::DamageInflict {
+            chance: 10,
+            inflict: Inflict::Paralysis,
+        }),
+        EMBER => Some(Effect::DamageInflict {
+            chance: 10,
+            inflict: Inflict::Burn,
+        }),
+        BUBBLE => Some(Effect::DamageInflict {
+            chance: 10,
+            inflict: Inflict::SpeedDown,
+        }),
+        BITE => Some(Effect::DamageInflict {
+            chance: 20,
+            inflict: Inflict::Flinch,
+        }),
+        THUNDER_WAVE | DISABLE => Some(Effect::Inflict(Inflict::Paralysis)),
+        HYPNOSIS => Some(Effect::Inflict(Inflict::Sleep)),
+        SMOKESCREEN => Some(Effect::Inflict(Inflict::Whiffer)),
+        FOCUS_ENERGY => Some(Effect::Inflict(Inflict::FocusEnergy)),
+        RAGE => Some(Effect::Inflict(Inflict::Enraged)),
+        LEECH_SEED => Some(Effect::Inflict(Inflict::LeechSeed)),
         _ => None,
     }
 }
@@ -478,10 +521,21 @@ mod tests {
     }
 
     #[test]
-    fn the_moves_not_ported_have_no_handler() {
-        // Thundershock and Hypnosis (see the shortcuts).
-        for id in [0x0BC, 0x06F] {
-            assert_eq!(effect_of(id), None, "move {id:#05X}");
+    fn the_status_moves_of_the_first_dungeon_have_a_handler() {
+        for id in [
+            THUNDERSHOCK,
+            THUNDER_WAVE,
+            DISABLE,
+            EMBER,
+            HYPNOSIS,
+            BITE,
+            SMOKESCREEN,
+            FOCUS_ENERGY,
+            RAGE,
+            LEECH_SEED,
+            BUBBLE,
+        ] {
+            assert!(effect_of(id).is_some(), "move {id:#05X}");
         }
         // The damaging moves of the leader are ported.
         assert_eq!(effect_of(0x09A), Some(Effect::Damage { arg8: ARG8 }));
@@ -847,5 +901,235 @@ mod tests {
         assert_eq!(outcome, Outcome::Applied);
         assert_eq!(leader_pp(&g), before_pp - 1);
         assert!((10..=11).contains(&g.dungeon().unwrap().water_sport));
+    }
+
+    /// The rng after `n` draws (of any cap: each takes one step) from `rng`.
+    fn after_draws(rng: &DungeonRng, n: usize) -> DungeonRng {
+        let mut r = *rng;
+        for _ in 0..n {
+            r.int(1);
+        }
+        r
+    }
+
+    /// A battle for `mv` whose rng is the first seed whose draw number `index` (from 0) is below
+    /// `chance` (`pass`) or not. The gate of a damaging hit is draw 5, after the hit's five.
+    fn gated_battle(mv: &Move, chance: i32, pass: bool, index: usize) -> GameState {
+        let mut g = battle_with(mv);
+        for seed in 1..10_000u32 {
+            let rng = DungeonRng::from_state(seed);
+            let roll = after_draws(&rng, index).int(100);
+            if (roll < chance) == pass {
+                g.dungeon_mut().unwrap().rng = rng;
+                return g;
+            }
+        }
+        panic!("no seed");
+    }
+
+    fn wild_status(g: &GameState) -> crate::status::Status {
+        g.dungeon().unwrap().wild()[0].info.status
+    }
+
+    fn damage_move(id: u16) -> Move {
+        crate::combat::tests::move_of(id, 40, 1, [100; 3], 0)
+    }
+
+    #[test]
+    fn thunder_wave_and_disable_paralyse_after_the_hit_check_and_one_draw() {
+        for id in [THUNDER_WAVE, DISABLE] {
+            let (g, before) = run_on_wild(id, [100; 3]);
+            assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 2));
+            let s = wild_status(&g);
+            assert_eq!((s.burn_class, s.burn_turns), (crate::status::PARALYSIS, 2));
+        }
+        // A miss at the dispatch sets nothing and draws the check only.
+        let (g, before) = run_on_wild(THUNDER_WAVE, [0; 3]);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+        assert_eq!(wild_status(&g), Default::default());
+    }
+
+    #[test]
+    fn the_four_gated_moves_draw_the_gate_after_the_hit_and_set_their_status_when_it_passes() {
+        // (move, gate chance, draws of the setter, check on the wild monster)
+        type Check = fn(&EntityInfo) -> bool;
+        let cases: [(u16, i32, usize, Check); 4] = [
+            (THUNDERSHOCK, 10, 1, |i| {
+                (i.status.burn_class, i.status.burn_turns) == (4, 2)
+            }),
+            (EMBER, 10, 0, |i| {
+                (i.status.burn_class, i.status.burn_turns) == (1, 128)
+            }),
+            (BITE, 20, 0, |i| {
+                (i.status.cringe, i.status.cringe_turns) == (1, 2)
+            }),
+            (BUBBLE, 10, 1, |i| (7..=8).contains(&i.speed_down[0])),
+        ];
+        for (id, chance, setter_draws, check) in cases {
+            let mv = damage_move(id);
+            let effect = effect_of(id).unwrap();
+            // Five draws of the hit, then the gate, then the setter's own.
+            let mut g = gated_battle(&mv, chance, true, 5);
+            let before = *g.dungeon().unwrap().rng();
+            use_on(&mut g, &mv, &effect, Slot::Wild(0));
+            assert_eq!(
+                g.dungeon().unwrap().rng(),
+                &after_draws(&before, 6 + setter_draws),
+                "move {id:#05X}"
+            );
+            let w = &g.dungeon().unwrap().wild()[0].info;
+            assert!(check(w), "move {id:#05X} passes its gate");
+            assert!(wild_hp(&g) < 100);
+
+            // A failed gate draws the gate and nothing more.
+            let mut g = gated_battle(&mv, chance, false, 5);
+            let before = *g.dungeon().unwrap().rng();
+            use_on(&mut g, &mv, &effect, Slot::Wild(0));
+            assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 6));
+            assert_eq!(wild_status(&g), Default::default());
+            assert_eq!(g.dungeon().unwrap().wild()[0].info.speed_down, [0; 5]);
+        }
+    }
+
+    #[test]
+    fn a_gated_move_that_misses_has_no_gate() {
+        let mv = crate::combat::tests::move_of(THUNDERSHOCK, 40, 1, [0; 3], 0);
+        let effect = effect_of(THUNDERSHOCK).unwrap();
+        let mut g = battle_with(&mv);
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+    }
+
+    #[test]
+    fn a_hit_that_defeats_the_target_has_no_gate() {
+        let mv = damage_move(THUNDERSHOCK);
+        let effect = effect_of(THUNDERSHOCK).unwrap();
+        let mut g = gated_battle(&mv, 10, true, 5);
+        g.dungeon_mut().unwrap().wild[0].info.hp = 1;
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 5));
+        assert!(g.dungeon().unwrap().wild().is_empty(), "the target fainted");
+    }
+
+    #[test]
+    fn hypnosis_draws_the_roll_even_for_an_immune_target() {
+        let (g, before) = run_on_wild(HYPNOSIS, [100; 3]);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 2));
+        let s = wild_status(&g);
+        assert_eq!(s.sleep, 1);
+        assert!((3..=6).contains(&s.sleep_turns));
+        let (g, before) = run_on_wild_with_abilities(HYPNOSIS, [0x36, 0]);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 2));
+        assert_eq!(wild_status(&g).sleep, 0);
+    }
+
+    #[test]
+    fn smokescreen_and_leech_seed_draw_one_value_after_the_check() {
+        let (g, before) = run_on_wild(SMOKESCREEN, [100; 3]);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 2));
+        let s = wild_status(&g);
+        assert_eq!(s.sure_shot, 2);
+        assert!((2..=6).contains(&s.sure_shot_turns));
+        let (g, before) = run_on_wild(LEECH_SEED, [100; 3]);
+        assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 2));
+        let s = wild_status(&g);
+        assert_eq!(s.leech_seed, 1);
+        assert!((11..=12).contains(&s.leech_turns));
+        // A Grass target refuses the seed and the roll is never drawn.
+        let mv = stat_move(LEECH_SEED, [100; 3]);
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().wild[0].info.types = [4, 0];
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect_of(LEECH_SEED).unwrap(), Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+        assert_eq!(wild_status(&g).leech_seed, 0);
+    }
+
+    #[test]
+    fn focus_energy_and_rage_land_on_the_user() {
+        for id in [FOCUS_ENERGY, RAGE] {
+            let mv = stat_move(id, [125; 3]);
+            let mut g = battle_with(&mv);
+            let before = *g.dungeon().unwrap().rng();
+            use_on(&mut g, &mv, &effect_of(id).unwrap(), Slot::Team(0));
+            assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 2));
+            let s = g.dungeon().unwrap().team()[0].info.status;
+            if id == FOCUS_ENERGY {
+                assert_eq!(s.sure_shot, 4);
+                assert!((3..=4).contains(&s.sure_shot_turns));
+            } else {
+                assert_eq!(s.enraged, 0xC);
+                assert!((5..=10).contains(&s.enraged_turns));
+            }
+            assert_eq!(wild_status(&g), Default::default());
+        }
+    }
+
+    #[test]
+    fn focus_energy_use_takes_the_turn_and_sets_the_users_status() {
+        let mut mv = stat_move(FOCUS_ENERGY, [125; 3]);
+        mv.targeting = [0x73, 0x0];
+        let t = tables();
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut g = battle_with(&mv);
+        let outcome = g.step_with(
+            Command::UseMove {
+                slot: 0,
+                direction: Some(Direction::Right),
+            },
+            &data,
+        );
+        assert_eq!(outcome, Outcome::Applied);
+        assert_eq!(g.dungeon().unwrap().team()[0].info.status.sure_shot, 4);
+        assert_eq!(leader_pp(&g), 9);
+    }
+
+    #[test]
+    fn bubble_does_nothing_to_a_target_at_speed_stage_0() {
+        // The wild base stage is 1, so one counter already takes it to 0.
+        let mv = damage_move(BUBBLE);
+        let effect = effect_of(BUBBLE).unwrap();
+        let mut g = gated_battle(&mv, 10, true, 5);
+        g.dungeon_mut().unwrap().wild[0].info.speed_down[0] = 5;
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().rng(), &after_draws(&before, 6));
+        assert_eq!(
+            g.dungeon().unwrap().wild()[0].info.speed_down,
+            [5, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn a_whiffer_user_misses_after_the_slot_0_draw_and_a_focus_energy_user_always_crits() {
+        let mv = damage_move(0x09A);
+        let effect = effect_of(0x09A).unwrap();
+        // Whiffer: the check draws, then misses whatever the accuracy.
+        let mut g = battle_with(&mv);
+        g.dungeon_mut().unwrap().team[0].info.status.sure_shot = 2;
+        let before = *g.dungeon().unwrap().rng();
+        use_on(&mut g, &mv, &effect, Slot::Wild(0));
+        assert_eq!(g.dungeon().unwrap().rng(), &after_one_draw(&before));
+        assert_eq!(wild_hp(&g), 100);
+        // Focus Energy: the same five draws, a critical hit (odds 999) against none (odds 0).
+        let mut plain = battle_with(&mv);
+        use_on(&mut plain, &mv, &effect, Slot::Wild(0));
+        let mut focused = battle_with(&mv);
+        focused.dungeon_mut().unwrap().team[0].info.status.sure_shot = 4;
+        use_on(&mut focused, &mv, &effect, Slot::Wild(0));
+        assert_eq!(
+            plain.dungeon().unwrap().rng(),
+            focused.dungeon().unwrap().rng()
+        );
+        assert!(wild_hp(&focused) < wild_hp(&plain));
     }
 }

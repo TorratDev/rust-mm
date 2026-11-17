@@ -23,6 +23,7 @@ use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
 use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
+use crate::status::{self, Status};
 use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
 
 /// Team slots: `teamPokemon[4]` (`+0x11314`).
@@ -123,6 +124,7 @@ pub(crate) fn wild_monster(species: u16, level: u8, pos: (i16, i16)) -> Monster 
             belly: 0,
             belly_empty: false,
             regen_acc: 0,
+            status: Default::default(),
             regen_speed: 0,
             exp: 0,
             exp_gained: 0,
@@ -135,8 +137,9 @@ pub(crate) fn wild_monster(species: u16, level: u8, pos: (i16, i16)) -> Monster 
 pub const MAX_RESTORED_FLOORS: u32 = 1 << 16;
 
 /// The entity-info fields the notes record (`docs/re/structs.md`, "Entity info"). The
-/// offset is the Blue offset from `entity + 0x70`. Left out: the held item, the status
-/// records, the skill bits, the AI target and the decoy and curse state.
+/// offset is the Blue offset from `entity + 0x70`. Left out: the held item, the skill bits, the
+/// AI target, the decoy and curse state and every status but the nine of the first dungeon (see
+/// [`crate::status`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityInfo {
     /// `+0x02`: species id.
@@ -176,9 +179,8 @@ pub struct EntityInfo {
     pub moves: [MoveSlot; 4],
     /// `+0xE4` to `+0xE8`: the five speed-up counters (turns left, 0 when free). Each nonzero
     /// one adds 1 to the speed stage (`CalcSpeedStage`).
-    // shortcut: the counters are set by the caller and never counted down (the gated-pass
-    // tick, `TickStatusAndHealthRegen`, is not ported), so a speed stage keeps them until
-    // the status slice ports the countdown.
+    // shortcut: no first-dungeon move sets a speed-up counter, so only the caller sets one; the
+    // tick counts both kinds down (`EntityInfo::tick_status`).
     pub speed_up: [u8; 5],
     /// `+0xE9` to `+0xED`: the five speed-down counters, as `speed_up`. Each nonzero one
     /// takes 1 from the speed stage.
@@ -206,6 +208,9 @@ pub struct EntityInfo {
     // keeps the sum of every award.
     #[serde(default)]
     pub exp_gained: i32,
+    /// The statuses of the first dungeon (`+0x99` to `+0xC5`, see [`crate::status`]).
+    #[serde(default)]
+    pub status: Status,
 }
 
 /// One move slot of a monster: the six bytes at `info + 0xF4 + 6 * slot` (`docs/re/combat.md`,
@@ -630,35 +635,16 @@ impl Dungeon {
     /// one per nonzero speed-up counter, minus one per nonzero speed-down counter, clamped to 0
     /// to 4.
     fn calc_speed_stage(&self) -> u8 {
-        let (up, down) = match self.team.first() {
-            Some(leader) => (
-                leader
-                    .info
-                    .speed_up
-                    .iter()
-                    .map(|&c| i32::from(c != 0))
-                    .sum::<i32>(),
-                leader
-                    .info
-                    .speed_down
-                    .iter()
-                    .map(|&c| i32::from(c != 0))
-                    .sum::<i32>(),
-            ),
-            None => (0, 0),
-        };
-        // shortcut: the terms that need state the sim does not have are left out. The -1 for
-        // paralysis (`+0x9B` == 4) needs the status records; the +1 for snow on an ice type
-        // needs the weather (`FUN_02195C48`); the +1 for Deoxys in Speed form (apparent species
-        // 419) needs its constant, which the export does not resolve; the +1 for a Kecleon
-        // that stole (species 380, not a team member, `gDungeon+0x65E`) needs the stolen-item
-        // flag. Each goes in with its slice.
-        let stage = self
-            .leader_speed
-            .saturating_add(up)
-            .saturating_sub(down)
-            .clamp(0, i32::from(MAX_SPEED_STAGE));
-        u8::try_from(stage).unwrap_or(MAX_SPEED_STAGE)
+        // shortcut: the terms that need state the sim does not have are left out: the +1 for
+        // snow on an ice type needs the weather (`FUN_02195C48`); the +1 for Deoxys in Speed form
+        // (apparent species 419) needs its constant, which the export does not resolve; the +1
+        // for a Kecleon that stole (species 380, not a team member, `gDungeon+0x65E`) needs the
+        // stolen-item flag. Each goes in with its slice. The paralysis -1 is in `status`.
+        match self.team.first() {
+            Some(leader) => status::speed_stage(&leader.info, self.leader_speed),
+            None => u8::try_from(self.leader_speed.clamp(0, i32::from(MAX_SPEED_STAGE)))
+                .unwrap_or(MAX_SPEED_STAGE),
+        }
     }
 }
 
@@ -1276,6 +1262,7 @@ mod tests {
             belly: 0,
             belly_empty: false,
             regen_acc: 0,
+            status: Default::default(),
             regen_speed: 0,
             exp: 0,
             exp_gained: 0,
