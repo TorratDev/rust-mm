@@ -89,39 +89,45 @@ fn wild_monsters(floor: &Floor, spawns: &[MonsterSpawn]) -> Vec<Monster> {
     floor::enemy_spawn_spots(floor)
         .into_iter()
         .take(WILD_SLOTS)
-        .map(|pos| Monster {
-            pos,
-            visible: true,
-            info: EntityInfo {
-                species: spawn.species,
-                apparent_species: spawn.species,
-                not_team_member: true,
-                is_team_leader: false,
-                level: spawn.level,
-                iq: 0,
-                hp: 50,
-                max_hp: 50,
-                attack: [10, 10],
-                defence: [5, 5],
-                offensive_stages: [10, 10],
-                defensive_stages: [10, 10],
-                accuracy_stage: 10,
-                evasion_stage: 10,
-                types: [0, 0],
-                abilities: [0, 0],
-                moves: [MoveSlot::default(); 4],
-                speed_up: [0; 5],
-                speed_down: [0; 5],
-                direction: 0,
-                belly: 0,
-                belly_empty: false,
-                regen_acc: 0,
-                regen_speed: 0,
-                exp: 0,
-                exp_gained: 0,
-            },
-        })
+        .map(|pos| wild_monster(spawn.species, spawn.level, pos))
         .collect()
+}
+
+/// One wild monster of `species` at `pos`, with the stand-in stats (see [`wild_monsters`]). Also
+/// what the per-turn spawn creates (`crate::turn`).
+pub(crate) fn wild_monster(species: u16, level: u8, pos: (i16, i16)) -> Monster {
+    Monster {
+        pos,
+        visible: true,
+        info: EntityInfo {
+            species,
+            apparent_species: species,
+            not_team_member: true,
+            is_team_leader: false,
+            level,
+            iq: 0,
+            hp: 50,
+            max_hp: 50,
+            attack: [10, 10],
+            defence: [5, 5],
+            offensive_stages: [10, 10],
+            defensive_stages: [10, 10],
+            accuracy_stage: 10,
+            evasion_stage: 10,
+            types: [0, 0],
+            abilities: [0, 0],
+            moves: [MoveSlot::default(); 4],
+            speed_up: [0; 5],
+            speed_down: [0; 5],
+            direction: 0,
+            belly: 0,
+            belly_empty: false,
+            regen_acc: 0,
+            regen_speed: 0,
+            exp: 0,
+            exp_gained: 0,
+        },
+    }
 }
 
 /// The most floors a snapshot may record. Restoring the preseed generator replays one step
@@ -308,6 +314,14 @@ pub struct Dungeon {
     pub(crate) mud_sport: u8,
     /// `+0xC118`: the Water Sport turns left, 0 when none is active (as [`Self::mud_sport`]).
     pub(crate) water_sport: u8,
+    /// The floor's monster spawn list (the table at `+0x2F9C`, entries of 8 bytes), read by the
+    /// per-turn spawn (see [`crate::turn`]). Empty when the caller gave none.
+    pub(crate) spawns: Vec<MonsterSpawn>,
+    /// `+0x652`: fractional-turn spawn steps since the last spawn attempt (s16).
+    pub(crate) spawn_counter: i16,
+    /// `+0x654`: `enemyDensity`; 0 stops the per-turn spawn. From floor-properties byte `+0x06`.
+    // shortcut: the byte is taken as is; the game's writer of `+0x654` is not located.
+    pub(crate) enemy_density: u8,
 }
 
 impl Dungeon {
@@ -832,6 +846,9 @@ impl GameState {
             darkness,
             mud_sport: 0,
             water_sport: 0,
+            spawns: spawns.to_vec(),
+            spawn_counter: 0,
+            enemy_density: self.density_of_floor(self.floors_entered),
         });
         // The arrival reveal (`docs/re/visibility.md`, P2): the leader's start is seen at once.
         if let Some(dungeon) = self.dungeon.as_mut() {
@@ -847,6 +864,15 @@ impl GameState {
             .ok()
             .and_then(|index| self.floors.get(index))
             .map_or(0, crate::visibility::darkness)
+    }
+
+    /// The monster density (floor-properties byte `+0x06`) of floor number `floor` in the run's
+    /// records, 0 when there is no record.
+    fn density_of_floor(&self, floor: u32) -> u8 {
+        usize::try_from(floor)
+            .ok()
+            .and_then(|index| self.floors.get(index))
+            .map_or(0, |record| record[0x06])
     }
 
     /// Sets the leader's speed stage to one the caller observed (clamped to 0 to 4). The
@@ -991,6 +1017,11 @@ impl GameState {
             darkness,
             mud_sport: 0,
             water_sport: 0,
+            // shortcut: the next floor's spawn list is not loaded (as its wild monsters are not),
+            // so the per-turn spawn is off after the stairs.
+            spawns: Vec::new(),
+            spawn_counter: 0,
+            enemy_density: self.density_of_floor(self.floors_entered),
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1071,6 +1102,11 @@ impl GameState {
                     // active (#421).
                     mud_sport: 0,
                     water_sport: 0,
+                    // shortcut: the spawn state is not in `DungeonSnapshot` (as the sport
+                    // timers), so a restored floor has no spawn list and spawns nothing (#451).
+                    spawns: Vec::new(),
+                    spawn_counter: 0,
+                    enemy_density: 0,
                 })
             }
         };

@@ -8,7 +8,7 @@
 //! Integer math only.
 
 use crate::floor;
-use crate::state::Dungeon;
+use crate::state::{Dungeon, NO_MONSTER_HOUSE, WILD_SLOTS, wild_monster};
 
 /// Fractional turns in one dungeon turn (`fractionalTurn` cycles 0 to 23).
 pub const FRACTIONAL_TURNS: u8 = 24;
@@ -43,6 +43,17 @@ const fn next(k: u8) -> u8 {
     (k + 1) % FRACTIONAL_TURNS
 }
 
+/// Spawn steps between spawn attempts: the word at `0x021AA1D4` (36 at runtime).
+const SPAWN_THRESHOLD: i16 = 36;
+
+/// The wild-monster cap: the word at `0x021AA270` (10 at runtime), or the one at `0x021AA254`
+/// (4) on a floor with a monster house.
+const WILD_CAP: usize = 10;
+const WILD_CAP_HOUSE: usize = 4;
+
+/// The species a floor with an empty weight table spawns (`021388D4`).
+const FALLBACK_SPECIES: u16 = 0x17C;
+
 /// Belly lost per leader turn, in thousandths: 100, that is 0.1 (index 10 of the belly table at
 /// `0x021AA824`; `docs/re/turns.md`, "Per-turn effects", belly).
 const BELLY_PER_TURN: i32 = 100;
@@ -74,6 +85,7 @@ impl Dungeon {
     /// one pending.
     pub(crate) fn take_leader_turn(&mut self, act: impl FnOnce(&mut Dungeon)) {
         let k = self.run_to_leader_gate(self.fractional_turn);
+        self.spawn_step(k);
         // The floor's first pass skips the regeneration tick (`param` TRUE in the floor loop).
         if self.turn > 0 || k > 0 {
             self.regenerate_leader();
@@ -124,11 +136,88 @@ impl Dungeon {
     /// read on each fractional turn, as the gate does (`CalcSpeedStage` runs per turn).
     fn run_to_leader_gate(&mut self, mut k: u8) -> u8 {
         while !acts(self.leader_stage(), k) {
+            self.spawn_step(k);
             self.run_other_monsters(k);
             self.weather_step(k);
             k = next(k);
         }
         k
+    }
+
+    /// The spawn step of fractional turn `k` (`TrySpawnMonsterAndActivatePlusMinus_Async`,
+    /// `0214078C`), first in the turn: gated on `gSpeedTurns[1][k]`, it runs the spawn routine.
+    /// Its plus and minus flags and lightning-rod pass touch no state the sim holds.
+    fn spawn_step(&mut self, k: u8) {
+        if acts(1, k) {
+            self.try_spawn_wild();
+        }
+    }
+
+    /// `021826A0` (`docs/re/turns.md`, "Wild monster spawn (#358 P1)"). Off when the density is
+    /// 0; counts one step, and every [`SPAWN_THRESHOLD`] steps tries a spawn when fewer wild
+    /// monsters than the cap stand on tiles that allow spawns. The draws come in the game's
+    /// order: species (`RandInt(10000)`), the tile pick (x, y, index per pass), the movement
+    /// roll (`RandInt(100)`), and the two inside the spawn call (`RandInt(2)`, `RandInt(100)`).
+    // shortcut: the dungeon-0x15 gate (`+0x335D`), the Kecleon-theft path (`+0x65E`) and the
+    // over-900 message are not modelled, and the validity gate `02175BA0` always passes. The
+    // movement roll's threshold (`020063DC`) and the two draws inside `02179CFC` are drawn but
+    // their results are unused: the sim has no movement flag or wander setup. An empty spawn list
+    // spawns nothing (the game would pick 0x17C). The tile pick skips the item word.
+    fn try_spawn_wild(&mut self) {
+        if self.enemy_density == 0 || self.spawns.is_empty() {
+            return;
+        }
+        self.spawn_counter = self.spawn_counter.saturating_add(1);
+        if self.spawn_counter < SPAWN_THRESHOLD {
+            return;
+        }
+        self.spawn_counter = 0;
+        let counted = self
+            .wild
+            .iter()
+            .filter(|m| {
+                self.floor
+                    .tile(i32::from(m.pos.0), i32::from(m.pos.1))
+                    .is_some_and(|t| t.terrain & floor::TERRAIN_NO_SPAWN == 0)
+            })
+            .count();
+        let cap = if self.monster_house_room() == NO_MONSTER_HOUSE {
+            WILD_CAP
+        } else {
+            WILD_CAP_HOUSE
+        };
+        if cap <= counted {
+            return;
+        }
+        let species = self.pick_spawn_species();
+        let level = self
+            .spawns
+            .iter()
+            .find(|s| s.species == species)
+            .map_or(1, |s| s.level.max(1));
+        let leader = self.team.first().map_or((0, 0), |m| m.pos);
+        let (team, wild) = (&self.team, &self.wild);
+        let occupied = |x, y| team.iter().chain(wild.iter()).any(|m| m.pos == (x, y));
+        let Some(pos) = floor::pick_spawn_tile(&self.floor, leader, occupied, &mut self.rng) else {
+            return;
+        };
+        let _moves = self.rng.int(100);
+        let _wander = self.rng.int(2);
+        let _spawn_roll = self.rng.int(100);
+        if self.wild.len() < WILD_SLOTS {
+            self.wild.push(wild_monster(species, level, pos));
+        }
+    }
+
+    /// `021388D4(0)`: one `RandInt(10000)`; the first entry with a nonzero weight at or above
+    /// the roll wins, else the first with a nonzero weight, else [`FALLBACK_SPECIES`].
+    fn pick_spawn_species(&mut self) -> u16 {
+        let roll = self.rng.int(10_000);
+        let weighted = || self.spawns.iter().filter(|s| s.weights[0] != 0);
+        weighted()
+            .find(|s| roll <= i32::from(s.weights[0]))
+            .or_else(|| weighted().next())
+            .map_or(FALLBACK_SPECIES, |s| s.species)
     }
 
     /// The other monsters' steps of fractional turn `k` (team non-leaders and wild monsters).
@@ -404,5 +493,91 @@ mod tests {
         assert_eq!((d.mud_sport, d.water_sport), (0, 0));
         d.weather_step(10);
         assert_eq!((d.mud_sport, d.water_sport), (0, 0));
+    }
+
+    /// A floor of one open room, so every tile far from the leader fits a spawn.
+    fn spawn_run(density: u8, weights: [i16; 2]) -> GameState {
+        let mut g = leader_run(1);
+        let d = g.dungeon_mut().unwrap();
+        for x in 0..56 {
+            for y in 0..32 {
+                let t = d.floor.tile_mut(x, y).unwrap();
+                t.terrain = 1;
+                t.room = 0;
+            }
+        }
+        d.enemy_density = density;
+        d.spawns = vec![rescue_data::dungeon::MonsterSpawn {
+            species: 7,
+            level: 4,
+            weights,
+        }];
+        g
+    }
+
+    #[test]
+    fn a_wild_monster_spawns_every_36th_step_with_the_draws_in_order() {
+        let mut g = spawn_run(4, [10_000, 0]);
+        let d = g.dungeon_mut().unwrap();
+        // The 36th gated spawn step; the 35 before it draw nothing.
+        d.spawn_counter = 35;
+        let mut expected = d.rng;
+        d.try_spawn_wild();
+        // Species, then the tile pick (x, y, index), the movement roll and the two in the spawn.
+        expected.int(10_000);
+        expected.int(56);
+        expected.int(32);
+        // Every room tile but the 11 by 11 around the leader fits; the pick draws among them.
+        expected.int(56 * 32 - 11 * 11);
+        expected.int(100);
+        expected.int(2);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.spawn_counter, 0);
+        assert_eq!(d.wild.len(), 1);
+        let m = &d.wild[0];
+        assert_eq!((m.info.species, m.info.level), (7, 4));
+        assert!((i32::from(m.pos.0) - 5).abs() > 5 || (i32::from(m.pos.1) - 5).abs() > 5);
+    }
+
+    #[test]
+    fn the_spawn_counts_steps_and_stops_at_density_0_and_at_the_cap() {
+        let mut g = spawn_run(0, [10_000, 0]);
+        let d = g.dungeon_mut().unwrap();
+        let before = d.rng;
+        d.spawn_counter = 35;
+        d.try_spawn_wild();
+        assert_eq!((d.rng, d.spawn_counter, d.wild.len()), (before, 35, 0));
+        d.enemy_density = 4;
+        d.spawn_counter = 0;
+        d.try_spawn_wild();
+        assert_eq!((d.rng, d.spawn_counter), (before, 1));
+        // At the cap the counter still resets and nothing is drawn.
+        d.spawn_counter = 35;
+        d.wild = (0..10)
+            .map(|i| crate::state::wild_monster(7, 4, (20 + i, 20)))
+            .collect();
+        d.try_spawn_wild();
+        assert_eq!((d.rng, d.spawn_counter, d.wild.len()), (before, 0, 10));
+    }
+
+    #[test]
+    fn the_spawn_step_is_gated_on_stage_1_turns() {
+        let mut g = spawn_run(4, [10_000, 0]);
+        let d = g.dungeon_mut().unwrap();
+        d.spawn_step(0);
+        assert_eq!(d.spawn_counter, 0);
+        d.spawn_step(3);
+        assert_eq!(d.spawn_counter, 1);
+    }
+
+    #[test]
+    fn the_species_roll_takes_the_first_weight_at_or_above_it() {
+        let mut g = spawn_run(4, [0, 0]);
+        let d = g.dungeon_mut().unwrap();
+        // No nonzero weight: the first entry with one, and with none, the fallback species.
+        assert_eq!(d.pick_spawn_species(), FALLBACK_SPECIES);
+        d.spawns[0].weights = [5, 0];
+        assert_eq!(d.pick_spawn_species(), 7);
     }
 }

@@ -2254,7 +2254,7 @@ const SPAWN_ITEM: u16 = 0x2;
 const SPAWN_TRAP: u16 = 0x4;
 const SPAWN_BLOCKED: u16 = 0x8;
 const SPAWN_NO_STAIRS: u16 = 0x10;
-const TERRAIN_NO_SPAWN: u16 = 0x100;
+pub(crate) const TERRAIN_NO_SPAWN: u16 = 0x100;
 
 /// The most items a monster house gets (a constant in overlay 1's data).
 const HOUSE_ITEM_LIMIT: i32 = 7;
@@ -2561,6 +2561,53 @@ pub fn enemy_spawn_spots(floor: &Floor) -> Vec<(i16, i16)> {
         .into_iter()
         .map(|(x, y)| (i16::from(x), i16::from(y)))
         .collect()
+}
+
+/// The tile pick of the per-turn wild spawn (`ov_0001::0219BFE0`; `docs/re/turns.md`, "Wild
+/// monster spawn (#358 P1)"). Up to 3 passes; each draws x (`0x38`) and y (`0x20`), scans every
+/// column from x with wrap, each column from y with wrap, and collects up to `0x700` fitting
+/// tiles; the first pass with any draws an index among them. Fitting: floor terrain (`& 3 == 1`),
+/// nobody on it (`occupied`), and in passes 0 and 1 a room number other than `0xFF`; pass 0 also
+/// needs more than 5 tiles from `leader` in x or y. `None` after three empty passes.
+// shortcut: the item word (`+0xC`) of the tile is not checked, as the sim has no item entities;
+// upgrade with the items slice.
+pub fn pick_spawn_tile(
+    floor: &Floor,
+    leader: (i16, i16),
+    occupied: impl Fn(i16, i16) -> bool,
+    rng: &mut DungeonRng,
+) -> Option<(i16, i16)> {
+    const MAX_CANDIDATES: usize = 0x700;
+    for pass in 0..3 {
+        let x0 = rng.int(WIDTH as i32);
+        let y0 = rng.int(HEIGHT as i32);
+        let mut found: Vec<(i16, i16)> = Vec::new();
+        'scan: for dx in 0..WIDTH as i32 {
+            let x = (x0 + dx) % WIDTH as i32;
+            for dy in 0..HEIGHT as i32 {
+                if found.len() >= MAX_CANDIDATES {
+                    break 'scan;
+                }
+                let y = (y0 + dy) % HEIGHT as i32;
+                let Some(tile) = floor.tile(x, y) else {
+                    continue;
+                };
+                let (px, py) = (x as i16, y as i16);
+                let room_ok = pass == 2 || tile.room != NO_ROOM;
+                let far = pass != 0
+                    || (i32::from(leader.0) - x).abs() > 5
+                    || (i32::from(leader.1) - y).abs() > 5;
+                if tile.terrain & 3 == 1 && room_ok && far && !occupied(px, py) {
+                    found.push((px, py));
+                }
+            }
+        }
+        if !found.is_empty() {
+            let pick = rng.int(found.len() as i32);
+            return found.get(usize::try_from(pick).ok()?).copied();
+        }
+    }
+    None
 }
 
 /// Terrain bit `0x4`. Its meaning is not known yet. `StairsAlwaysReachable`
