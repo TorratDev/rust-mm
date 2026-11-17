@@ -37,3 +37,14 @@ The capture script checks each file it writes: `trace_check` reads it with `resc
 ```
 scripts\trace_check\target\debug\trace_check.exe C:\work\run1.jsonl
 ```
+
+## Issue creation (`gh-issue.sh`)
+
+Creates an issue with its real GitHub relations, not only mentions in the body: labels, assignee (default `@me`), the parent (sub-issue link) and "blocked by" dependencies. With `--issue N` it adds them to an existing issue instead. Needs `gh`, logged in.
+
+```
+scripts/gh-issue.sh --title "sim: wild monster spawn" --body-file body.md --label enhancement --parent 73 --blocked-by 358 --blocked-by 437
+scripts/gh-issue.sh --issue 451 --parent 73 --blocked-by 358 --blocked-by 437
+```
+
+`--dry-run` prints the `gh` calls without running them.

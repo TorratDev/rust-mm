@@ -80,7 +80,7 @@ Rules:
 - After starting, check that the JSON shows state live. Then run hc read <name> --lines 0 and confirm the header shows the expected model. If it doesn't, stop and report.
 - Never judge a session's state from screen text. Use the status from hc get.
 - Wait for reports with hc wait --children any. Reports arrive as your next input, tagged <hc from="tN name">...</hc>. Never sleep or poll.
-- A timeout is a check-in, not a failure. At each one, run hc get <name> and hc read <name> --lines 30 on every session you are waiting for, then wait again. A session whose output has not changed across two check-ins in a row is stuck: if hc get shows it blocked, read its screen and ask the user; otherwise exit it and dispatch a fresh session for the same task with the Resume line (see Resume, step 4).
+- A timeout is a check-in, not a failure. At each one, run orch_checkin <name>... (docs/agent-api.md) on every session you are waiting for, then wait again. A session that shows UNCHANGED at two check-ins in a row is stuck: if hc get shows it blocked, read its screen and ask the user; otherwise exit it and dispatch a fresh session for the same task with the Resume line (see Resume, step 4).
 - A report is a child's claim, not proof. Read the session (hc read <name> --lines 100) and check what it left behind (the findings comment, the PR, the review comment) before you act on it.
 - Once you have read a session's report, exit it: hc kill <name>, then hc rm <name>. For an investigator or a reviewer, also make sure its Ghidra bridge is stopped: ghidra --project <its copy> --program arm9.bin stop. The name is then free for a new session.
 
@@ -140,7 +140,7 @@ The reviewer takes the diff itself, reruns the verification, and posts its verdi
 2. Keep ./progress.md in the main checkout (it is gitignored; never commit it) with one row per sub-issue: sub-issue | status | attempts | executor | worktree | PR | follow-up. If the file already exists with other columns, keep its rows and convert them to this format.
 
 Select a batch of sub-issues to run now:
-- Each is open, and every issue in its Dependencies section is closed or merged.
+- Each is open, and every issue in its Dependencies section is closed or merged. gh_ready <EPIC> (docs/agent-api.md) lists the open sub-issues as ready or blocked.
 - Walk them in the epic's order. Ties go to the lower number.
 - Add a sub-issue to the batch only if it has no dependency on another sub-issue in the batch, and its files do not overlap the files of the batch or of any task still running.
 - If a sub-issue's files are unknown, it goes in a batch alone.
@@ -152,13 +152,15 @@ For each sub-issue in the batch:
 2. Dispatch the task to a new executor with the Dispatch to executors format.
 3. Wait for the DONE or BLOCKED line, then read the executor output and check that the draft PR exists. Do not assume it received the task or finished. On BLOCKED, record it in progress.md and ask the user if a human decision is needed.
 4. Dispatch a review of the PR as described in Dispatch to the reviewer. Wait for its report, then read it.
-   - PASS: mark the PR ready (gh pr ready <PR>), then wait for its checks without blocking on them. While other sessions are running, run gh pr checks <PR> each time you return from hc wait; use gh pr checks <PR> --watch only when nothing else is running. Do not use gh pr merge --auto: main has no required checks, so it would merge before the checks finish. When the checks pass, merge it yourself: gh pr merge <PR> --squash --delete-branch. Then remove the worktree (git worktree remove <WT>) and mark the sub-issue done (Closes) or partial (Refs). After a Refs merge, check with gh issue view <n> that the sub-issue is still open, and reopen it if it is not. If a check fails, dispatch a new executor with the Fix checks line, then a new review.
+   - PASS: mark the PR ready (gh pr ready <PR>), then wait for its checks without blocking on them. While other sessions are running, run gh_pr_line <PR>... each time you return from hc wait; use gh pr checks <PR> --watch only when nothing else is running. Do not use gh pr merge --auto: main has no required checks, so it would merge before the checks finish. When the checks pass (or there are none), merge it yourself: gh_pr_finish <PR> <WT> <n> closes|refs. It squash-merges, deletes the branch, removes the worktree, and after a Refs merge reopens the sub-issue if the merge closed it. Then mark the sub-issue done (Closes) or partial (Refs). If a check fails, dispatch a new executor with the Fix checks line, then a new review.
    - REVISE: dispatch a new executor with the Revise line and increment attempts. When it reports DONE, dispatch a new review.
    - SPLIT: create the follow-up in step 5.
    - ESCALATE: record it in progress.md and ask the user.
 5. After 3 REVISE attempts, or when the work doesn't fit one PR, create a follow-up:
-   gh issue create --title "<title> (follow-up)" --body "<done so far, remaining work, reason for split>\n\nParent: #<n>\nEpic: #<FOLLOWUP_EPIC>\nDependencies: <list>" --label follow-up
-   <FOLLOWUP_EPIC> is the current epic (#<EPIC>) unless the follow-up's Dependencies list names an issue outside the current epic. Only then, create a new epic for it first: gh issue create --title "<title> epic" --body "Epic: #<EPIC> split. Original sub-issue: #<n>\nDependencies: <full dependency list>" --label epic, then use its number as <FOLLOWUP_EPIC>. The follow-up goes into its epic's task list: the current epic's, or the new epic's after a split. Mark the original "partial" in progress.md either way.
+   Write the body (done so far, remaining work, reason for split, then "Parent: #<n>", "Epic: #<FOLLOWUP_EPIC>", "Dependencies: <list>") to a scratch file outside the repo, then:
+   scripts/gh-issue.sh --title "<title> (follow-up)" --body-file <file> --label follow-up --parent <FOLLOWUP_EPIC> --blocked-by <each open dependency>
+   Create every issue with scripts/gh-issue.sh, never bare gh issue create: the script also sets the assignee, the sub-issue link and the blocked-by links, which mentions in the body do not. If it exits 1, rerun it with --issue <number> and the links it reported as failed.
+   <FOLLOWUP_EPIC> is the current epic (#<EPIC>) unless the follow-up's Dependencies list names an issue outside the current epic. Only then, create a new epic for it first: scripts/gh-issue.sh --title "<title> epic" --body-file <file: "Epic: #<EPIC> split. Original sub-issue: #<n>" and "Dependencies: <full dependency list>"> --label epic --parent <EPIC> --blocked-by <each open dependency>, then use its number as <FOLLOWUP_EPIC>. The follow-up goes into its epic's task list: the current epic's, or the new epic's after a split. Mark the original "partial" in progress.md either way.
    If the part already done is still worth merging, first change the PR's link to "Refs #<n>" (gh pr edit <PR> --body "..."), then take it through review and merge as usual.
 6. The worktree stays until the PR is merged; only you remove it. For an abandoned task, first check that its worktree has no uncommitted changes worth keeping, then remove it and close the draft PR (gh pr close <PR>). Record the executor and worktree in progress.md either way.
 
