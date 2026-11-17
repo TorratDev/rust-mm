@@ -20,6 +20,7 @@ libfuzzer-sys = "0.4"
 rescue-nds = { path = "../crates/nds" }
 rescue-formats = { path = "../crates/formats" }
 rescue-data = { path = "../crates/data" }
+rescue-save = { path = "../crates/save" }
 
 # Own workspace, so cargo does not treat it as part of the root one.
 [workspace]
@@ -77,6 +78,13 @@ bench = false
 [[bin]]
 name = "data_tables"
 path = "fuzz_targets/data_tables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "save_read"
+path = "fuzz_targets/save_read.rs"
 test = false
 doc = false
 bench = false

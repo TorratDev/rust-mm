@@ -2846,6 +2846,11 @@ dependencies = [
 [[package]]
 name = "rescue-save"
 version = "0.0.0"
+dependencies = [
+ "proptest",
+ "rescue-sim",
+ "serde_json",
+]
 
 [[package]]
 name = "rescue-sim"
