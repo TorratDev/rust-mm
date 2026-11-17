@@ -37,7 +37,7 @@ Findings for [#360](https://github.com/TorratDev/rust-mm/issues/360), points P1 
 - When `gDungeon+0x64C == 0` or the entity is not the leader (`info+6 != 0`), only the held slot (`info+0x5A`) is a candidate, not the bag. What sets `+0x64C` is not traced.
 
 **Entry points** [blue-verified]
-- Step-on: `ov_0001::02165B00`, called from `0218766C`. It reads the tile object (`+0x10`) and the entity type: type 3 (item) calls `021441D8(entity+4, 1)` unless the item has sticky bit 2 (then it writes `gDungeon+0x5B8 = 4`); type 2 (trap) goes on to the trap trigger (P5).
+- Step-on: `ov_0001::02165B00`, called from `0218766C`. It reads the tile object (`+0x10`) and the entity type: type 3 (item) calls `021441D8(entity+4, 1)` unless the item has bit 2 (shop stock, see P6; then it writes `gDungeon+0x5B8 = 4` and does not pick up; the meaning of 4, probably the shop prompt, is [hypothesis]); type 2 (trap) goes on to the trap trigger (P5).
 - Leader pickup: `ov_0001::021441D8(pos*, silent?)`. Order: `02180B68(entity, 1)` gate (non-zero refuses; meaning not read); category 6 goes to money (`02007350` amount from a table indexed by quantity, `AddToTeamMoney 02007688`, sound `0x14C`, `02143F98` removes the floor item); else the stacking rules; else the first free slot; bag full prints the "cannot pick up" message (`param_2 == 0` suppresses it).
 - AI/ally pickup: `ov_0001::02184E50` (action 0x3F), a copy of the same body with guards: tile object exists and is not a trap, `0214067C` false, `info+7 == 0`, `info+8 != 1`, `info+0x40` not `'J'` or `'G'`, `info+0x98 != 1`.
 - Money never takes a bag slot. Item id `0x69` is the Poké item; `02142B70` and `020076CC` convert any `0x69` in the bag to money. Which dungeon-exit path calls `02142B70` is not traced. The 99,999 clamp is in `AddToTeamMoney`.
@@ -73,11 +73,11 @@ Not verified: the money table at `DAT_02007360`, the meaning of `+0x64C`, `02180
   5. Category 1 (arc) uses `0219BD04` to pick a target tile and then `ov_0001::02144A54(thrower, item, thrower_pos, target_pos, flags)`; otherwise (line) `ov_0001::02144F3C(thrower, item, thrower_pos, direction, flags)`.
   6. After: `0217ADF8` (face), `0219037C`.
 - **Path.** `02144A54` steps the projectile in `12 * (|dx| + |dy|)` sub-steps (12 per tile), with height from `02017A60`. `02144F3C` walks up to 6 tiles per leg along the 8 directions with a wall-edge fixup and stops at a wall or the first monster unless the pierce flag is set.
-- **Hit test `ov_0001::0214498C(thrower, target)`** [blue-verified]. Miss when the target has `info+8 == 1` or `info+0x98` is 1 or 4. Otherwise `hit = DungeonRandInt(100) < *DAT_ov_0001__02144A50`, one draw per target per throw; then overrides: thrower holds `0x28` (Red Whiff Specs) always miss, else holds `0x2A` (Red Lockon Specs) always hit, target holds `0x25` (Red Dodge Scarf) always miss. In `02144A54`, a target holding `0x26` (Red Bounce Band) skips the roll and prints the bounce message.
+- **Hit test `ov_0001::0214498C(thrower, target)`** [blue-verified]. Miss when the target has `info+8 == 1` or `info+0x98` is 1 or 4. Otherwise `hit = DungeonRandInt(100) < *(s16 *)` read through the literal at `ov_0001::02144A50`, which points to `021AA268` (the chance is an **s16** at `021AA268`), one draw per target per throw; then overrides: thrower holds `0x28` (Red Whiff Specs) always miss, else holds `0x2A` (Red Lockon Specs) always hit, target holds `0x25` (Red Dodge Scarf) always miss. In `02144A54`, a target holding `0x26` (Red Bounce Band) skips the roll and prints the bounce message.
 - **Outcome.** `02146880(1, flagB, p3, thrower, target, item)`. `021467F4` is the likely thrown-damage handler for ids 1 to 6 [hypothesis, unread]. An enemy that is hit gets `0217ADBC(target, 8)`.
 - **Landing `ov_0001::02143918(thrower, pos*, item, flagOrDirection, offset*)`**. If nothing was hit, the item goes to the end tile (floor type `(tile & 3)` non-zero, not `0x200`, no object), else the ring offsets at `DAT_ov_0001__02143BDC` (list ends at sentinel 99) with the same checks; `021437A8` and `021440B0` place it; with no free tile it disappears. No RNG draw in `02143918` or `021437A8`: landing is deterministic. A trap on the landing tile consumes the item (`02142ADC == 2` branch).
 - **RNG summary.** `DungeonRandInt(8)` for No-Aim Scope in `021732C4`; `DungeonRandInt(100)` per target in `0214498C`; nothing else in `02144A54` and `02144F3C`. Whether `02146880`'s thrown branch draws damage RNG is not traced.
-- Not verified: the hit-chance constant (read the 4-byte pointer at `ov_0001::02144A50`, then the word it points to); the `info+0xC6` range table; the data source of `021803B8` / `020022A4`; any runtime trace of a throw (a py-desmume hook on `0219D058` during a throw would settle the draw count).
+- Not verified: the hit-chance value (read the s16 at `021AA268`); the `info+0xC6` range table; the data source of `021803B8` / `020022A4`; any runtime trace of a throw (a py-desmume hook on `0219D058` during a throw would settle the draw count).
 
 ## P4. Held items
 
@@ -193,7 +193,7 @@ Largely in [`structs.md`](structs.md) ("Team inventory"). Added here:
 
 ## Open questions
 
-- Hit-chance constant behind `ov_0001::02144A50`, the `info+0xC6` range table, `021803B8`, `02180B68`, `+0x64C`, the money table `DAT_02007360`.
+- Hit-chance value at `021AA268` (s16, reached from `ov_0001::02144A50`), the `info+0xC6` range table, `021803B8`, `02180B68`, `+0x64C`, the money table `DAT_02007360`.
 - Per-id effect of the item handlers (`02146880` arms) and of trap handlers 0xB to 0x13; meaning of trap record byte 1 and of `info+6` on the monster-step path.
 - The roughly 20 direct readers of `info+0x5C`.
 - Runtime: no py-desmume check was recorded for the throw RNG draw count, for `02198824`'s caller, or for the bag layout. Investigator b announced a runtime-check section that was not posted, so nothing here is trace-confirmed.
