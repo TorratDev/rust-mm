@@ -42,6 +42,24 @@ for a in $(re_grep gSpeedTurns | cut -f1); do echo "== $a"; re_src "$a" | grep -
 |---|---|
 | `orch_checkin NAME...` | `name status changed\|UNCHANGED` (`gone` when not live), comparing the last 30 screen lines with the previous check-in |
 
+## Task scripts (role sessions)
+
+Each does one mechanical step from the role prompts and prints a short verdict, so a session
+writes only content. They read `TASK_FILES`, `AGENT_ROLE`, `AGENT_ENGINE`, `AGENT_MODEL`,
+`AGENT_GHIDRA` and `ORCH` from the environment the orchestrator starts them with. Plan:
+[`plans/agent-harness-scripts.md`](plans/agent-harness-scripts.md). Self-test:
+`scripts/tests/harness-test.sh`.
+
+| Script | Does |
+|---|---|
+| `scripts/wt.sh N SLUG` | creates the worktree `../rust-mm-worktrees/N-SLUG` from the latest main, or reuses it and prints its commits, status and latest REVISE comment; the path is the last line |
+| `scripts/check-diff.sh WT [--staged] [--files LIST]` | `scope`, `legal`, `deps`, `pub` and `panic` lines (OK, WARN or FAIL); exit 1 on a FAIL |
+| `scripts/verify.sh [WT]` | the CI steps (fmt, deps, determinism, clippy, tests, doctests), one PASS/FAIL line each, ending `verify: PASS (6/6)` or `verify: FAIL (...)` |
+| `scripts/commit.sh WT -m SUBJECT [-m PARA]...` | stages all, refuses out-of-scope or forbidden files, adds `(#N)` and the engine's Co-Authored-By line |
+| `scripts/ship.sh WT --closes N\|--refs N [--title T --body-file F]` | rebase (exit 3 with a BLOCKED line on conflict), check-diff, verify, push, draft PR with the attribution; last line `ship: <URL> <verify>` |
+| `scripts/review-prep.sh PR` | the reviewer's mechanical checks for the PR's worktree, saved for `report.sh` to append to the verdict |
+| `scripts/report.sh LINE [--pr-comment PR F] [--issue-comment N F]` | checks the line's format for the role, posts and reads back the comment, stops the Ghidra bridge, sends the line to `$ORCH` |
+
 ## Writes (GitHub)
 
 Run these as their own command, so the permission prompt shows what is written.

@@ -68,13 +68,13 @@ Each role has one tab in your space. A role that needs more than one session get
 
 A session starts with its only task, so starting and dispatching are one step. Start a session only when you have a task for it, and only as many as the batch needs.
 
-Start command (one line; the first message carries the role and the task):
-  hc run --bg --name <session name> --cwd <REPO> --label herdr.space=<SP> [--label herdr.tab=<TAB>] claude --model <model> "Read prompts/<role>.md in your working directory; it defines your role. Report to the orchestrator with: hc send <ORCH> '<your final line>'. <dispatch text>"
+Start command (one line; the first message carries the role and the task). The env values are what the role's scripts read (scripts/report.sh sends the final line to ORCH; commit.sh, ship.sh and review-prep.sh check against TASK_FILES):
+  hc run --bg --name <session name> --cwd <REPO> --label herdr.space=<SP> [--label herdr.tab=<TAB>] env ORCH=<ORCH> AGENT_ROLE=<role> AGENT_NAME=<session name> AGENT_ENGINE=<claude|pi> AGENT_MODEL=<model> AGENT_GHIDRA=<copy|none> TASK_FILES="<files the task names>" claude --model <model> "Read prompts/<role>.md in your working directory; it defines your role. <dispatch text>"
 
 Start command for a pi session (on a Claude limit). pi takes its task after it is ready, so start, wait, then send:
-  hc run --bg --name <session name> --cwd <REPO> --label herdr.space=<SP> [--label herdr.tab=<TAB>] pi --model <pi model> --name <session name> --append-system-prompt prompts/<role>.md
+  hc run --bg --name <session name> --cwd <REPO> --label herdr.space=<SP> [--label herdr.tab=<TAB>] env ORCH=<ORCH> AGENT_ROLE=<role> AGENT_NAME=<session name> AGENT_ENGINE=<claude|pi> AGENT_MODEL=<model> AGENT_GHIDRA=<copy|none> TASK_FILES="<files the task names>" pi --model <pi model> --name <session name> --append-system-prompt prompts/<role>.md
   hc wait <session name>
-  hc send <session name> "Report to the orchestrator with: hc send <ORCH> '<your final line>'. <dispatch text>"
+  hc send <session name> "<dispatch text>"
   From here a pi session is handled exactly like a Claude session: same model check, hc wait, hc read, hc kill and hc rm.
 
 Rules:

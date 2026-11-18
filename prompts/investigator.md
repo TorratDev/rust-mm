@@ -43,6 +43,5 @@ Your findings are for the orchestrator. The Ghidra copies are not synced, so a r
 
 When you finish:
 1. Write the per-point findings and the table to the findings file the dispatch names (it is outside the repo).
-2. Post that file as a comment on the sub-issue, so the executor and the reviewer can read it: gh issue comment <n> --body-file <path>. This is the one thing you write outside your scratch directory.
-3. If you started a bridge, stop it: ghidra --project rescue-arm9-<x> --program arm9.bin stop
-4. Report "DONE: findings posted on #<n>, file <path>" or "BLOCKED: <reason>". Make that line the last line of your reply; if the orchestrator gave you an hc send command, send it there too, otherwise it reads the reply text itself. The orchestrator then ends your session.
+2. Report with: scripts/report.sh "DONE: findings posted on #<n>, file <path>" --issue-comment <n> <path>
+   (or scripts/report.sh "BLOCKED: <reason>"). It posts the findings as a comment on the sub-issue, checks that it landed, stops your Ghidra bridge and sends the line to the orchestrator. Make the same line the last line of your reply. The orchestrator then ends your session.
