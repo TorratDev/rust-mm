@@ -4,6 +4,9 @@
 //! gated in, then the end-of-turn effects of the ones left flagged `aiAllySkip`. The draws come
 //! in the game's order. Integer math only.
 //!
+//! A partner's turn (`02140AC0`) is the same flow with the sides swapped: it attacks a foe it sees
+//! next to it, else heads for the foe or the leader.
+//!
 //! A turn is: the weighted move pick (`02192D24`, one `DungeonRandInt`), then either the regular
 //! attack (the leader is next to the monster) or `AIMovement` (`021918D4`): the target search
 //! (`02191394`), the wander (`02190854`) when it finds none, and `DecideMovement` (`02190FEC`).
@@ -23,6 +26,8 @@ use crate::targeting::Slot;
 // most common wild value (150 of 163 walks), and nothing is attacked. With the data,
 // `choose_ai_move` computes the total from the monster's move slots.
 const MOVE_PICK_TOTAL: i32 = 35;
+/// The weight total team partners showed in the P7 trace (`docs/re/turns.md`, "One enemy turn").
+const TEAM_PICK_TOTAL: i32 = 65;
 
 /// The entries of the weighted pick: the four move slots, then the regular attack
 /// (`02192D24`, `docs/re/ai.md`, "Move and target selection").
@@ -82,6 +87,114 @@ impl Dungeon {
         }
     }
 
+    /// The team loop (`02140AC0`, `docs/re/turns.md`, "Other monsters' turns"): each gated
+    /// partner acts once in slot order (phase 1), then the members flagged `aiAllySkip` act again
+    /// in up to three passes, nearest the leader first, last slot first within a distance
+    /// (phase 2); each member still flagged at the end gets its end-of-turn effects.
+    // shortcut: every partner is gated at speed stage 1 (the caller picks the gated turns), and
+    // runs one `RunMonsterAI` and Execute cycle where the game repeats up to three while Execute
+    // returns TRUE (what makes it return TRUE is not decoded).
+    // shortcut: the `0x8000` and `0x4000` swap flags are never set, yet the sim already swaps the
+    // leader with a team ally (`state.rs` `move_leader`). In the game that swap sets `0x8000`,
+    // the swap pass `02140ED0` runs the partner's `RunMonsterAI` and Execute (with their draws)
+    // inside the leader's turn, and the gate here then skips the partner (`docs/re/turns.md`,
+    // "Swap flags (#181 P2)"). After a leader swap the sim neither runs the swap pass nor skips
+    // the partner, so the RNG diverges on that turn; #475 ports `02140ED0` and the flag gate.
+    pub(crate) fn run_team_members(&mut self, data: Option<&CombatData<'_>>) {
+        // The slots flagged `aiAllySkip`.
+        let mut skipped = Vec::new();
+        for i in 1..self.team.len() {
+            if !self.leader_alive() {
+                return;
+            }
+            if self.ally_turn(i, data, false) {
+                skipped.push(i);
+            }
+        }
+        for _ in 0..3 {
+            let leader = self.team[0].pos;
+            let mut order = std::mem::take(&mut skipped);
+            // The bucket is the distance to the leader capped at 2; each bucket is LIFO.
+            order.sort_by_key(|&i| (chebyshev(leader, self.team[i].pos).min(2), usize::MAX - i));
+            for i in order {
+                if !self.leader_alive() {
+                    return;
+                }
+                if self.ally_turn(i, data, true) {
+                    skipped.push(i);
+                }
+            }
+        }
+        for i in skipped {
+            self.ally_end_of_turn(i);
+        }
+    }
+
+    /// One partner's turn: `RunMonsterAI` and Execute. `recalc` is phase 2's `+0x117`. Returns
+    /// whether the partner is flagged `aiAllySkip`, which defers its end of turn.
+    // shortcut: the partner's own moves are not used: the pick draws the team total 65 seen in
+    // the P7 trace (the sum of its five weights is not computed) and only the regular attack
+    // is used. IQ skills and tactics are not read (`ai.md`, P4-b, P4-c): the partner attacks a
+    // foe it sees, else follows the leader, whatever its tactic. A phase-2 turn never re-flags
+    // (`recalculateFollow` set, `DecideMovement` lines 358-361), though the trailing branch
+    // (lines 436-443) may in the game.
+    // shortcut: HP regeneration (`TickStatusAndHealthRegen`) and the partner's belly are not
+    // modelled; only the status countdowns run.
+    fn ally_turn(&mut self, i: usize, data: Option<&CombatData<'_>>, recalc: bool) -> bool {
+        let me = self.team[i].pos;
+        if self.team[i].info.hp == 0 {
+            return false;
+        }
+        self.team[i].info.tick_status();
+        if self.team[i].info.is_asleep() {
+            self.ally_end_of_turn(i);
+            return false;
+        }
+        // `AIFindTarget` (`02191394`): a foe in view, else the leader (`02183FF0`).
+        let leader = self.team[0].pos;
+        let foe = self.nearest_seen(me, self.wild.iter().map(|m| m.pos));
+        let target = foe.or_else(|| self.in_view(me, leader).then_some(leader));
+        // `ChooseAIMove`: the weighted pick is drawn whatever the target.
+        let _pick = self.rng.int(TEAM_PICK_TOTAL);
+        if let Some(f) = foe.filter(|&f| self.adjacent_attackable(me, f)) {
+            // The regular attack's target pick among one candidate (`02192CC0`).
+            let _candidate = self.rng.int(1);
+            let dir = usize::from(direction_towards(me, f));
+            self.team[i].info.direction = dir as u8;
+            if let Some(data) = data {
+                self.regular_attack_hits(Slot::Team(i), dir, data);
+            }
+            self.ally_end_of_turn(i);
+            return false;
+        }
+        // shortcut: [hypothesis] a follow (walk) turn runs two `RunMonsterAI`/Execute cycles, the
+        // P7 team row (`Int(65), Int(65), Int(100)`): Execute returns 1 only on the early
+        // `DisplayActions_Async` path, before the action runs, so the first cycle does not walk
+        // and the second does. Not checked beyond that trace row. The attack turn above stays at
+        // one pick: the P7 "Attack" row shows one `Int(65)` for the 3 team attacks.
+        let _second_pick = self.rng.int(TEAM_PICK_TOTAL);
+        let facing = usize::from(self.team[i].info.direction);
+        let goal = target.unwrap_or_else(|| self.wander(me, facing));
+        let (plan, skip) = self.decide_movement(me, goal);
+        if let Plan::Walk(dir) = plan {
+            let m = &mut self.team[i];
+            m.pos = step(m.pos, dir);
+            m.info.direction = dir as u8;
+        }
+        let skip = skip && !recalc;
+        if !skip {
+            self.ally_end_of_turn(i);
+        }
+        skip
+    }
+
+    /// `DoEndOfTurnEffects` for a partner: the one draw it makes, `DungeonRandInt(100)`
+    /// (`02186894`), then the status part (see [`Self::monster_end_of_turn`]).
+    fn ally_end_of_turn(&mut self, i: usize) {
+        let _roll = self.rng.int(100);
+        self.team[i].info.end_of_turn_status();
+    }
+
     /// One wild monster's turn: `RunMonsterAI`, Execute and the end-of-turn effects Execute runs.
     /// Returns whether the monster is flagged `aiAllySkip`, which defers the effects.
     fn wild_turn(&mut self, i: usize, data: Option<&CombatData<'_>>) -> bool {
@@ -135,7 +248,10 @@ impl Dungeon {
             }
             return false;
         }
-        let goal = target.unwrap_or_else(|| self.wander(i));
+        let goal = target.unwrap_or_else(|| {
+            let m = &self.wild[i];
+            self.wander(m.pos, usize::from(m.info.direction))
+        });
         let (plan, skip) = self.decide_movement(me, goal);
         if let Plan::Walk(dir) = plan {
             let (dx, dy) = DIRECTIONS[dir].delta();
@@ -291,7 +407,11 @@ impl Dungeon {
     /// face it and the regular attack's damage resolves on the foes its range picks.
     fn use_regular_attack(&mut self, i: usize, dir: usize, data: &CombatData<'_>) -> bool {
         self.wild[i].info.direction = dir as u8;
-        let me = Slot::Wild(i);
+        self.regular_attack_hits(Slot::Wild(i), dir, data)
+    }
+
+    /// The damage of a regular attack by `me` towards direction index `dir` (either side).
+    fn regular_attack_hits(&mut self, me: Slot, dir: usize, data: &CombatData<'_>) -> bool {
         let Some(mv) = data.moves.get(usize::from(REGULAR_ATTACK)) else {
             return true;
         };
@@ -367,14 +487,27 @@ impl Dungeon {
     // Sight is `in_view` (`0219C6BC`); the game's wild-monster test is `0219C5C4`, not read. The
     // behaviour, petrified and decoy filters are not modelled (no statuses).
     fn find_target(&self, me: (i16, i16)) -> Option<(i16, i16)> {
+        self.nearest_seen(
+            me,
+            self.team.iter().filter(|t| t.info.hp > 0).map(|t| t.pos),
+        )
+    }
+
+    /// The nearest of `foes` that `me` sees, the first at the smallest distance, stopping at one
+    /// within 1 tile.
+    fn nearest_seen(
+        &self,
+        me: (i16, i16),
+        foes: impl Iterator<Item = (i16, i16)>,
+    ) -> Option<(i16, i16)> {
         let mut best: Option<((i16, i16), i32)> = None;
-        for t in self.team.iter().filter(|t| t.info.hp > 0) {
-            if !self.in_view(me, t.pos) {
+        for pos in foes {
+            if !self.in_view(me, pos) {
                 continue;
             }
-            let dist = chebyshev(me, t.pos);
+            let dist = chebyshev(me, pos);
             if best.is_none_or(|(_, d)| dist < d) {
-                best = Some((t.pos, dist));
+                best = Some((pos, dist));
                 if dist < 2 {
                     break;
                 }
@@ -402,9 +535,8 @@ impl Dungeon {
     // exit lists are generated at floor entry.
     // shortcut: the mobility class is 0 (a regular walker) and the objective and the `+0xF0`
     // state are read as unset, as the sim keeps no AI target record.
-    fn wander(&mut self, i: usize) -> (i16, i16) {
-        let m = &self.wild[i];
-        let (me, facing) = (m.pos, usize::from(m.info.direction) % 8);
+    fn wander(&mut self, me: (i16, i16), facing: usize) -> (i16, i16) {
+        let facing = facing % 8;
         let in_corridor = self
             .floor
             .tile(i32::from(me.0), i32::from(me.1))
@@ -984,5 +1116,90 @@ mod tests {
         d.run_wild_monsters(None);
         assert_eq!(d.wild[0].info.hp, hp - 5);
         assert_eq!(d.wild[0].info.status.burn_turns, 127);
+    }
+
+    /// `room_with` plus a partner at `partner`, as team slot 1.
+    fn with_partner(leader: (i16, i16), partner: (i16, i16), wild: &[(i16, i16)]) -> GameState {
+        let mut g = room_with(leader, wild);
+        let d = g.dungeon_mut().unwrap();
+        let mut ally = d.team[0].clone();
+        ally.pos = partner;
+        ally.info.is_team_leader = false;
+        d.team.push(ally);
+        g
+    }
+
+    #[test]
+    fn a_partner_follows_the_leader_and_draws_the_pick_and_the_end_of_turn() {
+        let mut g = with_partner((12, 5), (5, 5), &[]);
+        let d = g.dungeon_mut().unwrap();
+        let mut expected = d.rng;
+        d.run_team_members(None);
+        // `Int(65)@02193260` twice (two cycles), then `Int(100)@02186894`; the walk draws nothing.
+        expected.int(65);
+        expected.int(65);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.team[1].pos, (6, 5));
+        assert_eq!(d.team[1].info.direction, 2);
+    }
+
+    #[test]
+    fn a_partner_next_to_a_foe_it_sees_attacks_it_instead_of_following() {
+        let mut g = with_partner((12, 5), (5, 5), &[(6, 5)]);
+        let moves = duel(&[], &[]).1;
+        let tables = crate::combat::tests::tables();
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let d = g.dungeon_mut().unwrap();
+        let mut model = d.clone();
+        d.run_team_members(Some(&data));
+        // The pick, the target draw, the damage, then the end of turn.
+        model.rng.int(65);
+        model.rng.int(1);
+        let mv = &moves[usize::from(REGULAR_ATTACK)];
+        let attack = Effect::Damage {
+            arg8: REGULAR_ATTACK_ARG8,
+        };
+        model.resolve_all(Slot::Team(1), &[Slot::Wild(0)], mv, &attack, &data);
+        model.rng.int(100);
+        assert_eq!(d.rng, model.rng);
+        assert_eq!(d.team[1].pos, (5, 5), "an attack does not move");
+        assert_eq!(d.team[1].info.direction, 2, "it faces the foe");
+        assert_eq!(d.wild.len(), model.wild.len());
+        assert_eq!(
+            d.wild.first().map(|w| w.info.hp),
+            model.wild.first().map(|w| w.info.hp)
+        );
+    }
+
+    #[test]
+    fn a_partner_blocked_by_a_monster_acts_again_in_phase_2_and_its_end_of_turn_comes_last() {
+        // The partner at (5,5) heads right for the leader at (9,5); a wild monster far off in a
+        // closed corridor cannot be seen, so only the other team member blocks: a second partner
+        // stands at (6,5), walls close the two 45 degree tiles.
+        let mut g = with_partner((9, 5), (5, 5), &[]);
+        let d = g.dungeon_mut().unwrap();
+        let mut blocker = d.team[1].clone();
+        blocker.pos = (6, 5);
+        d.team.push(blocker);
+        for p in [(6, 4), (6, 6)] {
+            d.floor.tile_mut(p.0, p.1).unwrap().terrain = floor::TERRAIN_IMPASSABLE_WALL;
+        }
+        let mut expected = d.rng;
+        d.run_team_members(None);
+        // Phase 1: A picks twice (blocked, flagged); B picks twice and steps on, end of turn.
+        // Phase 2: A, `recalculateFollow` set, picks twice and steps into the freed tile with
+        // its end of turn; nothing is left for the final pass.
+        for cap in [65, 65, 65, 65, 100, 65, 65, 100] {
+            expected.int(cap);
+        }
+        assert_eq!(d.rng, expected);
+        assert_eq!((d.team[1].pos, d.team[2].pos), ((6, 5), (7, 5)));
     }
 }
