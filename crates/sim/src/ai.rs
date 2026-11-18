@@ -61,13 +61,20 @@ impl Dungeon {
     // modelled. The `0x8000` and `0x4000` flags never get set.
     pub(crate) fn run_wild_monsters(&mut self, data: Option<&CombatData<'_>>) {
         let mut deferred = Vec::new();
-        for i in 0..self.wild.len() {
+        let mut i = 0;
+        while i < self.wild.len() {
             // A fallen leader ends the loop: the run is over.
             if !self.leader_alive() {
                 break;
             }
+            let before = self.wild.len();
             if self.wild_turn(i, data) {
                 deferred.push(i);
+            }
+            // Struggle's recoil can remove the acting monster (`remove_defeated` compacts the
+            // list): the next monster now sits at `i`, and the deferred indices all lie below it.
+            if self.wild.len() == before {
+                i += 1;
             }
         }
         for i in deferred {
@@ -98,6 +105,7 @@ impl Dungeon {
         }
         // `RunMonsterAI` steps 1 to 9 draw nothing for a monster with no status or item.
         let target = self.find_target(me);
+        let len_before = self.wild.len();
         // shortcut: a wild monster the sim gave no moves (the spawn loads no learnset yet) keeps
         // the fixed pick of the no-data path; a real monster always holds a move.
         let has_moves = self.wild[i]
@@ -121,7 +129,8 @@ impl Dungeon {
             }
         };
         if attacked {
-            if self.wild.get(i).is_some() {
+            // A monster the recoil removed gets no end of turn (`i` now names the next one).
+            if self.wild.len() == len_before {
                 self.monster_end_of_turn(i);
             }
             return false;
@@ -176,9 +185,10 @@ impl Dungeon {
             .map(|m| u32::from(m.pp))
             .sum();
         if pp_sum == 0 {
-            // `0200B568(0x160)` then `02192728`: the regular attack, no weighted pick.
+            // `InitPokemonMove(0x160)` then `02192728`, action 0x17: Struggle, no weighted pick.
+            // The target search draws as the regular attack's does when a foe is adjacent.
             return match self.regular_attack_direction(i) {
-                Some(dir) => self.use_regular_attack(i, dir, data),
+                Some(dir) => self.use_struggle(i, dir, data),
                 None => false,
             };
         }
@@ -293,6 +303,23 @@ impl Dungeon {
             .filter(|t| !t.is_empty())
         {
             self.resolve_all(me, &targets, mv, &effect, data);
+        }
+        true
+    }
+
+    /// Struggle (`0x160`) by wild monster `i` towards direction index `dir`: the normal damage
+    /// path with the recoil on the user, and no PP taken.
+    fn use_struggle(&mut self, i: usize, dir: usize, data: &CombatData<'_>) -> bool {
+        self.wild[i].info.direction = dir as u8;
+        let me = Slot::Wild(i);
+        let Some(mv) = data.moves.get(usize::from(move_effects::STRUGGLE)) else {
+            return true;
+        };
+        if let Some(targets) = self
+            .targets_of(me, mv, DIRECTIONS[dir])
+            .filter(|t| !t.is_empty())
+        {
+            self.resolve_all(me, &targets, mv, &Effect::Struggle, data);
         }
         true
     }
@@ -704,11 +731,89 @@ mod tests {
     }
 
     #[test]
-    fn a_monster_with_no_pp_skips_the_pick_and_attacks_with_the_regular_attack() {
-        let (g, moves) = duel(&[(0x9A, 5, 0)], &[(0x9A, 6)]);
+    fn a_monster_with_no_pp_skips_the_pick_and_uses_struggle_with_its_recoil() {
+        let (g, moves) = duel(&[(0x9A, 5, 0)], &[(0x9A, 6), (move_effects::STRUGGLE, 0)]);
+        let tables = crate::combat::tests::tables();
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
         for seed in 0..8 {
-            check_turn(&g, &moves, seed, None, |_| None, true);
+            let mut actual = g.dungeon().unwrap().clone();
+            actual.rng = crate::rng::DungeonRng::new(seed);
+            let mut model = actual.clone();
+            actual.run_wild_monsters(Some(&data));
+            // No pick; the target draw, Struggle's resolve and recoil, then the end-of-turn roll.
+            model.rng.int(1);
+            let mv = &moves[usize::from(move_effects::STRUGGLE)];
+            model.resolve_all(
+                Slot::Wild(0),
+                &[Slot::Team(0)],
+                mv,
+                &Effect::Struggle,
+                &data,
+            );
+            model.rng.int(100);
+            assert_eq!(actual.rng, model.rng, "seed {seed}");
+            assert_eq!(actual.team[0].info.hp, model.team[0].info.hp, "seed {seed}");
+            assert_eq!(actual.wild[0].info.hp, model.wild[0].info.hp, "seed {seed}");
+            assert_eq!(actual.wild[0].info.moves, model.wild[0].info.moves);
         }
+    }
+
+    #[test]
+    fn a_wild_monster_removed_by_recoil_does_not_make_the_next_one_skip_its_turn() {
+        let mut g = room_with((10, 10), &[(11, 10), (9, 10)]);
+        let moves = duel(&[], &[(move_effects::STRUGGLE, 0)]).1;
+        let d = g.dungeon_mut().unwrap();
+        for w in &mut d.wild {
+            w.info.moves[0] = MoveSlot {
+                flags: 0x01,
+                flags2: 0,
+                id: 0x9A,
+                pp: 0,
+                ginseng: 0,
+            };
+        }
+        // The first monster dies of its recoil; the second must still act.
+        d.wild[0].info.hp = 1;
+        let tables = crate::combat::tests::tables();
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut model = d.clone();
+        d.run_wild_monsters(Some(&data));
+        let mv = &moves[usize::from(move_effects::STRUGGLE)];
+        // A: target draw, Struggle, removed (no end of turn). B, now at index 0: the same, then
+        // its end of turn.
+        model.rng.int(1);
+        model.resolve_all(
+            Slot::Wild(0),
+            &[Slot::Team(0)],
+            mv,
+            &Effect::Struggle,
+            &data,
+        );
+        assert_eq!(model.wild.len(), 1);
+        model.rng.int(1);
+        model.resolve_all(
+            Slot::Wild(0),
+            &[Slot::Team(0)],
+            mv,
+            &Effect::Struggle,
+            &data,
+        );
+        model.rng.int(100);
+        assert_eq!(d.wild.len(), 1);
+        assert_eq!(d.rng, model.rng);
+        assert_eq!(d.team[0].info.hp, model.team[0].info.hp);
     }
 
     #[test]
