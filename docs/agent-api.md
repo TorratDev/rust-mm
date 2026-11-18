@@ -60,6 +60,16 @@ writes only content. They read `TASK_FILES`, `AGENT_ROLE`, `AGENT_ENGINE`, `AGEN
 | `scripts/review-prep.sh PR` | the reviewer's mechanical checks for the PR's worktree, saved for `report.sh` to append to the verdict |
 | `scripts/report.sh LINE [--pr-comment PR F] [--issue-comment N F]` | checks the line's format for the role, posts and reads back the comment, stops the Ghidra bridge, sends the line to `$ORCH` |
 
+## Orchestrator scripts
+
+| Script | Does |
+|---|---|
+| `scripts/orch/epic-status.py EPIC [--all]` | one line per open sub-issue: next action (running, review, revise, split, merge, fix-checks, ask-user, follow-up, resume, rest, blocked, dispatch), PRs, worktree, sessions. Replaces `progress.md` |
+| `scripts/orch/spawn.sh ROLE --issue N ...` | starts a role session with its task: next free name, Ghidra copy, model, role tab, dispatch text, the role scripts' environment, model check; `--dry-run` prints it instead |
+| `scripts/orch/reap.sh NAME...` | saves the screen, prints the report line, kills and removes the terminal, stops its Ghidra bridge |
+| `scripts/orch/merge.sh PR` | after a PASS: `gh pr ready`, then `gh_pr_finish` once checks pass; exit 75 while pending |
+| `scripts/orch/cleanup-check.sh` | end-of-epic checks: bridges, worktrees, sessions, stray files in the main checkout |
+
 ## Writes (GitHub)
 
 Run these as their own command, so the permission prompt shows what is written.
