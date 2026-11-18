@@ -1262,6 +1262,76 @@ mod tests {
     }
 
     #[test]
+    fn a_monster_on_a_junction_holding_objective_4_steps_out_to_the_corridor() {
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        d.floor.tile_mut(5, 5).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        d.floor.tile_mut(6, 5).unwrap().room = NO_ROOM;
+        let held = AiRecord {
+            objective: LEAVE_ROOM,
+            goal: (9, 9),
+            target: None,
+        };
+        d.ai.wild.insert((5, 5), held);
+        let mut expected = d.rng;
+        d.run_wild_monsters(None);
+        // Pick, the direction roll of the step-out, end of turn: no `Int(count)` is drawn.
+        expected.int(35);
+        expected.int(8);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        let rec = *d.ai.wild.values().next().unwrap();
+        assert_eq!((rec.objective, rec.goal), (ROAM, (6, 5)));
+        assert_eq!(d.wild[0].pos, (6, 5));
+    }
+
+    #[test]
+    fn an_exit_drawn_equal_to_the_own_tile_is_drawn_again_and_a_room_without_exits_stands_still() {
+        let exits: [(i16, i16); 2] = [(5, 5), (10, 5)];
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        for (x, y) in exits {
+            d.floor.tile_mut(x.into(), y.into()).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        let mut redrawn = false;
+        for seed in 0..32 {
+            let mut run = d.clone();
+            run.rng = crate::rng::DungeonRng::new(seed);
+            let mut model = run.rng;
+            run.run_wild_monsters(None);
+            model.int(35);
+            // Only the other exit can be taken, so the draws end at the first one that is not (5, 5).
+            for tries in 1.. {
+                if model.int(2) == 1 {
+                    redrawn |= tries > 1;
+                    break;
+                }
+            }
+            model.int(100);
+            assert_eq!(run.rng, model, "seed {seed}");
+            let rec = *run.ai.wild.values().next().unwrap();
+            assert_eq!(
+                (rec.objective, rec.goal),
+                (LEAVE_ROOM, (10, 5)),
+                "seed {seed}"
+            );
+        }
+        assert!(redrawn, "some seed must draw the own tile first");
+
+        // No exit: one `Int(8)` and objective 6, the goal a neighbour.
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        let mut expected = d.rng;
+        d.run_wild_monsters(None);
+        expected.int(35);
+        let dir = expected.int(8) as usize;
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        let rec = *d.ai.wild.values().next().unwrap();
+        assert_eq!((rec.objective, rec.goal), (STAND_STILL, step((5, 5), dir)));
+    }
+
+    #[test]
     fn a_monster_that_loses_sight_follows_the_leaders_remembered_positions() {
         let mut g = room_with((12, 5), &[(5, 5)]);
         let d = g.dungeon_mut().unwrap();

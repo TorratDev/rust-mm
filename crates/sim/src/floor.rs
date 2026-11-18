@@ -7053,6 +7053,28 @@ mod tests {
         floor
     }
 
+    #[test]
+    fn room_exits_are_in_column_order_and_stop_at_0x20() {
+        // (10, 15) comes before (12, 3): x is the outer loop, so row order would swap them.
+        let mut floor = one_room_floor();
+        for (x, y) in [(12, 3), (10, 15)] {
+            open_tile(&mut floor, x, y, 3);
+            floor.tile_mut(x, y).unwrap().terrain |= TERRAIN_JUNCTION;
+        }
+        assert_eq!(floor.room_exits(3), [(10, 15), (12, 3)]);
+
+        // 40 junction tiles: the list keeps the first 0x20 in column order.
+        let mut floor = Floor::new();
+        for x in 0..5 {
+            for y in 0..8 {
+                open_tile(&mut floor, x, y, 0);
+                floor.tile_mut(x, y).unwrap().terrain |= TERRAIN_JUNCTION;
+            }
+        }
+        let first: Vec<(i16, i16)> = (0..4).flat_map(|x| (0..8).map(move |y| (x, y))).collect();
+        assert_eq!(floor.room_exits(0), first);
+    }
+
     /// Branches the first floor cannot reach, read from the disassembly: with
     /// both pairs set and no counts, the step draws nothing; floor type 2 turns
     /// the stairs' room into a monster house; `isEmptyMonsterHouse` skips the
