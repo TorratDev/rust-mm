@@ -1125,8 +1125,9 @@ impl GameState {
                     ai: AiState::default(),
                 };
                 // shortcut: the snapshot holds no AI records, so every restored wild monster gets
-                // the floor-generation record without the draws (see `seed_wild_ai`), right only
-                // for a snapshot taken before the wild monsters' first turn (the harness's row 1).
+                // the floor-generation record without the draws (see `seed_wild_ai`; the game's
+                // step is in docs/re/ai.md, "Initial wild AI records"), right only for a
+                // snapshot taken before the wild monsters' first turn (the harness's row 1).
                 dungeon.seed_wild_ai(false);
                 Some(dungeon)
             }
