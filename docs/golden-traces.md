@@ -163,6 +163,14 @@ cargo test -p rescue-trace-harness --test movement_trace -- --nocapture
 
 The scenario file holds `{"dungeonId":0,"floorId":0}`. With `--nocapture`, a run that compared the trace prints `no leader difference over N trace rows`; a run that skipped prints `SKIPPED`. Check that it did not skip. The full replay (`rescue-trace-harness movement.jsonl --scenario ...`) still stops at the first monster row.
 
+## Golden trace with enemies present (#488)
+
+**Schema check.** v1 rows already hold what the slice needs: the wild slots (`wild`, entity fields), the team, the dungeon RNG on every row, `fractionalTurn` and the leader's actions. The floor-1 movement capture has three wild monsters from row 1, so it is the trace with enemies present; no new field was added. What the comparison cannot yet separate is which monster drew which RNG value: rows give the generator once per fractional turn, not per draw.
+
+**Test.** `apps/trace-harness/tests/enemies_trace.rs` replays a local trace with every field compared ([`Scope::All`](../apps/trace-harness/src/lib.rs)). It skips (prints `SKIPPED`, passes) unless `RESCUE_TRACE_ENEMIES` names the trace. It needs `RESCUE_TRACE_ENEMIES_SCENARIO` and `RESCUE_ROM` as the movement test does. The capture is the movement capture above (`verification/v7-trace/movement_inputs.txt`, `--frames 1700`).
+
+**Result.** The replay stops at row 8 (frame 424, `fractionalTurn` 7): `dungeonRng` differs, expected 1709136509, actual 3941875803. Every other field of that row, including the three wild monsters' positions, matches. The sim's generator is 2 draws ahead of the game's (10 draws after the first leader action, against the sim's 12). So the sim's wild and team turns reach the same positions but draw a different count; the trace rows are not enough to place the extra draws, which is for the AI investigators (#73). This is not fixed here.
+
 ## Combat replay (#424)
 
 `rescue_trace_harness::combat::replay_combat` replays the leader's Regular Attacks with the sim's combat (`step_with`), and compares the leader and the target on each row. The tables are read from the dump, as `apps/game/src/combat.rs` reads them, and the start state gets each monster's species types, abilities and regeneration speed (`EntityInfo::apply_species`).
