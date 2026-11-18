@@ -323,8 +323,9 @@ impl Dungeon {
     /// whether the partner is flagged `aiAllySkip`, which defers its end of turn.
     // shortcut: the partner's own moves are not used: the pick draws the team total 65 seen in
     // the P7 trace (the sum of its five weights is not computed) and only the regular attack
-    // is used. IQ skills and tactics are not read (`ai.md`, P4-b, P4-c): the partner attacks a
-    // foe it sees, else follows the leader, whatever its tactic. A phase-2 turn may re-flag
+    // is used. IQ skills are not read (`ai.md`, P4-b): the tactic table gates the enemy scan
+    // (`TACTIC_SKIPS_SCAN`); a partner that scans attacks a foe it sees, else follows the
+    // leader. A phase-2 turn may re-flag
     // through the trailing branch of `DecideMovement` (branch 2a is phase 1 only).
     // shortcut: HP regeneration (`TickStatusAndHealthRegen`) and the partner's belly are not
     // modelled; only the status countdowns run.
@@ -1012,11 +1013,23 @@ impl Dungeon {
             }
         }
         let count = if mover.wide { 5 } else { 3 };
-        for (n, turn) in TURNS.iter().enumerate().take(count).skip(1) {
-            let d = (dir + turn) % 8;
-            let (ok, monster) = self.can_move(me, d);
+        let tries: Vec<(usize, bool, bool)> = TURNS
+            .iter()
+            .enumerate()
+            .take(count)
+            .skip(1)
+            .map(|(n, turn)| {
+                let (ok, monster) = self.can_move(me, (dir + turn) % 8);
+                (n, ok, monster)
+            })
+            .collect();
+        // A terrain-blocked candidate (`02190FEC`, first loop) re-enables both dropped turns.
+        if tries.iter().any(|&(_, ok, monster)| !ok && !monster) {
+            enabled = [true; 5];
+        }
+        for (n, ok, monster) in tries {
             if ok && enabled[n] {
-                return (Plan::Walk(d), false);
+                return (Plan::Walk((dir + TURNS[n]) % 8), false);
             }
             blocked_by_monster |= monster;
         }
@@ -2257,24 +2270,39 @@ mod tests {
         assert!([4, 5, 6, 7, 8, 10].iter().all(|&t| TACTIC_SKIPS_SCAN[t]));
     }
 
+    fn team_mover() -> Mover {
+        Mover {
+            team: true,
+            recalc: false,
+            wide: false,
+        }
+    }
+
     #[test]
     fn a_team_member_on_a_diagonal_drops_one_45_degree_turn() {
         // Branch 2c: heading down-right (1) with the goal 2 right and 1 down, the direct tile
-        // and the turn along the longer axis (right) are walls; the other turn (down) is open
-        // but disabled for a team member, so it passes, while a wild monster walks down.
+        // is a wall, the turn along the longer axis (right) holds a wild monster and the other
+        // turn (down) is open but dropped for a team member, so it passes (flagged by the
+        // monster), while a wild monster walks down.
+        let mut g = with_partner((12, 6), (10, 5), &[(11, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.floor.tile_mut(11, 6).unwrap().terrain = floor::TERRAIN_IMPASSABLE_WALL;
+        let (plan, flagged) = d.decide_movement((10, 5), (12, 6), team_mover());
+        assert!(matches!(plan, Plan::Pass) && flagged);
+        let (plan, _) = d.decide_movement((10, 5), (12, 6), Mover::WILD);
+        assert!(matches!(plan, Plan::Walk(0)));
+    }
+
+    #[test]
+    fn a_terrain_blocked_candidate_re_enables_the_dropped_turn() {
+        // Same layout with a wall at (11,5) instead of the monster: the terrain block re-enables
+        // both turns (`02190FEC`), so the team member walks down too.
         let mut g = with_partner((12, 6), (10, 5), &[]);
         let d = g.dungeon_mut().unwrap();
         for p in [(11, 6), (11, 5)] {
             d.floor.tile_mut(p.0, p.1).unwrap().terrain = floor::TERRAIN_IMPASSABLE_WALL;
         }
-        let team = Mover {
-            team: true,
-            recalc: false,
-            wide: false,
-        };
-        let (plan, flagged) = d.decide_movement((10, 5), (12, 6), team);
-        assert!(matches!(plan, Plan::Pass) && !flagged);
-        let (plan, _) = d.decide_movement((10, 5), (12, 6), Mover::WILD);
+        let (plan, _) = d.decide_movement((10, 5), (12, 6), team_mover());
         assert!(matches!(plan, Plan::Walk(0)));
     }
 }
