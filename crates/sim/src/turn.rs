@@ -211,6 +211,9 @@ impl Dungeon {
         let _moves = self.rng.int(100);
         let _wander = self.rng.int(2);
         let _spawn_roll = self.rng.int(100);
+        // shortcut: `02142120` also needs a free run of sprite-size cells in the 16-byte sprite
+        // bitmap (`FUN_020023E0`) and drops the spawn otherwise; that fit is not checked, so only
+        // the 16-slot limit drops a spawn (#73 P1.2).
         // A spawn takes the lowest free slot, and the list is in slot order (`02142120`).
         self.sync_wild_slots();
         if let Some(slot) = (0..WILD_SLOTS as u8).find(|s| !self.ai.slots.contains(s)) {

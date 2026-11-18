@@ -142,18 +142,15 @@ impl Dungeon {
 
     /// The wild loop of fractional turn `k` (`021408F8`): every wild monster gated in acts once in
     /// slot order, and each one still flagged `aiAllySkip` at the end gets its end-of-turn
-    /// effects. The gate is per monster (`docs/re/turns.md`, #73 P1.1): its own speed stage
-    /// (`CalcSpeedStage`) must act in `k`, then flag `0x8000` skips it and `0x4000` is cleared
-    /// and skips it once; a gated monster has `0xC000` cleared.
+    /// effects. The gate is per monster (`docs/re/turns.md`, #73 P1.1), in this order: flag
+    /// `0x8000` skips it, `0x4000` is cleared and skips it once (even in a turn its stage does not
+    /// act); then its own speed stage (`CalcSpeedStage`) must act in `k`.
     // shortcut: a wild monster's base stage is [`status::WILD_BASE_STAGE`] (all floor 1 to 3
     // species have movement speed 1). The `+0x11A` (attacking) skip and `+0x117 = 0` are not
     // modelled: nothing in the sim sets the first or reads the second. Nothing sets the
     // `0x8000` and `0x4000` flags either; the record holds them for when a setter exists. A
     // monster that spawns asleep is not modelled.
     pub(crate) fn run_wild_monsters(&mut self, k: u8, data: Option<&CombatData<'_>>) {
-        if !self.wild.iter().any(|m| wild_acts(m, k)) {
-            return;
-        }
         self.sync_team_ai();
         let live: Vec<_> = self.wild.iter().map(|m| m.pos).collect();
         self.ai.wild.retain(|p, _| live.contains(p));
@@ -164,7 +161,7 @@ impl Dungeon {
             if !self.leader_alive() {
                 break;
             }
-            if !wild_acts(&self.wild[i], k) || !self.pass_wild_flags(i) {
+            if !self.pass_wild_flags(i) || !wild_acts(&self.wild[i], k) {
                 i += 1;
                 continue;
             }
@@ -1599,6 +1596,21 @@ mod tests {
         assert_eq!((d.wild[0].pos, d.ai.wild[&(5, 5)].flags), ((5, 5), 0));
         d.run_wild_monsters(K, None);
         assert_ne!(d.wild[0].pos, (5, 5));
+    }
+
+    #[test]
+    fn the_skip_once_flag_is_cleared_in_a_turn_the_stage_does_not_act() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.ai.wild.insert(
+            (5, 5),
+            AiRecord {
+                flags: 0x4000,
+                ..AiRecord::default()
+            },
+        );
+        d.run_wild_monsters(1, None);
+        assert_eq!((d.wild[0].pos, d.ai.wild[&(5, 5)].flags), ((5, 5), 0));
     }
 
     #[test]
