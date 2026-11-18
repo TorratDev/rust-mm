@@ -54,5 +54,26 @@ ok "report.sh rejects a verdict file with another word" '! "$S/report.sh" "PASS:
 ok "report.sh rejects investigator DONE without findings" '! "$S/report.sh" "DONE: x" --role investigator'
 ok "report.sh prints a valid BLOCKED line" '[ "$(env -u ORCH "$S/report.sh" "BLOCKED: no dump" --role executor --ghidra none 2>/dev/null)" = "BLOCKED: no dump" ]'
 
+# guard.sh: refuses by role, allows the rest, and does nothing without a role.
+g() { AGENT_ROLE=$1 AGENT_GHIDRA=${3:-none} "$S/guard.sh" "$2"; }
+ok "guard: no role, no rule" 'env -u AGENT_ROLE "$S/guard.sh" "gh pr create"'
+ok "guard: bare gh issue create" '! g executor "gh issue create --title x"'
+ok "guard: gh pr create after &&" '! g reviewer "cd x && gh pr create"'
+ok "guard: text inside a commit message passes" 'g executor "scripts/commit.sh wt -m \"no gh pr create here\""'
+ok "guard: executor git commit" '! g executor "git -C /tmp/wt commit -m x"'
+ok "guard: executor git push" '! g executor "git push -u origin 7-x"'
+ok "guard: executor git status in a worktree" 'g executor "git -C /tmp/wt status"'
+ok "guard: push to main for anyone" '! g orchestrator "git push origin main"'
+ok "guard: orchestrator bare gh pr merge" '! g orchestrator "gh pr merge 5 --squash"'
+ok "guard: orchestrator merge.sh" 'g orchestrator "scripts/orch/merge.sh 5"'
+ok "guard: reviewer cargo update" '! g reviewer "cargo update"'
+ok "guard: reviewer cargo test" 'g reviewer "cargo test --workspace"'
+ok "guard: investigator other Ghidra copy" '! g investigator "ghidra --project rescue-arm9-b --program arm9.bin status" rescue-arm9-a'
+ok "guard: investigator own Ghidra copy" 'g investigator "ghidra --project rescue-arm9-a --program arm9.bin status" rescue-arm9-a'
+ok "guard: executor hc kill" '! g executor "hc kill executor-2"'
+ok "guard: old herdr CLI" '! g orchestrator "herdr ls"'
+ok "guard: herdr-app passes" 'g orchestrator "herdr-app ls"'
+ok "guard: claude hook JSON" '! echo "{\"tool_input\":{\"command\":\"gh pr create\"}}" | AGENT_ROLE=executor "$S/guard.sh" --claude-hook'
+
 echo "harness-test: $pass passed, $fails failed"
 [ "$fails" = 0 ]

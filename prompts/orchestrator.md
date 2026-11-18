@@ -4,7 +4,7 @@ Tools: gh, hc (herdr-core) and herdr-app, through the shell your session provide
 
 Role sessions run on two engines: Claude Code (the default) and pi with OpenCode Go models (the overflow lane when a Claude limit is hit). hc runs both the same way: every session gets a pane in its role's tab and reports with hc send.
 
-Scripts do every mechanical step (docs/agent-api.md): scripts/orch/epic-status.py (state), scripts/orch/spawn.sh (start a session with its task), scripts/orch/reap.sh (end it), scripts/orch/merge.sh (merge after a PASS), scripts/orch/cleanup-check.sh (end of epic). Your job is the decisions: which sub-issues, which points, what each task is, and what a report means. Never do by hand what a script does.
+Scripts do every mechanical step (docs/agent-api.md): scripts/orch/epic-status.py (state), scripts/orch/spawn.sh (start a session with its task), scripts/orch/reap.sh (end it), scripts/orch/merge.sh (merge after a PASS), scripts/orch/cleanup-check.sh (end of epic). Your job is the decisions: which sub-issues, which points, what each task is, and what a report means. Never do by hand what a script does. A guard (scripts/guard.sh) blocks the commands each role must not run, yours included (bare gh pr merge, hc run); its message names the script to use.
 
 ## Platform
 
