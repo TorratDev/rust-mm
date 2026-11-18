@@ -426,7 +426,7 @@ The weather source indices match Red **[red-hypothesis for the Red comparison]**
 **RNG per turn** (P6.6). Tag blue-verified, confidence medium: the end-of-turn block was read; the status chain was checked for RNG in #359 P3 (see [Per-turn order](status.md#per-turn-order)).
 
 - `DoEndOfTurnEffects` makes two `DungeonRandInt(100)` calls, in this order. First, Warp Scarf (item 22), only when the entity holds it and its turns-since counter (`+0x137`) is set; the roll is compared with the chance table. Second, Shed Skin, unconditionally, before the ability check (ability 0x21). Red does the same.
-- None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` was checked in #359 P3: it draws dungeon RNG only for the yawn-end roll. The `0219635C(1)` path is still open (see [Per-turn order](status.md#per-turn-order)).
+- None is visible in the decompiles of `UpdateWindTurns`, the weather resolver, or `TickStatusAndHealthRegen`. The status chain of `TickStatusAndHealthRegen` was checked in #359 P3: it draws dungeon RNG only for the yawn-end roll. The `0219635C(1)` path (step 10 case 1, the Kecleon shop check) draws none at runtime (#359 L3; see [Per-turn order](status.md#per-turn-order)).
 The monsters' AI decision procedure, `RunMonsterAI` (`ov_0001::02188030`), is described in [`ai.md`](ai.md). Its callers are the wild loop, the team loop (two sites), `02140E14` (call at `02140EA0`) and the swap pass `02140ED0`; the leader never calls it (#353 P3).
 
 ### Per-turn effects in the sim (#344 P1, P2)
@@ -568,6 +568,6 @@ The full map is in [`structs.md`](structs.md).
 - **P6.2, hunger damage.** Resolved: the Blue call is `FUN_0217BCA4(entity, 1, 0xE, 0x211)` (see the empty-belly paragraph under [Per-turn effects](#per-turn-effects)).
 - **P6.4, callers of the weather resolver.** Resolved: 13 callers, classified in the table under Weather (#182 P2).
 - **P6.5, wind phase 3.** Resolved: see the wind paragraph under [Per-turn effects](#per-turn-effects).
-- **RNG in the status chain** of `TickStatusAndHealthRegen` (#51), closed in part by #359 P3. The chain draws dungeon RNG only for the yawn-end roll (step 2, case 4); the nightmare damage draws none (`param_7 = 0`); the facing draws use the global `Rand32Bit`. Still open: the step 10 case 1 path through `0219635C(1)` (hypothesis). See [Per-turn order](status.md#per-turn-order).
+- **RNG in the status chain** of `TickStatusAndHealthRegen` (#51), closed in part by #359 P3. The chain draws dungeon RNG only for the yawn-end roll (step 2, case 4); the nightmare damage draws none (`param_7 = 0`); the facing draws use the global `Rand32Bit`. The step 10 case 1 path through `0219635C(1)` draws none at runtime (#359 L3, blue-verified; the shopkeeper-adjacent `021938C8` branch was not run). See [Per-turn order](status.md#per-turn-order).
 - **`DisplayActions_Async` label.** Resolved (#182 P4): the label is confirmed, and the call order matches Red (see the DisplayActions paragraph under [Per-turn effects](#per-turn-effects)).
 - **`DoEndOfTurnEffects` return value (closed, #353 P4).** Blue returns `bool`, the floor-over state, and no Blue caller uses it. Red returns `void`. See [Per-turn effects](#per-turn-effects).
