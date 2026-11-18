@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 use rescue_nds::rom::{
     CONFIG_FILE_NAME, ROM_PATH_ENV, SUPPORTED_DUMPS, identify_bytes, resolve_rom_path,
 };
+use rescue_trace_harness::combat::{CombatSetup, replay_enemies};
 use rescue_trace_harness::floor::start_properties;
 use rescue_trace_harness::scenario::parse_scenario;
-use rescue_trace_harness::{Replay, check_rom, render_divergence, render_sim_gap, replay};
+use rescue_trace_harness::{Replay, check_rom, render_divergence, render_sim_gap};
 
 const TRACE_VAR: &str = "RESCUE_TRACE_ENEMIES";
 const SCENARIO_VAR: &str = "RESCUE_TRACE_ENEMIES_SCENARIO";
@@ -54,7 +55,14 @@ fn every_field_matches_every_row_of_the_enemies_trace() {
     let scenario = parse_scenario(&text).unwrap_or_else(|e| panic!("{scenario_path:?}: {e}"));
     let floor = start_properties(&rom, scenario).unwrap_or_else(|e| panic!("{e}"));
 
-    match replay(&trace.rows, Some(&floor)).expect("replay") {
+    let leader = trace
+        .rows
+        .first()
+        .and_then(|row| row.team[0])
+        .and_then(|e| u16::try_from(e.species).ok())
+        .unwrap_or_else(|| panic!("the trace's first row has no leader species"));
+    let setup = CombatSetup::from_rom(&rom, leader).unwrap_or_else(|e| panic!("{e}"));
+    match replay_enemies(&trace.rows, Some(&floor), &setup).expect("replay") {
         Replay::Match { rows } => {
             eprintln!(
                 "{TEST}: no difference over {rows} trace rows (every field, gate rows compared)"

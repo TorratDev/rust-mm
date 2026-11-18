@@ -15,7 +15,7 @@ use rescue_nds::header::Header;
 use rescue_sim::combat::CombatData;
 use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::floor_gen::FloorProperties;
-use rescue_sim::state::{GameState, Snapshot};
+use rescue_sim::state::{GameState, MoveSlot, Snapshot};
 use rescue_trace::{Entity, TurnRow};
 
 use crate::actions::command_for;
@@ -160,6 +160,81 @@ pub fn replay_combat(
         }
     }
     Ok(Replay::Match { rows: rows.len() })
+}
+
+/// The wild monsters of the first-floor capture as the game holds them at the first row: the
+/// species, its attack and defence, and its first move (id, PP) read from the emulator
+/// (`~/rescue-re/scratch/505/probe2.py`, frame 455, #505). Slot flags `05`: holds a move, AI on.
+// shortcut: pinned from one emulator read of the first-floor save, as `TARGET_STATS`; a capture
+// with other wild species needs its own entries. Upgrade by reading the spawn's learnset.
+const WILD_PINS: [WildPin; 2] = [
+    WildPin {
+        species: 290,
+        stats: ([4, 6], [5, 5]),
+        mv: (0x9A, 22),
+    },
+    WildPin {
+        species: 191,
+        stats: ([5, 5], [4, 4]),
+        mv: (0x87, 18),
+    },
+];
+
+/// One entry of [`WILD_PINS`].
+struct WildPin {
+    species: u16,
+    stats: ([u8; 2], [u8; 2]),
+    mv: (u16, u8),
+}
+
+/// Replays the enemies trace with the wild turns on the combat path (#505): the start state's
+/// wild monsters hold their real stats and moves ([`WILD_PINS`]), the partner and leader their
+/// measured stats, and every command runs through `step_with`, so a wild attack on the team
+/// deals its damage. Compared as [`crate::replay`] with [`Scope::All`].
+pub fn replay_enemies(
+    rows: &[TurnRow],
+    properties: Option<&FloorProperties>,
+    setup: &CombatSetup,
+) -> Result<Replay, HarnessError> {
+    let Some(first) = rows.first() else {
+        return Ok(Replay::Match { rows: 0 });
+    };
+    let mut state = state_from_row(first, properties).map_err(HarnessError::Start)?;
+    prepare(&mut state, &setup.species)?;
+    pin_wild(&mut state)?;
+    crate::replay_from(state, rows, crate::Scope::All, Some(&setup.data()))
+}
+
+/// The partner's attack and defence at level 5 (species 4), read from the emulator with the wild
+/// pins (frame 455). The trace does not carry them.
+// shortcut: pinned from one emulator read, as `LEADER_STATS`.
+const PARTNER_STATS: ([u8; 2], [u8; 2]) = ([11, 11], [8, 8]);
+
+/// Gives the partner its stats and each wild monster of [`WILD_PINS`] its stats and its move.
+fn pin_wild(state: &mut GameState) -> Result<(), HarnessError> {
+    let mut snapshot = state.snapshot();
+    let Some(dungeon) = snapshot.dungeon.as_mut() else {
+        return Ok(());
+    };
+    for monster in dungeon.team.iter_mut().filter(|m| !m.info.is_team_leader) {
+        (monster.info.attack, monster.info.defence) = PARTNER_STATS;
+    }
+    for monster in dungeon.wild.iter_mut() {
+        let info = &mut monster.info;
+        let Some(pin) = WILD_PINS.iter().find(|p| p.species == info.species) else {
+            continue;
+        };
+        (info.attack, info.defence) = pin.stats;
+        info.moves[0] = MoveSlot {
+            flags: MoveSlot::HOLDS_MOVE | 0x04,
+            flags2: 0,
+            id: pin.mv.0,
+            pp: pin.mv.1,
+            ginseng: 0,
+        };
+    }
+    *state = restore(&snapshot)?;
+    Ok(())
 }
 
 /// The start state's monsters get the fields the row does not carry: the species' types and
