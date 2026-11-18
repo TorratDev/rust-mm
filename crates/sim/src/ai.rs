@@ -23,6 +23,9 @@ use crate::status;
 use crate::targeting::Slot;
 use crate::turn::acts;
 
+/// The chance (percent) that a confused monster skips `ChooseAIMove` (`0x021AA184`).
+const CONFUSED_SKIP_PERCENT: i32 = 70;
+
 /// The weight total of the move pick when the sim has no combat data, `DungeonRandInt(total)` at
 /// `02193260`. The game's total is the regular-attack weight plus the weights of the enabled
 /// moves; wild monsters showed 35 and 45 (`docs/re/turns.md`, P7).
@@ -489,7 +492,24 @@ impl Dungeon {
             .moves
             .iter()
             .any(|m| m.flags & MoveSlot::HOLDS_MOVE != 0);
-        let attacked = match data.filter(|_| has_moves) {
+        // `ChooseAIMove`'s gates: `02181530(self, 0)` (sleep-like modes, `+0x9B == 4`),
+        // `02180B68` (run away) and `IsTacticSet(8)` skip the whole function with no draw; then
+        // a confused monster (`+0xAC == 2`) skips it on a 70% roll (`0x021AA184`).
+        // After `ChooseAIMove`, `02188030` runs `AIMovement` (`021918D4`) only for a monster that
+        // is not confused and set no action; a confused one that set none goes to `02141878`,
+        // which sets action 1 or 2 and draws nothing. So a confused monster never walks, whether
+        // or not the 70% roll skipped.
+        // shortcut: the run-away test (ability `+` below half HP, tactics 6 and 10), tactic 8
+        // and the frozen byte `+0xA0` are not modelled: a wild monster has no tactic, the
+        // ability is not identified, and the sim keeps no frozen state. Upgrade each when the
+        // sim keeps it (a frozen status, an ability, a tactic).
+        let info = &self.wild[i].info;
+        let (gated, confused) = (info.skips_move_choice(), info.is_confused());
+        let confusion_skip = !gated && confused && self.rng.outcome(CONFUSED_SKIP_PERCENT);
+        let choice = data.filter(|_| has_moves);
+        let attacked = match choice {
+            _ if gated => false,
+            _ if confusion_skip => true,
             Some(data) => self.choose_ai_move(i, data),
             None => {
                 // `ChooseAIMove`: the weighted pick is drawn whatever the target.
@@ -504,7 +524,7 @@ impl Dungeon {
                 }
             }
         };
-        if attacked {
+        if attacked || confused {
             // A monster the recoil removed gets no end of turn (`i` now names the next one).
             if self.wild.len() == len_before {
                 self.monster_end_of_turn(i);
@@ -538,9 +558,9 @@ impl Dungeon {
     /// adjacent); then the entry the roll lands on (the first with `cumulative >= roll`) is used:
     /// a move needs a target (`02192728`, one draw), and a move with none falls back to the
     /// regular attack when it has one.
-    // shortcut: the gates before the move choice (`02181530`, `02180B68`, `021805CC(8)`, the
-    // confusion roll of `+0xAC`) and the bide block (`+0xAE`) read statuses the sim keeps no
-    // field for, so they pass. No IQ skill is set (PP Checker, Weak-Type Picker, Exclusive
+    // The gates before the move choice (`02181530`, the confusion roll) run in `wild_turn_with`.
+    // shortcut: the bide block (`+0xAE`) reads a status the sim keeps no field for, so it passes.
+    // No IQ skill is set (PP Checker, Weak-Type Picker, Exclusive
     // Move-User), as the sim derives none from the monster's IQ (`+0x87`).
     // shortcut: a move is usable (`02159E58`) when it has PP; its other tests are not read.
     // shortcut: a move's target search (`02192728`) is modelled for the adjacent areas of its AI
@@ -616,12 +636,15 @@ impl Dungeon {
         regular.is_some_and(|dir| self.use_regular_attack(i, dir, data))
     }
 
-    /// The directions (indices into [`DIRECTIONS`], in table order) of the adjacent foes monster
-    /// `i` can hit with a regular attack: the team members one tile away with no wall corner
-    /// between (`02192728`, the `02180FFC` test).
+    /// The directions (indices into [`DIRECTIONS`]) of the adjacent foes monster `i` can hit with
+    /// a regular attack: the team members one tile away with no wall corner between (the
+    /// `02180FFC` test), scanned from the facing byte `+0x44` round the 8 neighbours
+    /// (`02191F84`; `02192728` uses the same set).
     fn adjacent_foe_directions(&self, i: usize) -> Vec<usize> {
         let me = self.wild[i].pos;
+        let facing = usize::from(self.wild[i].info.direction);
         (0..DIRECTIONS.len())
+            .map(|k| (facing + k) % DIRECTIONS.len())
             .filter(|&d| {
                 let (dx, dy) = DIRECTIONS[d].delta();
                 let at = (me.0 + dx as i16, me.1 + dy as i16);
@@ -934,9 +957,16 @@ impl Dungeon {
 
     /// `CanAIMonsterMoveInDirection` (`02180DF8`) from `me` in direction index `dir`: whether the
     /// step is allowed, and whether a monster stands on the tile (which blocks it).
-    // shortcut: the walk rule of `leader_target`, a plain walker: plain floor, no wall corner cut.
-    // The per-tile walkable masks, the monster-house, trap and lava IQ skills and the all-terrain
-    // and super-mobile classes are not modelled.
+    ///
+    /// In the game's order: the target tile's wall bit `0x10` blocks; the monster-house bit
+    /// `0x40`, a trap and lava block only with IQ skills 15, 14 and 20, which a plain monster
+    /// lacks; the mobility class (plain: regular, class 0) reads the current tile's walkable
+    /// byte `+6` ANDed with the direction's bit; last, a monster on the tile fails the move and
+    /// sets the flag.
+    // shortcut: every monster is class 0 and has no IQ skill, status `+0xC7` or held item that
+    // changes it; the species mobility (`0218267C`) is not kept. The floor generator does not
+    // fill `walkable_neighbors`, so the regular byte is derived from the terrain by the mask
+    // writer's rule (`02148F50`, `docs/re/turns.md`, "Movement") instead of being read.
     fn can_move(&self, me: (i16, i16), dir: usize) -> (bool, bool) {
         let (dx, dy) = DIRECTIONS[dir].delta();
         let (x, y) = (i32::from(me.0) + dx, i32::from(me.1) + dy);
@@ -944,8 +974,7 @@ impl Dungeon {
             return (false, false);
         };
         if tile.terrain & floor::TERRAIN_IMPASSABLE_WALL != 0
-            || tile.terrain & floor::TERRAIN_TYPE_MASK != floor::TERRAIN_FLOOR
-            || !self.corner_open(i32::from(me.0), i32::from(me.1), dx, dy)
+            || !self.regular_mask_allows(i32::from(me.0), i32::from(me.1), dx, dy)
         {
             return (false, false);
         }
@@ -955,6 +984,19 @@ impl Dungeon {
             .chain(self.wild.iter())
             .any(|m| i32::from(m.pos.0) == x && i32::from(m.pos.1) == y);
         (!monster, monster)
+    }
+
+    /// The regular-class bit of the walkable byte (`+6`) of tile (`x`, `y`) for the step
+    /// (`dx`, `dy`): a cardinal bit needs the neighbour to be exactly NORMAL terrain; a diagonal
+    /// one needs the diagonal NORMAL and both orthogonal neighbours not walls (type 0).
+    fn regular_mask_allows(&self, x: i32, y: i32, dx: i32, dy: i32) -> bool {
+        let kind = |xx: i32, yy: i32| {
+            self.floor
+                .tile(xx, yy)
+                .map_or(0, |t| t.terrain & floor::TERRAIN_TYPE_MASK)
+        };
+        kind(x + dx, y + dy) == floor::TERRAIN_FLOOR
+            && (dx == 0 || dy == 0 || (kind(x + dx, y) != 0 && kind(x, y + dy) != 0))
     }
 }
 
@@ -1816,6 +1858,144 @@ mod tests {
         assert_eq!(d.wild[0].pos, (5, 5));
         // Its countdown ran first, in its own turn.
         assert_eq!(d.wild[0].info.status.sleep_turns, 2);
+    }
+
+    fn tackle_data(moves: &[rescue_data::moves::Move]) -> CombatData<'_> {
+        CombatData {
+            tables: Box::leak(Box::new(crate::combat::tests::tables())),
+            moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        }
+    }
+
+    #[test]
+    fn a_sleeping_or_flinching_monster_next_to_the_leader_skips_the_pick_and_the_attack() {
+        // Paralysis (`+0x9B == 4`) is gated too; it also slows the monster, so only the gate is
+        // checked for it.
+        let mut paralysed = crate::state::wild_monster(7, 4, (5, 5)).info;
+        paralysed.status.burn_class = status::PARALYSIS;
+        assert!(paralysed.skips_move_choice());
+        paralysed.status.burn_class = status::BURN;
+        assert!(!paralysed.skips_move_choice());
+        paralysed.status.cringe = status::CONFUSED;
+        assert!(!paralysed.skips_move_choice() && paralysed.is_confused());
+        for (n, set) in [
+            |s: &mut crate::status::Status| (s.sleep, s.sleep_turns) = (status::SLEEP, 5),
+            |s: &mut crate::status::Status| (s.cringe, s.cringe_turns) = (status::FLINCH, 5),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (mut g, moves) = duel(&[(0x9A, 5, 10)], &[(0x9A, 6)]);
+            let data = tackle_data(&moves);
+            let d = g.dungeon_mut().unwrap();
+            set(&mut d.wild[0].info.status);
+            let hp = d.team[0].info.hp;
+            let mut expected = d.rng;
+            d.run_wild_monsters(K, Some(&data));
+            // No weighted pick and no attack: only the end-of-turn roll (a sleeper stays; the
+            // others take the movement step, which here is blocked by the leader).
+            expected.int(100);
+            assert_eq!(d.rng, expected, "mode {n}");
+            assert_eq!(d.team[0].info.hp, hp);
+        }
+    }
+
+    #[test]
+    fn a_confused_monster_skips_the_move_choice_on_a_70_percent_roll_and_otherwise_picks() {
+        let (g, moves) = duel(&[(0x9A, 5, 10)], &[(0x9A, 6)]);
+        let data = tackle_data(&moves);
+        let seed_with = |skip: bool| {
+            (1u32..)
+                .find(|&s| crate::rng::DungeonRng::new(s).outcome(70) == skip)
+                .unwrap()
+        };
+        // Skipped: the roll, then only the end of turn; the leader is untouched.
+        let mut skipped = g.dungeon().unwrap().clone();
+        skipped.wild[0].info.status.cringe = status::CONFUSED;
+        skipped.wild[0].info.status.cringe_turns = status::NO_END;
+        skipped.rng = crate::rng::DungeonRng::new(seed_with(true));
+        let mut model = skipped.rng;
+        skipped.run_wild_monsters(K, Some(&data));
+        model.outcome(70);
+        model.int(100);
+        assert_eq!(skipped.rng, model);
+        assert_eq!(
+            skipped.team[0].info.hp,
+            g.dungeon().unwrap().team[0].info.hp
+        );
+        // Not skipped: the roll is one extra draw ahead of the same turn without confusion.
+        let mut rolled = g.dungeon().unwrap().clone();
+        rolled.wild[0].info.status.cringe = status::CONFUSED;
+        rolled.wild[0].info.status.cringe_turns = status::NO_END;
+        rolled.rng = crate::rng::DungeonRng::new(seed_with(false));
+        let mut plain = g.dungeon().unwrap().clone();
+        plain.rng = rolled.rng;
+        plain.rng.outcome(70);
+        rolled.run_wild_monsters(K, Some(&data));
+        plain.run_wild_monsters(K, Some(&data));
+        assert_eq!(rolled.rng, plain.rng);
+        assert_eq!(rolled.team[0].info.hp, plain.team[0].info.hp);
+    }
+
+    #[test]
+    fn a_confused_monster_that_finds_no_action_passes_and_never_walks() {
+        // One move of weight 6 plus the regular attack's `REGULAR[1]`: the pick draws 13.
+        let (g, moves) = duel(&[(0x9A, 5, 10)], &[(0x9A, 6)]);
+        let data = tackle_data(&moves);
+        let seed = (1u32..)
+            .find(|&s| !crate::rng::DungeonRng::new(s).outcome(70))
+            .unwrap();
+        let mut d = g.dungeon().unwrap().clone();
+        // No foe adjacent: `ChooseAIMove` sets no action; `02141878` draws nothing.
+        d.wild[0].pos = (14, 10);
+        d.wild[0].info.status.cringe = status::CONFUSED;
+        d.wild[0].info.status.cringe_turns = status::NO_END;
+        d.rng = crate::rng::DungeonRng::new(seed);
+        let mut model = d.rng;
+        let start = d.wild[0].pos;
+        d.run_wild_monsters(K, Some(&data));
+        model.outcome(70);
+        model.int(REGULAR[1] + 6);
+        model.int(100);
+        assert_eq!(d.wild[0].pos, start);
+        assert_eq!(d.rng, model);
+    }
+
+    #[test]
+    fn the_regular_attack_takes_the_first_adjacent_foe_from_the_facing_byte() {
+        // The leader on the left (direction 6) and the partner on the right (direction 2).
+        let mut g = with_partner((10, 10), (12, 10), &[(11, 10)]);
+        let d = g.dungeon_mut().unwrap();
+        for (facing, first) in [(0, 2), (2, 2), (3, 6), (4, 6), (6, 6), (7, 2)] {
+            d.wild[0].info.direction = facing;
+            assert_eq!(
+                d.regular_attack_direction(0),
+                Some(first),
+                "facing {facing}"
+            );
+        }
+        // A wall on both sides of a diagonal foe closes the corner: it is not a candidate.
+        d.team[1].pos = (12, 11);
+        d.floor.tile_mut(11, 11).unwrap().terrain = 0;
+        d.wild[0].info.direction = 0;
+        assert_eq!(d.regular_attack_direction(0), Some(6));
+    }
+
+    #[test]
+    fn a_wild_monster_does_not_step_round_a_wall_corner_or_onto_non_floor() {
+        let mut g = room_with((20, 20), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.floor.tile_mut(6, 5).unwrap().terrain = 0;
+        assert_eq!(d.can_move((5, 5), 2), (false, false), "the wall");
+        assert_eq!(d.can_move((5, 5), 1), (false, false), "the corner");
+        assert_eq!(d.can_move((5, 5), 0), (true, false));
+        d.floor.tile_mut(5, 6).unwrap().terrain = floor::TERRAIN_FLOOR | 0x10;
+        assert_eq!(d.can_move((5, 5), 0), (false, false), "the wall bit");
+        d.wild.push(crate::state::wild_monster(7, 4, (4, 5)));
+        assert_eq!(d.can_move((5, 5), 6), (false, true), "a monster");
     }
 
     #[test]
