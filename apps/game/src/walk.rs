@@ -43,6 +43,11 @@ impl Walk {
         (self.cell, (dx * k, dy * k))
     }
 
+    /// The direction the walk goes in.
+    pub fn dir(&self) -> Direction {
+        self.dir
+    }
+
     /// Advances one frame. Returns true when the last leg has ended.
     pub fn tick(&mut self) -> bool {
         self.frame += 1;
