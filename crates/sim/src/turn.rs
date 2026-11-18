@@ -106,6 +106,8 @@ impl Dungeon {
         if self.leader_on_stairs() {
             self.stairs_pending = true;
         }
+        // The swap pass follows the leader's Execute, before the team loop (`02140FAC`, `0214114C`).
+        self.run_swap_pass(data);
         self.pending_end_of_turns = self.pending_end_of_turns.saturating_add(1);
         self.run_other_monsters(k, data);
         self.weather_step(k);

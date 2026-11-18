@@ -93,6 +93,12 @@ struct TeamAi {
 pub(crate) struct AiState {
     wild: BTreeMap<(i16, i16), AiRecord>,
     team: Vec<TeamAi>,
+    /// Team slots flagged `0x8000` by a leader swap, until the swap pass (`02140ED0`) runs.
+    pub(crate) swapping: Vec<usize>,
+    /// Team slots flagged `0x4000`: the team loop skips each once and clears the flag.
+    held: Vec<usize>,
+    /// Slots the swap pass left flagged `aiAllySkip`, for the team loop's phase 2.
+    deferred: Vec<usize>,
 }
 
 impl PartialEq for AiState {
@@ -150,19 +156,19 @@ impl Dungeon {
     // shortcut: every partner is gated at speed stage 1 (the caller picks the gated turns), and
     // runs one `RunMonsterAI` and Execute cycle where the game repeats up to three while Execute
     // returns TRUE (what makes it return TRUE is not decoded).
-    // shortcut: the `0x8000` and `0x4000` swap flags are never set, yet the sim already swaps the
-    // leader with a team ally (`state.rs` `move_leader`). In the game that swap sets `0x8000`,
-    // the swap pass `02140ED0` runs the partner's `RunMonsterAI` and Execute (with their draws)
-    // inside the leader's turn, and the gate here then skips the partner (`docs/re/turns.md`,
-    // "Swap flags (#181 P2)"). After a leader swap the sim neither runs the swap pass nor skips
-    // the partner, so the RNG diverges on that turn; #475 ports `02140ED0` and the flag gate.
+    // The `0x4000` gate (phase 1) skips a partner the swap pass just ran, see
+    // [`Self::run_swap_pass`] (`docs/re/turns.md`, "Swap flags (#181 P2)").
     pub(crate) fn run_team_members(&mut self, data: Option<&CombatData<'_>>) {
         self.sync_team_ai();
         // The slots flagged `aiAllySkip`.
-        let mut skipped = Vec::new();
+        let mut skipped = std::mem::take(&mut self.ai.deferred);
         for i in 1..self.team.len() {
             if !self.leader_alive() {
                 return;
+            }
+            if let Some(h) = self.ai.held.iter().position(|&s| s == i) {
+                self.ai.held.remove(h);
+                continue;
             }
             if self.ally_turn(i, data, false) {
                 skipped.push(i);
@@ -184,6 +190,25 @@ impl Dungeon {
         }
         for i in skipped {
             self.ally_end_of_turn(i);
+        }
+    }
+
+    /// The swap pass (`02140ED0`, called at `0214114C` in the leader's turn): each team ally the
+    /// leader swapped with (flag `0x8000`) takes its turn, `RunMonsterAI` and Execute with their
+    /// draws, then its flag becomes `0x4000`, which the team loop skips once.
+    // shortcut: the pass's early return when `FUN_0214067C()` is nonzero (not decoded) and the
+    // `gDungeon+0xE` test are not modelled, so the pass always runs. Its `TickStatusAndHealthRegen`
+    // is `ally_turn`'s status tick only (see there).
+    pub(crate) fn run_swap_pass(&mut self, data: Option<&CombatData<'_>>) {
+        for i in std::mem::take(&mut self.ai.swapping) {
+            if !self.leader_alive() {
+                return;
+            }
+            self.sync_team_ai();
+            if self.ally_turn(i, data, false) {
+                self.ai.deferred.push(i);
+            }
+            self.ai.held.push(i);
         }
     }
 
@@ -1442,6 +1467,22 @@ mod tests {
         ally.info.is_team_leader = false;
         d.team.push(ally);
         g
+    }
+
+    #[test]
+    fn a_swapped_partner_acts_in_the_swap_pass_and_the_team_loop_skips_it_once() {
+        let mut g = with_partner((12, 5), (5, 5), &[]);
+        let d = g.dungeon_mut().unwrap();
+        let start = d.rng;
+        d.ai.swapping.push(1);
+        d.run_swap_pass(None);
+        assert_ne!(d.rng, start);
+        let after_pass = d.rng;
+        d.run_team_members(None);
+        assert_eq!(d.rng, after_pass);
+        // The flag is cleared by the skip: the next team loop runs the partner.
+        d.run_team_members(None);
+        assert_ne!(d.rng, after_pass);
     }
 
     #[test]

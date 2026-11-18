@@ -514,9 +514,12 @@ impl Dungeon {
             };
             let from = leader.pos;
             leader.pos = target;
-            if let Some(ally) = d.team.iter_mut().skip(1).find(|m| m.pos == target) {
+            if let Some(i) = (1..d.team.len()).find(|&i| d.team[i].pos == target) {
+                let ally = &mut d.team[i];
                 ally.pos = from;
                 ally.info.direction = u8::try_from((index_of(dir) + 4) % 8).unwrap_or(0);
+                // The swap sets `0x8000` on the ally; the swap pass in `take_leader_turn` clears it.
+                d.ai.swapping.push(i);
             }
         });
     }
