@@ -716,12 +716,11 @@ impl Dungeon {
 
     /// Removes the wild monsters in `defeated` from the wild list. The list is compacted: the
     /// monsters that remain keep their order, which is the order the others act and draw in,
-    /// but the ones after a removed monster move down an index.
-    // shortcut: the wild list is compacted on a defeat; the game keeps the slot empty. Only the
-    // indices change, not the order of the monsters that remain.
+    /// but the ones after a removed monster move down an index. Their slots (`ai.slots`) stay,
+    /// so a later spawn takes the freed one.
     // shortcut: a defeated team member stays in the team at 0 HP, and no faint is run for it
     // (`HandleFaint_Async`).
-    fn remove_defeated(&mut self, defeated: &[Slot]) {
+    pub(crate) fn remove_defeated(&mut self, defeated: &[Slot]) {
         let mut wild: Vec<usize> = defeated
             .iter()
             .filter_map(|slot| match *slot {
@@ -732,9 +731,11 @@ impl Dungeon {
         // Highest index first, so each removal leaves the lower indices where they are.
         wild.sort_unstable_by(|a, b| b.cmp(a));
         wild.dedup();
+        self.sync_wild_slots();
         for i in wild {
             if i < self.wild.len() {
                 self.wild.remove(i);
+                self.ai.slots.remove(i);
             }
         }
     }

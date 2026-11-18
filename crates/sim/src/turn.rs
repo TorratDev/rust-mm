@@ -34,7 +34,7 @@ const SPEED_TURNS: [&[u8]; 5] = [
 
 /// Whether a monster of speed stage `stage` acts in fractional turn `k`. A stage above
 /// [`MAX_SPEED_STAGE`] is treated as the fastest, so every stage has a gated turn.
-fn acts(stage: u8, k: u8) -> bool {
+pub(crate) fn acts(stage: u8, k: u8) -> bool {
     let row = usize::from(stage.min(MAX_SPEED_STAGE));
     SPEED_TURNS.get(row).is_some_and(|turns| turns.contains(&k))
 }
@@ -211,8 +211,12 @@ impl Dungeon {
         let _moves = self.rng.int(100);
         let _wander = self.rng.int(2);
         let _spawn_roll = self.rng.int(100);
-        if self.wild.len() < WILD_SLOTS {
-            self.wild.push(wild_monster(species, level, pos));
+        // A spawn takes the lowest free slot, and the list is in slot order (`02142120`).
+        self.sync_wild_slots();
+        if let Some(slot) = (0..WILD_SLOTS as u8).find(|s| !self.ai.slots.contains(s)) {
+            let at = self.ai.slots.partition_point(|&s| s < slot);
+            self.ai.slots.insert(at, slot);
+            self.wild.insert(at, wild_monster(species, level, pos));
         }
     }
 
@@ -228,12 +232,13 @@ impl Dungeon {
     }
 
     /// The other monsters' steps of fractional turn `k`: the team loop (`02140AC0`), then the
-    /// wild loop (`021408F8`, see [`crate::ai`]). They run in the gated turns of speed stage 1.
+    /// wild loop (`021408F8`, see [`crate::ai`]). The team runs in the gated turns of speed stage 1.
     fn run_other_monsters(&mut self, k: u8, data: Option<&CombatData<'_>>) {
         if acts(1, k) {
             self.run_team_members(data);
-            self.run_wild_monsters(data);
         }
+        // The wild loop gates each monster by its own speed stage.
+        self.run_wild_monsters(k, data);
     }
 
     /// The weather step of fractional turn `k` (`sub_8044AB4`, `docs/re/turns.md`, "One leader
@@ -558,6 +563,24 @@ mod tests {
         let m = &d.wild[0];
         assert_eq!((m.info.species, m.info.level), (7, 4));
         assert!((i32::from(m.pos.0) - 5).abs() > 5 || (i32::from(m.pos.1) - 5).abs() > 5);
+    }
+
+    #[test]
+    fn a_spawn_after_a_kill_takes_the_lowest_free_slot_and_acts_first() {
+        use crate::targeting::Slot;
+        let mut g = spawn_run(4, [10_000, 0]);
+        let d = g.dungeon_mut().unwrap();
+        d.wild = (0..3)
+            .map(|i| crate::state::wild_monster(9, 4, (20 + i, 20)))
+            .collect();
+        d.remove_defeated(&[Slot::Wild(0)]);
+        assert_eq!(d.ai.slots, [1, 2]);
+        d.spawn_counter = 35;
+        d.try_spawn_wild();
+        assert_eq!(d.ai.slots, [0, 1, 2]);
+        assert_eq!(d.wild.len(), 3);
+        assert_eq!(d.wild[0].info.species, 7);
+        assert!(d.wild[1..].iter().all(|m| m.info.species == 9));
     }
 
     #[test]
