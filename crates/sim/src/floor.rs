@@ -130,6 +130,28 @@ impl Floor {
     pub(crate) fn room_mut(&mut self, index: u8) -> Option<&mut Room> {
         self.rooms.get_mut(usize::from(index))
     }
+
+    /// The exit list of `room` (`dungeon+0xE5E4` counts, `+0xE624` lists, built by `0214D82C`):
+    /// the room's junction tiles (terrain bit `0x8`) in column order, at most 0x20.
+    // shortcut: the game fills the lists once at floor entry (and again from `021946FC`); this
+    // scans the grid on each call, which gives the same list while the junction bits stay as
+    // generation left them. Upgrade if a later step changes bit `0x8`.
+    pub(crate) fn room_exits(&self, room: u8) -> Vec<(i16, i16)> {
+        if room >= 0x20 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                let t = &self.tiles[y * WIDTH + x];
+                if t.terrain & TERRAIN_JUNCTION != 0 && t.room == room && out.len() < 0x20 {
+                    out.push((x as i16, y as i16));
+                }
+            }
+        }
+        out
+    }
+
     fn index(x: i32, y: i32) -> Option<usize> {
         let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
         (x < WIDTH && y < HEIGHT).then_some(y * WIDTH + x)
@@ -2028,7 +2050,7 @@ pub fn ensure_impassable_tiles_are_walls(floor: &mut Floor) {
 }
 
 /// Terrain flag set on a room tile that touches a hallway.
-const TERRAIN_JUNCTION: u16 = 0x8;
+pub(crate) const TERRAIN_JUNCTION: u16 = 0x8;
 /// `ov_0001::0214D900` (`FinalizeJunctions`), without its last call
 /// (`0214D82C`, which lists the junction tiles of each room in the dungeon
 /// struct, outside the tile grid). Walking the map column by column: a

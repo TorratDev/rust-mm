@@ -18,6 +18,7 @@ use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam, MonsterSpawn};
 use rescue_data::moves::Move;
 use rescue_data::species::Species;
 
+use crate::ai::AiState;
 use crate::combat::CombatData;
 use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
@@ -327,6 +328,8 @@ pub struct Dungeon {
     /// `+0x654`: `enemyDensity`; 0 stops the per-turn spawn. From floor-properties byte `+0x06`.
     // shortcut: the byte is taken as is; the game's writer of `+0x654` is not located.
     pub(crate) enemy_density: u8,
+    /// The monsters' AI records and the team's position trails (see [`crate::ai`]).
+    pub(crate) ai: AiState,
 }
 
 impl Dungeon {
@@ -841,6 +844,7 @@ impl GameState {
             spawns: spawns.to_vec(),
             spawn_counter: 0,
             enemy_density: self.density_of_floor(self.floors_entered),
+            ai: AiState::default(),
         });
         // The arrival reveal (`docs/re/visibility.md`, P2): the leader's start is seen at once.
         if let Some(dungeon) = self.dungeon.as_mut() {
@@ -1026,6 +1030,7 @@ impl GameState {
             spawns: Vec::new(),
             spawn_counter: 0,
             enemy_density: self.density_of_floor(self.floors_entered),
+            ai: AiState::default(),
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1111,6 +1116,7 @@ impl GameState {
                     spawns: Vec::new(),
                     spawn_counter: 0,
                     enemy_density: 0,
+                    ai: AiState::default(),
                 })
             }
         };

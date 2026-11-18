@@ -13,6 +13,8 @@
 //! Execute then draws the end-of-turn roll (`02186894`), unless the monster is flagged
 //! `aiAllySkip`, which defers it to the end of the loop.
 
+use std::collections::BTreeMap;
+
 use crate::combat::{CombatData, REGULAR_ATTACK, REGULAR_ATTACK_ARG8};
 use crate::floor::{self, NO_ROOM};
 use crate::move_effects::{self, Effect};
@@ -50,6 +52,57 @@ const TURNS: [usize; 3] = [0, 1, 7];
 /// walkable mask equal to one of these makes the monster pick a new random direction.
 const STRAIGHT_MASKS: [u8; 5] = [0x54, 0x51, 0x45, 0x15, 0x55];
 
+/// AI objectives (`+0x70`; the names are Red's, see `docs/re/structs.md`, "AI target readers").
+const CHASE_TARGET: u8 = 1;
+const CHASE_REMEMBERED: u8 = 2;
+const ROAM: u8 = 3;
+const LEAVE_ROOM: u8 = 4;
+const STAND_STILL: u8 = 6;
+
+/// The persistent part of a monster's AI record: the objective (`+0x70`), the goal tile
+/// (`+0x80`, `+0x82`) and the target (`+0x78`, a team slot).
+// shortcut: the generation ID (`+0x74`) is not kept: a team slot is never reused on a floor
+// here, so the ID always matches. `+0xF0` (move randomly) is read as 0: the notes give no writer
+// that sets it. The record is cleared nowhere else (`0216C638`, petrify and decoy resets are not
+// modelled, as the sim has no such statuses).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AiRecord {
+    objective: u8,
+    goal: (i16, i16),
+    target: Option<usize>,
+}
+
+/// A team member's AI record and its last four positions (`info+0x5E`, written by the move
+/// helper `02177700`: the tiles it left, newest first).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TeamAi {
+    rec: AiRecord,
+    last: (i16, i16),
+    prev: [(i16, i16); 4],
+}
+
+/// The AI state of a floor: the wild monsters' records and the team's.
+// shortcut: a wild monster's record is keyed by its tile (monsters have no ID here, and other
+// modules remove and add them), so a monster moved by something other than its own walk starts
+// a fresh record, and a monster that spawns on the tile of one that just fell inherits its
+// record until the next wild loop prunes it.
+// shortcut: `DungeonSnapshot` (its literals are in `apps/trace-harness`) does not hold this
+// state, so a restored floor starts with fresh records and trails (#467), and equality ignores
+// it, so a snapshot round trip compares equal.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AiState {
+    wild: BTreeMap<(i16, i16), AiRecord>,
+    team: Vec<TeamAi>,
+}
+
+impl PartialEq for AiState {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for AiState {}
+
 /// What a turn's decision step ended with.
 enum Plan {
     /// Pass the turn (action 1).
@@ -65,6 +118,9 @@ impl Dungeon {
     // its own speed counters and paralysis are not read. A monster that spawns asleep is not
     // modelled. The `0x8000` and `0x4000` flags never get set.
     pub(crate) fn run_wild_monsters(&mut self, data: Option<&CombatData<'_>>) {
+        self.sync_team_ai();
+        let live: Vec<_> = self.wild.iter().map(|m| m.pos).collect();
+        self.ai.wild.retain(|p, _| live.contains(p));
         let mut deferred = Vec::new();
         let mut i = 0;
         while i < self.wild.len() {
@@ -101,6 +157,7 @@ impl Dungeon {
     // "Swap flags (#181 P2)"). After a leader swap the sim neither runs the swap pass nor skips
     // the partner, so the RNG diverges on that turn; #475 ports `02140ED0` and the flag gate.
     pub(crate) fn run_team_members(&mut self, data: Option<&CombatData<'_>>) {
+        self.sync_team_ai();
         // The slots flagged `aiAllySkip`.
         let mut skipped = Vec::new();
         for i in 1..self.team.len() {
@@ -127,6 +184,28 @@ impl Dungeon {
         }
         for i in skipped {
             self.ally_end_of_turn(i);
+        }
+    }
+
+    /// Brings the team's position trails up to date: a member found away from its last position
+    /// has moved, so that position enters its trail (`02177700`, a walk; a teleport would fill
+    /// all four, not modelled). Called at the start of each monster loop.
+    // shortcut: one shift per loop however many tiles the member moved since.
+    fn sync_team_ai(&mut self) {
+        self.ai.team.truncate(self.team.len());
+        for (slot, m) in self.team.iter().enumerate() {
+            if let Some(t) = self.ai.team.get_mut(slot) {
+                if t.last != m.pos {
+                    t.prev = [t.last, t.prev[0], t.prev[1], t.prev[2]];
+                    t.last = m.pos;
+                }
+            } else {
+                self.ai.team.push(TeamAi {
+                    last: m.pos,
+                    prev: [m.pos; 4],
+                    ..TeamAi::default()
+                });
+            }
         }
     }
 
@@ -174,7 +253,23 @@ impl Dungeon {
         // one pick: the P7 "Attack" row shows one `Int(65)` for the 3 team attacks.
         let _second_pick = self.rng.int(TEAM_PICK_TOTAL);
         let facing = usize::from(self.team[i].info.direction);
-        let goal = target.unwrap_or_else(|| self.wander(me, facing));
+        let mut rec = self.ai.team.get(i).map(|t| t.rec).unwrap_or_default();
+        let goal = match target {
+            Some(t) => {
+                // shortcut: a partner that loses sight does not follow remembered positions: it
+                // keeps no target, so its objective 1 has none to follow.
+                rec = AiRecord {
+                    objective: CHASE_TARGET,
+                    goal: t,
+                    target: None,
+                };
+                t
+            }
+            None => self.wander(me, facing, &mut rec),
+        };
+        if let Some(t) = self.ai.team.get_mut(i) {
+            t.rec = rec;
+        }
         let (plan, skip) = self.decide_movement(me, goal);
         if let Plan::Walk(dir) = plan {
             let m = &mut self.team[i];
@@ -201,6 +296,24 @@ impl Dungeon {
         let Some(me) = self.wild.get(i).map(|m| m.pos) else {
             return false;
         };
+        let len = self.wild.len();
+        let mut rec = self.ai.wild.remove(&me).unwrap_or_default();
+        let skip = self.wild_turn_with(i, data, &mut rec);
+        // A monster the recoil removed leaves `i` naming the next one: its record is not ours.
+        if self.wild.len() == len {
+            self.ai.wild.insert(self.wild[i].pos, rec);
+        }
+        skip
+    }
+
+    /// [`Self::wild_turn`] with the monster's AI record.
+    fn wild_turn_with(
+        &mut self,
+        i: usize,
+        data: Option<&CombatData<'_>>,
+        rec: &mut AiRecord,
+    ) -> bool {
+        let me = self.wild[i].pos;
         if self.team.is_empty() {
             return false;
         }
@@ -248,10 +361,8 @@ impl Dungeon {
             }
             return false;
         }
-        let goal = target.unwrap_or_else(|| {
-            let m = &self.wild[i];
-            self.wander(m.pos, usize::from(m.info.direction))
-        });
+        let facing = usize::from(self.wild[i].info.direction);
+        let goal = self.movement_goal(me, facing, target, rec);
         let (plan, skip) = self.decide_movement(me, goal);
         if let Plan::Walk(dir) = plan {
             let (dx, dy) = DIRECTIONS[dir].delta();
@@ -482,8 +593,6 @@ impl Dungeon {
 
     /// `AIFindTarget` (`02191394`) for a wild monster at `me`: the nearest team member it sees,
     /// the first at the smallest distance, stopping at one within 1 tile.
-    // shortcut: the remembered-target block (a target seen earlier, its 4 previous positions) is
-    // not kept, as the sim has no AI target record: a monster that loses sight wanders at once.
     // Sight is `in_view` (`0219C6BC`); the game's wild-monster test is `0219C5C4`, not read. The
     // behaviour, petrified and decoy filters are not modelled (no statuses).
     fn find_target(&self, me: (i16, i16)) -> Option<(i16, i16)> {
@@ -525,28 +634,56 @@ impl Dungeon {
         chebyshev(me, t) == 1 && self.corner_open(i32::from(me.0), i32::from(me.1), dx, dy)
     }
 
-    /// `AIWander` (`02190854`): the tile the monster heads to. The corridor branch (the monster's
-    /// tile has no room) is read from the decompile; it returns the objective-3 tile (the first
-    /// direction that can be walked) or, with none, a random neighbour (objective 6).
-    // shortcut: the in-room branch needs the room's exit list (`dungeon+0xE5E4`, with
-    // `+0xE5E4 + 0x80 * room` entries), which the sim does not hold. It draws the fallback
-    // `Int(8)` only, which is the game's path for a room with no exits; a room with exits draws
-    // `Int(count)` (the `Int(3)` of the P7 table) and then walks to one. Upgrade once the room
-    // exit lists are generated at floor entry.
-    // shortcut: the mobility class is 0 (a regular walker) and the objective and the `+0xF0`
-    // state are read as unset, as the sim keeps no AI target record.
-    fn wander(&mut self, me: (i16, i16), facing: usize) -> (i16, i16) {
+    /// `AIFindTarget` (`02191394`) after the candidate loop, for a wild monster at `me` that saw
+    /// `seen` (or nothing): the goal tile, with the record updated. A seen target is objective 1.
+    /// Otherwise a monster that was chasing (objective 1 or 2) with a target takes the first of
+    /// the target's four previous positions it can see (objective 2); with none it wanders.
+    // shortcut: "can see" is `in_view`, not `02141AD0` (`0219C5C4`, not read). The tactic and
+    // leader branches (`+7`, tactic 1) do not apply to a wild monster.
+    fn movement_goal(
+        &mut self,
+        me: (i16, i16),
+        facing: usize,
+        seen: Option<(i16, i16)>,
+        rec: &mut AiRecord,
+    ) -> (i16, i16) {
+        if let Some(t) = seen {
+            let slot = self.team.iter().position(|m| m.pos == t && m.info.hp > 0);
+            *rec = AiRecord {
+                objective: CHASE_TARGET,
+                goal: t,
+                target: slot,
+            };
+            return t;
+        }
+        let chasing = matches!(rec.objective, CHASE_TARGET | CHASE_REMEMBERED);
+        if let Some(slot) = rec.target.filter(|_| chasing) {
+            let prev = self.ai.team.get(slot).map_or([me; 4], |t| t.prev);
+            if let Some(p) = prev.into_iter().find(|&p| self.in_view(me, p)) {
+                rec.objective = CHASE_REMEMBERED;
+                rec.goal = p;
+                return p;
+            }
+        }
+        self.wander(me, facing, rec)
+    }
+
+    /// `AIWander` (`02190854`): the tile the monster heads to, written to `rec` with the
+    /// objective. A corridor tile picks the first direction that can be walked (objective 3) or a
+    /// random neighbour (6). A room tile heads for one of the room's exits (objective 4, kept
+    /// until the monster is chosen again), or, standing on a junction, steps out to the corridor
+    /// (3); a room with no exits draws a random neighbour (6). When no branch fires the record
+    /// is left as it was, as the game's is.
+    // shortcut: the mobility class is 0 (a regular walker) and `+0xF0` is read as 0 (see
+    // [`AiRecord`]).
+    fn wander(&mut self, me: (i16, i16), facing: usize, rec: &mut AiRecord) -> (i16, i16) {
         let facing = facing % 8;
-        let in_corridor = self
-            .floor
-            .tile(i32::from(me.0), i32::from(me.1))
-            .is_some_and(|t| t.room == NO_ROOM);
-        let mut dir = facing;
-        if in_corridor {
-            let jitter = self
-                .floor
-                .tile(i32::from(me.0), i32::from(me.1))
-                .is_some_and(|t| STRAIGHT_MASKS.contains(&t.walkable_neighbors[0]));
+        let tile = self.floor.tile(i32::from(me.0), i32::from(me.1));
+        let room = tile.map_or(NO_ROOM, |t| t.room);
+        let on_junction = tile.is_some_and(|t| t.terrain & floor::TERRAIN_JUNCTION != 0);
+        if room == NO_ROOM {
+            let jitter = tile.is_some_and(|t| STRAIGHT_MASKS.contains(&t.walkable_neighbors[0]));
+            let mut dir = facing;
             if jitter {
                 dir = self.rng.int(8) as usize;
             }
@@ -558,11 +695,55 @@ impl Dungeon {
                     continue;
                 }
                 if self.can_move(me, d).0 {
-                    return step(me, d);
+                    *rec = AiRecord {
+                        objective: ROAM,
+                        goal: step(me, d),
+                        ..*rec
+                    };
+                    return rec.goal;
+                }
+            }
+            return self.stand_still(me, rec);
+        }
+        if rec.objective != LEAVE_ROOM {
+            let exits = self.floor.room_exits(room);
+            if exits.is_empty() {
+                return self.stand_still(me, rec);
+            }
+            for _ in 0..10 {
+                let exit = exits[self.rng.int(exits.len() as i32) as usize];
+                if exit != me {
+                    rec.objective = LEAVE_ROOM;
+                    rec.goal = exit;
+                    return exit;
                 }
             }
         }
-        step(me, self.rng.int(8) as usize)
+        if on_junction {
+            let mut d = self.rng.int(8) as usize;
+            for _ in 0..8 {
+                d &= 7;
+                let n = step(me, d);
+                let in_corridor = self
+                    .floor
+                    .tile(i32::from(n.0), i32::from(n.1))
+                    .is_some_and(|t| t.room == NO_ROOM);
+                if in_corridor && self.can_move(me, d).0 {
+                    rec.objective = ROAM;
+                    rec.goal = n;
+                    return n;
+                }
+                d += 1;
+            }
+        }
+        rec.goal
+    }
+
+    /// The wander's last resort: a random neighbour as the goal, objective 6.
+    fn stand_still(&mut self, me: (i16, i16), rec: &mut AiRecord) -> (i16, i16) {
+        rec.objective = STAND_STILL;
+        rec.goal = step(me, self.rng.int(8) as usize);
+        rec.goal
     }
 
     /// `DecideMovement` (`02190FEC`) for a wild monster at `me` heading to `goal`: the plan and
@@ -1036,6 +1217,70 @@ mod tests {
         // Facing 0, so the way back is 4; the roll is taken unless it is that.
         let dir = if roll == 4 { 5 } else { roll };
         assert_eq!(d.wild[0].pos, step((5, 5), dir));
+    }
+
+    /// `room_with`, with the room cut to 20 by 20 so the leader at (50, 28) is out of sight.
+    fn room_apart(wild: (i16, i16)) -> GameState {
+        let mut g = room_with((50, 28), &[wild]);
+        let d = g.dungeon_mut().unwrap();
+        d.floor.rooms[0].x1 = 20;
+        d.floor.rooms[0].y1 = 20;
+        g
+    }
+
+    #[test]
+    fn a_monster_in_a_room_with_exits_draws_one_exit_and_walks_there_without_more_draws() {
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        let exits: [(i16, i16); 2] = [(10, 5), (12, 19)];
+        for (x, y) in exits {
+            d.floor.tile_mut(x.into(), y.into()).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        assert_eq!(d.floor.room_exits(0), exits);
+        let mut expected = d.rng;
+        d.run_wild_monsters(None);
+        // Pick, the exit draw (`Int(count)`, one try as it is not the monster's tile), end.
+        expected.int(35);
+        let goal = exits[expected.int(2) as usize];
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(
+            d.wild[0].pos,
+            step((5, 5), direction_towards((5, 5), goal) as usize)
+        );
+        // Objective 4 stays: the next turns draw the pick and the end of turn only.
+        for _ in 0..3 {
+            d.run_wild_monsters(None);
+            expected.int(35);
+            expected.int(100);
+            assert_eq!(d.rng, expected);
+        }
+        assert_eq!(
+            d.ai.wild.values().next().map(|r| (r.objective, r.goal)),
+            Some((4, goal))
+        );
+    }
+
+    #[test]
+    fn a_monster_that_loses_sight_follows_the_leaders_remembered_positions() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        // Turn 1: the leader is seen (objective 1).
+        d.run_wild_monsters(None);
+        assert_eq!(d.ai.wild.values().next().map(|r| r.objective), Some(1));
+        // The leader steps out of sight, leaving (12, 5) first in its trail.
+        d.floor.rooms[0].x1 = 20;
+        d.floor.rooms[0].y1 = 20;
+        d.team[0].pos = (50, 28);
+        let mut expected = d.rng;
+        d.run_wild_monsters(None);
+        // Pick and end of turn only: no wander draw, the goal is the remembered tile.
+        expected.int(35);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        let rec = *d.ai.wild.values().next().unwrap();
+        assert_eq!((rec.objective, rec.goal), (2, (12, 5)));
+        assert_eq!(d.wild[0].pos, (7, 5));
     }
 
     #[test]
