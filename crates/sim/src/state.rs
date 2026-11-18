@@ -1561,6 +1561,25 @@ mod tests {
     }
 
     #[test]
+    fn a_leader_swap_costs_the_partner_one_end_of_turn_draw_and_no_move() {
+        let mut g = run_with_leader(1);
+        g.dungeon.as_mut().unwrap().team.push(monster(6, 5, 8));
+        // The same turn with no partner: the swap pass's draw is the only difference.
+        let mut alone = g.clone();
+        alone.dungeon.as_mut().unwrap().team.truncate(1);
+        assert_eq!(g.step(Command::Move(Direction::Right)), Outcome::Applied);
+        assert_eq!(
+            alone.step(Command::Move(Direction::Right)),
+            Outcome::Applied
+        );
+        let (d, mut expected) = (g.dungeon().unwrap(), alone.dungeon().unwrap().rng);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        // On the leader's old tile, not moved again by the team loop that turn.
+        assert_eq!(d.team()[1].pos, (5, 5));
+    }
+
+    #[test]
     fn a_team_ally_on_water_is_not_swapped_with() {
         let mut g = run_with_leader(1);
         g.dungeon.as_mut().unwrap().team.push(monster(6, 5, 8));

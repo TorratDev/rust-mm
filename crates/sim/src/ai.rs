@@ -97,8 +97,6 @@ pub(crate) struct AiState {
     pub(crate) swapping: Vec<usize>,
     /// Team slots flagged `0x4000`: the team loop skips each once and clears the flag.
     held: Vec<usize>,
-    /// Slots the swap pass left flagged `aiAllySkip`, for the team loop's phase 2.
-    deferred: Vec<usize>,
 }
 
 impl PartialEq for AiState {
@@ -161,7 +159,7 @@ impl Dungeon {
     pub(crate) fn run_team_members(&mut self, data: Option<&CombatData<'_>>) {
         self.sync_team_ai();
         // The slots flagged `aiAllySkip`.
-        let mut skipped = std::mem::take(&mut self.ai.deferred);
+        let mut skipped = Vec::new();
         for i in 1..self.team.len() {
             if !self.leader_alive() {
                 return;
@@ -194,19 +192,21 @@ impl Dungeon {
     }
 
     /// The swap pass (`02140ED0`, called at `0214114C` in the leader's turn): each team ally the
-    /// leader swapped with (flag `0x8000`) takes its turn, `RunMonsterAI` and Execute with their
-    /// draws, then its flag becomes `0x4000`, which the team loop skips once.
-    // shortcut: the pass's early return when `FUN_0214067C()` is nonzero (not decoded) and the
-    // `gDungeon+0xE` test are not modelled, so the pass always runs. Its `TickStatusAndHealthRegen`
-    // is `ally_turn`'s status tick only (see there).
-    pub(crate) fn run_swap_pass(&mut self, data: Option<&CombatData<'_>>) {
+    /// leader swapped with (flag `0x8000`) gets the status tick and Execute, then its flag becomes
+    /// `0x4000`, which the team loop skips once. `RunMonsterAI` returns at once on `0x8000`, so
+    /// only Execute's end-of-turn draw (`Int(100)`) happens: no pick, target search or move.
+    // shortcut: the pass is gated by `gDungeon+0xE`, which the swap sets, so it runs when
+    // `swapping` is non-empty. Its early return is `IsFloorOver`, checked per entity; the sim
+    // checks the leader's fall instead. Its `TickStatusAndHealthRegen` is the status tick only.
+    pub(crate) fn run_swap_pass(&mut self) {
         for i in std::mem::take(&mut self.ai.swapping) {
             if !self.leader_alive() {
                 return;
             }
-            self.sync_team_ai();
-            if self.ally_turn(i, data, false) {
-                self.ai.deferred.push(i);
+            if self.team[i].info.hp != 0 {
+                self.team[i].info.tick_status();
+                // Asleep or not, Execute still runs the end of turn.
+                self.ally_end_of_turn(i);
             }
             self.ai.held.push(i);
         }
@@ -1475,8 +1475,12 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let start = d.rng;
         d.ai.swapping.push(1);
-        d.run_swap_pass(None);
-        assert_ne!(d.rng, start);
+        d.run_swap_pass();
+        // Only Execute's end-of-turn draw: one `Int(100)`, no pick, and the partner stays put.
+        let mut expected = start;
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.team[1].pos, (5, 5));
         let after_pass = d.rng;
         d.run_team_members(None);
         assert_eq!(d.rng, after_pass);
