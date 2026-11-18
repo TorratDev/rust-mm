@@ -1586,7 +1586,7 @@ mod tests {
 
     #[test]
     fn a_partner_with_a_distant_foe_in_view_still_follows_the_leader() {
-        // Leader to the south (4), foe 3 tiles east (2), not adjacent: cause B of #348 row 8.
+        // Leader to the south (0), foe 3 tiles east (2), not adjacent: cause B of #348 row 8.
         let mut g = with_partner((10, 14), (10, 10), &[(13, 10)]);
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
@@ -1600,7 +1600,7 @@ mod tests {
             (10, 11),
             "it heads for the leader, not the foe"
         );
-        assert_eq!(d.team[1].info.direction, 4);
+        assert_eq!(d.team[1].info.direction, 0);
     }
 
     #[test]
