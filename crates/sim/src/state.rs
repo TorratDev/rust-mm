@@ -849,6 +849,9 @@ impl GameState {
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: AiState::default(),
         });
+        if let Some(dungeon) = self.dungeon.as_mut() {
+            dungeon.seed_wild_ai(true);
+        }
         // The arrival reveal (`docs/re/visibility.md`, P2): the leader's start is seen at once.
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1090,7 +1093,7 @@ impl GameState {
                 if d.wild.len() > WILD_SLOTS {
                     return Err(StateError::WildTooLarge(d.wild.len()));
                 }
-                Some(Dungeon {
+                let mut dungeon = Dungeon {
                     floor: d.floor.restore()?,
                     rng: DungeonRng::from_state(d.rng),
                     team: d.team.clone(),
@@ -1120,7 +1123,12 @@ impl GameState {
                     spawn_counter: 0,
                     enemy_density: 0,
                     ai: AiState::default(),
-                })
+                };
+                // shortcut: the snapshot holds no AI records, so every restored wild monster gets
+                // the floor-generation record without the draws (see `seed_wild_ai`), right only
+                // for a snapshot taken before the wild monsters' first turn (the harness's row 1).
+                dungeon.seed_wild_ai(false);
+                Some(dungeon)
             }
         };
         Ok(Self {
