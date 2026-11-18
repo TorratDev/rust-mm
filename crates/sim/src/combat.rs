@@ -783,13 +783,18 @@ impl Dungeon {
                 self.start_sport(*sport);
                 return false;
             }
-            // A status move's setter follows the slot-0 check, and no damage.
+            // A status move's setter follows the slot-0 check, and no damage. `0218DAE4` refuses
+            // self, Grass and an existing seed before the roll, and the game writes the seeder
+            // only on a landed seed: a refused one leaves the fields alone.
             Effect::Inflict(kind) => {
                 let fresh = self
                     .info_of(target)
                     .is_some_and(|i| i.status.leech_seed != status::LEECH_SEED);
                 self.inflict(target, *kind);
-                if *kind == Inflict::LeechSeed && fresh {
+                let seeded = self
+                    .info_of(target)
+                    .is_some_and(|i| i.status.leech_seed == status::LEECH_SEED);
+                if *kind == Inflict::LeechSeed && fresh && seeded {
                     self.note_seeder(user, target);
                 }
                 return false;
@@ -1132,6 +1137,38 @@ pub(crate) mod tests {
             &Effect::Damage { arg8: ARG8 },
             &data,
         );
+    }
+
+    /// A refused Leech Seed (a Grass target, `0218DAE4`) leaves the seeder fields alone.
+    #[test]
+    fn a_refused_leech_seed_records_no_seeder() {
+        let mv = move_of(crate::move_effects::LEECH_SEED, 0, 1, [100; 3], 0);
+        let mut g = battle_with(&mv);
+        let t = tables();
+        let moves = table(std::slice::from_ref(&mv));
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        {
+            let d = g.dungeon_mut().unwrap();
+            d.wild[0].info.types = [4, 0]; // a Grass type (`status::GRASS`)
+            d.wild[0].info.status.seeder_slot = 0x7F;
+            d.wild[0].info.status.seeder_id = 7;
+            d.strike(
+                Slot::Team(0),
+                0,
+                &[Slot::Wild(0)],
+                &mv,
+                &Effect::Inflict(Inflict::LeechSeed),
+                &data,
+            );
+        }
+        let s = &g.dungeon().unwrap().wild[0].info.status;
+        assert_eq!((s.leech_seed, s.seeder_slot, s.seeder_id), (0, 0x7F, 7));
     }
 
     /// A fresh floor, generated with monsters, gets wild monsters on its enemy spawn marks, and

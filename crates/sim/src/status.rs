@@ -422,7 +422,7 @@ impl EntityInfo {
     /// at `+0xC0` with its `info+0x8C` id, or `None` when the slot is empty. A gone seeder or a
     /// changed id clears the status, but only on a drain turn. The countdown goes down when it is
     /// not 0; if it is then 0 it reloads, the seeder is checked, and the victim loses 10 HP while
-    /// the seeder gains 10 (ability `:`: the seeder loses 10).
+    /// the seeder gains 10 (ability `:`: the seeder loses 10 too).
     // shortcut: the heal is a plain add capped at max HP (`0218DF38` not read), and the victim's
     // `+0xA0 != 1` gate (frozen class) is not modelled: the sim has no such state. Faints are not
     // handled, as with the burn.
@@ -439,10 +439,10 @@ impl EntityInfo {
             self.status.leech_seed = 0;
             return;
         };
+        self.hp = (self.hp - LEECH_DAMAGE).max(0);
         if self.has_ability(LEECH_REVERSE) {
             seeder.hp = (seeder.hp - LEECH_DAMAGE).max(0);
         } else {
-            self.hp = (self.hp - LEECH_DAMAGE).max(0);
             seeder.hp = (seeder.hp + LEECH_DAMAGE).min(seeder.max_hp);
         }
     }
@@ -785,7 +785,7 @@ mod tests {
         let (mut v, mut s) = seeded();
         v.abilities = [LEECH_REVERSE, 0];
         v.leech_seed_drain(Some((77, &mut s)));
-        assert_eq!((v.hp, s.hp), (100, 40));
+        assert_eq!((v.hp, s.hp), (90, 40));
         let (mut v, mut s) = seeded();
         s.hp = 95;
         v.leech_seed_drain(Some((77, &mut s)));
@@ -814,7 +814,7 @@ mod tests {
         v.abilities = [LEECH_REVERSE, 0];
         s.hp = 10;
         v.leech_seed_drain(Some((77, &mut s)));
-        assert_eq!((s.hp, v.hp), (0, 100));
+        assert_eq!((s.hp, v.hp), (0, 90));
         v.leech_seed_drain(None);
         v.leech_seed_drain(None);
         assert_eq!(v.status.leech_seed, 0);
