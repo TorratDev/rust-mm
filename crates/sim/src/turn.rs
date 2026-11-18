@@ -225,12 +225,11 @@ impl Dungeon {
             .map_or(FALLBACK_SPECIES, |s| s.species)
     }
 
-    /// The other monsters' steps of fractional turn `k`: the wild loop (`021408F8`, see
-    /// [`crate::ai`]). It runs in the gated turns of speed stage 1.
-    // shortcut: the team's non-leader members do not act yet (the team loop `02140AC0`); port
-    // them before a floor with allies is simulated.
+    /// The other monsters' steps of fractional turn `k`: the team loop (`02140AC0`), then the
+    /// wild loop (`021408F8`, see [`crate::ai`]). They run in the gated turns of speed stage 1.
     fn run_other_monsters(&mut self, k: u8, data: Option<&CombatData<'_>>) {
         if acts(1, k) {
+            self.run_team_members(data);
             self.run_wild_monsters(data);
         }
     }
