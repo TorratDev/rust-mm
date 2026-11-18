@@ -1343,6 +1343,48 @@ mod tests {
     }
 
     #[test]
+    fn a_wild_tackle_on_the_partner_draws_the_games_list_and_hurts_the_partner() {
+        // #505 row 16: the leader is away and the partner stands next to the wild monster. The
+        // game draws `Int(45)@02193260`, no draw in `02191F84`, `Int(1)@02192CC0`, then Execute's
+        // `100, 100, 100, 16384, 100` (`0215A950`, `0217C02C`, `0217C698`, `0217C720`,
+        // `0215A950`), then the end-of-turn `Int(100)`.
+        let (mut g, moves) = duel(&[(0x9A, 5, 10)], &[(0x9A, 10)]);
+        let mut tables = crate::combat::tests::tables();
+        tables.regular_attack_weight[1] = 35;
+        let d = g.dungeon_mut().unwrap();
+        let partner = Monster {
+            pos: (12, 10),
+            ..d.team[0].clone()
+        };
+        d.team[0].pos = (3, 3);
+        d.team.push(partner);
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let mut hit = false;
+        for seed in 0..64 {
+            let mut actual = g.dungeon().unwrap().clone();
+            actual.rng = crate::rng::DungeonRng::new(seed);
+            let mut model = actual.clone();
+            actual.run_wild_monsters(K, Some(&data));
+            if model.rng.int(45) > 10 {
+                continue; // the roll landed on the regular attack
+            }
+            for total in [1, 100, 100, 100, 16384, 100, 100] {
+                model.rng.int(total);
+            }
+            assert_eq!(actual.rng, model.rng, "seed {seed}");
+            assert_eq!(actual.team[0].info.hp, g.dungeon().unwrap().team[0].info.hp);
+            hit |= actual.team[1].info.hp < g.dungeon().unwrap().team[1].info.hp;
+        }
+        assert!(hit, "the Tackle must reach the partner");
+    }
+
+    #[test]
     fn with_no_enabled_move_the_regular_attack_is_picked_by_table_entry_0() {
         // The slots exist and have PP but none is enabled for the AI (bit 2 clear): the total is
         // table[0], so the roll always lands on the regular attack.

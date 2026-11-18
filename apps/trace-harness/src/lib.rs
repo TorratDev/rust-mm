@@ -272,7 +272,17 @@ pub fn replay_combat(
     let Some(first) = rows.first() else {
         return Ok(Replay::Match { rows: 0 });
     };
-    let mut state = state_from_row(first, properties).map_err(HarnessError::Start)?;
+    let state = state_from_row(first, properties).map_err(HarnessError::Start)?;
+    replay_from(state, rows, scope, combat)
+}
+
+/// [`replay_combat`] from a start state the caller has prepared (see [`combat::replay_enemies`]).
+pub(crate) fn replay_from(
+    mut state: GameState,
+    rows: &[TurnRow],
+    scope: Scope,
+    combat: Option<&CombatData<'_>>,
+) -> Result<Replay, HarnessError> {
     let mut applied = false;
     // The tile the last attack lands on, read before it ran (see `leader_target`).
     let mut target: Option<(i16, i16)> = None;
