@@ -6,4 +6,5 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let _ = rescue_save::read(data);
+    let _ = rescue_save::load(data);
 });
