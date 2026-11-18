@@ -495,11 +495,14 @@ impl Dungeon {
         // `ChooseAIMove`'s gates: `02181530(self, 0)` (sleep-like modes, `+0x9B == 4`),
         // `02180B68` (run away) and `IsTacticSet(8)` skip the whole function with no draw; then
         // a confused monster (`+0xAC == 2`) skips it on a 70% roll (`0x021AA184`).
+        // After `ChooseAIMove`, `02188030` runs `AIMovement` (`021918D4`) only for a monster that
+        // is not confused and set no action; a confused one that set none goes to `02141878`,
+        // which sets action 1 or 2 and draws nothing. So a confused monster never walks, whether
+        // or not the 70% roll skipped.
         // shortcut: the run-away test (ability `+` below half HP, tactics 6 and 10), tactic 8
         // and the frozen byte `+0xA0` are not modelled: a wild monster has no tactic, the
-        // ability is not identified, and the sim keeps no frozen state. After a skip the game
-        // runs `AIMovement` (`02141878` instead when confused, not read): here a gated monster
-        // walks and a confused one that skipped passes its turn.
+        // ability is not identified, and the sim keeps no frozen state. Upgrade each when the
+        // sim keeps it (a frozen status, an ability, a tactic).
         let info = &self.wild[i].info;
         let (gated, confused) = (info.skips_move_choice(), info.is_confused());
         let confusion_skip = !gated && confused && self.rng.outcome(CONFUSED_SKIP_PERCENT);
@@ -521,7 +524,7 @@ impl Dungeon {
                 }
             }
         };
-        if attacked {
+        if attacked || confused {
             // A monster the recoil removed gets no end of turn (`i` now names the next one).
             if self.wild.len() == len_before {
                 self.monster_end_of_turn(i);
@@ -1935,6 +1938,30 @@ mod tests {
         plain.run_wild_monsters(K, Some(&data));
         assert_eq!(rolled.rng, plain.rng);
         assert_eq!(rolled.team[0].info.hp, plain.team[0].info.hp);
+    }
+
+    #[test]
+    fn a_confused_monster_that_finds_no_action_passes_and_never_walks() {
+        // One move of weight 6 plus the regular attack's `REGULAR[1]`: the pick draws 13.
+        let (g, moves) = duel(&[(0x9A, 5, 10)], &[(0x9A, 6)]);
+        let data = tackle_data(&moves);
+        let seed = (1u32..)
+            .find(|&s| !crate::rng::DungeonRng::new(s).outcome(70))
+            .unwrap();
+        let mut d = g.dungeon().unwrap().clone();
+        // No foe adjacent: `ChooseAIMove` sets no action; `02141878` draws nothing.
+        d.wild[0].pos = (14, 10);
+        d.wild[0].info.status.cringe = status::CONFUSED;
+        d.wild[0].info.status.cringe_turns = status::NO_END;
+        d.rng = crate::rng::DungeonRng::new(seed);
+        let mut model = d.rng;
+        let start = d.wild[0].pos;
+        d.run_wild_monsters(K, Some(&data));
+        model.outcome(70);
+        model.int(REGULAR[1] + 6);
+        model.int(100);
+        assert_eq!(d.wild[0].pos, start);
+        assert_eq!(d.rng, model);
     }
 
     #[test]
