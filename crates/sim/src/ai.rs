@@ -51,7 +51,33 @@ const ADJACENT_AREAS: [u16; 3] = [0x00, 0x10, 0x20];
 // shortcut: the pool table `0x021A98F4` was not read; the values are Red's table (the note says
 // Blue's order matches, `ai.md` P3-e). Check with an overlay byte read before the sign of the
 // 45-degree turns is relied on.
-const TURNS: [usize; 3] = [0, 1, 7];
+const TURNS: [usize; 5] = [0, 1, 7, 2, 6];
+
+/// The byte table at `0x02091E48` that `02184074` reads for a team member, indexed by the
+/// tactic (`info+0x8A`): non-zero skips `AIFindTarget`'s enemy scan (tactics 0, 4 to 8 and 10;
+/// `docs/re/ai.md`, #73 investigator b P5).
+const TACTIC_SKIPS_SCAN: [bool; 12] = [
+    true, false, false, false, true, true, true, true, true, false, true, false,
+];
+
+/// Who moves, for the team-only branches of `DecideMovement` (`02190FEC`).
+#[derive(Clone, Copy)]
+struct Mover {
+    /// `info+6 == 0`: a team member.
+    team: bool,
+    /// `info+0x117`: phase 2 of the team loop.
+    recalc: bool,
+    /// The wide candidate loop (4 turns, not 2): run-away (`02180B68`) or `+0x73` set.
+    wide: bool,
+}
+
+impl Mover {
+    const WILD: Self = Self {
+        team: false,
+        recalc: false,
+        wide: false,
+    };
+}
 
 /// `0200B9A4`-style straight-corridor masks of the wander's first branch (`02180C98`): the tile's
 /// walkable mask equal to one of these makes the monster pick a new random direction.
@@ -97,6 +123,8 @@ struct TeamAi {
     rec: AiRecord,
     last: (i16, i16),
     prev: [(i16, i16); 4],
+    /// `info+0x8A`, the tactic (0 is LETS_GO_TOGETHER, the default).
+    tactic: u8,
 }
 
 /// The AI state of a floor: the wild monsters' records and the team's.
@@ -295,10 +323,10 @@ impl Dungeon {
     /// whether the partner is flagged `aiAllySkip`, which defers its end of turn.
     // shortcut: the partner's own moves are not used: the pick draws the team total 65 seen in
     // the P7 trace (the sum of its five weights is not computed) and only the regular attack
-    // is used. IQ skills and tactics are not read (`ai.md`, P4-b, P4-c): the partner attacks a
-    // foe it sees, else follows the leader, whatever its tactic. A phase-2 turn never re-flags
-    // (`recalculateFollow` set, `DecideMovement` lines 358-361), though the trailing branch
-    // (lines 436-443) may in the game.
+    // is used. IQ skills are not read (`ai.md`, P4-b): the tactic table gates the enemy scan
+    // (`TACTIC_SKIPS_SCAN`); a partner that scans attacks a foe it sees, else follows the
+    // leader. A phase-2 turn may re-flag
+    // through the trailing branch of `DecideMovement` (branch 2a is phase 1 only).
     // shortcut: HP regeneration (`TickStatusAndHealthRegen`) and the partner's belly are not
     // modelled; only the status countdowns run.
     fn ally_turn(&mut self, i: usize, data: Option<&CombatData<'_>>, recalc: bool) -> bool {
@@ -312,15 +340,24 @@ impl Dungeon {
             return false;
         }
         // `AIFindTarget` (`02191394`): the foe search is gated by `02184074`, which for a team
-        // member reads the byte table `0x02091E48` at `info+0x8A` (the tactic); entry 0 (the
-        // default tactic) is 1, so the search is skipped and the target is the leader if in view
-        // (`02183FF0`, `+0x72` = 0). `docs/re/ai.md` P3-c, #348 row 8 findings.
-        // shortcut: every partner is read as tactic 0 (the sim keeps no tactic byte); the table
-        // reads 1,0,0,0,1,1,1,1 for entries 0 to 7 (entries 1 to 3 would search a foe, the rest
-        // were not read, entries 8+ not read at all). Upgrade with the tactic field.
+        // member reads the byte table `0x02091E48` at the tactic (`info+0x8A`); non-zero skips
+        // the scan (tactics 0, 4 to 8 and 10), and the target is the leader if in view
+        // (`GetLeaderIfVisible`, `02183FF0`). `docs/re/ai.md` P3-c, #73 investigator b P5.
+        // shortcut: a scanning tactic (1 to 3, 9, 11) targets the nearest foe in view, else the
+        // leader; its own branches (tactic 1's leader rule, 9 holding still) are not read.
         let leader = self.team[0].pos;
+        let tactic = self.ai.team.get(i).map_or(0, |t| t.tactic);
+        let scans = !TACTIC_SKIPS_SCAN
+            .get(usize::from(tactic))
+            .copied()
+            .unwrap_or(true);
         let foe = self.nearest_seen(me, self.wild.iter().map(|m| m.pos));
-        let target = self.in_view(me, leader).then_some(leader);
+        let leader_seen = self.in_view(me, leader).then_some(leader);
+        let target = if scans {
+            foe.or(leader_seen)
+        } else {
+            leader_seen
+        };
         // `ChooseAIMove`: the weighted pick is drawn whatever the target.
         let _pick = self.rng.int(TEAM_PICK_TOTAL);
         if let Some(f) = foe.filter(|&f| self.adjacent_attackable(me, f)) {
@@ -360,13 +397,17 @@ impl Dungeon {
         if let Some(t) = self.ai.team.get_mut(i) {
             t.rec = rec;
         }
-        let (plan, skip) = self.decide_movement(me, goal);
+        let mover = Mover {
+            team: true,
+            recalc,
+            wide: false,
+        };
+        let (plan, skip) = self.decide_movement(me, goal, mover);
         if let Plan::Walk(dir) = plan {
             let m = &mut self.team[i];
             m.pos = step(m.pos, dir);
             m.info.direction = dir as u8;
         }
-        let skip = skip && !recalc;
         if !skip {
             self.ally_end_of_turn(i);
         }
@@ -533,7 +574,7 @@ impl Dungeon {
         }
         let facing = usize::from(self.wild[i].info.direction);
         let goal = self.movement_goal(me, facing, target, rec);
-        let (plan, skip) = self.decide_movement(me, goal);
+        let (plan, skip) = self.decide_movement(me, goal, Mover::WILD);
         if let Plan::Walk(dir) = plan {
             let (dx, dy) = DIRECTIONS[dir].delta();
             let m = &mut self.wild[i];
@@ -927,29 +968,70 @@ impl Dungeon {
         rec.goal
     }
 
-    /// `DecideMovement` (`02190FEC`) for a wild monster at `me` heading to `goal`: the plan and
-    /// whether the monster ends flagged `aiAllySkip` (it was blocked by a monster).
-    // shortcut: the 90-degree turns (a run-away or turn-around state) and the tactic that keeps a
-    // distance are not modelled; the monster has none of those.
-    fn decide_movement(&self, me: (i16, i16), goal: (i16, i16)) -> (Plan, bool) {
+    /// `DecideMovement` (`02190FEC`) for the monster at `me` heading to `goal`: the plan and
+    /// whether the monster ends flagged `aiAllySkip` (`+0x116`).
+    ///
+    /// In the game's order: the direct step (ok: walk). Blocked by a monster, a team member in
+    /// phase 1 (`+0x117 == 0`) passes flagged at once (branch 2a); otherwise a goal that is
+    /// exactly that adjacent tile passes unflagged (2b). Then the candidate loop tries the two
+    /// 45-degree turns, or four turns when `mover.wide` (2d); for a team member on a diagonal
+    /// with both axis distances under 3 and unequal, one of the two 45-degree turns is
+    /// disabled (2c). A monster seen on the way flags a non-leader that passes at the end.
+    /// `docs/re/ai.md` and #73 investigator b P4.2.
+    // shortcut: the 90-degree turns of a run-away or turn-around state (`02180C6C`,
+    // `0219C3CC`) and the table `0x02191390` (read as Red's `0, 1, 7, 2, 6`) are not read; no
+    // caller sets `wide` yet (it needs the run-away predicate or `+0x73`, tactic 8). The flag
+    // `+0x71` is read as clear at the start of each turn, and a leader never gets here.
+    fn decide_movement(&self, me: (i16, i16), goal: (i16, i16), mover: Mover) -> (Plan, bool) {
         if me == goal {
             return (Plan::Pass, false);
         }
         let dir = direction_towards(me, goal) as usize;
+        let (ok, monster) = self.can_move(me, dir);
+        if ok {
+            return (Plan::Walk(dir), false);
+        }
         let mut blocked_by_monster = false;
-        for (n, turn) in TURNS.iter().enumerate() {
-            let d = (dir + turn) % 8;
-            let (ok, monster) = self.can_move(me, d);
-            if ok {
-                return (Plan::Walk(d), false);
+        if monster {
+            if mover.team && !mover.recalc {
+                return (Plan::Pass, true);
             }
-            if monster {
-                // A goal tile held by a monster: wait there, not flagged.
-                if n == 0 && step(me, d) == goal {
-                    return (Plan::Pass, false);
-                }
-                blocked_by_monster = true;
+            if step(me, dir) == goal {
+                return (Plan::Pass, false);
             }
+            blocked_by_monster = true;
+        }
+        let mut enabled = [true; 5];
+        if mover.team && dir & 1 == 1 {
+            let dx = (i32::from(me.0) - i32::from(goal.0)).abs();
+            let dy = (i32::from(me.1) - i32::from(goal.1)).abs();
+            if dx < 3 && dy < 3 && dx != dy {
+                // With `dir & 2` clear the turn at index 2 goes when x is the longer axis and
+                // index 1 when y is; with it set, the other way round.
+                let off = if (dir & 2 == 0) == (dx > dy) { 2 } else { 1 };
+                enabled[off] = false;
+            }
+        }
+        let count = if mover.wide { 5 } else { 3 };
+        let tries: Vec<(usize, bool, bool)> = TURNS
+            .iter()
+            .enumerate()
+            .take(count)
+            .skip(1)
+            .map(|(n, turn)| {
+                let (ok, monster) = self.can_move(me, (dir + turn) % 8);
+                (n, ok, monster)
+            })
+            .collect();
+        // A terrain-blocked candidate (`02190FEC`, first loop) re-enables both dropped turns.
+        if tries.iter().any(|&(_, ok, monster)| !ok && !monster) {
+            enabled = [true; 5];
+        }
+        for (n, ok, monster) in tries {
+            if ok && enabled[n] {
+                return (Plan::Walk((dir + TURNS[n]) % 8), false);
+            }
+            blocked_by_monster |= monster;
         }
         // A non-leader that saw a monster in the way skips to the end-of-turn pass.
         (Plan::Pass, blocked_by_monster)
@@ -2143,5 +2225,84 @@ mod tests {
         }
         assert_eq!(d.rng, expected);
         assert_eq!((d.team[1].pos, d.team[2].pos), ((6, 5), (7, 5)));
+    }
+
+    #[test]
+    fn a_partner_next_to_the_leader_stops_flagged_in_phase_1_and_passes_in_phase_2() {
+        // Branch 2a: the direct step is blocked by a monster (the leader) in phase 1, so it
+        // passes flagged. Branch 2b: in phase 2 the goal is exactly that tile, so it passes
+        // unflagged and its end-of-turn runs. Each pass draws the two picks.
+        let mut g = with_partner((6, 5), (5, 5), &[]);
+        let d = g.dungeon_mut().unwrap();
+        let mut expected = d.rng;
+        d.run_team_members(None);
+        for cap in [65, 65, 65, 65, 100] {
+            expected.int(cap);
+        }
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.team[1].pos, (5, 5));
+    }
+
+    #[test]
+    fn a_partner_whose_leader_is_out_of_sight_does_not_chase_it() {
+        // The partner stands in a corridor far from the leader: `GetLeaderIfVisible` fails and
+        // the partner wanders (`AIWander`) instead of taking the leader's tile as its goal.
+        let mut g = with_partner((10, 10), (40, 20), &[]);
+        let d = g.dungeon_mut().unwrap();
+        let t = d.floor.tile_mut(40, 20).unwrap();
+        t.room = NO_ROOM;
+        assert!(!d.in_view((40, 20), (10, 10)));
+        d.run_team_members(None);
+        assert_ne!(d.ai.team[1].rec.objective, CHASE_TARGET);
+        assert_ne!(d.ai.team[1].rec.goal, (10, 10));
+    }
+
+    #[test]
+    fn a_tactic_that_scans_enemies_targets_the_foe_in_view() {
+        // Tactic 1 reads 0 in the table at `0x02091E48`: the scan runs and the foe is the target.
+        let mut g = with_partner((10, 14), (10, 10), &[(13, 10)]);
+        let d = g.dungeon_mut().unwrap();
+        d.sync_team_ai();
+        d.ai.team[1].tactic = 1;
+        d.run_team_members(None);
+        assert_eq!(d.team[1].pos, (11, 10), "it heads for the foe");
+        assert!(TACTIC_SKIPS_SCAN[0] && !TACTIC_SKIPS_SCAN[1]);
+        assert!([4, 5, 6, 7, 8, 10].iter().all(|&t| TACTIC_SKIPS_SCAN[t]));
+    }
+
+    fn team_mover() -> Mover {
+        Mover {
+            team: true,
+            recalc: false,
+            wide: false,
+        }
+    }
+
+    #[test]
+    fn a_team_member_on_a_diagonal_drops_one_45_degree_turn() {
+        // Branch 2c: heading down-right (1) with the goal 2 right and 1 down, the direct tile
+        // is a wall, the turn along the longer axis (right) holds a wild monster and the other
+        // turn (down) is open but dropped for a team member, so it passes (flagged by the
+        // monster), while a wild monster walks down.
+        let mut g = with_partner((12, 6), (10, 5), &[(11, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.floor.tile_mut(11, 6).unwrap().terrain = floor::TERRAIN_IMPASSABLE_WALL;
+        let (plan, flagged) = d.decide_movement((10, 5), (12, 6), team_mover());
+        assert!(matches!(plan, Plan::Pass) && flagged);
+        let (plan, _) = d.decide_movement((10, 5), (12, 6), Mover::WILD);
+        assert!(matches!(plan, Plan::Walk(0)));
+    }
+
+    #[test]
+    fn a_terrain_blocked_candidate_re_enables_the_dropped_turn() {
+        // Same layout with a wall at (11,5) instead of the monster: the terrain block re-enables
+        // both turns (`02190FEC`), so the team member walks down too.
+        let mut g = with_partner((12, 6), (10, 5), &[]);
+        let d = g.dungeon_mut().unwrap();
+        for p in [(11, 6), (11, 5)] {
+            d.floor.tile_mut(p.0, p.1).unwrap().terrain = floor::TERRAIN_IMPASSABLE_WALL;
+        }
+        let (plan, _) = d.decide_movement((10, 5), (12, 6), team_mover());
+        assert!(matches!(plan, Plan::Walk(0)));
     }
 }
