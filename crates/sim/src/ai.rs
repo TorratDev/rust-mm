@@ -73,8 +73,7 @@ const STAND_STILL: u8 = 6;
 /// The persistent part of a monster's AI record: the objective (`+0x70`), the goal tile
 /// (`+0x80`, `+0x82`) and the target (`+0x78`, a team slot).
 // shortcut: the generation ID (`+0x74`) is not kept: a team slot is never reused on a floor
-// here, so the ID always matches. `+0xF0` (move randomly) is read as 0: the notes give no writer
-// that sets it. The record is cleared nowhere else (`0216C638`, petrify and decoy resets are not
+// here, so the ID always matches. The record is cleared nowhere else (`0216C638`, petrify and decoy resets are not
 // modelled, as the sim has no such statuses).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AiRecord {
@@ -83,8 +82,8 @@ pub(crate) struct AiRecord {
     target: Option<usize>,
     /// The monster flags `0x8000` and `0x4000` (`info+0x..`, see [`HELD_FLAG`]).
     flags: u16,
-    /// `+0xF0`, "move randomly": set at spawn from the movement roll (`021826A0`); `AIWander`
-    /// then always takes the random-neighbour branch (objective 6).
+    /// `+0xF0`, "move randomly": set at spawn from the movement roll (`021826A0`, stored by
+    /// `02179CFC` line 31); `AIWander` then always takes the random-neighbour branch (objective 6).
     random_walk: bool,
 }
 
@@ -119,7 +118,7 @@ pub(crate) struct AiState {
     /// `Species::chance_asleep` (species `+0x1D`) by species ID, read by the spawn's sleep roll
     /// (`02179CFC`). A species past the end reads 0 (never spawns asleep).
     // shortcut: nothing fills it outside tests yet; the species table has to reach the dungeon
-    // (state.rs) before natural spawns can sleep.
+    // (state.rs) before natural spawns can sleep (follow-up #496).
     pub(crate) chance_asleep: Vec<u8>,
 }
 
@@ -405,8 +404,9 @@ impl Dungeon {
 
     /// The rest of `02179CFC` for the wild monster just added at `pos` (slot allocation is done):
     /// `random_walk` is the movement roll's result (`+0xF0`). First objective (`021794CC` ->
-    /// `AIMovement`): a team member in view becomes the target and nothing is drawn, else
-    /// `AIWander`. Then the asleep roll, `Int(100)` against `Species::chance_asleep`, which
+    /// `AIMovement`, line 19 of `02179CFC`): a team member in view becomes the target and nothing
+    /// is drawn, else `AIWander`. That runs before `+0xF0` is written (line 31), so it sees
+    /// `random_walk` false; only later wanders read the flag. Then the asleep roll, `Int(100)` against `Species::chance_asleep`, which
     /// sleeps the monster with the `0x7F` "no countdown" duration (`0218B420`).
     // shortcut: the roll's other conditions (record `+2`, `+14`, `param_2`) are read as 0, true
     // for a natural spawn; the `0217ADF8(monster, 8)` call after the sleep is not modelled.
@@ -414,10 +414,7 @@ impl Dungeon {
         let Some(i) = self.wild.iter().position(|m| m.pos == pos) else {
             return;
         };
-        let mut rec = AiRecord {
-            random_walk,
-            ..AiRecord::default()
-        };
+        let mut rec = AiRecord::default();
         if let Some(t) = self.find_target(pos) {
             rec.objective = CHASE_TARGET;
             rec.goal = t;
@@ -425,6 +422,7 @@ impl Dungeon {
             let facing = usize::from(self.wild[i].info.direction);
             self.wander(pos, facing, &mut rec);
         }
+        rec.random_walk = random_walk;
         self.ai.wild.insert(pos, rec);
         let species = usize::from(self.wild[i].info.species);
         let chance = self.ai.chance_asleep.get(species).copied().unwrap_or(0);
@@ -831,8 +829,8 @@ impl Dungeon {
     /// until the monster is chosen again), or, standing on a junction, steps out to the corridor
     /// (3); a room with no exits draws a random neighbour (6). When no branch fires the record
     /// is left as it was, as the game's is.
-    // shortcut: the mobility class is 0 (a regular walker) and `+0xF0` is read as 0 (see
-    // [`AiRecord`]).
+    // shortcut: the mobility class is 0 (a regular walker). `+0xF0` is set from the movement roll
+    // at spawn (`02179CFC`) and read here (see [`AiRecord`]).
     fn wander(&mut self, me: (i16, i16), facing: usize, rec: &mut AiRecord) -> (i16, i16) {
         if rec.random_walk {
             return self.stand_still(me, rec);
@@ -1527,13 +1525,35 @@ mod tests {
     }
 
     #[test]
-    fn the_movement_flag_sends_the_wander_to_a_random_neighbour() {
-        let (g, mut expected) = forced_spawn((50, 28), (5, 5), 0, true);
-        let d = g.dungeon().unwrap();
-        expected.int(8);
+    fn the_movement_flag_is_set_after_the_first_wander_and_read_by_the_next() {
+        // `02179CFC`: the first objective (line 19) runs before `+0xF0` is written (line 31).
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        let exits: [(i16, i16); 3] = [(5, 5), (10, 5), (12, 19)];
+        for (x, y) in exits {
+            d.floor.tile_mut(x.into(), y.into()).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        let mut expected = d.rng;
+        d.setup_spawned_wild((5, 5), true);
+        let goal = loop {
+            let e = exits[expected.int(3) as usize];
+            if e != (5, 5) {
+                break e;
+            }
+        };
         expected.int(100);
+        assert_eq!(
+            d.rng, expected,
+            "the spawn's exit and sleep draws are unchanged"
+        );
+        let mut rec = d.ai.wild[&(5, 5)];
+        assert_eq!((rec.objective, rec.goal), (LEAVE_ROOM, goal));
+        assert!(rec.random_walk, "the record keeps the flag");
+        // The next wander takes the random-neighbour branch.
+        d.wander((5, 5), 0, &mut rec);
+        expected.int(8);
         assert_eq!(d.rng, expected);
-        assert_eq!(d.ai.wild[&(5, 5)].objective, STAND_STILL);
+        assert_eq!(rec.objective, STAND_STILL);
     }
 
     #[test]
