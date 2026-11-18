@@ -83,6 +83,9 @@ pub(crate) struct AiRecord {
     target: Option<usize>,
     /// The monster flags `0x8000` and `0x4000` (`info+0x..`, see [`HELD_FLAG`]).
     flags: u16,
+    /// `+0xF0`, "move randomly": set at spawn from the movement roll (`021826A0`); `AIWander`
+    /// then always takes the random-neighbour branch (objective 6).
+    random_walk: bool,
 }
 
 /// A team member's AI record and its last four positions (`info+0x5E`, written by the move
@@ -113,6 +116,11 @@ pub(crate) struct AiState {
     /// The slot (0 to 15) of each wild monster, ascending: the list is in slot order and a
     /// spawn takes the lowest free slot. Rebuilt as 0, 1, ... when its length differs.
     pub(crate) slots: Vec<u8>,
+    /// `Species::chance_asleep` (species `+0x1D`) by species ID, read by the spawn's sleep roll
+    /// (`02179CFC`). A species past the end reads 0 (never spawns asleep).
+    // shortcut: nothing fills it outside tests yet; the species table has to reach the dungeon
+    // (state.rs) before natural spawns can sleep.
+    pub(crate) chance_asleep: Vec<u8>,
 }
 
 impl PartialEq for AiState {
@@ -341,6 +349,7 @@ impl Dungeon {
                     goal: t,
                     target: None,
                     flags: 0,
+                    random_walk: false,
                 };
                 t
             }
@@ -391,6 +400,38 @@ impl Dungeon {
             if rec.objective == LEAVE_ROOM {
                 self.ai.wild.insert(me, rec);
             }
+        }
+    }
+
+    /// The rest of `02179CFC` for the wild monster just added at `pos` (slot allocation is done):
+    /// `random_walk` is the movement roll's result (`+0xF0`). First objective (`021794CC` ->
+    /// `AIMovement`): a team member in view becomes the target and nothing is drawn, else
+    /// `AIWander`. Then the asleep roll, `Int(100)` against `Species::chance_asleep`, which
+    /// sleeps the monster with the `0x7F` "no countdown" duration (`0218B420`).
+    // shortcut: the roll's other conditions (record `+2`, `+14`, `param_2`) are read as 0, true
+    // for a natural spawn; the `0217ADF8(monster, 8)` call after the sleep is not modelled.
+    pub(crate) fn setup_spawned_wild(&mut self, pos: (i16, i16), random_walk: bool) {
+        let Some(i) = self.wild.iter().position(|m| m.pos == pos) else {
+            return;
+        };
+        let mut rec = AiRecord {
+            random_walk,
+            ..AiRecord::default()
+        };
+        if let Some(t) = self.find_target(pos) {
+            rec.objective = CHASE_TARGET;
+            rec.goal = t;
+        } else {
+            let facing = usize::from(self.wild[i].info.direction);
+            self.wander(pos, facing, &mut rec);
+        }
+        self.ai.wild.insert(pos, rec);
+        let species = usize::from(self.wild[i].info.species);
+        let chance = self.ai.chance_asleep.get(species).copied().unwrap_or(0);
+        if self.rng.int(100) < i32::from(chance) {
+            let s = &mut self.wild[i].info.status;
+            s.sleep = status::SLEEP;
+            s.sleep_turns = status::NO_END;
         }
     }
 
@@ -768,6 +809,7 @@ impl Dungeon {
                 goal: t,
                 target: slot,
                 flags: rec.flags,
+                random_walk: rec.random_walk,
             };
             return t;
         }
@@ -792,6 +834,9 @@ impl Dungeon {
     // shortcut: the mobility class is 0 (a regular walker) and `+0xF0` is read as 0 (see
     // [`AiRecord`]).
     fn wander(&mut self, me: (i16, i16), facing: usize, rec: &mut AiRecord) -> (i16, i16) {
+        if rec.random_walk {
+            return self.stand_still(me, rec);
+        }
         let facing = facing % 8;
         let tile = self.floor.tile(i32::from(me.0), i32::from(me.1));
         let room = tile.map_or(NO_ROOM, |t| t.room);
@@ -942,6 +987,7 @@ fn direction_towards(from: (i16, i16), to: (i16, i16)) -> u8 {
 mod tests {
     use super::*;
     use crate::command::Command;
+    use crate::rng::DungeonRng;
 
     /// A fractional turn in which a speed stage 1 monster acts.
     const K: u8 = 3;
@@ -1417,6 +1463,97 @@ mod tests {
         );
     }
 
+    /// A forced spawn: a species-7 monster at `at`, set up as `try_spawn_wild` does after its slot.
+    fn forced_spawn(
+        leader: (i16, i16),
+        at: (i16, i16),
+        chance: u8,
+        random_walk: bool,
+    ) -> (GameState, DungeonRng) {
+        let mut g = room_apart(at);
+        g.dungeon_mut().unwrap().team[0].pos = leader;
+        let d = g.dungeon_mut().unwrap();
+        d.ai.chance_asleep = vec![0, 0, 0, 0, 0, 0, 0, chance];
+        let expected = d.rng;
+        d.setup_spawned_wild(at, random_walk);
+        (g, expected)
+    }
+
+    #[test]
+    fn a_spawn_in_a_room_draws_the_exit_then_the_sleep_roll() {
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        let exits: [(i16, i16); 3] = [(5, 5), (10, 5), (12, 19)];
+        for (x, y) in exits {
+            d.floor.tile_mut(x.into(), y.into()).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        let mut expected = d.rng;
+        d.setup_spawned_wild((5, 5), false);
+        // The exit count is the draw's bound; the monster's own tile is retried.
+        let goal = loop {
+            let e = exits[expected.int(3) as usize];
+            if e != (5, 5) {
+                break e;
+            }
+        };
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        let rec = d.ai.wild[&(5, 5)];
+        assert_eq!((rec.objective, rec.goal), (LEAVE_ROOM, goal));
+        assert!(!d.wild[0].info.is_asleep());
+    }
+
+    #[test]
+    fn a_spawn_in_a_corridor_takes_the_corridor_branch_and_draws_no_exit() {
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        d.floor.tile_mut(5, 5).unwrap().room = NO_ROOM;
+        let mut expected = d.rng;
+        d.setup_spawned_wild((5, 5), false);
+        // Open neighbours that are not a straight run: the first walkable direction, no draw.
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.ai.wild[&(5, 5)].objective, ROAM);
+    }
+
+    #[test]
+    fn a_spawn_that_sees_the_team_targets_it_and_draws_only_the_sleep_roll() {
+        let (g, mut expected) = forced_spawn((5, 12), (5, 5), 0, false);
+        let d = g.dungeon().unwrap();
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        let rec = d.ai.wild[&(5, 5)];
+        assert_eq!((rec.objective, rec.goal), (CHASE_TARGET, (5, 12)));
+    }
+
+    #[test]
+    fn the_movement_flag_sends_the_wander_to_a_random_neighbour() {
+        let (g, mut expected) = forced_spawn((50, 28), (5, 5), 0, true);
+        let d = g.dungeon().unwrap();
+        expected.int(8);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.ai.wild[&(5, 5)].objective, STAND_STILL);
+    }
+
+    #[test]
+    fn a_sleeping_spawn_gets_the_no_countdown_sleep_when_the_roll_is_below_the_species_chance() {
+        // The roll after the wander's draw is a fixed value of this seed: bracket it.
+        let (g, mut probe) = forced_spawn((50, 28), (5, 5), 0, false);
+        let _ = g;
+        let roll = {
+            // The room has no exits, so the wander draws a neighbour (`Int(8)`) first.
+            probe.int(8);
+            probe.int(100) as u8
+        };
+        let (g, _) = forced_spawn((50, 28), (5, 5), roll + 1, false);
+        let s = g.dungeon().unwrap().wild[0].info.status;
+        assert_eq!((s.sleep, s.sleep_turns), (status::SLEEP, status::NO_END));
+        assert!(g.dungeon().unwrap().wild[0].info.is_asleep());
+        let (g, _) = forced_spawn((50, 28), (5, 5), roll, false);
+        assert!(!g.dungeon().unwrap().wild[0].info.is_asleep());
+    }
+
     #[test]
     fn a_monster_in_a_room_with_exits_draws_one_exit_and_walks_there_without_more_draws() {
         let mut g = room_apart((5, 5));
@@ -1461,6 +1598,7 @@ mod tests {
             goal: (9, 9),
             target: None,
             flags: 0,
+            random_walk: false,
         };
         d.ai.wild.insert((5, 5), held);
         let mut expected = d.rng;

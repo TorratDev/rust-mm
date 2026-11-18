@@ -46,6 +46,10 @@ const fn next(k: u8) -> u8 {
 
 /// Spawn steps between spawn attempts: the word at `0x021AA1D4` (36 at runtime).
 const SPAWN_THRESHOLD: i16 = 36;
+/// The movement-roll threshold (`020063DC`, `+0x63C`): the table cell for dungeon 0 is 0, so the
+/// roll `RandInt(100) < 0` never succeeds there (#73 P1.5).
+// shortcut: the table is not read; other dungeons would need their cell.
+const WILD_MOVE_THRESHOLD: i32 = 0;
 
 /// The wild-monster cap: the word at `0x021AA270` (10 at runtime), or the one at `0x021AA254`
 /// (4) on a floor with a monster house.
@@ -164,11 +168,11 @@ impl Dungeon {
     /// 0; counts one step, and every [`SPAWN_THRESHOLD`] steps tries a spawn when fewer wild
     /// monsters than the cap stand on tiles that allow spawns. The draws come in the game's
     /// order: species (`RandInt(10000)`), the tile pick (x, y, index per pass), the movement
-    /// roll (`RandInt(100)`), and the two inside the spawn call (`RandInt(2)`, `RandInt(100)`).
+    /// roll (`RandInt(100)`), then, only if a slot is free, the first objective (the wander's
+    /// draws, none when a team member is in view) and the asleep roll (`RandInt(100)`).
     // shortcut: the dungeon-0x15 gate (`+0x335D`), the Kecleon-theft path (`+0x65E`) and the
     // over-900 message are not modelled, and the validity gate `02175BA0` always passes. The
-    // movement roll's threshold (`020063DC`) and the two draws inside `02179CFC` are drawn but
-    // their results are unused: the sim has no movement flag or wander setup. An empty spawn list
+    // tile check `021825E0` is only the occupied-tile filter of the pick. An empty spawn list
     // spawns nothing (the game would pick 0x17C). The tile pick skips the item word.
     fn try_spawn_wild(&mut self) {
         if self.enemy_density == 0 || self.spawns.is_empty() {
@@ -208,9 +212,9 @@ impl Dungeon {
         let Some(pos) = floor::pick_spawn_tile(&self.floor, leader, occupied, &mut self.rng) else {
             return;
         };
-        let _moves = self.rng.int(100);
-        let _wander = self.rng.int(2);
-        let _spawn_roll = self.rng.int(100);
+        // `021826A0`: the movement flag (`+0x4`, copied to `info+0xF0`); the roll is made before
+        // the spawn call. Its threshold (`020063DC`) is 0 for dungeon 0, so it never succeeds.
+        let random_walk = self.rng.int(100) < WILD_MOVE_THRESHOLD;
         // shortcut: `02142120` also needs a free run of sprite-size cells in the 16-byte sprite
         // bitmap (`FUN_020023E0`) and drops the spawn otherwise; that fit is not checked, so only
         // the 16-slot limit drops a spawn (#73 P1.2).
@@ -220,6 +224,8 @@ impl Dungeon {
             let at = self.ai.slots.partition_point(|&s| s < slot);
             self.ai.slots.insert(at, slot);
             self.wild.insert(at, wild_monster(species, level, pos));
+            // `02179CFC` after the slot: the first objective, then the asleep roll.
+            self.setup_spawned_wild(pos, random_walk);
         }
     }
 
@@ -558,7 +564,9 @@ mod tests {
         // Every room tile but the 11 by 11 around the leader fits; the pick draws among them.
         expected.int(56 * 32 - 11 * 11);
         expected.int(100);
-        expected.int(2);
+        // The spawn's first objective (this room has no exit, so the wander's random neighbour,
+        // `Int(8)`), then the asleep roll.
+        expected.int(8);
         expected.int(100);
         assert_eq!(d.rng, expected);
         assert_eq!(d.spawn_counter, 0);
