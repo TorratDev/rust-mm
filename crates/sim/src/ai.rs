@@ -93,8 +93,13 @@ impl Dungeon {
     /// (phase 2); each member still flagged at the end gets its end-of-turn effects.
     // shortcut: every partner is gated at speed stage 1 (the caller picks the gated turns), and
     // runs one `RunMonsterAI` and Execute cycle where the game repeats up to three while Execute
-    // returns TRUE (what makes it return TRUE is not decoded). The `0x8000` and `0x4000` swap
-    // flags never get set.
+    // returns TRUE (what makes it return TRUE is not decoded).
+    // shortcut: the `0x8000` and `0x4000` swap flags are never set, yet the sim already swaps the
+    // leader with a team ally (`state.rs` `move_leader`). In the game that swap sets `0x8000`,
+    // the swap pass `02140ED0` runs the partner's `RunMonsterAI` and Execute (with their draws)
+    // inside the leader's turn, and the gate here then skips the partner (`docs/re/turns.md`,
+    // "Swap flags (#181 P2)"). After a leader swap the sim neither runs the swap pass nor skips
+    // the partner, so the RNG diverges on that turn; #475 ports `02140ED0` and the flag gate.
     pub(crate) fn run_team_members(&mut self, data: Option<&CombatData<'_>>) {
         // The slots flagged `aiAllySkip`.
         let mut skipped = Vec::new();
@@ -162,6 +167,12 @@ impl Dungeon {
             self.ally_end_of_turn(i);
             return false;
         }
+        // shortcut: [hypothesis] a follow (walk) turn runs two `RunMonsterAI`/Execute cycles, the
+        // P7 team row (`Int(65), Int(65), Int(100)`): Execute returns 1 only on the early
+        // `DisplayActions_Async` path, before the action runs, so the first cycle does not walk
+        // and the second does. Not checked beyond that trace row. The attack turn above stays at
+        // one pick: the P7 "Attack" row shows one `Int(65)` for the 3 team attacks.
+        let _second_pick = self.rng.int(TEAM_PICK_TOTAL);
         let facing = usize::from(self.team[i].info.direction);
         let goal = target.unwrap_or_else(|| self.wander(me, facing));
         let (plan, skip) = self.decide_movement(me, goal);
@@ -1124,7 +1135,8 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
-        // `Int(65)@02193260`, then `Int(100)@02186894`; the walk draws nothing.
+        // `Int(65)@02193260` twice (two cycles), then `Int(100)@02186894`; the walk draws nothing.
+        expected.int(65);
         expected.int(65);
         expected.int(100);
         assert_eq!(d.rng, expected);
@@ -1181,10 +1193,10 @@ mod tests {
         }
         let mut expected = d.rng;
         d.run_team_members(None);
-        // Phase 1: A picks (blocked, flagged); B picks and steps on, end of turn. Phase 2: A,
-        // `recalculateFollow` set, picks again and steps into the freed tile with its end of
-        // turn; nothing is left for the final pass.
-        for cap in [65, 65, 100, 65, 100] {
+        // Phase 1: A picks twice (blocked, flagged); B picks twice and steps on, end of turn.
+        // Phase 2: A, `recalculateFollow` set, picks twice and steps into the freed tile with
+        // its end of turn; nothing is left for the final pass.
+        for cap in [65, 65, 65, 65, 100, 65, 65, 100] {
             expected.int(cap);
         }
         assert_eq!(d.rng, expected);
