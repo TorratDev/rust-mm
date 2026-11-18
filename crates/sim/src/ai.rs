@@ -254,10 +254,16 @@ impl Dungeon {
             self.ally_end_of_turn(i);
             return false;
         }
-        // `AIFindTarget` (`02191394`): a foe in view, else the leader (`02183FF0`).
+        // `AIFindTarget` (`02191394`): the foe search is gated by `02184074`, which for a team
+        // member reads the byte table `0x02091E48` at `info+0x8A` (the tactic); entry 0 (the
+        // default tactic) is 1, so the search is skipped and the target is the leader if in view
+        // (`02183FF0`, `+0x72` = 0). `docs/re/ai.md` P3-c, #348 row 8 findings.
+        // shortcut: every partner is read as tactic 0 (the sim keeps no tactic byte); the table
+        // reads 1,0,0,0,1,1,1,1 for entries 0 to 7 (entries 1 to 3 would search a foe, the rest
+        // were not read, entries 8+ not read at all). Upgrade with the tactic field.
         let leader = self.team[0].pos;
         let foe = self.nearest_seen(me, self.wild.iter().map(|m| m.pos));
-        let target = foe.or_else(|| self.in_view(me, leader).then_some(leader));
+        let target = self.in_view(me, leader).then_some(leader);
         // `ChooseAIMove`: the weighted pick is drawn whatever the target.
         let _pick = self.rng.int(TEAM_PICK_TOTAL);
         if let Some(f) = foe.filter(|&f| self.adjacent_attackable(me, f)) {
@@ -306,6 +312,38 @@ impl Dungeon {
             self.ally_end_of_turn(i);
         }
         skip
+    }
+
+    /// The game's floor-generation AI step for the initial wild monsters (`02179CFC` ->
+    /// `021918D4` -> `02190854`, the `Int(exits)` draw at `02190A10`): one wander per monster in
+    /// slot order, which leaves objective 4 (leave the room) and the exit as its goal. With
+    /// `draw` false (a restored floor: the RNG is already past generation) nothing is drawn and
+    /// the first exit that is not the monster's tile stands in for the draw.
+    // shortcut: a monster outside a room gets no record (its generation-time wander is not read);
+    // `draw` false takes the first exit where the game drew one (#348), so such a monster can
+    // head for another exit than the game's. Upgrade with the snapshot holding the AI records.
+    pub(crate) fn seed_wild_ai(&mut self, draw: bool) {
+        for i in 0..self.wild.len() {
+            let me = self.wild[i].pos;
+            let room = self
+                .floor
+                .tile(i32::from(me.0), i32::from(me.1))
+                .map_or(NO_ROOM, |t| t.room);
+            if room == NO_ROOM {
+                continue;
+            }
+            let mut rec = AiRecord::default();
+            if draw {
+                let facing = usize::from(self.wild[i].info.direction);
+                self.wander(me, facing, &mut rec);
+            } else if let Some(&exit) = self.floor.room_exits(room).iter().find(|&&e| e != me) {
+                rec.objective = LEAVE_ROOM;
+                rec.goal = exit;
+            }
+            if rec.objective == LEAVE_ROOM {
+                self.ai.wild.insert(me, rec);
+            }
+        }
     }
 
     /// `DoEndOfTurnEffects` for a partner: the one draw it makes, `DungeonRandInt(100)`
@@ -1254,6 +1292,48 @@ mod tests {
     }
 
     #[test]
+    fn seeding_draws_one_exit_per_room_monster_and_the_first_turn_draws_none() {
+        let mut g = room_apart((5, 5));
+        let d = g.dungeon_mut().unwrap();
+        for (x, y) in [(10, 5), (12, 19)] {
+            d.floor.tile_mut(x, y).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        let mut expected = d.rng;
+        d.seed_wild_ai(true);
+        expected.int(2);
+        assert_eq!(d.rng, expected);
+        let rec = *d.ai.wild.values().next().unwrap();
+        assert_eq!(rec.objective, LEAVE_ROOM);
+        d.run_wild_monsters(None);
+        expected.int(35);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+    }
+
+    #[test]
+    fn restoring_seeds_the_first_foreign_exit_without_a_draw_and_skips_monsters_outside_rooms() {
+        let mut g = room_apart((10, 5));
+        let d = g.dungeon_mut().unwrap();
+        for (x, y) in [(10, 5), (12, 19)] {
+            d.floor.tile_mut(x, y).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        // A second monster on a tile that belongs to no room.
+        d.floor.tile_mut(30, 10).unwrap().room = NO_ROOM;
+        d.wild.push(wild_monster(7, 4, (30, 10)));
+        let before = d.rng;
+        d.seed_wild_ai(false);
+        assert_eq!(d.rng, before, "no draw");
+        assert_eq!(d.ai.wild.len(), 1);
+        let rec = d.ai.wild[&(10, 5)];
+        assert_eq!(rec.objective, LEAVE_ROOM);
+        assert_eq!(
+            rec.goal,
+            (12, 19),
+            "the first exit that is not its own tile"
+        );
+    }
+
+    #[test]
     fn a_monster_in_a_room_with_exits_draws_one_exit_and_walks_there_without_more_draws() {
         let mut g = room_apart((5, 5));
         let d = g.dungeon_mut().unwrap();
@@ -1502,6 +1582,25 @@ mod tests {
         assert_eq!(d.rng, expected);
         assert_eq!(d.team[1].pos, (6, 5));
         assert_eq!(d.team[1].info.direction, 2);
+    }
+
+    #[test]
+    fn a_partner_with_a_distant_foe_in_view_still_follows_the_leader() {
+        // Leader to the south (0), foe 3 tiles east (2), not adjacent: cause B of #348 row 8.
+        let mut g = with_partner((10, 14), (10, 10), &[(13, 10)]);
+        let d = g.dungeon_mut().unwrap();
+        let mut expected = d.rng;
+        d.run_team_members(None);
+        expected.int(65);
+        expected.int(65);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(
+            d.team[1].pos,
+            (10, 11),
+            "it heads for the leader, not the foe"
+        );
+        assert_eq!(d.team[1].info.direction, 0);
     }
 
     #[test]
