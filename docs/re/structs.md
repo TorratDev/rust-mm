@@ -165,7 +165,7 @@ Red reference: `pmd-red` `dungeon_ai_movement.c` 277–281 tests `aiObjective ==
 - Final block: if `(objective − 1) < 2` and the target is not NULL, and the target's genID equals `+0x74`, loop over the target's 4 previous positions (`target_info+0x5E + 4*i`) with `02141AD0` (Red `CanTargetPosition`), then set objective 2 (`AI_CHASE_REMEMBERED_TARGET`), position and `+0xF0` = 0. Otherwise objective 6 (`AI_STAND_STILL`), target NULL and genID 0. This is Red lines 277–296.
 - End: `02190854` is Red's `Wander`.
 
-The gate `02184074() == 0` and the monsterBehavior filter appear as `info+0x98 == 0` in Blue. B did not map the exact field. Blue has no separate `unkC`.
+The gate `02184074() == 0` is, for a team member, the byte table at `0x02091E48` (`DAT_02004530`) indexed by `info+0x8A` (the ally's tactic byte): `table[0..7]` = `1,0,0,0,1,1,1,1`, so index 0 (the default) skips the foe search and follows the leader (#480, from #348 P1b; [blue-verified] at runtime for index 0, [hypothesis] for the meaning of the others, entries past 7 not read). The monsterBehavior filter appears as `info+0x98 == 0` in Blue. B did not map the exact field. Blue has no separate `unkC`.
 
 **Offsets.** The −8 shift is confirmed (high) for `aiObjective` (`+0x70`), `aiTargetSpawnGenID` (`+0x74`), `aiTarget` (`+0x78`), `aiTargetPos` (`+0x80`/`+0x82`), `aiTargetingEnemy` (`+0x72`), `aiTurningAround` (`+0x73`) and `moveRandomly` (`+0xF0`, Red `0xF8`). [blue-verified for the Blue offsets and behaviour; red-hypothesis for the Red names]
 
