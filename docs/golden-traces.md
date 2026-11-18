@@ -169,7 +169,7 @@ The scenario file holds `{"dungeonId":0,"floorId":0}`. With `--nocapture`, a run
 
 **Test.** `apps/trace-harness/tests/enemies_trace.rs` replays a local trace with every field compared ([`Scope::All`](../apps/trace-harness/src/lib.rs)). It skips (prints `SKIPPED`, passes) unless `RESCUE_TRACE_ENEMIES` names the trace. It needs `RESCUE_TRACE_ENEMIES_SCENARIO` and `RESCUE_ROM` as the movement test does. The capture is the movement capture above (`verification/v7-trace/movement_inputs.txt`, `--frames 1700`).
 
-**Result.** The replay stops at row 8 (frame 424, `fractionalTurn` 7): `dungeonRng` differs, expected 1709136509, actual 3941875803. Every other field of that row, including the three wild monsters' positions, matches. The sim's generator is 2 draws ahead of the game's (10 draws after the first leader action, against the sim's 12). So the sim's wild and team turns reach the same positions but draw a different count; the trace rows are not enough to place the extra draws, which is for the AI investigators (#73). This is not fixed here.
+**Result.** The replay stops at row 16 (frame 667, `fractionalTurn` 15): `dungeonRng` differs, expected 3272943824, actual 3036396926, and `team[1].hp` differs, expected 26, actual 30. Rows 8 to 15 match since #504 (one team pick per pass; the partner's second pick is the phase-2 rerun). Row 16 is the wild attack on the partner (#505, the known P-D1b gap), which the sim does not make yet. This is not fixed here.
 
 ## Combat replay (#424)
 
