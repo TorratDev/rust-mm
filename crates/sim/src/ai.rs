@@ -237,8 +237,9 @@ impl Dungeon {
     /// in up to three passes, nearest the leader first, last slot first within a distance
     /// (phase 2); each member still flagged at the end gets its end-of-turn effects.
     // shortcut: every partner is gated at speed stage 1 (the caller picks the gated turns), and
-    // runs one `RunMonsterAI` and Execute cycle where the game repeats up to three while Execute
-    // returns TRUE (what makes it return TRUE is not decoded).
+    // runs one `RunMonsterAI` and Execute cycle per call. The game repeats up to three while
+    // Execute returns TRUE, but it returned 0 on every partner call of the floor-1 capture (#504):
+    // the second pick of a partner that stays is this phase-2 rerun, not a second cycle.
     // The `0x4000` gate (phase 1) skips a partner the swap pass just ran, see
     // [`Self::run_swap_pass`] (`docs/re/turns.md`, "Swap flags (#181 P2)").
     pub(crate) fn run_team_members(&mut self, data: Option<&CombatData<'_>>) {
@@ -401,12 +402,6 @@ impl Dungeon {
             let m = &mut self.team[i];
             m.pos = step(m.pos, dir);
             m.info.direction = dir as u8;
-        } else {
-            // A partner that does not walk draws the team pick a second time: runtime evidence
-            // (py-desmume, floor-1 movement capture, #488 P-D1): a walking turn draws one
-            // `Int(65)` at `02193260`, a turn that stays draws two. Why Execute needs the
-            // second cycle is not decompiled.
-            let _second_pick = self.rng.int(TEAM_PICK_TOTAL);
         }
         if !skip {
             self.ally_end_of_turn(i);
@@ -2215,10 +2210,10 @@ mod tests {
         }
         let mut expected = d.rng;
         d.run_team_members(None);
-        // Phase 1: A picks twice (blocked, flagged); B picks once and steps on, end of turn.
+        // Phase 1: A picks once (blocked, flagged); B picks once and steps on, end of turn.
         // Phase 2: A, `recalculateFollow` set, picks once and steps into the freed tile with
         // its end of turn; nothing is left for the final pass.
-        for cap in [65, 65, 65, 100, 65, 100] {
+        for cap in [65, 65, 100, 65, 100] {
             expected.int(cap);
         }
         assert_eq!(d.rng, expected);
@@ -2229,12 +2224,12 @@ mod tests {
     fn a_partner_next_to_the_leader_stops_flagged_in_phase_1_and_passes_in_phase_2() {
         // Branch 2a: the direct step is blocked by a monster (the leader) in phase 1, so it
         // passes flagged. Branch 2b: in phase 2 the goal is exactly that tile, so it passes
-        // unflagged and its end-of-turn runs. Each pass stays, so it draws the two picks.
+        // unflagged and its end-of-turn runs. One pick per pass: no second cycle (#504).
         let mut g = with_partner((6, 5), (5, 5), &[]);
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
-        for cap in [65, 65, 65, 65, 100] {
+        for cap in [65, 65, 100] {
             expected.int(cap);
         }
         assert_eq!(d.rng, expected);
