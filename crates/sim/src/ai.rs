@@ -371,12 +371,6 @@ impl Dungeon {
             self.ally_end_of_turn(i);
             return false;
         }
-        // shortcut: [hypothesis] a follow (walk) turn runs two `RunMonsterAI`/Execute cycles, the
-        // P7 team row (`Int(65), Int(65), Int(100)`): Execute returns 1 only on the early
-        // `DisplayActions_Async` path, before the action runs, so the first cycle does not walk
-        // and the second does. Not checked beyond that trace row. The attack turn above stays at
-        // one pick: the P7 "Attack" row shows one `Int(65)` for the 3 team attacks.
-        let _second_pick = self.rng.int(TEAM_PICK_TOTAL);
         let facing = usize::from(self.team[i].info.direction);
         let mut rec = self.ai.team.get(i).map(|t| t.rec).unwrap_or_default();
         let goal = match target {
@@ -407,6 +401,12 @@ impl Dungeon {
             let m = &mut self.team[i];
             m.pos = step(m.pos, dir);
             m.info.direction = dir as u8;
+        } else {
+            // A partner that does not walk draws the team pick a second time: runtime evidence
+            // (py-desmume, floor-1 movement capture, #488 P-D1): a walking turn draws one
+            // `Int(65)` at `02193260`, a turn that stays draws two. Why Execute needs the
+            // second cycle is not decompiled.
+            let _second_pick = self.rng.int(TEAM_PICK_TOTAL);
         }
         if !skip {
             self.ally_end_of_turn(i);
@@ -2140,8 +2140,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
-        // `Int(65)@02193260` twice (two cycles), then `Int(100)@02186894`; the walk draws nothing.
-        expected.int(65);
+        // `Int(65)@02193260` once (a walking turn), then `Int(100)@02186894`.
         expected.int(65);
         expected.int(100);
         assert_eq!(d.rng, expected);
@@ -2156,7 +2155,6 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
-        expected.int(65);
         expected.int(65);
         expected.int(100);
         assert_eq!(d.rng, expected);
@@ -2217,10 +2215,10 @@ mod tests {
         }
         let mut expected = d.rng;
         d.run_team_members(None);
-        // Phase 1: A picks twice (blocked, flagged); B picks twice and steps on, end of turn.
-        // Phase 2: A, `recalculateFollow` set, picks twice and steps into the freed tile with
+        // Phase 1: A picks twice (blocked, flagged); B picks once and steps on, end of turn.
+        // Phase 2: A, `recalculateFollow` set, picks once and steps into the freed tile with
         // its end of turn; nothing is left for the final pass.
-        for cap in [65, 65, 65, 65, 100, 65, 65, 100] {
+        for cap in [65, 65, 65, 100, 65, 100] {
             expected.int(cap);
         }
         assert_eq!(d.rng, expected);
@@ -2231,7 +2229,7 @@ mod tests {
     fn a_partner_next_to_the_leader_stops_flagged_in_phase_1_and_passes_in_phase_2() {
         // Branch 2a: the direct step is blocked by a monster (the leader) in phase 1, so it
         // passes flagged. Branch 2b: in phase 2 the goal is exactly that tile, so it passes
-        // unflagged and its end-of-turn runs. Each pass draws the two picks.
+        // unflagged and its end-of-turn runs. Each pass stays, so it draws the two picks.
         let mut g = with_partner((6, 5), (5, 5), &[]);
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
