@@ -21,15 +21,17 @@ use rescue_formats::sprite::Sprite;
 use rescue_formats::tileset::Tileset;
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
-use rescue_render::SCREEN_WIDTH;
 use rescue_render::anim::AnimPlayer;
 use rescue_render::autotile::{GRID_H, GRID_W, autotile};
 use rescue_render::bg::{BgLayer, Frame, compose, floor_layer, solid_cells_layer};
 use rescue_render::camera::{entity_pixel, follow};
-use rescue_render::minimap::{CANVAS_COLS, COLS, Cell, Patterns, ROWS, Settings, render};
+use rescue_render::minimap::{
+    CANVAS_COLS, COLS, Cell, MonsterMark, Patterns, ROWS, Settings, render,
+};
 use rescue_render::sprite::{
     PlacedSprite, SpriteImage, compose_with_sprites, render_sprite, sprite_origin,
 };
+use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 use rescue_sim::command::Direction;
 use rescue_sim::floor::{Floor, HEIGHT, WIDTH};
 use rescue_sim::floor_gen::{
@@ -288,6 +290,34 @@ pub struct Figure {
     pub cell: (i32, i32),
     pub offset: (i32, i32),
     pub image: SpriteImage,
+    /// The status marker over the sprite, if the monster has a status.
+    pub mark: Option<MonsterMark>,
+}
+
+/// Side of the status marker in pixels, and its offset from the entity origin (above the head).
+const MARK_SIZE: i32 = 5;
+const MARK_AT: (i32, i32) = (-2, -38);
+
+/// The marker's colour. shortcut: the minimap's diamond patterns are not drawn on sprites; a
+/// square in the mark's colour stands in until the retail status icon is read.
+fn mark_colour(mark: MonsterMark) -> [u8; 4] {
+    match mark {
+        MonsterMark::Red => [248, 48, 48, 255],
+        MonsterMark::Yellow => [248, 216, 40, 255],
+        MonsterMark::Leader => [248, 248, 248, 255],
+    }
+}
+
+fn stamp(frame: &mut Frame, origin: (i32, i32), mark: MonsterMark) {
+    let colour = mark_colour(mark);
+    for y in origin.1 + MARK_AT.1..origin.1 + MARK_AT.1 + MARK_SIZE {
+        for x in origin.0 + MARK_AT.0..origin.0 + MARK_AT.0 + MARK_SIZE {
+            if (0..SCREEN_WIDTH as i32).contains(&x) && (0..SCREEN_HEIGHT as i32).contains(&y) {
+                let at = (y as usize * SCREEN_WIDTH as usize + x as usize) * 4;
+                frame.pixels[at..at + 4].copy_from_slice(&colour);
+            }
+        }
+    }
 }
 
 /// The two screens of one floor. The top is redrawn by [`Dungeon::draw`]; the lower is fixed.
@@ -440,7 +470,8 @@ impl Dungeon {
 
     /// Draws the top screen with the leader's sprite `anim` at tile `cell`, `sub` pixels off
     /// the tile's centre (a walk's offset, `walk::Walk::pose`). The floor scrolls so that point
-    /// is at the leader's place on screen. Does nothing for the placeholder.
+    /// is at the leader's place on screen. `leader_mark` and each figure's mark are drawn over the
+    /// sprites. Does nothing for the placeholder.
     pub fn draw(
         &mut self,
         data: &FloorData,
@@ -448,6 +479,7 @@ impl Dungeon {
         cell: (i32, i32),
         sub: (i32, i32),
         figures: &[Figure],
+        leader_mark: Option<MonsterMark>,
     ) {
         let Some(layer) = self.layer.as_mut() else {
             return;
@@ -474,6 +506,19 @@ impl Dungeon {
             BACKDROP,
             &sprites,
         );
+        if let Some(mark) = leader_mark {
+            stamp(&mut self.frame, camera.sprite_origin, mark);
+        }
+        for f in figures {
+            if let Some(mark) = f.mark {
+                let tile = camera.to_screen(entity_pixel(f.cell, (0, 0)));
+                stamp(
+                    &mut self.frame,
+                    (tile.0 + f.offset.0, tile.1 + f.offset.1),
+                    mark,
+                );
+            }
+        }
     }
 }
 
@@ -549,6 +594,7 @@ mod rom_tests {
             (i32::from(cell.0), i32::from(cell.1)),
             (0, 0),
             &[],
+            None,
         );
         (view, anim)
     }
@@ -584,7 +630,7 @@ mod rom_tests {
                 .expect("the first floor loads");
             let (mut view, anim) = idle_at(&data, (20, 25));
             let rest = view.layer.as_ref().map(|l| (l.scroll_x, l.scroll_y));
-            view.draw(&data, (&anim, data.leader_image(&anim)), (20, 25), (5, -3), &[]);
+            view.draw(&data, (&anim, data.leader_image(&anim)), (20, 25), (5, -3), &[], None);
             let moved = view.layer.as_ref().map(|l| (l.scroll_x, l.scroll_y));
             assert_eq!(moved, rest.map(|(x, y)| (x + 5, y - 3)));
         }

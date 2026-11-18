@@ -10,11 +10,12 @@ use std::collections::BTreeMap;
 
 use rescue_platform::{ButtonState, Flow};
 use rescue_render::anim::AnimPlayer;
+use rescue_render::minimap::{MonsterInfo, MonsterMark, classify};
 use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster, MoveSlot};
 
 use crate::boot::RomCheck;
-use crate::combat::{self, LOG_LINES, Tables};
+use crate::combat::{self, Act, ActKind, LOG_LINES, Tables};
 use crate::dungeon::{self, Dungeon, Figure, FloorData, IDLE_GROUP, MonsterArt, WALK_GROUP};
 use crate::input::{self, MenuInput};
 use crate::scene::Scene;
@@ -35,6 +36,17 @@ const START_MOVE: usize = 0x09A;
 struct HitAnim {
     pos: (i16, i16),
     anim: AnimPlayer,
+}
+
+/// A monster's act playing on screen: the monster is the one of `species` on `pos`, the tile it
+/// ends the turn on. A walk draws it moving there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Fx {
+    species: u16,
+    pos: (i16, i16),
+    walk: Option<Walk>,
+    anim: AnimPlayer,
+    done: bool,
 }
 
 /// Where a run starts: its seed, the dungeon and floor of the options, and the leader's species.
@@ -72,6 +84,8 @@ pub struct App {
     strike: Option<AnimPlayer>,
     /// Hit reactions of struck monsters, while they play.
     hits: Vec<HitAnim>,
+    /// The monsters' walks and strikes of the last turn, while they play.
+    fx: Vec<Fx>,
     /// Sprites of the wild species met on this floor.
     art: BTreeMap<u16, MonsterArt>,
     /// Logic ticks in the dungeon, which time the monsters' idle poses.
@@ -111,6 +125,7 @@ impl App {
             tables: None,
             strike: None,
             hits: Vec::new(),
+            fx: Vec::new(),
             art: BTreeMap::new(),
             ticks: 0,
             menu: None,
@@ -237,6 +252,7 @@ impl App {
         self.walk = None;
         self.strike = None;
         self.hits.clear();
+        self.fx.clear();
         self.art.clear();
         self.anim = self
             .data
@@ -264,6 +280,15 @@ impl App {
             hit.anim.advance(1);
         }
         self.hits.retain(|h| !h.anim.finished());
+        for fx in &mut self.fx {
+            fx.anim.advance(1);
+            // A walk ends with its legs; a strike or a hit ends with its animation.
+            fx.done = match fx.walk.as_mut() {
+                Some(walk) => walk.tick(),
+                None => fx.anim.finished(),
+            };
+        }
+        self.fx.retain(|fx| !fx.done);
         if self.walk.as_mut().is_some_and(Walk::tick) {
             self.walk = None;
             self.anim = self
@@ -271,7 +296,10 @@ impl App {
                 .as_ref()
                 .and_then(|d| d.leader_anim(IDLE_GROUP, self.facing));
         }
-        let idle = self.walk.is_none() && self.strike.is_none() && self.hits.is_empty();
+        let idle = self.walk.is_none()
+            && self.strike.is_none()
+            && self.hits.is_empty()
+            && self.fx.is_empty();
         if let Some(cursor) = self.menu {
             self.menu_tick(cursor, pressed);
         } else if idle && input::opens_menu(pressed) {
@@ -312,6 +340,10 @@ impl App {
             .dungeon()
             .map(|d| d.wild().to_vec())
             .unwrap_or_default();
+        let team_before = game
+            .dungeon()
+            .map(|d| d.team().to_vec())
+            .unwrap_or_default();
         let outcome = match self.tables.as_ref() {
             Some(t) => game.step_with(command, &t.data()),
             None => game.step(command),
@@ -321,13 +353,21 @@ impl App {
             .dungeon()
             .map(|d| d.wild().to_vec())
             .unwrap_or_default();
+        let team_after = game
+            .dungeon()
+            .map(|d| d.team().to_vec())
+            .unwrap_or_default();
         match outcome {
             Outcome::Applied => {
                 if let (Some(from), Some(to), Some(dir)) = (before, after, moved_in(command)) {
                     self.start_walk(from, to, dir);
+                    // A partner's attack on a wild monster shows in the log.
+                    let lines = combat::attack_messages(&wild_before, &wild_after);
+                    self.log_lines(lines);
                 } else if let Some(dir) = attacked_in(command, self.facing) {
                     self.show_attack(dir, &wild_before, &wild_after);
                 }
+                self.show_monsters((&team_before, &team_after), (&wild_before, &wild_after));
             }
             Outcome::NextFloor => self.next_floor(),
             Outcome::DungeonCleared | Outcome::LeaderDefeated => self.back_to_menu(),
@@ -358,12 +398,43 @@ impl App {
                 self.hits.push(HitAnim { pos, anim });
             }
         }
+        self.log_lines(lines);
+    }
+
+    /// Prints `lines` and keeps the last of them in the message log.
+    fn log_lines(&mut self, lines: Vec<String>) {
         for line in &lines {
             println!("rescue: {line}");
         }
         self.log.extend(lines);
         let extra = self.log.len().saturating_sub(LOG_LINES);
         self.log.drain(..extra);
+    }
+
+    /// Shows what the monsters did in the turn: their walks, strikes and reactions, and the log
+    /// lines of their attacks and statuses (`combat::monster_acts`).
+    fn show_monsters(&mut self, team: (&[Monster], &[Monster]), wild: (&[Monster], &[Monster])) {
+        let (acts, lines) = combat::monster_acts(team, wild);
+        for Act { species, pos, kind } in acts {
+            let (group, dir, looping, walk) = match kind {
+                ActKind::Walk(w) => (WALK_GROUP, w.dir() as usize, true, Some(w)),
+                ActKind::Attack(d) => (ATTACK_GROUP, d as usize, false, None),
+                ActKind::Hit => (HIT_GROUP, 0, false, None),
+            };
+            let anim = self
+                .art_of(species)
+                .and_then(|a| a.anim(group, dir, looping));
+            if let Some(anim) = anim {
+                self.fx.push(Fx {
+                    species,
+                    pos,
+                    walk,
+                    anim,
+                    done: false,
+                });
+            }
+        }
+        self.log_lines(lines);
     }
 
     /// The sprite of wild species `species`, read from the dump the first time it is asked for.
@@ -385,14 +456,20 @@ impl App {
 
     /// The wild monsters in view, each at its idle pose or its hit reaction.
     fn figures(&mut self) -> Vec<Figure> {
-        let wild: Vec<Monster> = self
+        // The partners (team slots after the leader), then the wild monsters.
+        let monsters: Vec<Monster> = self
             .game
             .as_ref()
             .and_then(|g| g.dungeon())
-            .map(|d| d.wild().to_vec())
+            .map(|d| d.team().iter().skip(1).chain(d.wild()).cloned().collect())
             .unwrap_or_default();
         let mut out = Vec::new();
-        for m in wild.iter().filter(|m| m.visible) {
+        for m in monsters.iter().filter(|m| m.visible) {
+            let fx = self
+                .fx
+                .iter()
+                .find(|f| f.pos == m.pos && f.species == m.info.species)
+                .map(|f| (f.anim.clone(), f.walk));
             let hit = self
                 .hits
                 .iter()
@@ -403,7 +480,9 @@ impl App {
             let Some(art) = self.art_of(m.info.species) else {
                 continue;
             };
-            let anim = hit.or_else(|| {
+            let (fx_anim, walk) = fx.unzip();
+            let walk = walk.flatten();
+            let anim = hit.or(fx_anim).or_else(|| {
                 let mut idle = art.anim(IDLE_GROUP, dir, true)?;
                 idle.advance(ticks);
                 Some(idle)
@@ -415,10 +494,16 @@ impl App {
                 continue;
             };
             let step = anim.step().offset;
+            // A walking monster is drawn from the tile its leg starts on.
+            let (cell, sub) = walk
+                .map_or(((i32::from(m.pos.0), i32::from(m.pos.1)), (0, 0)), |w| {
+                    w.pose()
+                });
             out.push(Figure {
-                cell: (i32::from(m.pos.0), i32::from(m.pos.1)),
-                offset: (i32::from(step.0), i32::from(step.1)),
+                cell,
+                offset: (i32::from(step.0) + sub.0, i32::from(step.1) + sub.1),
                 image,
+                mark: combat::has_status(&m.info).then(|| mark_of(&m.info)),
             });
         }
         out
@@ -482,7 +567,21 @@ impl App {
                 (tile.unwrap_or((0, 0)), (0, 0))
             }
         };
-        view.draw(data, (anim, data.leader_image(anim)), cell, sub, &figures);
+        let leader_mark = self
+            .game
+            .as_ref()
+            .and_then(|g| g.dungeon())
+            .and_then(|d| d.team().first())
+            .filter(|l| combat::has_status(&l.info))
+            .map(|l| mark_of(&l.info));
+        view.draw(
+            data,
+            (anim, data.leader_image(anim)),
+            cell,
+            sub,
+            &figures,
+            leader_mark,
+        );
     }
 
     /// Drops the run and goes back to the menu's first entry.
@@ -500,10 +599,22 @@ impl App {
         self.anim = None;
         self.strike = None;
         self.hits.clear();
+        self.fx.clear();
         self.art.clear();
         self.menu = None;
         self.log.clear();
     }
+}
+
+/// The marker class of a monster: red for a wild one, yellow for a partner, white for the leader
+/// (`render::minimap::classify`). The species and status bytes it also reads are left 0.
+fn mark_of(info: &EntityInfo) -> MonsterMark {
+    classify(MonsterInfo {
+        species: 0,
+        status: 0,
+        hostile: u8::from(info.not_team_member),
+        leader: u8::from(info.is_team_leader),
+    })
 }
 
 /// The leader's tile on the sim's floor.
