@@ -19,7 +19,7 @@ events = []; rng_hits = []
 for nm, ad in (("wake_check_0218F21C", 0x0218F21C), ("silent_wake_0218F1EC", 0x0218F1EC), ("expiry_0218FE64", 0x0218FE64)):
     pr.hook(ad, (lambda nm: lambda: events.append(nm))(nm))
 for nm, ad in (("RandInt", 0x02011968), ("RandRange", 0x02011924), ("Rand32", 0x0201198C),
-               ("DungeonRandInt", 0x0219D058), ("DungeonRandRange", 0x0219D0F0)):
+               ("DungeonRandInt", 0x0219D058), ("DungeonRandRange", 0x0219D014)):
     pr.hook(ad, (lambda nm: lambda: rng_hits.append(nm))(nm))
 CASES = [("awake", 0, 0), ("sleep_finite", 1, 4), ("sleep_7F", 1, 0x7F), ("nightmare_finite", 3, 4),
          ("nightmare_7F", 3, 0x7F), ("napping_finite", 5, 4), ("napping_7F", 5, 0x7F)]

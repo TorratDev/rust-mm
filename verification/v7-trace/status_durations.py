@@ -4,8 +4,7 @@
 Usage: status_durations.py ROM OUT_DIR [setter ...]
 Calls each setter wrapper on the first floor (partner to leader) and prints, per setter, the
 bytes read back, the `CalculateStatusTurns` (pair, flag) seen, and the number of
-`DungeonRandInt` draws. ROM is a scratch-named copy of pmdb.nds. The result lines are the output
-whose hash is recorded in docs/verification.md."""
+`DungeonRandInt` draws. ROM is a scratch-named copy of pmdb.nds."""
 import collections, json
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

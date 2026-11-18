@@ -4,15 +4,14 @@ Writes (`+0x99`, `+0x9A`) = (1,3), (3,3), (3,4), (3,3) into the first floor's mo
 replays `combat_inputs.txt` for N frames and logs every change of the four values, the damage
 calls, the expiry `0218FE64`, and every `DungeonRandInt` with its caller.
 
-Usage: status_nightmare_ticks.py ROM OUT_DIR [FRAMES]   (default 1000)
+Usage: status_nightmare_ticks.py ROM OUT_DIR [FRAMES]   (default 4000)
 Read: a counter N expires on the Nth tick; the nightmare monsters lose 8 HP at expiry, the sleeper
 none; no dungeon draw comes from the expiry itself."""
-import sys
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_probe import Probe, parse_args, G_DUNGEON, WILD, HERE
+from status_probe import Probe, parse_args, WILD, HERE
 
-ap = parse_args(__doc__); ap.add_argument("frames", nargs="?", type=int, default=1000)
+ap = parse_args(__doc__); ap.add_argument("frames", nargs="?", type=int, default=4000)
 a = ap.parse_args()
 pr = Probe(a.rom, a.out_dir); R = pr.R
 inp = pr.h.parse_inputs(HERE + "/combat_inputs.txt")
@@ -38,4 +37,4 @@ for f in range(a.frames):
     if any(st(e) != last.get(e) for e in mons):
         log.append(("chg", f, [(tag[e], st(e)) for e in mons])); last.update({e: st(e) for e in mons})
 print("valid monsters", len(mons))
-for l in log[:400]: print(l)
+for l in log: print(l)
