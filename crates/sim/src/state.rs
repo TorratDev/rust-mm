@@ -514,9 +514,12 @@ impl Dungeon {
             };
             let from = leader.pos;
             leader.pos = target;
-            if let Some(ally) = d.team.iter_mut().skip(1).find(|m| m.pos == target) {
+            if let Some(i) = (1..d.team.len()).find(|&i| d.team[i].pos == target) {
+                let ally = &mut d.team[i];
                 ally.pos = from;
                 ally.info.direction = u8::try_from((index_of(dir) + 4) % 8).unwrap_or(0);
+                // The swap sets `0x8000` on the ally; the swap pass in `take_leader_turn` clears it.
+                d.ai.swapping.push(i);
             }
         });
     }
@@ -1555,6 +1558,25 @@ mod tests {
         // Right is 2; (2 + 4) & 7 is 6, Left.
         assert_eq!(team[1].info.direction, 6);
         assert_eq!(g.dungeon().unwrap().turn(), 1);
+    }
+
+    #[test]
+    fn a_leader_swap_costs_the_partner_one_end_of_turn_draw_and_no_move() {
+        let mut g = run_with_leader(1);
+        g.dungeon.as_mut().unwrap().team.push(monster(6, 5, 8));
+        // The same turn with no partner: the swap pass's draw is the only difference.
+        let mut alone = g.clone();
+        alone.dungeon.as_mut().unwrap().team.truncate(1);
+        assert_eq!(g.step(Command::Move(Direction::Right)), Outcome::Applied);
+        assert_eq!(
+            alone.step(Command::Move(Direction::Right)),
+            Outcome::Applied
+        );
+        let (d, mut expected) = (g.dungeon().unwrap(), alone.dungeon().unwrap().rng);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        // On the leader's old tile, not moved again by the team loop that turn.
+        assert_eq!(d.team()[1].pos, (5, 5));
     }
 
     #[test]
