@@ -19,7 +19,9 @@ use crate::combat::{CombatData, REGULAR_ATTACK, REGULAR_ATTACK_ARG8};
 use crate::floor::{self, NO_ROOM};
 use crate::move_effects::{self, Effect};
 use crate::state::{DIRECTIONS, Dungeon, MoveSlot};
+use crate::status;
 use crate::targeting::Slot;
+use crate::turn::acts;
 
 /// The weight total of the move pick when the sim has no combat data, `DungeonRandInt(total)` at
 /// `02193260`. The game's total is the regular-attack weight plus the weights of the enabled
@@ -52,6 +54,15 @@ const TURNS: [usize; 3] = [0, 1, 7];
 /// walkable mask equal to one of these makes the monster pick a new random direction.
 const STRAIGHT_MASKS: [u8; 5] = [0x54, 0x51, 0x45, 0x15, 0x55];
 
+/// Wild-loop flags: `0x8000` skips the monster, `0x4000` skips it once and is cleared.
+const HELD_FLAG: u16 = 0x8000;
+const SKIP_ONCE_FLAG: u16 = 0x4000;
+
+/// Whether the wild monster's own speed stage acts in fractional turn `k`.
+fn wild_acts(m: &crate::state::Monster, k: u8) -> bool {
+    acts(status::speed_stage(&m.info, status::WILD_BASE_STAGE), k)
+}
+
 /// AI objectives (`+0x70`; the names are Red's, see `docs/re/structs.md`, "AI target readers").
 const CHASE_TARGET: u8 = 1;
 const CHASE_REMEMBERED: u8 = 2;
@@ -70,6 +81,8 @@ pub(crate) struct AiRecord {
     objective: u8,
     goal: (i16, i16),
     target: Option<usize>,
+    /// The monster flags `0x8000` and `0x4000` (`info+0x..`, see [`HELD_FLAG`]).
+    flags: u16,
 }
 
 /// A team member's AI record and its last four positions (`info+0x5E`, written by the move
@@ -97,6 +110,9 @@ pub(crate) struct AiState {
     pub(crate) swapping: Vec<usize>,
     /// Team slots flagged `0x4000`: the team loop skips each once and clears the flag.
     held: Vec<usize>,
+    /// The slot (0 to 15) of each wild monster, ascending: the list is in slot order and a
+    /// spawn takes the lowest free slot. Rebuilt as 0, 1, ... when its length differs.
+    pub(crate) slots: Vec<u8>,
 }
 
 impl PartialEq for AiState {
@@ -116,12 +132,25 @@ enum Plan {
 }
 
 impl Dungeon {
-    /// The wild loop of one fractional turn (`021408F8`): every wild monster acts once in slot
-    /// order, and each one still flagged `aiAllySkip` at the end gets its end-of-turn effects.
-    // shortcut: every wild monster is gated at speed stage 1 (the caller picks the gated turns);
-    // its own speed counters and paralysis are not read. A monster that spawns asleep is not
-    // modelled. The `0x8000` and `0x4000` flags never get set.
-    pub(crate) fn run_wild_monsters(&mut self, data: Option<&CombatData<'_>>) {
+    /// Keeps [`AiState::slots`] the length of the wild list (a list set from outside holds its
+    /// monsters in slots 0, 1, ...).
+    pub(crate) fn sync_wild_slots(&mut self) {
+        if self.ai.slots.len() != self.wild.len() {
+            self.ai.slots = (0..self.wild.len()).map(|i| i as u8).collect();
+        }
+    }
+
+    /// The wild loop of fractional turn `k` (`021408F8`): every wild monster gated in acts once in
+    /// slot order, and each one still flagged `aiAllySkip` at the end gets its end-of-turn
+    /// effects. The gate is per monster (`docs/re/turns.md`, #73 P1.1), in this order: flag
+    /// `0x8000` skips it, `0x4000` is cleared and skips it once (even in a turn its stage does not
+    /// act); then its own speed stage (`CalcSpeedStage`) must act in `k`.
+    // shortcut: a wild monster's base stage is [`status::WILD_BASE_STAGE`] (all floor 1 to 3
+    // species have movement speed 1). The `+0x11A` (attacking) skip and `+0x117 = 0` are not
+    // modelled: nothing in the sim sets the first or reads the second. Nothing sets the
+    // `0x8000` and `0x4000` flags either; the record holds them for when a setter exists. A
+    // monster that spawns asleep is not modelled.
+    pub(crate) fn run_wild_monsters(&mut self, k: u8, data: Option<&CombatData<'_>>) {
         self.sync_team_ai();
         let live: Vec<_> = self.wild.iter().map(|m| m.pos).collect();
         self.ai.wild.retain(|p, _| live.contains(p));
@@ -131,6 +160,10 @@ impl Dungeon {
             // A fallen leader ends the loop: the run is over.
             if !self.leader_alive() {
                 break;
+            }
+            if !self.pass_wild_flags(i) || !wild_acts(&self.wild[i], k) {
+                i += 1;
+                continue;
             }
             let before = self.wild.len();
             if self.wild_turn(i, data) {
@@ -145,6 +178,20 @@ impl Dungeon {
         for i in deferred {
             self.monster_end_of_turn(i);
         }
+    }
+
+    /// The flag part of the gate: false for a monster flagged `0x8000` or `0x4000` (which is
+    /// cleared); else clears `0xC000` and returns true.
+    fn pass_wild_flags(&mut self, i: usize) -> bool {
+        let rec = self.ai.wild.entry(self.wild[i].pos).or_default();
+        if rec.flags & HELD_FLAG != 0 {
+            return false;
+        }
+        if rec.flags & SKIP_ONCE_FLAG != 0 {
+            rec.flags &= !SKIP_ONCE_FLAG;
+            return false;
+        }
+        true
     }
 
     /// The team loop (`02140AC0`, `docs/re/turns.md`, "Other monsters' turns"): each gated
@@ -293,6 +340,7 @@ impl Dungeon {
                     objective: CHASE_TARGET,
                     goal: t,
                     target: None,
+                    flags: 0,
                 };
                 t
             }
@@ -716,6 +764,7 @@ impl Dungeon {
                 objective: CHASE_TARGET,
                 goal: t,
                 target: slot,
+                flags: rec.flags,
             };
             return t;
         }
@@ -890,6 +939,9 @@ fn direction_towards(from: (i16, i16), to: (i16, i16)) -> u8 {
 mod tests {
     use super::*;
     use crate::command::Command;
+
+    /// A fractional turn in which a speed stage 1 monster acts.
+    const K: u8 = 3;
     use crate::floor::{Floor, Room};
     use crate::state::{EntityInfo, GameState, Monster, wild_monster};
 
@@ -1009,7 +1061,7 @@ mod tests {
         let mut actual = g.dungeon().unwrap().clone();
         actual.rng = crate::rng::DungeonRng::new(seed);
         let mut model = actual.clone();
-        actual.run_wild_monsters(Some(&data));
+        actual.run_wild_monsters(K, Some(&data));
 
         let roll = pick.map_or(0, |total| model.rng.int(total));
         if regular_target {
@@ -1121,7 +1173,7 @@ mod tests {
             let mut actual = g.dungeon().unwrap().clone();
             actual.rng = crate::rng::DungeonRng::new(seed);
             let mut model = actual.clone();
-            actual.run_wild_monsters(Some(&data));
+            actual.run_wild_monsters(K, Some(&data));
             // No pick; the target draw, Struggle's resolve and recoil, then the end-of-turn roll.
             model.rng.int(1);
             let mv = &moves[usize::from(move_effects::STRUGGLE)];
@@ -1165,7 +1217,7 @@ mod tests {
             levels: &[],
         };
         let mut model = d.clone();
-        d.run_wild_monsters(Some(&data));
+        d.run_wild_monsters(K, Some(&data));
         let mv = &moves[usize::from(move_effects::STRUGGLE)];
         // A: target draw, Struggle, removed (no end of turn). B, now at index 0: the same, then
         // its end of turn.
@@ -1206,7 +1258,7 @@ mod tests {
         };
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
-        d.run_wild_monsters(Some(&data));
+        d.run_wild_monsters(K, Some(&data));
         // The pick, then the end-of-turn roll; the walk draws nothing.
         expected.int(6 + REGULAR[1]);
         expected.int(100);
@@ -1249,7 +1301,7 @@ mod tests {
         let mut g = room_with((12, 5), &[(5, 5)]);
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         // `Int(35)@02193260`, then `Int(100)@02186894`; the walk itself draws nothing.
         expected.int(35);
         expected.int(100);
@@ -1272,7 +1324,7 @@ mod tests {
         }
         d.floor.rooms.clear();
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         expected.int(35);
         let roll = expected.int(8) as usize;
         expected.int(100);
@@ -1304,7 +1356,7 @@ mod tests {
         assert_eq!(d.rng, expected);
         let rec = *d.ai.wild.values().next().unwrap();
         assert_eq!(rec.objective, LEAVE_ROOM);
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         expected.int(35);
         expected.int(100);
         assert_eq!(d.rng, expected);
@@ -1343,7 +1395,7 @@ mod tests {
         }
         assert_eq!(d.floor.room_exits(0), exits);
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         // Pick, the exit draw (`Int(count)`, one try as it is not the monster's tile), end.
         expected.int(35);
         let goal = exits[expected.int(2) as usize];
@@ -1355,7 +1407,7 @@ mod tests {
         );
         // Objective 4 stays: the next turns draw the pick and the end of turn only.
         for _ in 0..3 {
-            d.run_wild_monsters(None);
+            d.run_wild_monsters(K, None);
             expected.int(35);
             expected.int(100);
             assert_eq!(d.rng, expected);
@@ -1376,10 +1428,11 @@ mod tests {
             objective: LEAVE_ROOM,
             goal: (9, 9),
             target: None,
+            flags: 0,
         };
         d.ai.wild.insert((5, 5), held);
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         // Pick, the direction roll of the step-out, end of turn: no `Int(count)` is drawn.
         expected.int(35);
         expected.int(8);
@@ -1403,7 +1456,7 @@ mod tests {
             let mut run = d.clone();
             run.rng = crate::rng::DungeonRng::new(seed);
             let mut model = run.rng;
-            run.run_wild_monsters(None);
+            run.run_wild_monsters(K, None);
             model.int(35);
             // Only the other exit can be taken, so the draws end at the first one that is not (5, 5).
             for tries in 1.. {
@@ -1427,7 +1480,7 @@ mod tests {
         let mut g = room_apart((5, 5));
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         expected.int(35);
         let dir = expected.int(8) as usize;
         expected.int(100);
@@ -1441,14 +1494,14 @@ mod tests {
         let mut g = room_with((12, 5), &[(5, 5)]);
         let d = g.dungeon_mut().unwrap();
         // Turn 1: the leader is seen (objective 1).
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         assert_eq!(d.ai.wild.values().next().map(|r| r.objective), Some(1));
         // The leader steps out of sight, leaving (12, 5) first in its trail.
         d.floor.rooms[0].x1 = 20;
         d.floor.rooms[0].y1 = 20;
         d.team[0].pos = (50, 28);
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         // Pick and end of turn only: no wander draw, the goal is the remembered tile.
         expected.int(35);
         expected.int(100);
@@ -1468,7 +1521,7 @@ mod tests {
             d.floor.tile_mut(p.0, p.1).unwrap().terrain = floor::TERRAIN_IMPASSABLE_WALL;
         }
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         // A: pick. B: pick, end of turn. Then A's deferred end of turn.
         for cap in [35, 35, 100, 100] {
             expected.int(cap);
@@ -1482,7 +1535,7 @@ mod tests {
         let mut g = room_with((6, 5), &[(5, 5)]);
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         for cap in [35, 1, 100] {
             expected.int(cap);
         }
@@ -1501,13 +1554,73 @@ mod tests {
     }
 
     #[test]
+    fn each_wild_monster_is_gated_by_its_own_speed_stage() {
+        let mut g = room_with((12, 5), &[(5, 5), (5, 20)]);
+        let d = g.dungeon_mut().unwrap();
+        // Paralysed: stage 0 acts at 7, 15 and 23 only. Hasted: stage 2 also acts at 1.
+        d.wild[0].info.status.burn_class = status::PARALYSIS;
+        d.wild[1].info.speed_up[0] = 9;
+        let moved = |d: &Dungeon| (d.wild[0].pos != (5, 5), d.wild[1].pos != (5, 20));
+        d.run_wild_monsters(3, None);
+        assert_eq!(moved(d), (false, true));
+        // At 1 only the hasted one acts: its draws advance the generator, a paralysed one's would too.
+        let before = d.rng;
+        d.run_wild_monsters(1, None);
+        assert_ne!(d.rng, before);
+        assert_eq!(d.wild[0].pos, (5, 5));
+        d.run_wild_monsters(7, None);
+        assert!(d.wild[0].pos != (5, 5));
+    }
+
+    #[test]
+    fn the_flags_skip_a_wild_monster_and_the_skip_once_flag_is_cleared() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.ai.wild.insert(
+            (5, 5),
+            AiRecord {
+                flags: 0x8000,
+                ..AiRecord::default()
+            },
+        );
+        d.run_wild_monsters(K, None);
+        assert_eq!(d.wild[0].pos, (5, 5));
+        d.ai.wild.insert(
+            (5, 5),
+            AiRecord {
+                flags: 0x4000,
+                ..AiRecord::default()
+            },
+        );
+        d.run_wild_monsters(K, None);
+        assert_eq!((d.wild[0].pos, d.ai.wild[&(5, 5)].flags), ((5, 5), 0));
+        d.run_wild_monsters(K, None);
+        assert_ne!(d.wild[0].pos, (5, 5));
+    }
+
+    #[test]
+    fn the_skip_once_flag_is_cleared_in_a_turn_the_stage_does_not_act() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.ai.wild.insert(
+            (5, 5),
+            AiRecord {
+                flags: 0x4000,
+                ..AiRecord::default()
+            },
+        );
+        d.run_wild_monsters(1, None);
+        assert_eq!((d.wild[0].pos, d.ai.wild[&(5, 5)].flags), ((5, 5), 0));
+    }
+
+    #[test]
     fn a_sleeping_monster_draws_only_the_end_of_turn_roll_and_stays_put() {
         let mut g = room_with((12, 5), &[(5, 5)]);
         let d = g.dungeon_mut().unwrap();
         d.wild[0].info.status.sleep = 1;
         d.wild[0].info.status.sleep_turns = 3;
         let mut expected = d.rng;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         expected.int(100);
         assert_eq!(d.rng, expected);
         assert_eq!(d.wild[0].pos, (5, 5));
@@ -1521,7 +1634,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         d.wild[0].info.status.sleep = 1;
         d.wild[0].info.status.sleep_turns = 1;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         assert_eq!(d.wild[0].info.status.sleep, 0);
         assert_eq!(d.wild[0].pos, (6, 5));
     }
@@ -1533,7 +1646,7 @@ mod tests {
         let hp = d.wild[0].info.hp;
         d.wild[0].info.status.burn_class = 1;
         d.wild[0].info.status.burn_turns = 128;
-        d.run_wild_monsters(None);
+        d.run_wild_monsters(K, None);
         assert_eq!(d.wild[0].info.hp, hp - 5);
         assert_eq!(d.wild[0].info.status.burn_turns, 127);
     }
