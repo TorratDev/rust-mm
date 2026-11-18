@@ -300,9 +300,14 @@ mod tests {
             weights,
             levels: &[],
         };
-        g.dungeon_mut()
-            .unwrap()
-            .strike(0, &[target], mv, effect, &data)
+        g.dungeon_mut().unwrap().strike(
+            crate::targeting::Slot::Team(0),
+            0,
+            &[target],
+            mv,
+            effect,
+            &data,
+        )
     }
 
     /// The wild monster's stages: (offensive, defensive, accuracy).

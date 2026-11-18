@@ -183,8 +183,8 @@ fn two_ahead_monster(d: &Dungeon, lx: i32, ly: i32, facing: Direction) -> Option
 /// The candidates of `area` for the leader facing `facing`, in the game's order, before the class
 /// filter. `None` when the leader is missing. For `0x40` this is the facing monster only: the
 /// tile two ahead is the fallback that [`executor_targets`] tries when that one is filtered out.
-fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
-    let leader = d.team().first()?;
+fn candidates(d: &Dungeon, user: Slot, area: Area, facing: Direction) -> Option<Vec<Slot>> {
+    let leader = monster_of(d, user)?;
     let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
     let dir = index_of(facing);
     Some(match area {
@@ -238,7 +238,7 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
             }
             found
         }
-        Area::User => vec![Slot::Team(0)],
+        Area::User => vec![user],
         // `0x30`: the slots the room test `02141AF0` passes (`docs/re/combat.md`, the `0x30` row).
         // The test needs the target to be visible (`+0x20`), and the room of the user's tile to
         // hold the target's tile: `Dungeon::in_view` is `0219C6BC`. The user is in the list when
@@ -262,8 +262,8 @@ fn candidates(d: &Dungeon, area: Area, facing: Direction) -> Option<Vec<Slot>> {
 /// The fallback of `0x40` (`0215A520`): the monster two tiles ahead, through `021774FC`, when the
 /// facing monster gives no target. Its tile must not be blocked, and the facing one must not be
 /// either (`021774FC` returns nothing for a blocked facing tile).
-fn two_ahead_fallback(d: &Dungeon, facing: Direction) -> Vec<Slot> {
-    let Some(leader) = d.team().first() else {
+fn two_ahead_fallback(d: &Dungeon, user: Slot, facing: Direction) -> Vec<Slot> {
+    let Some(leader) = monster_of(d, user) else {
         return Vec::new();
     };
     let (lx, ly) = (i32::from(leader.pos.0), i32::from(leader.pos.1));
@@ -272,8 +272,8 @@ fn two_ahead_fallback(d: &Dungeon, facing: Direction) -> Vec<Slot> {
 
 /// Whether the class `class` keeps candidate `slot` (`0215A3A8`, the relation tests). Relation 1
 /// is a foe (a wild monster); relation 0 is an ally or the user (a team member).
-fn keeps(class: u8, move_id: u16, slot: Slot) -> bool {
-    let user = slot == Slot::Team(0);
+fn keeps(class: u8, move_id: u16, user_slot: Slot, slot: Slot) -> bool {
+    let user = slot == user_slot;
     if move_id == MOVE_AIMED_AT_USER && user {
         return false;
     }
@@ -282,7 +282,9 @@ fn keeps(class: u8, move_id: u16, slot: Slot) -> bool {
     // not applied. The sim's monsters all pass them.
     // shortcut: `skipRelation` (argument 7) reads `info +0xAC` and `+0xC9`, which the sim does
     // not keep. It is 0 here, as it is for a leader with both fields clear.
-    let foe = matches!(slot, Slot::Wild(_));
+    // A foe is on the other side of the user: a wild monster for a team member, a team member
+    // for a wild monster.
+    let foe = matches!(slot, Slot::Wild(_)) != matches!(user_slot, Slot::Wild(_));
     match class {
         0 | 4 => foe,
         1 => !foe,
@@ -294,13 +296,14 @@ fn keeps(class: u8, move_id: u16, slot: Slot) -> bool {
 }
 
 /// The targets of move `move_id` (targeting byte `targeting`, the low byte of `targeting[0]`)
-/// used by the leader facing `facing`, in the game's order: the candidates that pass the class
+/// used by `user` (the leader or a wild monster) facing `facing`, in the game's order: the candidates that pass the class
 /// filter. `None` when the range is not modelled. An empty list is a use with no target, which
 /// the caller refuses.
 // shortcut: `sunny` is always `None` in the sim (see [`rewrite_class_four`]).
 #[must_use]
 pub(crate) fn executor_targets(
     d: &Dungeon,
+    user: Slot,
     move_id: u16,
     targeting: u16,
     facing: Direction,
@@ -309,7 +312,7 @@ pub(crate) fn executor_targets(
     let mut byte = (targeting & 0xFF) as u8;
     // `02191A30`: move 0xED takes the self class for a user that is not a Ghost.
     if move_id == MOVE_SELF_CLASS {
-        let leader: &EntityInfo = &d.team().first()?.info;
+        let leader: &EntityInfo = &monster_of(d, user)?.info;
         if !leader.types.contains(&GHOST) {
             byte = SELF_CLASS_BYTE;
         }
@@ -319,14 +322,14 @@ pub(crate) fn executor_targets(
     let class = byte & 0xF;
     let kept = |list: Vec<Slot>| -> Vec<Slot> {
         list.into_iter()
-            .filter(|&slot| keeps(class, move_id, slot))
+            .filter(|&slot| keeps(class, move_id, user, slot))
             .collect()
     };
-    let targets = kept(candidates(d, area, facing)?);
+    let targets = kept(candidates(d, user, area, facing)?);
     // `0215A520`, area `0x40`: the tile two ahead is tried only when the facing monster is
     // missing or the class filter drops it. The list holds at most one monster.
     if area == Area::TwoAhead && targets.is_empty() {
-        return Some(kept(two_ahead_fallback(d, facing)));
+        return Some(kept(two_ahead_fallback(d, user, facing)));
     }
     Some(targets)
 }
@@ -407,7 +410,7 @@ mod tests {
 
     /// `executor_targets` for a move whose targeting byte is `byte` (the low byte).
     fn targets(g: &GameState, byte: u16, facing: Direction) -> Option<Vec<Slot>> {
-        executor_targets(lead(g), 0x9A, byte, facing, None)
+        executor_targets(lead(g), Slot::Team(0), 0x9A, byte, facing, None)
     }
 
     #[test]
@@ -574,7 +577,14 @@ mod tests {
     fn move_0xfc_is_refused_when_aimed_at_the_user() {
         let g = dungeon(vec![monster((10, 10), false)], vec![]);
         assert_eq!(
-            executor_targets(lead(&g), MOVE_AIMED_AT_USER, 0x71, Direction::Right, None),
+            executor_targets(
+                lead(&g),
+                Slot::Team(0),
+                MOVE_AIMED_AT_USER,
+                0x71,
+                Direction::Right,
+                None
+            ),
             Some(vec![])
         );
     }
@@ -587,12 +597,26 @@ mod tests {
         );
         // Targeting byte 0x00 (a foe ahead) becomes 0x73 (self) for a user that is not a Ghost.
         assert_eq!(
-            executor_targets(lead(&g), MOVE_SELF_CLASS, 0x00, Direction::Right, None),
+            executor_targets(
+                lead(&g),
+                Slot::Team(0),
+                MOVE_SELF_CLASS,
+                0x00,
+                Direction::Right,
+                None
+            ),
             Some(vec![Slot::Team(0)])
         );
         g.dungeon_mut().unwrap().team[0].info.types = [GHOST, 0];
         assert_eq!(
-            executor_targets(lead(&g), MOVE_SELF_CLASS, 0x00, Direction::Right, None),
+            executor_targets(
+                lead(&g),
+                Slot::Team(0),
+                MOVE_SELF_CLASS,
+                0x00,
+                Direction::Right,
+                None
+            ),
             Some(vec![Slot::Wild(0)])
         );
     }
@@ -607,22 +631,36 @@ mod tests {
         // Another move with class 4: 0215A2C0 is 0 with no charge state, so the self class 0x73
         // (the user only), whatever the weather.
         assert_eq!(
-            executor_targets(d, 0x9A, 0x04, Direction::Right, None),
+            executor_targets(d, Slot::Team(0), 0x9A, 0x04, Direction::Right, None),
             Some(vec![Slot::Team(0)])
         );
         // Solarbeam (0x97) in sunny weather: the foe branch, area 0 class 0 (export line 44).
         assert_eq!(
-            executor_targets(d, SOLARBEAM, 0x74, Direction::Right, Some(true)),
+            executor_targets(
+                d,
+                Slot::Team(0),
+                SOLARBEAM,
+                0x74,
+                Direction::Right,
+                Some(true)
+            ),
             Some(vec![Slot::Wild(0)])
         );
         // Not sunny: 0215A2C0 decides, which is self with no charge.
         assert_eq!(
-            executor_targets(d, SOLARBEAM, 0x74, Direction::Right, Some(false)),
+            executor_targets(
+                d,
+                Slot::Team(0),
+                SOLARBEAM,
+                0x74,
+                Direction::Right,
+                Some(false)
+            ),
             Some(vec![Slot::Team(0)])
         );
         // The weather is not known in the sim, so Solarbeam is refused.
         assert_eq!(
-            executor_targets(d, SOLARBEAM, 0x74, Direction::Right, None),
+            executor_targets(d, Slot::Team(0), SOLARBEAM, 0x74, Direction::Right, None),
             None
         );
     }

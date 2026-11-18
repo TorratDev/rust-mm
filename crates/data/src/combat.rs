@@ -27,6 +27,11 @@ const DEFENCE_STAGES: u32 = 0x021A_A6B4;
 /// Accuracy and evasion stage multipliers, 21 integers each (`ov_0001::021AA8C4`, `021AA918`).
 const ACCURACY_STAGES: u32 = 0x021A_A8C4;
 const EVASION_STAGES: u32 = 0x021A_A918;
+/// The `s16` table of the regular attack's weight in `ChooseAIMove` (`ov_0001::021AA3A8`, pool
+/// word `0x021933BC`, `docs/re/ai.md`), indexed by the count of enabled move slots.
+const REGULAR_ATTACK_WEIGHTS: u32 = 0x021A_A3A8;
+/// Entries of the table the code reaches: the enabled-slot count is 0 to 4 (`docs/re/ai.md`).
+pub const REGULAR_ATTACK_WEIGHT_COUNT: usize = 5;
 /// Physical-type flag per type, one byte each, in the ARM9 binary (`0x02091E78`).
 const PHYSICAL_TYPES: u32 = 0x0209_1E78;
 
@@ -55,6 +60,9 @@ pub struct CombatTables {
     pub accuracy_stage: [i32; STAGES],
     /// Evasion stage multiplier per stage (integer, 256 is neutral).
     pub evasion_stage: [i32; STAGES],
+    /// The regular attack's weight in an AI monster's move pick, by the number of its enabled
+    /// move slots (0 to 4; `ChooseAIMove`, `ov_0001::02192D24`).
+    pub regular_attack_weight: [i16; REGULAR_ATTACK_WEIGHT_COUNT],
 }
 
 /// The file offset in `overlay1` of an overlay 1 RAM address.
@@ -109,8 +117,20 @@ impl CombatTables {
             defence_stage: stage_table(overlay1, DEFENCE_STAGES, "defence stage table")?,
             accuracy_stage: stage_table(overlay1, ACCURACY_STAGES, "accuracy stage table")?,
             evasion_stage: stage_table(overlay1, EVASION_STAGES, "evasion stage table")?,
+            regular_attack_weight: regular_attack_weights(overlay1)?,
         })
     }
+}
+
+/// Reads the regular-attack weight table: [`REGULAR_ATTACK_WEIGHT_COUNT`] little-endian `s16`.
+fn regular_attack_weights(overlay1: &[u8]) -> Result<[i16; REGULAR_ATTACK_WEIGHT_COUNT]> {
+    const WHAT: &str = "regular attack weights";
+    let base = overlay_offset(REGULAR_ATTACK_WEIGHTS, WHAT)?;
+    let mut table = [0i16; REGULAR_ATTACK_WEIGHT_COUNT];
+    for (i, entry) in table.iter_mut().enumerate() {
+        *entry = bytes::i16_at(overlay1, base + i * 2, WHAT)?;
+    }
+    Ok(table)
 }
 
 /// Reads one table of [`STAGES`] words at the overlay 1 RAM address `addr`.
@@ -168,6 +188,10 @@ mod tests {
                 ov[at..at + 2].copy_from_slice(&(((a * 18 + d) % 4) as i16).to_le_bytes());
             }
         }
+        for i in 0..REGULAR_ATTACK_WEIGHT_COUNT {
+            let at = (REGULAR_ATTACK_WEIGHTS - OVERLAY1_RAM) as usize + 2 * i;
+            ov[at..at + 2].copy_from_slice(&(0x100 + i as i16).to_le_bytes());
+        }
         for t in 0..types::TYPES {
             arm9[(PHYSICAL_TYPES - ARM9_RAM) as usize + t] = (t % 2) as u8;
         }
@@ -188,6 +212,7 @@ mod tests {
         assert_eq!(t.evasion_stage[1], 0x7001);
         assert_eq!(t.physical[0..4], [0, 1, 0, 1]);
         assert_eq!(t.type_chart[1][2], 0);
+        assert_eq!(t.regular_attack_weight, [0x100, 0x101, 0x102, 0x103, 0x104]);
     }
 
     #[test]

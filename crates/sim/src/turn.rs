@@ -7,6 +7,7 @@
 //! lists it, and the fractional turns it runs through first only run the other monsters' steps.
 //! Integer math only.
 
+use crate::combat::CombatData;
 use crate::floor;
 use crate::state::{Dungeon, EntityInfo, NO_MONSTER_HOUSE, WILD_SLOTS, wild_monster};
 
@@ -83,8 +84,12 @@ impl Dungeon {
     /// game's row at that gate, the row that shows the end-of-turn (`docs/re/turns.md`, "Row
     /// timing"). A leader that acts on a fractional turn with no weather step after it can leave
     /// one pending.
-    pub(crate) fn take_leader_turn(&mut self, act: impl FnOnce(&mut Dungeon)) {
-        let k = self.run_to_leader_gate(self.fractional_turn);
+    pub(crate) fn take_leader_turn(
+        &mut self,
+        data: Option<&CombatData<'_>>,
+        act: impl FnOnce(&mut Dungeon),
+    ) {
+        let k = self.run_to_leader_gate(self.fractional_turn, data);
         self.spawn_step(k);
         // The floor's first pass skips the regeneration tick (`param` TRUE in the floor loop).
         if self.turn > 0 || k > 0 {
@@ -102,9 +107,9 @@ impl Dungeon {
             self.stairs_pending = true;
         }
         self.pending_end_of_turns = self.pending_end_of_turns.saturating_add(1);
-        self.run_other_monsters(k);
+        self.run_other_monsters(k, data);
         self.weather_step(k);
-        self.fractional_turn = self.run_to_leader_gate(next(k));
+        self.fractional_turn = self.run_to_leader_gate(next(k), data);
         self.turn = self.turn.saturating_add(1);
     }
 
@@ -134,10 +139,10 @@ impl Dungeon {
     /// Runs the steps of fractional turns from `k` on, up to the leader's next gate, and returns
     /// that gate. Every stage has a gated turn, so this ends within one cycle of 24. The stage is
     /// read on each fractional turn, as the gate does (`CalcSpeedStage` runs per turn).
-    fn run_to_leader_gate(&mut self, mut k: u8) -> u8 {
+    fn run_to_leader_gate(&mut self, mut k: u8, data: Option<&CombatData<'_>>) -> u8 {
         while !acts(self.leader_stage(), k) {
             self.spawn_step(k);
-            self.run_other_monsters(k);
+            self.run_other_monsters(k, data);
             self.weather_step(k);
             k = next(k);
         }
@@ -224,9 +229,9 @@ impl Dungeon {
     /// [`crate::ai`]). It runs in the gated turns of speed stage 1.
     // shortcut: the team's non-leader members do not act yet (the team loop `02140AC0`); port
     // them before a floor with allies is simulated.
-    fn run_other_monsters(&mut self, k: u8) {
+    fn run_other_monsters(&mut self, k: u8, data: Option<&CombatData<'_>>) {
         if acts(1, k) {
-            self.run_wild_monsters();
+            self.run_wild_monsters(data);
         }
     }
 

@@ -37,7 +37,7 @@ pub const DAMAGING: [u16; 2] = [0x09A, 0x104];
 pub const REGULAR_ATTACK: u16 = 0x163;
 
 /// `arg8` of Regular Attack, 24.8: 0.5 (the dispatcher's case `0x163` passes `0x80`).
-const REGULAR_ATTACK_ARG8: i64 = 0x80;
+pub(crate) const REGULAR_ATTACK_ARG8: i64 = 0x80;
 
 /// `arg8`, the damage scale in 24.8, for [`DAMAGING`] moves: 1.0.
 pub(crate) const ARG8: i64 = 0x100;
@@ -482,15 +482,25 @@ impl Dungeon {
             // a sport's handler sets a floor counter and reads no target, and Withdraw's raises
             // the user's stage, so the user is the one target of each. Focus Energy and Rage
             // are self moves too.
-            Effect::Sport(_) | Effect::SelfStages(_) => {
-                targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)
-                    .filter(|t| t.as_slice() == [Slot::Team(0)])
-            }
-            Effect::Inflict(kind) if kind.on_user() => {
-                targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)
-                    .filter(|t| t.as_slice() == [Slot::Team(0)])
-            }
-            _ => self.targets_of(mv, facing),
+            Effect::Sport(_) | Effect::SelfStages(_) => targeting::executor_targets(
+                self,
+                Slot::Team(0),
+                mv.id,
+                mv.targeting[0],
+                facing,
+                None,
+            )
+            .filter(|t| t.as_slice() == [Slot::Team(0)]),
+            Effect::Inflict(kind) if kind.on_user() => targeting::executor_targets(
+                self,
+                Slot::Team(0),
+                mv.id,
+                mv.targeting[0],
+                facing,
+                None,
+            )
+            .filter(|t| t.as_slice() == [Slot::Team(0)]),
+            _ => self.targets_of(Slot::Team(0), mv, facing),
         };
         let Some(targets) = targets.filter(|t| !t.is_empty()) else {
             return Outcome::NotModelled;
@@ -516,7 +526,9 @@ impl Dungeon {
         }
         let slot = usize::from(slot);
         let mut leader_down = false;
-        self.take_leader_turn(|d| leader_down = d.strike(slot, &targets, mv, &effect, data));
+        self.take_leader_turn(Some(data), |d| {
+            leader_down = d.strike(Slot::Team(0), slot, &targets, mv, &effect, data);
+        });
         if leader_down {
             return Outcome::LeaderDefeated;
         }
@@ -544,18 +556,20 @@ impl Dungeon {
         let Some(mv) = data.moves.get(usize::from(REGULAR_ATTACK)) else {
             return Outcome::NotModelled;
         };
-        let Some(targets) = self.targets_of(mv, direction) else {
+        let Some(targets) = self.targets_of(Slot::Team(0), mv, direction) else {
             return Outcome::NotModelled;
         };
         if targets.is_empty() {
-            self.take_leader_turn(|_| {});
+            self.take_leader_turn(Some(data), |_| {});
             return Outcome::Applied;
         }
         let effect = Effect::Damage {
             arg8: REGULAR_ATTACK_ARG8,
         };
         let mut leader_down = false;
-        self.take_leader_turn(|d| leader_down = d.resolve_all(&targets, mv, &effect, data));
+        self.take_leader_turn(Some(data), |d| {
+            leader_down = d.resolve_all(Slot::Team(0), &targets, mv, &effect, data);
+        });
         if leader_down {
             return Outcome::LeaderDefeated;
         }
@@ -576,37 +590,38 @@ impl Dungeon {
     /// (`targeting`). `None` when the range is not modelled, or when no monster would be hit.
     // shortcut: a target that is the user is not modelled: the damage path against the user is
     // not in the notes.
-    fn targets_of(&self, mv: &Move, facing: Direction) -> Option<Vec<Slot>> {
-        let targets = targeting::executor_targets(self, mv.id, mv.targeting[0], facing, None)?;
-        if targets.contains(&Slot::Team(0)) {
+    pub(crate) fn targets_of(&self, user: Slot, mv: &Move, facing: Direction) -> Option<Vec<Slot>> {
+        let targets =
+            targeting::executor_targets(self, user, mv.id, mv.targeting[0], facing, None)?;
+        if targets.contains(&user) {
             return None;
         }
         Some(targets)
     }
 
-    /// One use of the move in the leader's `slot` on each of `targets`, in order: the PP mark, the
+    /// One use of the move in `user`'s `slot` on each of `targets`, in order: the PP mark, the
     /// hit checks and effect of each target, then the PP taken at the end (`docs/re/combat.md`,
     /// P1, P3, P6). A miss takes PP too.
     pub(crate) fn strike(
         &mut self,
+        user: Slot,
         slot: usize,
         targets: &[Slot],
         mv: &Move,
         effect: &Effect,
         data: &CombatData<'_>,
     ) -> bool {
-        if let Some(leader) = self.team.first_mut() {
-            leader.info.moves[slot].flags2 |= MoveSlot::USE_MARK;
+        if let Some(info) = self.info_mut(user) {
+            info.moves[slot].flags2 |= MoveSlot::USE_MARK;
         }
-        let leader_down = self.resolve_all(targets, mv, effect, data);
+        let leader_down = self.resolve_all(user, targets, mv, effect, data);
 
         // The PP is taken at the end of the action, once per use (`02159B18`).
         // shortcut: the Pressure double take (mark `0x10`) and the bit-`0x04` free use are not
         // modelled, as their writers are not traced.
         let marked = self
-            .team
-            .first_mut()
-            .and_then(|l| l.info.moves.get_mut(slot))
+            .info_mut(user)
+            .and_then(|i| i.moves.get_mut(slot))
             .filter(|m| m.flags2 & MoveSlot::USE_MARK != 0);
         if let Some(mslot) = marked {
             mslot.flags2 &= !MoveSlot::USE_MARK;
@@ -638,8 +653,9 @@ impl Dungeon {
     // 0 HP, so the next target is hit after that faint. The sim removes the defeated monsters only
     // after the last hit, and does not run a faint's own draws or effects, so a use that defeats
     // one target and then hits another may differ from the game.
-    fn resolve_all(
+    pub(crate) fn resolve_all(
         &mut self,
+        attacker: Slot,
         targets: &[Slot],
         mv: &Move,
         effect: &Effect,
@@ -647,16 +663,21 @@ impl Dungeon {
     ) -> bool {
         let mut defeated = Vec::new();
         for &target in targets {
-            if self.resolve(target, mv, effect, data) {
+            if self.resolve(attacker, target, mv, effect, data) {
                 defeated.push(target);
             }
-            // Struggle's recoil is the only thing that takes the leader down here (`resolve`).
-            if self.team.first().is_some_and(|m| m.info.hp == 0) {
-                defeated.push(Slot::Team(0));
+            // Struggle's recoil is the only thing that takes the attacker down here (`resolve`).
+            if self.info_of(attacker).is_some_and(|i| i.hp == 0) {
+                defeated.push(attacker);
             }
         }
         let leader_down = defeated.contains(&Slot::Team(0));
-        self.award_exp(&defeated, data);
+        // Only the team earns EXP: a wild attacker's kills are team members.
+        // shortcut: the EXP of a wild monster that a wild attacker's recoil defeats is not
+        // awarded (the game's credit rule for a non-team defeat is not read).
+        if matches!(attacker, Slot::Team(_)) {
+            self.award_exp(&defeated, data);
+        }
         self.remove_defeated(&defeated);
         leader_down
     }
@@ -722,8 +743,15 @@ impl Dungeon {
     /// `effect`: the damage with its second hit check, or the stage changes (`move_effects`). It
     /// takes no PP; [`strike`](Self::strike) and Regular Attack add that. Returns whether a hit
     /// took the target to 0 HP.
-    fn resolve(&mut self, target: Slot, mv: &Move, effect: &Effect, data: &CombatData<'_>) -> bool {
-        let Some(attacker) = self.team.first().map(|m| m.info.clone()) else {
+    fn resolve(
+        &mut self,
+        user: Slot,
+        target: Slot,
+        mv: &Move,
+        effect: &Effect,
+        data: &CombatData<'_>,
+    ) -> bool {
+        let Some(attacker) = self.info_of(user).cloned() else {
             return false;
         };
         let Some(defender) = self.info_of(target).cloned() else {
@@ -737,7 +765,7 @@ impl Dungeon {
         // user == target when its fifth argument is 1, which the dispatch passes for Withdraw
         // (`02156824`, P-withdraw of #421). The sports' self hit rule is not read here: their
         // accuracy forces a hit already.
-        let self_hit = matches!(effect, Effect::SelfStages(_)) && target == Slot::Team(0);
+        let self_hit = matches!(effect, Effect::SelfStages(_)) && target == user;
         if !self_hit && !hits(t, first, mv.accuracy[0], &attacker, &defender, physical) {
             return false;
         }
@@ -788,12 +816,12 @@ impl Dungeon {
             info.hp = hp;
         }
         if matches!(effect, Effect::Absorb) && dealt.value != 0 {
-            self.absorb_heal(dealt.value);
+            self.absorb_heal(user, dealt.value);
         }
         // The recoil follows a hit that dealt damage: the HDM returns 0 on a second-check miss
         // (no damage, so no recoil here) and when the damage word is 0 (`02162C70`, P2 of #421).
         if matches!(effect, Effect::Struggle) && dealt.value != 0 {
-            self.struggle_recoil();
+            self.struggle_recoil(user);
         }
         if let Effect::DamageInflict { chance, inflict } = *effect {
             self.secondary_status(target, &attacker, chance, inflict, hp);
@@ -853,9 +881,9 @@ impl Dungeon {
 
     /// Absorb's heal: the leader gains half of `dealt` (at least 1), up to its max HP
     /// (`0215F314`, `0218DF38`, `docs/re/move-effects.md`). A miss or a 0 damage does not heal.
-    fn absorb_heal(&mut self, dealt: i32) {
+    fn absorb_heal(&mut self, user: Slot, dealt: i32) {
         let heal = (dealt / 2).max(1);
-        if let Some(info) = self.team.first_mut().map(|m| &mut m.info) {
+        if let Some(info) = self.info_mut(user) {
             let hp = (i32::from(info.hp) + heal).min(i32::from(info.max_hp));
             info.hp = i16::try_from(hp).unwrap_or(info.hp);
         }
@@ -864,8 +892,8 @@ impl Dungeon {
     /// Struggle's recoil on the leader: max HP / 4 (truncated), at least 1, down to 0
     /// (`02162C70`, `0217BB94`, `docs/re/move-effects.md`). It has no type and draws nothing. The
     /// leader's 0 HP is read by [`resolve_all`](Self::resolve_all).
-    fn struggle_recoil(&mut self) {
-        if let Some(info) = self.team.first_mut().map(|m| &mut m.info) {
+    fn struggle_recoil(&mut self, user: Slot) {
+        if let Some(info) = self.info_mut(user) {
             let amount = (i32::from(info.max_hp) / 4).max(1);
             let hp = (i32::from(info.hp) - amount).max(0);
             info.hp = i16::try_from(hp).unwrap_or(0);
@@ -948,6 +976,8 @@ pub(crate) mod tests {
             defence_stage: stage(0x10, 0x100, 1),
             accuracy_stage: stage(0x20, 0x100, 1),
             evasion_stage: stage(0x10, 0x100, -1),
+            // The tests' own weights, not the game's.
+            regular_attack_weight: [9, 7, 5, 3, 1],
         }
     }
 
@@ -1088,6 +1118,7 @@ pub(crate) mod tests {
             levels: &[],
         };
         g.dungeon_mut().unwrap().strike(
+            Slot::Team(0),
             0,
             &[Slot::Wild(0)],
             mv,
@@ -1638,6 +1669,7 @@ pub(crate) mod tests {
             levels: &[],
         };
         g.dungeon_mut().unwrap().resolve(
+            Slot::Team(0),
             Slot::Wild(0),
             mv,
             &Effect::Damage {
@@ -1807,13 +1839,24 @@ pub(crate) mod tests {
         };
 
         // The targets are the cone's, as the executor lists them; `strike` runs the draws.
-        let targets =
-            targeting::executor_targets(g.dungeon().unwrap(), 0x9A, 0x10, Direction::Right, None)
-                .unwrap();
+        let targets = targeting::executor_targets(
+            g.dungeon().unwrap(),
+            Slot::Team(0),
+            0x9A,
+            0x10,
+            Direction::Right,
+            None,
+        )
+        .unwrap();
         assert_eq!(targets, vec![Slot::Wild(2), Slot::Wild(0), Slot::Wild(1)]);
-        g.dungeon_mut()
-            .unwrap()
-            .strike(0, &targets, &mv, &Effect::Damage { arg8: ARG8 }, &data);
+        g.dungeon_mut().unwrap().strike(
+            Slot::Team(0),
+            0,
+            &targets,
+            &mv,
+            &Effect::Damage { arg8: ARG8 },
+            &data,
+        );
         let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
         // DownRight (6, 6) is wild 2, Right (6, 5) is wild 0, UpRight (6, 4) is wild 1.
         assert_eq!(hp(&g, 2), 100 - dealt(blocks[0]));
@@ -1860,13 +1903,24 @@ pub(crate) mod tests {
             damage(&t, &mv, &attacker, &target, rolls).value
         };
 
-        let targets =
-            targeting::executor_targets(g.dungeon().unwrap(), 0xA0, 0x20, Direction::Right, None)
-                .unwrap();
+        let targets = targeting::executor_targets(
+            g.dungeon().unwrap(),
+            Slot::Team(0),
+            0xA0,
+            0x20,
+            Direction::Right,
+            None,
+        )
+        .unwrap();
         assert_eq!(targets, vec![Slot::Wild(1), Slot::Wild(2), Slot::Wild(0)]);
-        g.dungeon_mut()
-            .unwrap()
-            .strike(0, &targets, &mv, &Effect::Damage { arg8: ARG8 }, &data);
+        g.dungeon_mut().unwrap().strike(
+            Slot::Team(0),
+            0,
+            &targets,
+            &mv,
+            &Effect::Damage { arg8: ARG8 },
+            &data,
+        );
         let hp = |g: &GameState, i: usize| i32::from(g.dungeon().unwrap().wild()[i].info.hp);
         // Right (6, 5) is wild 1 and takes the first block, UpRight (6, 4) is wild 2 and takes
         // the second, DownRight (6, 6) is wild 0 and takes the third.
@@ -2230,7 +2284,13 @@ pub(crate) mod tests {
         let d = g.dungeon_mut().unwrap();
         d.team[0].info.hp = 1;
         let mv = tackle([100; 3], 0);
-        assert!(d.resolve_all(&[Slot::Team(0)], &mv, &Effect::Damage { arg8: ARG8 }, &data));
+        assert!(d.resolve_all(
+            Slot::Team(0),
+            &[Slot::Team(0)],
+            &mv,
+            &Effect::Damage { arg8: ARG8 },
+            &data
+        ));
         assert_eq!(d.team()[0].info.hp, 0);
         assert_eq!(
             d.wild().len(),
