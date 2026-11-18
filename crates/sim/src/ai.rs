@@ -524,8 +524,9 @@ impl Dungeon {
             .sum();
         if pp_sum == 0 {
             // `InitPokemonMove(0x160)` then `02192728`, action 0x17: Struggle, no weighted pick.
-            // The target search draws as the regular attack's does when a foe is adjacent.
-            return match self.regular_attack_direction(i) {
+            // The target search is `02192728`'s, so it draws the candidate pick.
+            let dirs = self.adjacent_foe_directions(i);
+            return match self.pick_direction(&dirs) {
                 Some(dir) => self.use_struggle(i, dir, data),
                 None => false,
             };
@@ -553,7 +554,8 @@ impl Dungeon {
             return false;
         }
         let roll = self.rng.int(total);
-        // `02191F84`: the regular attack's target, searched whatever the roll picks.
+        // `02191F84`: the regular attack's target, searched whatever the roll picks. A wild
+        // monster's IQ set has no multi-target mode, so it takes the first adjacent foe, no draw.
         let regular = self.regular_attack_direction(i);
         let mut cumulative = 0;
         for (entry, &w) in weights.iter().enumerate() {
@@ -600,10 +602,11 @@ impl Dungeon {
         dirs.get(usize::try_from(roll).unwrap_or(0)).copied()
     }
 
-    /// `02191F84`: the regular attack's direction, drawing the target pick when a foe is adjacent.
-    fn regular_attack_direction(&mut self, i: usize) -> Option<usize> {
-        let dirs = self.adjacent_foe_directions(i);
-        self.pick_direction(&dirs)
+    /// `02191F84`: the regular attack's direction. A wild monster's IQ set (`021804CC`: skills 8,
+    /// 6, 2, 18, 22) has no multi-target mode (9, 10), so the scan takes the first adjacent foe
+    /// and draws nothing (#73 P2.4).
+    fn regular_attack_direction(&self, i: usize) -> Option<usize> {
+        self.adjacent_foe_directions(i).first().copied()
     }
 
     /// `02192728` for the move in slot `slot` of monster `i`: the direction of the foe it would
@@ -1038,8 +1041,7 @@ mod tests {
     }
 
     /// Runs the wild loop with `seed` and checks the draws against the game's order: `pick`
-    /// (the weighted pick's total, if any), the regular attack's target draw when `regular_target`,
-    /// then `used`, the move slot the monster is expected to use (the move's own target draw, the
+    /// (the weighted pick's total, if any), then `used`, the move slot the monster is expected to use (the move's own target draw, the
     /// use and its PP) or the regular attack's resolve, then the end-of-turn roll. Returns the
     /// dungeon.
     fn check_turn(
@@ -1048,7 +1050,6 @@ mod tests {
         seed: u32,
         pick: Option<i32>,
         used: impl Fn(i32) -> Option<usize>,
-        regular_target: bool,
     ) -> Dungeon {
         let tables = crate::combat::tests::tables();
         let data = CombatData {
@@ -1064,9 +1065,6 @@ mod tests {
         actual.run_wild_monsters(K, Some(&data));
 
         let roll = pick.map_or(0, |total| model.rng.int(total));
-        if regular_target {
-            model.rng.int(1);
-        }
         let attack = Effect::Damage {
             arg8: REGULAR_ATTACK_ARG8,
         };
@@ -1101,14 +1099,9 @@ mod tests {
         let total = 6 + REGULAR[1];
         let (mut by_move, mut by_regular) = (false, false);
         for seed in 0..64 {
-            let d = check_turn(
-                &g,
-                &moves,
-                seed,
-                Some(total),
-                |roll| (roll <= 6).then_some(0),
-                true,
-            );
+            let d = check_turn(&g, &moves, seed, Some(total), |roll| {
+                (roll <= 6).then_some(0)
+            });
             let used = d.wild[0].info.moves[0].pp == 9;
             by_move |= used;
             by_regular |= !used;
@@ -1125,18 +1118,11 @@ mod tests {
         let total = 3 + 4 + REGULAR[2];
         let mut seen = [false; 3];
         for seed in 0..96 {
-            let d = check_turn(
-                &g,
-                &moves,
-                seed,
-                Some(total),
-                |roll| match roll {
-                    ..=3 => Some(0),
-                    4..=7 => Some(1),
-                    _ => None,
-                },
-                true,
-            );
+            let d = check_turn(&g, &moves, seed, Some(total), |roll| match roll {
+                ..=3 => Some(0),
+                4..=7 => Some(1),
+                _ => None,
+            });
             let pps = (d.wild[0].info.moves[0].pp, d.wild[0].info.moves[1].pp);
             seen[match pps {
                 (9, 10) => 0,
@@ -1147,13 +1133,59 @@ mod tests {
         assert_eq!(seen, [true; 3]);
     }
 
+    /// The wild totals of `#358` P7: a Tackle-only monster (Pidgey) and an Absorb-only one
+    /// (Sunkern), with the table entry for one enabled move set to the remainder.
+    fn total_case(weight: u8, total: i32) {
+        let (g, moves) = duel(&[(0x9A, 5, 10)], &[(0x9A, weight)]);
+        let mut tables = crate::combat::tests::tables();
+        tables.regular_attack_weight[1] = (total - i32::from(weight)) as i16;
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let (mut by_move, mut by_regular) = (false, false);
+        for seed in 0..64 {
+            let mut actual = g.dungeon().unwrap().clone();
+            actual.rng = crate::rng::DungeonRng::new(seed);
+            let mut model = actual.clone();
+            actual.run_wild_monsters(K, Some(&data));
+            let roll = model.rng.int(total);
+            if roll <= i32::from(weight) {
+                by_move = true;
+                model.rng.int(1); // the move's own target draw
+                let mv = &moves[0x9A];
+                let effect = move_effects::effect_of(0x9A).unwrap();
+                model.strike(Slot::Wild(0), 0, &[Slot::Team(0)], mv, &effect, &data);
+            } else {
+                by_regular = true; // the regular attack draws no target
+                let mv = &moves[usize::from(REGULAR_ATTACK)];
+                let effect = Effect::Damage {
+                    arg8: REGULAR_ATTACK_ARG8,
+                };
+                model.resolve_all(Slot::Wild(0), &[Slot::Team(0)], mv, &effect, &data);
+            }
+            model.rng.int(100);
+            assert_eq!(actual.rng, model.rng, "total {total}, seed {seed}");
+        }
+        assert!(by_move && by_regular);
+    }
+
+    #[test]
+    fn a_tackle_only_monster_rolls_against_45_and_a_sunkern_against_35() {
+        total_case(10, 45);
+        total_case(5, 35);
+    }
+
     #[test]
     fn with_no_enabled_move_the_regular_attack_is_picked_by_table_entry_0() {
         // The slots exist and have PP but none is enabled for the AI (bit 2 clear): the total is
         // table[0], so the roll always lands on the regular attack.
         let (g, moves) = duel(&[(0x9A, 1, 10)], &[(0x9A, 6)]);
         for seed in 0..8 {
-            let d = check_turn(&g, &moves, seed, Some(REGULAR[0]), |_| None, true);
+            let d = check_turn(&g, &moves, seed, Some(REGULAR[0]), |_| None);
             assert_eq!(d.wild[0].info.moves[0].pp, 10);
         }
     }
