@@ -55,7 +55,8 @@ const VITAL_SPIRIT: u8 = 0x49;
 const EARLY_BIRD: u8 = 0x2F;
 const FLINCH_BLOCK: u8 = 0x1F;
 const TURNS_CAP: u8 = 0x14;
-/// Ability `:` (0x3A) on the seeded victim: the drain hurts the seeder instead.
+/// Ability `:` (0x3A) on the seeded victim: the drain hurts the seeder instead [hypothesis:
+/// Liquid Ooze; the name was not read].
 const LEECH_REVERSE: u8 = 0x3A;
 /// The s16 at `0x021AA208`: the drain countdown reload (runtime read: 2).
 const LEECH_RELOAD: u8 = 2;
@@ -253,12 +254,14 @@ fn enrage(rng: &mut DungeonRng, t: &mut EntityInfo) {
 /// `0218DAE4`: refuses a user that is its own target, a Grass target and an existing seed; the
 /// roll comes after all three.
 // shortcut: the seeder's slot and id (`+0xC0`, `+0xBC`) are set by the caller with
-// `set_seeder`; the drain counter (`+0xC2`) starts at 0 (`docs/re/status.md`). The game's flag for the roll is read as 1 (`docs/re/status.md`, "Duration roll").
+// `set_seeder`; the setter resets the drain counter (`+0xC2`) to 0 and the slot (`+0xC0`) to 0xFF (`docs/re/status.md`). The game's flag for the roll is read as 1 (`docs/re/status.md`, "Duration roll").
 fn leech_seed(rng: &mut DungeonRng, t: &mut EntityInfo, same: bool) {
     if same || t.types.contains(&GRASS) || t.status.leech_seed == LEECH_SEED {
         return;
     }
     t.status.leech_seed = LEECH_SEED;
+    t.status.leech_countdown = 0;
+    t.status.seeder_slot = 0xFF;
     t.status.leech_turns = status_turns(rng, t, LEECH_SEED_TURNS, true).saturating_add(1);
 }
 
@@ -347,8 +350,9 @@ impl EntityInfo {
 
     /// The Leech Seed part of `DoEndOfTurnEffects` (`021861E8:460-513`). `seeder` is the entity
     /// at `+0xC0` with its `info+0x8C` id, or `None` when the slot is empty. A gone seeder or a
-    /// changed id clears the status. Else the countdown goes down, and at 0 it reloads and the
-    /// victim loses 10 HP while the seeder gains 10 (Liquid Ooze: the seeder loses 10).
+    /// changed id clears the status, but only on a drain turn. The countdown goes down when it is
+    /// not 0; if it is then 0 it reloads, the seeder is checked, and the victim loses 10 HP while
+    /// the seeder gains 10 (ability `:`: the seeder loses 10).
     // shortcut: the heal is a plain add capped at max HP (`0218DF38` not read), and the victim's
     // `+0xA0 != 1` gate (frozen class) is not modelled: the sim has no such state. Faints are not
     // handled, as with the burn.
@@ -357,15 +361,15 @@ impl EntityInfo {
         if self.status.leech_seed != LEECH_SEED {
             return;
         }
+        self.status.leech_countdown = self.status.leech_countdown.saturating_sub(1);
+        if self.status.leech_countdown != 0 {
+            return;
+        }
+        self.status.leech_countdown = LEECH_RELOAD;
         let Some((_, seeder)) = seeder.filter(|(id, _)| *id == self.status.seeder_id) else {
             self.status.leech_seed = 0;
             return;
         };
-        if self.status.leech_countdown != 0 {
-            self.status.leech_countdown -= 1;
-            return;
-        }
-        self.status.leech_countdown = LEECH_RELOAD;
         if self.has_ability(LEECH_REVERSE) {
             seeder.hp = (seeder.hp - LEECH_DAMAGE).max(0);
         } else {
@@ -654,6 +658,7 @@ mod tests {
         let (s, e) = run(Inflict::LeechSeed, &mut t);
         assert!(drew(&s, &e, 1));
         assert_eq!(t.status.leech_seed, LEECH_SEED);
+        assert_eq!((t.status.leech_countdown, t.status.seeder_slot), (0, 0xFF));
         let turns = t.status.leech_turns;
         assert!((11..=12).contains(&turns));
         for _ in 0..turns {
@@ -691,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn leech_seed_drains_every_third_end_of_turn() {
+    fn leech_seed_drains_every_second_end_of_turn() {
         let (mut v, mut s) = seeded();
         let mut hp = Vec::new();
         for _ in 0..7 {
@@ -699,8 +704,11 @@ mod tests {
             hp.push((v.hp, s.hp));
         }
         assert_eq!(hp[0], (90, 60));
-        assert_eq!((hp[1], hp[2]), ((90, 60), (90, 60)));
-        assert_eq!((hp[3], hp[6]), ((80, 70), (70, 80)));
+        assert_eq!(hp[1], (90, 60));
+        assert_eq!(hp[2], (80, 70));
+        assert_eq!(hp[3], (80, 70));
+        assert_eq!(hp[4], (70, 80));
+        assert_eq!(hp[6], (60, 90));
     }
 
     #[test]
@@ -713,6 +721,38 @@ mod tests {
         s.hp = 95;
         v.leech_seed_drain(Some((77, &mut s)));
         assert_eq!(s.hp, 100);
+    }
+
+    #[test]
+    fn leech_seed_keeps_the_status_for_a_missing_seeder_until_a_drain_turn() {
+        let (mut v, mut s) = seeded();
+        v.leech_seed_drain(Some((77, &mut s)));
+        v.leech_seed_drain(None);
+        assert_eq!(
+            (v.status.leech_seed, v.status.leech_countdown),
+            (LEECH_SEED, 1)
+        );
+        v.leech_seed_drain(None);
+        assert_eq!(
+            (v.status.leech_seed, v.status.leech_countdown),
+            (0, LEECH_RELOAD)
+        );
+    }
+
+    #[test]
+    fn leech_seed_seeder_that_faints_leaves_an_empty_slot_and_the_status_clears() {
+        let (mut v, mut s) = seeded();
+        v.abilities = [LEECH_REVERSE, 0];
+        s.hp = 10;
+        v.leech_seed_drain(Some((77, &mut s)));
+        assert_eq!((s.hp, v.hp), (0, 100));
+        v.leech_seed_drain(None);
+        v.leech_seed_drain(None);
+        assert_eq!(v.status.leech_seed, 0);
+        let (mut v, mut s) = seeded();
+        v.hp = 5;
+        v.leech_seed_drain(Some((77, &mut s)));
+        assert_eq!(v.hp, 0);
     }
 
     #[test]
