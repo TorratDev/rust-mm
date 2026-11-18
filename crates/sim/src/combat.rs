@@ -785,7 +785,13 @@ impl Dungeon {
             }
             // A status move's setter follows the slot-0 check, and no damage.
             Effect::Inflict(kind) => {
+                let fresh = self
+                    .info_of(target)
+                    .is_some_and(|i| i.status.leech_seed != status::LEECH_SEED);
                 self.inflict(target, *kind);
+                if *kind == Inflict::LeechSeed && fresh {
+                    self.note_seeder(user, target);
+                }
                 return false;
             }
             Effect::Damage { arg8 } => *arg8,

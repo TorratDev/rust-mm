@@ -8,7 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::rng::DungeonRng;
-use crate::state::EntityInfo;
+use crate::state::{Dungeon, EntityInfo, TEAM_SLOTS};
+use crate::targeting::Slot;
 
 /// The turns value that never counts down (`DecrementStatusTurns`, `0219BF1C`).
 pub const NO_END: u8 = 0x7F;
@@ -298,6 +299,76 @@ fn count_down(turns: &mut u8) -> bool {
     *turns == 0
 }
 
+// shortcut: the game's seeder id (`info+0x8C`) is not kept by the sim, so the species stands in
+// for it: a seeder replaced by another species in its slot clears the seed, the same species
+// does not. Upgrade when the sim keeps a per-monster id.
+impl Dungeon {
+    /// The slot byte of `slot` in the game's entity table: team members first, then wild ones.
+    fn slot_byte(slot: Slot) -> u8 {
+        let i = match slot {
+            Slot::Team(i) => i,
+            Slot::Wild(i) => TEAM_SLOTS + i,
+        };
+        u8::try_from(i).unwrap_or(0xFF)
+    }
+
+    /// Records `user` as the seeder of `target` after a landed `Inflict::LeechSeed`.
+    pub(crate) fn note_seeder(&mut self, user: Slot, target: Slot) {
+        let Some(id) = self.info_at(user).map(|i| i.species) else {
+            return;
+        };
+        if let Some(t) = self.info_at_mut(target) {
+            t.set_seeder(Self::slot_byte(user), id);
+        }
+    }
+
+    /// The Leech Seed drain of the monster at `victim`, finding the seeder by its slot byte.
+    pub(crate) fn drain_leech_seed(&mut self, victim: Slot) {
+        let Some(v) = self.info_at(victim) else {
+            return;
+        };
+        let byte = v.status.seeder_slot;
+        let slot = (0..TEAM_SLOTS + crate::state::WILD_SLOTS)
+            .map(|i| {
+                if i < TEAM_SLOTS {
+                    Slot::Team(i)
+                } else {
+                    Slot::Wild(i - TEAM_SLOTS)
+                }
+            })
+            .find(|s| Self::slot_byte(*s) == byte && *s != victim);
+        let mut seeder = slot.and_then(|s| self.info_at(s).map(|i| (s, i.clone())));
+        let arg = seeder.as_mut().map(|(_, i)| (i.species, i));
+        let Some(mut v) = self.info_at(victim).cloned() else {
+            return;
+        };
+        v.leech_seed_drain(arg);
+        let hp = seeder.map(|(s, i)| (s, i.hp));
+        if let Some(t) = self.info_at_mut(victim) {
+            *t = v;
+        }
+        if let Some((s, hp)) = hp
+            && let Some(t) = self.info_at_mut(s)
+        {
+            t.hp = hp;
+        }
+    }
+
+    fn info_at(&self, slot: Slot) -> Option<&EntityInfo> {
+        match slot {
+            Slot::Team(i) => self.team.get(i).map(|m| &m.info),
+            Slot::Wild(i) => self.wild.get(i).map(|m| &m.info),
+        }
+    }
+
+    fn info_at_mut(&mut self, slot: Slot) -> Option<&mut EntityInfo> {
+        match slot {
+            Slot::Team(i) => self.team.get_mut(i).map(|m| &mut m.info),
+            Slot::Wild(i) => self.wild.get_mut(i).map(|m| &mut m.info),
+        }
+    }
+}
+
 impl EntityInfo {
     /// Whether the monster does not act: `0217FD78` is true for a sleeper (`+0x99` of 1, 3 or 5).
     #[must_use]
@@ -342,7 +413,6 @@ impl EntityInfo {
 
     /// Records who seeded this monster (`+0xC0`, `+0xBC`); call after a successful
     /// `Inflict::LeechSeed`, which has no user to read them from.
-    #[allow(dead_code)] // shortcut: the caller in `ai.rs` is outside this issue's files
     pub(crate) fn set_seeder(&mut self, slot: u8, id: u16) {
         self.status.seeder_slot = slot;
         self.status.seeder_id = id;
@@ -356,7 +426,6 @@ impl EntityInfo {
     // shortcut: the heal is a plain add capped at max HP (`0218DF38` not read), and the victim's
     // `+0xA0 != 1` gate (frozen class) is not modelled: the sim has no such state. Faints are not
     // handled, as with the burn.
-    #[allow(dead_code)] // shortcut: as `set_seeder`, until `ai.rs` calls it
     pub(crate) fn leech_seed_drain(&mut self, seeder: Option<(u16, &mut EntityInfo)>) {
         if self.status.leech_seed != LEECH_SEED {
             return;
@@ -381,7 +450,7 @@ impl EntityInfo {
     /// The status part of `DoEndOfTurnEffects` (`021861E8`), after the Shed Skin roll: the burn
     /// damage (when its countdown is 0: 5 damage, then the countdown is 20), then the enraged
     /// count.
-    // shortcut: the Leech Seed drain is [`Self::leech_seed_drain`], as it needs the seeder; poison, the frozen and curse blocks are not
+    // shortcut: poison, the frozen and curse blocks are not
     // set by a first-dungeon move. A burn that takes HP to 0 is not a faint (`HandleFaint_Async`
     // is not ported), as with the hunger damage. The burn's wake-on-damage check (`0218F21C`)
     // only matters for a `0x7F` sleep, which no first-dungeon move gives.

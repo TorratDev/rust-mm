@@ -399,6 +399,7 @@ impl Dungeon {
     fn ally_end_of_turn(&mut self, i: usize) {
         let _roll = self.rng.int(100);
         self.team[i].info.end_of_turn_status();
+        self.drain_leech_seed(Slot::Team(i));
     }
 
     /// One wild monster's turn: `RunMonsterAI`, Execute and the end-of-turn effects Execute runs.
@@ -700,6 +701,7 @@ impl Dungeon {
     fn monster_end_of_turn(&mut self, i: usize) {
         let _roll = self.rng.int(100);
         self.wild[i].info.end_of_turn_status();
+        self.drain_leech_seed(Slot::Wild(i));
     }
 
     /// `AIFindTarget` (`02191394`) for a wild monster at `me`: the nearest team member it sees,
@@ -1649,6 +1651,23 @@ mod tests {
         d.run_wild_monsters(K, None);
         assert_eq!(d.wild[0].info.hp, hp - 5);
         assert_eq!(d.wild[0].info.status.burn_turns, 127);
+    }
+
+    #[test]
+    fn a_seeded_wild_monster_is_drained_into_its_seeder_over_end_of_turns() {
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        d.team[0].info.hp = 5;
+        d.team[0].info.max_hp = 100;
+        let hp = d.wild[0].info.hp;
+        d.wild[0].info.status.leech_seed = status::LEECH_SEED;
+        d.wild[0].info.status.leech_turns = 12;
+        d.note_seeder(Slot::Team(0), Slot::Wild(0));
+        d.run_wild_monsters(K, None);
+        assert_eq!((d.wild[0].info.hp, d.team[0].info.hp), (hp - 10, 15));
+        // The next turn is not a drain turn.
+        d.run_wild_monsters(K, None);
+        assert_eq!((d.wild[0].info.hp, d.team[0].info.hp), (hp - 10, 15));
     }
 
     /// `room_with` plus a partner at `partner`, as team slot 1.

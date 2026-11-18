@@ -10,6 +10,7 @@
 use crate::combat::CombatData;
 use crate::floor;
 use crate::state::{Dungeon, EntityInfo, NO_MONSTER_HOUSE, WILD_SLOTS, wild_monster};
+use crate::targeting::Slot;
 
 /// Fractional turns in one dungeon turn (`fractionalTurn` cycles 0 to 23).
 pub const FRACTIONAL_TURNS: u8 = 24;
@@ -330,6 +331,7 @@ impl Dungeon {
         if let Some(leader) = self.team.first_mut() {
             leader.info.end_of_turn_status();
         }
+        self.drain_leech_seed(Slot::Team(0));
     }
 }
 
