@@ -1311,6 +1311,29 @@ mod tests {
     }
 
     #[test]
+    fn restoring_seeds_the_first_foreign_exit_without_a_draw_and_skips_monsters_outside_rooms() {
+        let mut g = room_apart((10, 5));
+        let d = g.dungeon_mut().unwrap();
+        for (x, y) in [(10, 5), (12, 19)] {
+            d.floor.tile_mut(x, y).unwrap().terrain |= floor::TERRAIN_JUNCTION;
+        }
+        // A second monster on a tile that belongs to no room.
+        d.floor.tile_mut(30, 10).unwrap().room = NO_ROOM;
+        d.wild.push(wild_monster(7, 4, (30, 10)));
+        let before = d.rng;
+        d.seed_wild_ai(false);
+        assert_eq!(d.rng, before, "no draw");
+        assert_eq!(d.ai.wild.len(), 1);
+        let rec = d.ai.wild[&(10, 5)];
+        assert_eq!(rec.objective, LEAVE_ROOM);
+        assert_eq!(
+            rec.goal,
+            (12, 19),
+            "the first exit that is not its own tile"
+        );
+    }
+
+    #[test]
     fn a_monster_in_a_room_with_exits_draws_one_exit_and_walks_there_without_more_draws() {
         let mut g = room_apart((5, 5));
         let d = g.dungeon_mut().unwrap();
@@ -1559,6 +1582,25 @@ mod tests {
         assert_eq!(d.rng, expected);
         assert_eq!(d.team[1].pos, (6, 5));
         assert_eq!(d.team[1].info.direction, 2);
+    }
+
+    #[test]
+    fn a_partner_with_a_distant_foe_in_view_still_follows_the_leader() {
+        // Leader to the south (4), foe 3 tiles east (2), not adjacent: cause B of #348 row 8.
+        let mut g = with_partner((10, 14), (10, 10), &[(13, 10)]);
+        let d = g.dungeon_mut().unwrap();
+        let mut expected = d.rng;
+        d.run_team_members(None);
+        expected.int(65);
+        expected.int(65);
+        expected.int(100);
+        assert_eq!(d.rng, expected);
+        assert_eq!(
+            d.team[1].pos,
+            (10, 11),
+            "it heads for the leader, not the foe"
+        );
+        assert_eq!(d.team[1].info.direction, 4);
     }
 
     #[test]
