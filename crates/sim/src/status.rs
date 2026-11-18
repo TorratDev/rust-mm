@@ -21,6 +21,8 @@ pub const BURN: u8 = 1;
 pub const PARALYSIS: u8 = 4;
 /// `+0xAC` cringe class: flinch.
 pub const FLINCH: u8 = 1;
+/// `+0xAC` cringe class: confused (`ChooseAIMove` rolls 70% to skip the move choice).
+pub const CONFUSED: u8 = 2;
 /// `+0xC4` sure-shot class: the target's attacks always miss.
 pub const WHIFFER: u8 = 2;
 /// `+0xC4` sure-shot class: Focus Energy.
@@ -303,6 +305,21 @@ impl EntityInfo {
     #[must_use]
     pub fn is_asleep(&self) -> bool {
         self.status.sleep != 0
+    }
+
+    /// The modelled part of `02181530(self, 0)`, the first gate of `ChooseAIMove` (`02192D24`):
+    /// `+0x99` not 0, 2 or 4 (sleep), `+0xAC` of 1, 3 or 7 (flinch), or `+0x9B == 4` (paralysis).
+    /// The frozen byte `+0xA0` is not kept. Confusion (`+0xAC == 2`) is not in the list.
+    #[must_use]
+    pub(crate) fn skips_move_choice(&self) -> bool {
+        let s = &self.status;
+        !matches!(s.sleep, 0 | 2 | 4) || matches!(s.cringe, 1 | 3 | 7) || s.burn_class == PARALYSIS
+    }
+
+    /// Whether `+0xAC == 2` (confused).
+    #[must_use]
+    pub(crate) fn is_confused(&self) -> bool {
+        self.status.cringe == CONFUSED
     }
 
     /// Whether `02172ADC` refuses the monster's attack: flinching (`+0xAC == 1`) or paralysed
