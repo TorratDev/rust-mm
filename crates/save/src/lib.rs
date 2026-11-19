@@ -394,6 +394,7 @@ mod tests {
             }
             d.wild.push(m);
         }
+        let g = GameState::restore(&snapshot).unwrap();
         let mut resume = g.resume();
         resume.chance_asleep = vec![0, 0, 0, 50, 50];
         let dr = resume.dungeon.as_mut().unwrap();
@@ -454,6 +455,32 @@ mod tests {
         let d = busy_run(7).snapshot().dungeon.unwrap();
         assert_eq!(d.team.len(), 2);
         assert!(d.wild.len() >= 3);
+    }
+
+    #[test]
+    fn a_crafted_ai_state_is_refused_not_run() {
+        let g = busy_run(7);
+        let (snapshot, resume) = (g.snapshot(), g.resume());
+        let edit = |field: &str, value: serde_json::Value| {
+            let mut json = serde_json::to_value(&resume).unwrap();
+            json["dungeon"]["ai"][field] = value;
+            let r: Resume = serde_json::from_value(json).unwrap();
+            // A valid CRC: the file is built by `encode`.
+            load(&encode(&snapshot, &r)).map(|_| ())
+        };
+        for (field, value) in [
+            ("swapping", serde_json::json!([9])),
+            ("swapping", serde_json::json!([0])),
+            ("held", serde_json::json!([2])),
+            ("slots", serde_json::json!([])),
+            ("slots", serde_json::json!([0, 0, 1, 2])),
+            ("slots", serde_json::json!([0, 1, 99, 100])),
+        ] {
+            assert!(
+                matches!(edit(field, value.clone()), Err(SaveError::Restore(_))),
+                "{field} {value}"
+            );
+        }
     }
 
     #[test]

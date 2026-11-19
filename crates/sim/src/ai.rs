@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::combat::{CombatData, REGULAR_ATTACK, REGULAR_ATTACK_ARG8};
 use crate::floor::{self, NO_ROOM};
 use crate::move_effects::{self, Effect};
-use crate::state::{DIRECTIONS, Dungeon, MoveSlot};
+use crate::state::{DIRECTIONS, Dungeon, MoveSlot, StateError, WILD_SLOTS};
 use crate::status;
 use crate::targeting::Slot;
 use crate::turn::acts;
@@ -172,15 +172,52 @@ pub struct AiSnapshot {
 }
 
 impl AiState {
-    pub(crate) fn capture(&self) -> AiSnapshot {
+    /// `wild_len` is the wild list's length: slots not yet synced to it (a list set from
+    /// outside, before any step) are saved as the 0, 1, ... the next step would make.
+    pub(crate) fn capture(&self, wild_len: usize) -> AiSnapshot {
         AiSnapshot {
             wild: self.wild.iter().map(|(k, v)| (*k, *v)).collect(),
             team: self.team.clone(),
             pending_wild: self.pending_wild.iter().copied().collect(),
             swapping: self.swapping.clone(),
             held: self.held.clone(),
-            slots: self.slots.clone(),
+            slots: if self.slots.len() == wild_len {
+                self.slots.clone()
+            } else {
+                (0..wild_len.min(WILD_SLOTS) as u8).collect()
+            },
         }
+    }
+
+    /// Checks a snapshot against the team and wild list it will run with: the swap pass and
+    /// the team loop index the team from slot 1, and the spawn takes the first free slot of a
+    /// sorted, unique list.
+    pub(crate) fn check_snapshot(
+        s: &AiSnapshot,
+        team_len: usize,
+        wild_len: usize,
+    ) -> Result<(), StateError> {
+        let bad = |field: &'static str, index: usize, len: usize| {
+            Err(StateError::BadAiState { field, index, len })
+        };
+        for (field, list) in [("swapping", &s.swapping), ("held", &s.held)] {
+            if let Some(&i) = list.iter().find(|&&i| i == 0 || i >= team_len) {
+                return bad(field, i, team_len);
+            }
+        }
+        if s.team.len() > team_len {
+            return bad("team", s.team.len(), team_len);
+        }
+        if s.slots.len() != wild_len {
+            return bad("slots", s.slots.len(), wild_len);
+        }
+        if let Some(&v) = s.slots.iter().find(|&&v| usize::from(v) >= WILD_SLOTS) {
+            return bad("slots", usize::from(v), WILD_SLOTS);
+        }
+        if let Some(w) = s.slots.windows(2).find(|w| w[0] >= w[1]) {
+            return bad("slots", usize::from(w[1]), usize::from(w[0]));
+        }
+        Ok(())
     }
 
     pub(crate) fn from_snapshot(s: &AiSnapshot, chance_asleep: Vec<u8>) -> Self {

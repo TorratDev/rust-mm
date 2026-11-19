@@ -45,6 +45,13 @@ pub enum StateError {
     BadTileCount(usize),
     /// A snapshot records more floors than [`MAX_RESTORED_FLOORS`] to replay.
     TooManyFloors(u32),
+    /// A resume's AI part does not fit the restored team and wild list: `field` holds the
+    /// offending `index` (or length) against the bound `len`.
+    BadAiState {
+        field: &'static str,
+        index: usize,
+        len: usize,
+    },
 }
 
 /// The generator steps the game takes between a floor's seed and `GenerateFloor`'s entry
@@ -1128,7 +1135,7 @@ impl GameState {
                     .collect(),
                 spawn_counter: d.spawn_counter,
                 enemy_density: d.enemy_density,
-                ai: d.ai.capture(),
+                ai: d.ai.capture(d.wild.len()),
             }),
         }
     }
@@ -1153,6 +1160,7 @@ impl GameState {
                 .collect();
             d.spawn_counter = r.spawn_counter;
             d.enemy_density = r.enemy_density;
+            AiState::check_snapshot(&r.ai, d.team.len(), d.wild.len())?;
             d.ai = AiState::from_snapshot(&r.ai, resume.chance_asleep.clone());
         }
         Ok(state)
