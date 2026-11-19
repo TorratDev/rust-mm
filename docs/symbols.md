@@ -394,6 +394,15 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | 02007B68 | CompactBag | void CompactBag(void) | tentative | Shifts bag items down after a removal. Name is ours. [`re/items.md`](re/items.md#p1-pickup-drop-bag-money-floor-items) |
 | ov_0001::02197D88 | TriggerTrap | void TriggerTrap(void * entity, void * pos, int a3, int a4) | tentative | Trap dispatcher: `switch` on the trap id (0 to 0x1B). Callers `02165B00`, `02187420`, `0218453C`. Name is ours. [`re/items.md`](re/items.md#p5-traps) |
 | ov_0001::02198824 | PlaceRandomTraps | void PlaceRandomTraps(void) | tentative | Called from `RunDungeon_Async` at `0206E440` (ARM9 to overlay, so no overlay xref). Name is ours. [`re/items.md`](re/items.md#p5-traps) |
+| ov_0001::02196F84 | TrapLaunchHeldItem | void TrapLaunchHeldItem(void * user, void * target) | tentative | Trap id 0: throws the target's held item one tile along its facing. Our name (#461). [`re/items.md`](re/items.md#p5-traps) |
+| ov_0001::021972E8 | TrapSealMove | void TrapSealMove(void * user, void * target) | tentative | Trap id 0xB: seals one random move slot. Runtime-confirmed. Our name (#461) |
+| ov_0001::02197A2C | TrapPoison | void TrapPoison(void * user, void * target) | tentative | Trap id 0xC: wrapper for `0218A410` (poison). Our name (#461) |
+| ov_0001::021979FC | TrapExplosionKind1 | void TrapExplosionKind1(void * user, void * target) | tentative | Trap id 0xD: `02194BFC` with kind 1. Our name (#461) |
+| ov_0001::021979CC | TrapExplosionKind2 | void TrapExplosionKind2(void * user, void * target) | tentative | Trap id 0xE: `02194BFC` with kind 2. Our name (#461) |
+| ov_0001::02197414 | TrapZeroMovePP | void TrapZeroMovePP(void * user, void * target) | tentative | Trap id 0xF: sets one random move's PP to 0. Runtime-confirmed. Our name (#461) |
+| ov_0001::0219706C | TrapItemsToMonsters | void TrapItemsToMonsters(void * user, void * pos) | tentative | Trap id 0x12: floor items in the room or radius become monsters; consumes the trap. Static only. Our name (#461) |
+| ov_0001::0217BB20 | TrapSetInfo8 | void TrapSetInfo8(void * target, int flag) | tentative | Run for trap byte 1 = 2 (flag 1) or 1 (flag 0); sets `info+8` to 2 or 3 when nonzero. Meaning of `info+8` unknown. Our name (#461) |
+| ov_0001::02138C68 | PickRandomTrapId | int PickRandomTrapId(void) | tentative | Cumulative-weight pick of a trap id 0 to 0x13, fallback 0x10. Our name (#461) |
 | ov_0001::0219635C | UpdateShopState | void UpdateShopState(...) | tentative | Enter/leave a Kecleon shop; greeting and pay path. Name is ours. [`re/items.md`](re/items.md#p6-kecleon-shops) |
 | ov_0001::02195E18 | PayShopDebt | int PayShopDebt(...) | tentative | Debt `+0x684 - +0x67C`, prompt, money change, clears shop bits. Name is ours. [`re/items.md`](re/items.md#p6-kecleon-shops) |
 | ov_0001::02196084 | SellToShop | void SellToShop(...) | tentative | Pays the `+0x680` credit and turns sold items into shop stock. Name is ours. [`re/items.md`](re/items.md#p6-kecleon-shops) |
