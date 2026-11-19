@@ -426,8 +426,8 @@ impl Dungeon {
             || (tactic == 6 && m.info.hp <= half)
     }
 
-    /// Pickup for team member `member` on its tile (`021441D8` for the leader, `02184E50` for
-    /// an ally; the bodies are the same). Order: the floor item, the shop-stock refusal, the
+    /// Leader pickup on its tile (`021441D8`, the step-on pickup; the caller applies the
+    /// `info+0x46 == 0` run gate). Order: the floor item, the shop-stock refusal, the
     /// run-away gate, money (category 6), stacking, the first free slot, bag full.
     ///
     /// The candidates are the member's held slot alone when `+0x64C == 0`, else the 20 bag
@@ -436,10 +436,23 @@ impl Dungeon {
     /// fullest (the first wins a tie). The first pass also needs the same sticky bit; with no
     /// match the second pass drops that condition. The sum clamps to 99 and the slot becomes
     /// sticky when the floor item was.
+    pub fn pickup(&mut self, member: usize) -> Pickup {
+        self.pickup_from(member, false)
+    }
+
+    /// Ally pickup (`02184E50`, action 0x3F). It has no `+0x46` gate. The candidates are the 20
+    /// bag slots and then the held slot (`info+0x5A`, index 0x15) when `+0x64C != 0` and
+    /// `info+6 == 0` (every team member); with `+0x64C == 0` the held slot alone. Money runs
+    /// only for `info+6 == 0`. Shop stock is refused. The free-slot search walks the same list,
+    /// so a full bag puts the item in the held slot, and a stack can merge into the held slot.
     // shortcut: the ally guards on the species byte (`info+0x40` not 'J' or 'G') and on
     // `info+0x98 != 1`, `info+8 != 1` and `0214067C` are not modelled; no AI action calls this
-    // for an ally yet (the pickup decision is in `ai.md`, not ported).
-    pub fn pickup(&mut self, member: usize) -> Pickup {
+    // yet (the pickup decision is in `ai.md`, not ported).
+    pub fn ally_pickup(&mut self, member: usize) -> Pickup {
+        self.pickup_from(member, true)
+    }
+
+    fn pickup_from(&mut self, member: usize, ally: bool) -> Pickup {
         let Some(m) = self.team.get(member) else {
             return Pickup::NoItem;
         };
@@ -465,7 +478,11 @@ impl Dungeon {
         }
         // The candidates: `None` is the held slot, `Some(i)` bag slot `i`.
         let candidates: Vec<Option<usize>> = if st.tables.has_inventory {
-            (0..BAG_SLOTS).map(Some).collect()
+            let mut c: Vec<Option<usize>> = (0..BAG_SLOTS).map(Some).collect();
+            if ally {
+                c.push(None);
+            }
+            c
         } else {
             vec![None]
         };
@@ -570,6 +587,8 @@ impl Dungeon {
             st.bag.slots[usize::from(slot)] = Item::default();
             st.bag.compact();
         }
+        // shortcut: `0219037C` (the monster house wake-up: tile bit 0x40, flag `gDungeon+0x661`,
+        // room `+0x34AC`) ends `02173CCC` and is not modelled.
     }
 
     /// `02173A48` (action 0x0A): swaps the floor item underfoot with `source`, a bag slot or the
@@ -635,6 +654,8 @@ impl Dungeon {
             }
         }
         st.bag.compact();
+        // shortcut: `0219037C` (the monster house wake-up: tile bit 0x40, flag `gDungeon+0x661`,
+        // room `+0x34AC`) ends `02173A48` and is not modelled.
     }
 }
 
@@ -1298,14 +1319,60 @@ mod tests {
     }
 
     #[test]
-    fn an_ally_uses_the_bag_like_the_leader() {
-        // The gate is `+0x64C` alone (`021441D8`); the entity is not read.
+    fn an_ally_with_a_full_bag_picks_up_into_the_held_slot() {
         let mut g = run();
         lay(&mut g, (9, 9), Item::new(0x40, 1));
-        assert_eq!(dungeon(&mut g).pickup(1), Pickup::Placed);
+        for i in 0..BAG_SLOTS {
+            dungeon(&mut g).items.bag.slots[i] = Item::new(0x50, 1);
+        }
+        assert_eq!(dungeon(&mut g).ally_pickup(1), Pickup::Placed);
         let d = g.dungeon().unwrap();
-        assert_eq!(d.bag().slots[0], Item::new(0x40, 1));
-        assert!(d.held_item(1).is_some_and(|h| !h.exists()));
+        assert_eq!(d.held_item(1), Some(Item::new(0x40, 1)));
+    }
+
+    #[test]
+    fn an_ally_stack_merges_into_the_held_slot_when_it_is_fullest() {
+        let mut g = run();
+        lay(&mut g, (9, 9), Item::new(3, 2));
+        {
+            let d = dungeon(&mut g);
+            d.items.bag.slots[0] = Item::new(3, 4);
+            d.items.held[1] = Item::new(3, 9);
+        }
+        assert_eq!(dungeon(&mut g).ally_pickup(1), Pickup::Stacked);
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.held_item(1), Some(Item::new(3, 11)));
+        assert_eq!(d.bag().slots[0], Item::new(3, 4));
+    }
+
+    #[test]
+    fn an_ally_without_an_inventory_has_the_held_slot_alone() {
+        let mut g = run();
+        lay(&mut g, (9, 9), Item::new(0x40, 1));
+        dungeon(&mut g).items.tables.has_inventory = false;
+        assert_eq!(dungeon(&mut g).ally_pickup(1), Pickup::Placed);
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.held_item(1), Some(Item::new(0x40, 1)));
+        assert!(!d.bag().slots[0].exists());
+    }
+
+    #[test]
+    fn a_run_does_not_pick_up_but_a_move_does() {
+        // `021441D8` tests `info+0x46 == 0` (a run) first and only shows a message.
+        let mut g = run();
+        lay(&mut g, (6, 5), Item::new(0x40, 1));
+        g.step(crate::command::Command::Run(
+            crate::command::Direction::Right,
+        ));
+        let d = g.dungeon().unwrap();
+        assert!(!d.bag().slots[0].exists());
+        assert!(d.floor_item_at((6, 5)).is_some());
+        let mut g = run();
+        lay(&mut g, (6, 5), Item::new(0x40, 1));
+        g.step(crate::command::Command::Move(
+            crate::command::Direction::Right,
+        ));
+        assert_eq!(g.dungeon().unwrap().bag().slots[0], Item::new(0x40, 1));
     }
 
     #[test]
@@ -1354,10 +1421,10 @@ mod tests {
             d.team[1].info.abilities = [0x2B, 0];
             d.team[1].info.hp = 14;
         }
-        assert_eq!(dungeon(&mut g).pickup(1), Pickup::RunAway);
+        assert_eq!(dungeon(&mut g).ally_pickup(1), Pickup::RunAway);
         // At exactly half HP the ability does not trigger (strictly below).
         dungeon(&mut g).team[1].info.hp = 15;
-        assert_eq!(dungeon(&mut g).pickup(1), Pickup::Placed);
+        assert_eq!(dungeon(&mut g).ally_pickup(1), Pickup::Placed);
         // The leader is exempt even when the same conditions hold.
         let mut g = run();
         lay(&mut g, (5, 5), Item::new(0x40, 1));

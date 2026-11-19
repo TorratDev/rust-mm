@@ -521,7 +521,13 @@ impl Dungeon {
     // (`docs/re/turns.md`, hypothesis) are not checked. The sim has no statuses or those fields,
     // so any team ally on a plain tile swaps. The Yes/No prompt is not modelled. Upgrade with
     // #415, once statuses and the flag's writer are in.
-    fn move_leader(&mut self, dir: Direction, target: (i16, i16), data: Option<&CombatData<'_>>) {
+    fn move_leader(
+        &mut self,
+        dir: Direction,
+        target: (i16, i16),
+        running: bool,
+        data: Option<&CombatData<'_>>,
+    ) {
         self.take_leader_turn(data, |d| {
             let Some(leader) = d.team.first_mut() else {
                 return;
@@ -535,8 +541,11 @@ impl Dungeon {
                 // The swap sets `0x8000` on the ally; the swap pass in `take_leader_turn` clears it.
                 d.ai.swapping.push(i);
             }
-            // The step-on pickup (`02165B00`, from the move helper `0218766C`).
-            d.pickup(0);
+            // The step-on pickup (`02165B00`, from the move helper `0218766C`). `021441D8` picks
+            // up nothing while `info+0x46 == 0`, which a run sets (a walk sets 1).
+            if !running {
+                d.pickup(0);
+            }
         });
     }
 
@@ -545,13 +554,13 @@ impl Dungeon {
     /// "Run flag and belly test").
     fn run_leader(&mut self, dir: Direction, first: (i16, i16), data: Option<&CombatData<'_>>) {
         let running = self.team.first().is_some_and(|l| l.info.belly != 0);
-        self.move_leader(dir, first, data);
+        self.move_leader(dir, first, running, data);
         if !running {
             return;
         }
         // A wild monster's attack that defeats the leader ends the run.
         while let Some(next) = self.run_ahead(dir).filter(|_| self.leader_alive()) {
-            self.move_leader(dir, next, data);
+            self.move_leader(dir, next, true, data);
         }
     }
 
@@ -1076,7 +1085,7 @@ impl GameState {
             }
             Command::Move(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
-                    dungeon.move_leader(dir, target, data);
+                    dungeon.move_leader(dir, target, false, data);
                     Outcome::Applied
                 }
                 Err(blocked) => Outcome::Blocked(blocked),
