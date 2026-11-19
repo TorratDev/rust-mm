@@ -34,11 +34,11 @@ Findings for [#360](https://github.com/TorratDev/rust-mm/issues/360), points P1 
 - Team bag = 20 `Item` slots (3 bytes, bit 1 = exists) at the start of the team inventory (`*0x020DECF8`, see P7). Limit 20 (`0x14`) in loops in `ov_0001::021441D8`, `ov_0001::02142B70`, `02007884`, `02007B68`.
 - `02007884` adds to the bag (first slot with bit 1 clear; returns 0 on success, 1 when full). `02007B68` compacts the bag after a removal.
 - Stack cap 99 (`qty + qty' > 98` clamps to 99). Only item ids below 9 stack (same id, not sticky, same bit-8 flag); the search prefers the fullest non-99 match and also checks the held-item slot. Ids 1 to 8 are the thrown stacks (category 0 and 1).
-- When `gDungeon+0x64C == 0` or the entity is not the leader (`info+6 != 0`), only the held slot (`info+0x5A`) is a candidate, not the bag. What sets `+0x64C` is not traced.
+- When `gDungeon+0x64C == 0` or the entity is not the leader (`info+6 != 0`), only the held slot (`info+0x5A`) is a candidate, not the bag. `+0x64C` is described under "Pickup gate and `+0x64C` (#464)" below.
 
 **Entry points** [blue-verified]
 - Step-on: `ov_0001::02165B00`, called from `0218766C`. It reads the tile object (`+0x10`) and the entity type: type 3 (item) calls `021441D8(entity+4, 1)` unless the item has bit 2 (shop stock, see P6; then it writes `gDungeon+0x5B8 = 4` and does not pick up; 4 is the pending main-menu choice "ground menu", see P6 [blue-verified]); type 2 (trap) goes on to the trap trigger (P5).
-- Leader pickup: `ov_0001::021441D8(pos*, silent?)`. Order: `02180B68(entity, 1)` gate (non-zero refuses; meaning not read); category 6 goes to money (`02007350` amount from a table indexed by quantity, `AddToTeamMoney 02007688`, sound `0x14C`, `02143F98` removes the floor item); else the stacking rules; else the first free slot; bag full prints the "cannot pick up" message (`param_2 == 0` suppresses it).
+- Leader pickup: `ov_0001::021441D8(pos*, silent?)`. Order: `02180B68(entity, 1)` gate (non-zero refuses; the run-away check, see #464 below); category 6 goes to money (`02007350` amount from a table indexed by quantity, see #464 below, `AddToTeamMoney 02007688`, sound `0x14C`, `02143F98` removes the floor item); else the stacking rules; else the first free slot; bag full prints the "cannot pick up" message (`param_2 == 0` suppresses it).
 - AI/ally pickup: `ov_0001::02184E50` (action 0x3F), a copy of the same body with guards: tile object exists and is not a trap, `0214067C` false, `info+7 == 0`, `info+8 != 1`, `info+0x40` not `'J'` or `'G'`, `info+0x98 != 1`.
 - Money never takes a bag slot. Item id `0x69` is the Poké item; `02142B70` and `020076CC` convert any `0x69` in the bag to money. Which dungeon-exit path calls `02142B70` is not traced. The 99,999 clamp is in `AddToTeamMoney`.
 
@@ -52,7 +52,37 @@ Findings for [#360](https://github.com/TorratDev/rust-mm/issues/360), points P1 
 
 Reconciled with investigator b, who did not find a `numItems` reader: investigator a's search found the two readers above, so the P7 doubt that it is read at all is withdrawn; the high-water-mark part agrees.
 
-Not verified: the money table at `DAT_02007360`, the meaning of `+0x64C`, `02180B68`, other limits in other modes.
+Not verified: other limits in other modes. The gate `02180B68`, `+0x64C` and the money table are settled in the next section.
+
+### Pickup gate and `+0x64C` (#464)
+
+Sources: the text export and read-only live ghidra-cli words; no emulator run, so nothing is trace-confirmed. Red names are `[red-hypothesis]` labels.
+
+**Gate `ov_0001::02180B68(entity, showEffect)`** = "should the monster run away" [blue-verified logic, high]. It calls `02180BA0(e)` and, when that is non-zero, `02180AF4(e, showEffect)` (run-away visual only, no effect on the decision); a non-zero return refuses the pickup. Callers: the leader pickup `021441D8`, the AI pickup `02184E50` and the throw `021732C4`.
+- `02180BA0` returns 0 for an invalid entity and 1 when `info+0xD7 != 0` (terrified). Otherwise, for a non-leader (`info+7 == 0`): 1 if ability `0x2B` (Run Away) is active and `info+0xE < Q`; or tactic `0x0A` is set; or tactic `0x06` is set and `info+0xE <= Q`. Else 0. So a terrified or fleeing monster does not pick up, and the leader is exempt unless terrified.
+- `Q = FUN_0208625C(info+0x10, 2)`. `0208625C` is the ARM9 signed divide helper, so `Q` is the max-HP field halved [hypothesis: the quotient is the low word of the returned pair; the helper was not read to its end]. Medium-high.
+- Red labels: `ShouldMonsterRunAwayAndShowEffect` and `ShouldMonsterRunAway`, with Run Away `0x2B`, tactics 10 (get away) and 6 (avoid trouble), HP at most max HP / 2 [red-hypothesis].
+- Open: this gate reads the leader flag at `info+7`, while the `+0x64C` rule above says `info+6`. The two bytes are not reconciled against `structs.md`.
+
+**`gDungeon+0x64C`** [blue-verified chain, high; quest meaning medium].
+- One writer: `RunDungeon_Async 0206DC20` copies `setup[0xB]` into it (the same block copies `setup[7]` to `0x64D`, `[8]` to `0x649`, `[9]` to `0x64A`, `[0xA]` to `0x64B`, `[0xC]` to `0x64E`).
+- The setup is built by ARM9 `0201E3C8(mode 0..3)` on its stack. `0201DEF4` fills `setup+4..`: `+7 <- 0201F994(8)`, `+8 <- 0201F994(3)`, `+9 <- 0201F994(0x18) && (0x19) && (0x1A)`, `+0xA <- 0201F994(7)`, `+0xB <- 0201F994(0)`, `+0xC <- 0201F994(5)`. The chain to the writer is `0201E3C8` -> `0201E204` -> `LoadAndRunDungeon_Async 0201DB70` -> `0206DC20`.
+- `0201F994(0)` = `02020518(4, 2, -1)`. `02020518(group, stage, sub)` reads the current stage and sub-count of event-variable group `group` (`02020D90`); with `sub = -1` it is 1 exactly when the stage is above `stage`. It logs and returns 0 for the unset group sentinel `0x3A`. So `+0x64C` = "story variable group 4 is past stage 2".
+- Readers: `0206DC20` (the copy), `021441D8`, `02184E50`, `021691F8`, `021693DC`, `0216D194`. With 0 the bag is not used: pickup considers only the held slot (`info+0x5A`); the bag menu `021693DC` hides the bag entries and skips the bag-full test; `021691F8` returns early; `0216D194` adds one extra entry to the team menu.
+- Meaning: "the player has an inventory in this dungeon", Red's `hasInventory` [red-hypothesis]. Red sets it from `CheckQuest(QUEST_SET_TEAM_NAME)`; that group 4 stage 2 is that quest was not checked against Red's event table. A tutorial run has no bag [hypothesis]. A trace of `+0x64C` at floor start in the tutorial and in a normal dungeon would settle it.
+- Do not port Red's setup offsets: Blue copies bytes 7 to 0xC with a different layout (Red has `canChangeLeader` at +5, `hasInventory` at +9). `0217F9B8` reads `0x64D` for dungeon ids `0x2C` to `0x30` like Red's rescue-team-maze recruit flag, so +7 agrees. For the sim, `+0x64C` can be a plain per-run setup parameter.
+
+**Money table** [blue-verified; table values deliberately not recorded]. `02007350(Item*)` (our `GetMoneyValue`) returns the u32 at `table + quantity*4`, where `quantity` is item byte 1. The pool word `DAT_02007360` holds the table address `02091FA8`. Shape: 100 u32 entries (indexes 0 to 99), non-decreasing, all below the 99,999 cap; zero words and unrelated data follow. The length matches the stack cap 99 plus index 0 and Red's 100-entry table [red-hypothesis for the identity beyond the count]. The index is not bounds-checked, so a port must keep it below 100.
+- Cap: the literal at `020076C8` is 99,999, the `AddToTeamMoney` clamp.
+- Use: only for item id `0x69` (category 6). Callers: leader and AI pickup (add to team money), bag conversion (`02006500`, `020076CC`, `02142B70`), held items of team members (`02178068`, record `+0x36`, stride `0x54`), the name formatter `02007E20`, and the buy and sell price getters `02008234` and `02008298`, which return the table value with no quantity multiplication for `0x69`. So the table also gives the shop price.
+- Not read: the other two references to `02091FA8` (twin getter `0200733C`, and `ov_0001::021432B4` in `02143290`), and whether floor generation keeps the Poké quantity in range.
+
+**Give, take and markers** (dispatched from `0218453C`; `0x3C` and `0x3D` also from the L+R handler `02168774` with the leader and `1`) [blue-verified flow, medium on messages; Red names `HandleGiveItemAction_Async` etc. are `[red-hypothesis]`]. Item flags: 1 exists, 2 shop stock, 8 sticky, 0x10 set marker.
+- Give `ov_0001::02174280` (action `0x36`): target ally `021416F4(user, 1)`, item `02141720(user, 0, 2)`. Refuses when the item is not from the floor and has both `0x10` and `8`. Empty held slot: the item (with `0x10` cleared) goes into it and the source is consumed by `02141680`. Occupied by a sticky item: message only. Occupied otherwise: swap; the old held item goes to the bag (`02007884`) or, for a floor source, onto the floor by `SpawnItem`. Both branches end with `02175F54`, a bad-tile fix (`02181F30`, `021938C8`), `|= 0x4000` on a non-leader target and `0219037C`.
+- Take `ov_0001::021740EC` (action `0x37`): refuses when the last bag slot is used (`+0x39` bit 1; the bag is compacted, so this means full) or the held item is sticky. Else the held item (marker cleared) moves to the bag with `02007884` and the held slot is zeroed; same tail as Give.
+- Set marker `ov_0001::02174680(user, msg)` (action `0x3C`): over the 20 bag slots, an existing slot with `0x10` that is sticky aborts with a message; otherwise the marker is cleared. Then the selected item (`02141720(user, 0, 0xFE)`) gets `0x10`, with one of three messages when `msg != 0`. At most one item carries the marker, and a sticky marked item blocks moving it.
+- Unset marker `ov_0001::02174594(user, msg)` (action `0x3D`): same loop; a sticky marked slot aborts with a message, else the marker is cleared with a sound and a message when `msg != 0`.
+- Both operate on the leader's team bag only. A held item is never marked (Give and Take strip `0x10`). Message ids (language tables around `021B1FAC` to `021B209C`) and the meaning of the third argument of `02141720` (2 give, `0xFE` set) are unread [hypothesis].
 
 ## P2. Using an item
 
@@ -305,7 +335,7 @@ Largely in [`structs.md`](structs.md) ("Team inventory"). Added here:
 
 ## Open questions
 
-- Hit-chance value at `021AA268` (s16, reached from `ov_0001::02144A50`), the `info+0xC6` range table, `021803B8`, `02180B68`, `+0x64C`, the money table `DAT_02007360`.
+- Hit-chance value at `021AA268` (s16, reached from `ov_0001::02144A50`), the `info+0xC6` range table, `021803B8`, (`02180B68`, `+0x64C` and the money table are settled in #464). Still open: who in the story data sets event group 4 stage 2, and the length-independent check that floor Poké quantities stay in range.
 - Message texts of the item handlers (the effects are decoded, see P2 (#459)) and trap handlers 0xB to 0x13; meaning of trap record byte 1 and of `info+6` on the monster-step path.
 - Callees that read the held id through an `Item*` (see P4, #463), and the meaning of the ids tested by the direct readers.
 - Runtime: no py-desmume check was recorded for the throw RNG draw count, for `02198824`'s caller, or for the bag layout. Investigator b announced a runtime-check section that was not posted, so nothing here is trace-confirmed.
