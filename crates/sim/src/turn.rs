@@ -207,7 +207,12 @@ impl Dungeon {
             .map_or(1, |s| s.level.max(1));
         let leader = self.team.first().map_or((0, 0), |m| m.pos);
         let (team, wild) = (&self.team, &self.wild);
-        let occupied = |x, y| team.iter().chain(wild.iter()).any(|m| m.pos == (x, y));
+        let items = &self.items;
+        // The tile's item word: a floor item on the tile rules it out as well.
+        let occupied = |x, y| {
+            team.iter().chain(wild.iter()).any(|m| m.pos == (x, y))
+                || items.slot_at((x, y)).is_some()
+        };
         let Some(pos) = floor::pick_spawn_tile(&self.floor, leader, occupied, &mut self.rng) else {
             return;
         };

@@ -2591,8 +2591,8 @@ pub fn enemy_spawn_spots(floor: &Floor) -> Vec<(i16, i16)> {
 /// tiles; the first pass with any draws an index among them. Fitting: floor terrain (`& 3 == 1`),
 /// nobody on it (`occupied`), and in passes 0 and 1 a room number other than `0xFF`; pass 0 also
 /// needs more than 5 tiles from `leader` in x or y. `None` after three empty passes.
-// shortcut: the item word (`+0xC`) of the tile is not checked, as the sim has no item entities;
-// upgrade with the items slice.
+// The item word (`+0xC`) of the tile is not checked here: the caller folds a floor item on the
+// tile into `occupied` (the sim keeps floor items in `crate::items`, not in the tile).
 pub fn pick_spawn_tile(
     floor: &Floor,
     leader: (i16, i16),

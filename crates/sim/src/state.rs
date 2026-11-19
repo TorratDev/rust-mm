@@ -23,6 +23,9 @@ use crate::combat::CombatData;
 use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
 use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
+use crate::items::{
+    Bag, FLOOR_ITEM_SLOTS, FloorItem, Item, ItemState, ItemTables, SwapSource, spawn_floor_items,
+};
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::status::{self, Status};
 use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
@@ -45,6 +48,8 @@ pub enum StateError {
     BadTileCount(usize),
     /// A snapshot records more floors than [`MAX_RESTORED_FLOORS`] to replay.
     TooManyFloors(u32),
+    /// A resume lists more floor item slots than [`FLOOR_ITEM_SLOTS`].
+    BadItemCount(usize),
     /// A resume's AI part does not fit the restored team and wild list: `field` holds the
     /// offending `index` (or length) against the bound `len`.
     BadAiState {
@@ -337,6 +342,8 @@ pub struct Dungeon {
     pub(crate) enemy_density: u8,
     /// The monsters' AI records and the team's position trails (see [`crate::ai`]).
     pub(crate) ai: AiState,
+    /// The bag, the held items and the floor items (see [`crate::items`]).
+    pub(crate) items: ItemState,
 }
 
 impl Dungeon {
@@ -514,7 +521,13 @@ impl Dungeon {
     // (`docs/re/turns.md`, hypothesis) are not checked. The sim has no statuses or those fields,
     // so any team ally on a plain tile swaps. The Yes/No prompt is not modelled. Upgrade with
     // #415, once statuses and the flag's writer are in.
-    fn move_leader(&mut self, dir: Direction, target: (i16, i16), data: Option<&CombatData<'_>>) {
+    fn move_leader(
+        &mut self,
+        dir: Direction,
+        target: (i16, i16),
+        running: bool,
+        data: Option<&CombatData<'_>>,
+    ) {
         self.take_leader_turn(data, |d| {
             let Some(leader) = d.team.first_mut() else {
                 return;
@@ -528,6 +541,11 @@ impl Dungeon {
                 // The swap sets `0x8000` on the ally; the swap pass in `take_leader_turn` clears it.
                 d.ai.swapping.push(i);
             }
+            // The step-on pickup (`02165B00`, from the move helper `0218766C`). `021441D8` picks
+            // up nothing while `info+0x46 == 0`, which a run sets (a walk sets 1).
+            if !running {
+                d.pickup(0);
+            }
         });
     }
 
@@ -536,13 +554,13 @@ impl Dungeon {
     /// "Run flag and belly test").
     fn run_leader(&mut self, dir: Direction, first: (i16, i16), data: Option<&CombatData<'_>>) {
         let running = self.team.first().is_some_and(|l| l.info.belly != 0);
-        self.move_leader(dir, first, data);
+        self.move_leader(dir, first, running, data);
         if !running {
             return;
         }
         // A wild monster's attack that defeats the leader ends the run.
         while let Some(next) = self.run_ahead(dir).filter(|_| self.leader_alive()) {
-            self.move_leader(dir, next, data);
+            self.move_leader(dir, next, true, data);
         }
     }
 
@@ -702,6 +720,16 @@ fn place_team(team: &mut [Monster], floor: &Floor, start: (i16, i16)) {
     }
 }
 
+/// What one call of the state's apply path does: a command, or an item action that has no
+/// [`Command`] yet.
+enum Input {
+    Command(Command),
+    /// Drop bag slot (`02173CCC`).
+    Drop(u8),
+    /// Swap the floor item underfoot with a bag slot or the held item (`02173A48`).
+    Swap(SwapSource),
+}
+
 /// Everything the sim owns for one run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameState {
@@ -726,6 +754,11 @@ pub struct GameState {
     /// `Species::chance_asleep` by species ID, for the spawn's sleep roll (see
     /// [`GameState::with_species_sleep_chances`]); a species past the end reads 0.
     chance_asleep: Vec<u8>,
+    /// The team bag and money while no dungeon is loaded; a loaded dungeon holds the live one
+    /// and this one is empty.
+    bag: Bag,
+    /// The item tables and setup of the run (see [`GameState::with_item_tables`]).
+    item_tables: ItemTables,
 }
 
 impl GameState {
@@ -743,7 +776,46 @@ impl GameState {
             dungeon: None,
             floors: Vec::new(),
             chance_asleep: Vec::new(),
+            bag: Bag {
+                slots: [Item {
+                    flags: 0,
+                    qty: 0,
+                    id: 0,
+                }; crate::items::BAG_SLOTS],
+                money: 0,
+            },
+            item_tables: ItemTables::new(),
         }
+    }
+
+    /// The run with its item tables (picker rows, categories, money values, sticky chance, the
+    /// `+0x64C` bag gate), given before the first floor is entered. A floor already loaded takes
+    /// them too, but its items are already placed.
+    #[must_use]
+    pub fn with_item_tables(mut self, tables: ItemTables) -> Self {
+        if let Some(d) = self.dungeon.as_mut() {
+            d.items.tables = tables.clone();
+        }
+        self.item_tables = tables;
+        self
+    }
+
+    /// The team bag and money.
+    #[must_use]
+    pub fn bag(&self) -> &Bag {
+        self.dungeon.as_ref().map_or(&self.bag, |d| &d.items.bag)
+    }
+
+    /// Drops bag slot `slot` of the leader on its tile (action 8, `02173CCC`). It takes the
+    /// leader's turn. Refusals change nothing (see [`Blocked`]).
+    pub fn drop_item(&mut self, slot: u8) -> Outcome {
+        self.apply_input(Input::Drop(slot), None)
+    }
+
+    /// Swaps the floor item underfoot with `source`, a bag slot or the held item (action 0x0A,
+    /// `02173A48`). It takes the leader's turn. Refusals change nothing (see [`Blocked`]).
+    pub fn swap_floor_item(&mut self, source: SwapSource) -> Outcome {
+        self.apply_input(Input::Swap(source), None)
     }
 
     /// The run with the species' sleep chances (`Species::chance_asleep`, indexed by species
@@ -870,13 +942,22 @@ impl GameState {
         // The spawn marks share the tile word with the visibility bits, which `enter_floor`
         // clears: the wild monsters are read from the marks first.
         let wild = wild_monsters(&floor, spawns);
-        crate::visibility::enter_floor(&mut floor);
         let floor_seed = self.preseed.next_floor_seed();
+        let mut rng = DungeonRng::new(floor_seed);
+        // The floor items come from the item marks, which `enter_floor` clears, and draw from the
+        // floor's generator (`02144714`).
+        // shortcut: the generator is not at the game's position here (the floor is given, not
+        // generated: no `FLOOR_ENTRY_STEPS`, no generation draws), so the item draws are right
+        // in order but not in state; `take_stairs` places them at the game's position.
+        let mut items = spawn_floor_items(&floor, &self.item_tables, &mut rng);
+        // The bag moves into the dungeon for the floor's length (see `drop_dungeon`).
+        items.bag = std::mem::take(&mut self.bag);
+        crate::visibility::enter_floor(&mut floor);
         self.floors_entered = self.floors_entered.saturating_add(1);
         let darkness = self.darkness_of_floor(self.floors_entered);
         self.dungeon = Some(Dungeon {
             floor,
-            rng: DungeonRng::new(floor_seed),
+            rng,
             team,
             wild,
             turn: 0,
@@ -896,6 +977,7 @@ impl GameState {
             spawn_counter: 0,
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: self.new_ai(),
+            items,
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.seed_wild_ai(true);
@@ -956,6 +1038,10 @@ impl GameState {
     }
 
     fn apply(&mut self, command: Command, data: Option<&CombatData<'_>>) -> Outcome {
+        self.apply_input(Input::Command(command), data)
+    }
+
+    fn apply_input(&mut self, input: Input, data: Option<&CombatData<'_>>) -> Outcome {
         // The stairs menu answers the leader's next input: confirm is given, so any command
         // takes the stairs (menus are not modelled).
         if self.dungeon.as_ref().is_some_and(|d| d.stairs_pending) {
@@ -967,6 +1053,31 @@ impl GameState {
         // A sleeper does not act (`0217FD78`): whatever the command, the turn passes.
         // The sleep countdown runs in the turn's leader tick, so the sleeper wakes in time.
         let asleep = dungeon.team.first().is_some_and(|l| l.info.is_asleep());
+        let command = match input {
+            Input::Command(command) => command,
+            Input::Drop(_) | Input::Swap(_) if asleep => {
+                dungeon.take_leader_turn(data, |_| {});
+                return Outcome::Applied;
+            }
+            Input::Drop(slot) => {
+                return match dungeon.drop_check(slot) {
+                    Ok(()) => {
+                        dungeon.take_leader_turn(data, |d| d.drop_apply(slot));
+                        self.after_turn(Outcome::Applied)
+                    }
+                    Err(blocked) => Outcome::Blocked(blocked),
+                };
+            }
+            Input::Swap(source) => {
+                return match dungeon.swap_check(source) {
+                    Ok(()) => {
+                        dungeon.take_leader_turn(data, |d| d.swap_apply(source));
+                        self.after_turn(Outcome::Applied)
+                    }
+                    Err(blocked) => Outcome::Blocked(blocked),
+                };
+            }
+        };
         let outcome = match command {
             _ if asleep => {
                 dungeon.take_leader_turn(data, |_| {});
@@ -974,7 +1085,7 @@ impl GameState {
             }
             Command::Move(dir) => match dungeon.leader_target(dir) {
                 Ok(target) => {
-                    dungeon.move_leader(dir, target, data);
+                    dungeon.move_leader(dir, target, false, data);
                     Outcome::Applied
                 }
                 Err(blocked) => Outcome::Blocked(blocked),
@@ -1000,16 +1111,27 @@ impl GameState {
             },
             Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
         };
-        // A wild monster's attack can defeat the leader in the turn the command took.
+        self.after_turn(outcome)
+    }
+
+    /// The end of a command: a wild monster's attack can defeat the leader in the turn the
+    /// command took, and that ends the run (the dungeon is dropped, as the cleared one is).
+    fn after_turn(&mut self, outcome: Outcome) -> Outcome {
         let outcome = match (&outcome, self.dungeon.as_ref()) {
             (Outcome::Applied, Some(d)) if !d.leader_alive() => Outcome::LeaderDefeated,
             _ => outcome,
         };
-        // The leader's defeat ends the run: the dungeon is dropped, as the cleared one is.
         if outcome == Outcome::LeaderDefeated {
-            self.dungeon = None;
+            self.drop_dungeon();
         }
         outcome
+    }
+
+    /// Unloads the dungeon; the bag goes back to the run.
+    fn drop_dungeon(&mut self) {
+        if let Some(d) = self.dungeon.take() {
+            self.bag = d.items.bag;
+        }
     }
 
     /// The stairs action: the next floor is loaded, or the dungeon is cleared when the next floor
@@ -1025,7 +1147,7 @@ impl GameState {
             .ok()
             .and_then(|index| self.floors.get(index))
         else {
-            self.dungeon = None;
+            self.drop_dungeon();
             return Outcome::DungeonCleared;
         };
         // The leaving floor's end effects come first: they are part of the stairs turn, and the
@@ -1056,6 +1178,12 @@ impl GameState {
         if g.stairs_a == UNSET {
             return Outcome::NotModelled;
         }
+        // The floor items follow the generation on the same generator (`02144714`).
+        // shortcut: the wild monsters (`02179E2C`) and traps (`02198824`), which the game draws
+        // for before the items, are not placed on a later floor, so their draws are missing.
+        let mut items = spawn_floor_items(&floor, &self.item_tables, &mut rng);
+        items.bag = leaving.items.bag;
+        items.held = leaving.items.held;
         crate::visibility::enter_floor(&mut floor);
         place_team(&mut leaving.team, &floor, g.stairs_a);
         self.preseed = preseed;
@@ -1085,6 +1213,7 @@ impl GameState {
             spawn_counter: 0,
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: self.new_ai(),
+            items,
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1136,7 +1265,14 @@ impl GameState {
                 spawn_counter: d.spawn_counter,
                 enemy_density: d.enemy_density,
                 ai: d.ai.capture(d.wild.len()),
+                held: d.items.held,
+                floor_items: d.items.floor.clone(),
+                num_items: d.items.num_items,
             }),
+            items: ItemsResume {
+                bag: *self.bag(),
+                tables: self.item_tables.clone(),
+            },
         }
     }
 
@@ -1145,7 +1281,22 @@ impl GameState {
     /// `restore` made it.
     pub fn restore_with(snapshot: &Snapshot, resume: &Resume) -> Result<Self, StateError> {
         let mut state = Self::restore(snapshot)?;
+        if let Some(r) = resume.dungeon.as_ref()
+            && r.floor_items.len() > FLOOR_ITEM_SLOTS
+        {
+            return Err(StateError::BadItemCount(r.floor_items.len()));
+        }
         state.chance_asleep.clone_from(&resume.chance_asleep);
+        let mut bag = resume.items.bag;
+        bag.money = bag.money.clamp(0, crate::items::MONEY_CAP);
+        state.item_tables = resume.items.tables.clone();
+        match state.dungeon.as_mut() {
+            Some(d) => {
+                d.items.bag = bag;
+                d.items.tables = resume.items.tables.clone();
+            }
+            None => state.bag = bag,
+        }
         if let (Some(d), Some(r)) = (state.dungeon.as_mut(), resume.dungeon.as_ref()) {
             d.mud_sport = r.mud_sport;
             d.water_sport = r.water_sport;
@@ -1162,6 +1313,18 @@ impl GameState {
             d.enemy_density = r.enemy_density;
             AiState::check_snapshot(&r.ai, d.team.len(), d.wild.len())?;
             d.ai = AiState::from_snapshot(&r.ai, resume.chance_asleep.clone());
+            d.items.held = r.held;
+            let mut floor_items = r.floor_items.clone();
+            floor_items.resize(FLOOR_ITEM_SLOTS, None);
+            d.items.floor = floor_items;
+            let high = d
+                .items
+                .floor
+                .iter()
+                .rposition(Option::is_some)
+                .map_or(0, |i| i + 1);
+            let high = u16::try_from(high).unwrap_or(0);
+            d.items.num_items = r.num_items.max(high).min(FLOOR_ITEM_SLOTS as u16);
         }
         Ok(state)
     }
@@ -1216,6 +1379,7 @@ impl GameState {
                     spawn_counter: 0,
                     enemy_density: 0,
                     ai: AiState::default(),
+                    items: ItemState::new(Bag::default(), ItemTables::new()),
                 };
                 // shortcut: plain `restore` has no AI records, so every restored wild monster gets
                 // the floor-generation record without the draws (see `seed_wild_ai`; the game's
@@ -1236,6 +1400,8 @@ impl GameState {
             // chances until `with_species_sleep_chances` is called on it (that covers the
             // restored floor too).
             chance_asleep: Vec::new(),
+            bag: Bag::default(),
+            item_tables: ItemTables::new(),
         })
     }
 }
@@ -1249,6 +1415,16 @@ pub struct Resume {
     pub chance_asleep: Vec<u8>,
     /// The current floor's extra state, `None` when no dungeon is loaded.
     pub dungeon: Option<DungeonResume>,
+    /// The team bag and the item tables of the run. Absent in older resumes: an empty bag.
+    #[serde(default)]
+    pub items: ItemsResume,
+}
+
+/// The run-wide item state of [`Resume`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemsResume {
+    pub bag: Bag,
+    pub tables: ItemTables,
 }
 
 /// The floor part of [`Resume`].
@@ -1261,6 +1437,15 @@ pub struct DungeonResume {
     pub spawn_counter: i16,
     pub enemy_density: u8,
     pub ai: AiSnapshot,
+    /// The held item of each team slot.
+    #[serde(default)]
+    pub held: [Item; TEAM_SLOTS],
+    /// The 64 floor item slots (fewer are padded with empty ones).
+    #[serde(default)]
+    pub floor_items: Vec<Option<FloorItem>>,
+    /// `numItems`, the floor item high-water mark.
+    #[serde(default)]
+    pub num_items: u16,
 }
 
 /// One tile, as a snapshot: the fields of [`Tile`].
@@ -1972,6 +2157,8 @@ mod tests {
             false,
         )
         .unwrap();
+        // The floor items draw next, on the same generator (`02144714`).
+        spawn_floor_items(&floor, &ItemTables::new(), &mut rng);
         (floor, rng, g)
     }
 
@@ -2112,6 +2299,35 @@ mod tests {
     }
 
     #[test]
+    fn the_bag_and_held_items_go_to_the_next_floor_and_survive_the_clear() {
+        let seed = 0x0007_7777;
+        let mut st = first_floor_run(seed, records(2));
+        {
+            let d = st.dungeon.as_mut().unwrap();
+            d.items.bag.slots[0] = Item::new(0x40, 3);
+            d.items.bag.money = 500;
+            d.items.held[0] = Item::new(0x41, 1);
+        }
+        stand_on_stairs(&mut st);
+        assert_eq!(st.step(Command::Wait), Outcome::NextFloor);
+        let d = st.dungeon().unwrap();
+        assert_eq!(d.bag().slots[0], Item::new(0x40, 3));
+        assert_eq!(d.bag().money, 500);
+        assert_eq!(d.held_item(0), Some(Item::new(0x41, 1)));
+        // The new floor's items are its own: none carried over.
+        assert!(
+            d.floor_items()
+                .iter()
+                .flatten()
+                .all(|f| f.item != Item::new(0x40, 3))
+        );
+        stand_on_stairs(&mut st);
+        assert_eq!(st.step(Command::Wait), Outcome::DungeonCleared);
+        assert_eq!(st.bag().money, 500);
+        assert_eq!(st.bag().slots[0], Item::new(0x40, 3));
+    }
+
+    #[test]
     fn two_floors_in_a_row_match_separate_generation_and_the_last_floor_clears() {
         let seed = 0x0031_4159;
         let recs = records(3);
@@ -2177,7 +2393,9 @@ mod tests {
         stand_on_stairs(&mut st);
         let text = serde_json::to_string(&st.snapshot()).unwrap();
         let back: Snapshot = serde_json::from_str(&text).unwrap();
-        let mut restored = GameState::restore(&back).unwrap();
+        // The floor items are not in the snapshot (the trace harness builds it), so the resume
+        // brings them back.
+        let mut restored = GameState::restore_with(&back, &st.resume()).unwrap();
         assert_eq!(restored, st);
         assert_eq!(restored.step(Command::Wait), st.step(Command::Wait));
         assert_eq!(restored, st);

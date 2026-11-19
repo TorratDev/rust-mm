@@ -70,7 +70,9 @@ pub enum Command {
         slot: u8,
         direction: Option<Direction>,
     },
-    /// Use inventory item `slot`. Items are not modelled yet.
+    /// Use inventory item `slot`. Using an item is not modelled yet (dropping and swapping are,
+    /// through [`crate::state::GameState::drop_item`] and
+    /// [`crate::state::GameState::swap_floor_item`]).
     UseItem { slot: u8 },
     /// Pass a turn in place.
     Wait,
@@ -100,6 +102,17 @@ pub enum Blocked {
     /// The move has no PP left, and another move still has PP, so the game does not use it
     /// (`docs/re/combat.md`, P3). When every move has no PP the use is Struggle instead.
     NoPp,
+    /// The bag slot is empty or not one of the 20; or a swap has nothing underfoot or an empty
+    /// source.
+    NoItem,
+    /// The item is sticky (a drop or swap of a sticky marked item, or a swap of a sticky held
+    /// item).
+    ItemSticky,
+    /// The leader's tile cannot take a dropped item: the stairs, not plain floor, or it already
+    /// holds an item.
+    DropTile,
+    /// All 64 floor item slots are used.
+    FloorItemsFull,
 }
 
 /// What a command did.
