@@ -24,6 +24,8 @@ pub struct View<'a> {
     pub menu: Option<usize>,
     pub menu_items: usize,
     pub notice: bool,
+    /// The title screens' frame for the screen being drawn, when the art is loaded.
+    pub title: Option<&'a Frame>,
 }
 
 /// Draws one screen of the view.
@@ -34,7 +36,11 @@ pub fn screen(view: &View<'_>, screen: Screen, p: &mut Painter<'_>) -> Result<()
         menu,
         menu_items,
         notice,
+        title,
     } = *view;
+    if let Some(frame) = title {
+        return blit(frame, p);
+    }
     match screen {
         Screen::Top => top(scene, dungeon, (menu_items, notice), p),
         Screen::Bottom if scene == Scene::Dungeon && menu.is_some() => {

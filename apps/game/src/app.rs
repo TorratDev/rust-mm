@@ -10,11 +10,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use rescue_data::dungeon::MonsterSpawn;
-use rescue_platform::{ButtonState, Flow};
+use rescue_platform::{ButtonState, Flow, Screen};
 use rescue_render::anim::AnimPlayer;
+use rescue_render::bg::Frame;
 use rescue_render::minimap::{MonsterInfo, MonsterMark, classify};
 use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::floor::Floor;
+use rescue_sim::rng::GlobalRng;
 use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster, MoveSlot};
 
 use crate::boot::RomCheck;
@@ -23,6 +25,7 @@ use crate::dungeon::{self, Dungeon, Figure, FloorData, IDLE_GROUP, MonsterArt, W
 use crate::input::{self, MenuInput};
 use crate::save;
 use crate::scene::{MenuItem, Scene};
+use crate::title::{self, MenuClock, MenuView, TitleArt};
 use crate::walk::Walk;
 
 /// The leader's attack pose: group 2, the close-range strike (docs/formats/sprites.md).
@@ -60,6 +63,14 @@ pub struct RunConfig {
     pub dungeon: u8,
     pub floor: u8,
     pub species: u16,
+}
+
+/// Where the menu goes when its fade out ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Leave {
+    Scene(Scene),
+    /// Load the suspend save and resume.
+    Continue,
 }
 
 /// The running game: the current scene, last tick's held buttons, and while the dungeon scene
@@ -104,6 +115,17 @@ pub struct App {
     has_save: bool,
     /// Why the last suspend or Continue failed, shown on the menu until the next try.
     notice: Option<String>,
+    /// The title screens' art, once read from the dump. `None`: the placeholders are drawn.
+    title: Option<TitleArt>,
+    /// The menu screen's fade and blink, while the menu is up.
+    clock: Option<MenuClock>,
+    /// Where the menu goes once it has faded out.
+    leave: Option<Leave>,
+    /// The menu backdrop of this visit, `FUN_02011968(3)` from the global generator.
+    backdrop: usize,
+    /// The global generator, which draws the backdrop.
+    // shortcut: seeded from the run's seed; the game seeds it from the console's MAC address.
+    rng: GlobalRng,
 }
 
 impl App {
@@ -143,7 +165,17 @@ impl App {
             save_path: None,
             has_save: false,
             notice: None,
+            title: None,
+            clock: None,
+            leave: None,
+            backdrop: 0,
+            rng: GlobalRng::from_state(config.seed),
         };
+        app.title = app.rom.as_deref().and_then(|rom| {
+            TitleArt::from_rom(rom)
+                .map_err(|e| eprintln!("rescue: no title art, placeholders are drawn: {e}"))
+                .ok()
+        });
         if app.scene == Scene::Dungeon {
             app.enter_dungeon();
         }
@@ -199,11 +231,20 @@ impl App {
                 Flow::Continue
             };
         }
-        if self.continue_pressed(pressed) {
-            self.continue_run();
-        } else {
-            self.scene = self.scene.step_with(pressed, self.has_save);
+        if self.menu_busy(&mut pressed) {
+            return Flow::Continue;
         }
+        if self.continue_pressed(pressed) {
+            self.start_leave(Leave::Continue);
+        } else {
+            let next = self.scene.step_with(pressed, self.has_save);
+            if matches!(self.scene, Scene::Menu { .. }) && !matches!(next, Scene::Menu { .. }) {
+                self.start_leave(Leave::Scene(next));
+            } else {
+                self.scene = next;
+            }
+        }
+        self.track_menu();
         if self.scene == Scene::Dungeon {
             if self.game.is_none() {
                 self.enter_dungeon();
@@ -214,7 +255,87 @@ impl App {
         } else {
             self.leave_dungeon();
         }
+        self.track_menu();
         Flow::Continue
+    }
+
+    /// Runs the menu screen's fade for this tick. `true` while it is fading: input is not read.
+    /// The tick the fade out ends, the menu's choice happens and the tick goes on.
+    fn menu_busy(&mut self, pressed: &mut ButtonState) -> bool {
+        if !matches!(self.scene, Scene::Menu { .. }) {
+            return false;
+        }
+        let Some(clock) = self.clock.as_mut() else {
+            return false;
+        };
+        let was_ready = clock.ready();
+        let done = clock.tick();
+        if done {
+            self.clock = None;
+            match self.leave.take() {
+                Some(Leave::Scene(s)) => self.scene = s,
+                Some(Leave::Continue) => self.continue_run(),
+                None => {}
+            }
+            self.track_menu();
+            *pressed = ButtonState::default();
+            return false;
+        }
+        !was_ready || self.leave.is_some()
+    }
+
+    /// Starts the menu's fade out towards `leave`.
+    fn start_leave(&mut self, leave: Leave) {
+        match self.clock.as_mut() {
+            Some(clock) => {
+                clock.leave();
+                self.leave = Some(leave);
+            }
+            // No clock (the scene was set from outside): leave at once.
+            None => match leave {
+                Leave::Scene(s) => self.scene = s,
+                Leave::Continue => self.continue_run(),
+            },
+        }
+    }
+
+    /// Keeps the menu clock in step with the scene: a menu that is up without one starts a fade
+    /// in on a new backdrop, and the clock goes when the scene does.
+    fn track_menu(&mut self) {
+        if matches!(self.scene, Scene::Menu { .. }) {
+            if self.clock.is_none() {
+                self.backdrop = title::backdrop_from(self.rng.next_u32());
+                self.clock = Some(MenuClock::new());
+                self.leave = None;
+            }
+        } else {
+            self.clock = None;
+        }
+    }
+
+    /// The title screens' frame for `screen`: the logo screen on the title, the menu screen on
+    /// the menu. `None` when another scene is up or the art is not loaded.
+    pub fn title_frame(&self, screen: Screen) -> Option<Frame> {
+        let art = self.title.as_ref()?;
+        match (self.scene, screen) {
+            (Scene::Title, Screen::Bottom) => Some(art.logo_frame()),
+            (Scene::Title, Screen::Top) => Some(TitleArt::black()),
+            (Scene::Menu { cursor }, _) => {
+                let clock = self.clock?;
+                if screen == Screen::Top {
+                    return Some(art.menu_top(clock.counter));
+                }
+                Some(art.menu_bottom(&MenuView {
+                    backdrop: self.backdrop,
+                    fade: clock.counter,
+                    windows: clock.windows(),
+                    items: MenuItem::list(self.has_save),
+                    cursor,
+                    blink: clock.blink,
+                }))
+            }
+            _ => None,
+        }
     }
 
     /// Whether this tick confirms Continue on the menu.
@@ -852,6 +973,20 @@ mod tests {
         app.tick(ButtonState::default());
     }
 
+    /// Waits out the menu's fade in or out.
+    fn fade(app: &mut App) {
+        for _ in 0..crate::title::FADE_FRAMES {
+            app.tick(ButtonState::default());
+        }
+    }
+
+    /// A tap on the menu: waits for the fade in, taps, then waits for the fade out.
+    fn choose(app: &mut App, b: DsButton) {
+        fade(app);
+        tap(app, b);
+        fade(app);
+    }
+
     fn ready() -> RomCheck {
         RomCheck::Ready(RomId::BlueRescueTeamEur)
     }
@@ -965,19 +1100,72 @@ mod tests {
         assert_eq!(app.scene, Scene::Title);
         tap(&mut app, DsButton::Start);
         assert_eq!(app.scene, Scene::Menu { cursor: 0 });
-        tap(&mut app, DsButton::Down);
+        choose(&mut app, DsButton::Down);
         assert_eq!(app.scene, Scene::Menu { cursor: 1 });
-        tap(&mut app, DsButton::A);
+        choose(&mut app, DsButton::A);
         assert_eq!(app.scene, Scene::AdventureLog);
         tap(&mut app, DsButton::B);
         assert_eq!(app.scene, Scene::Menu { cursor: 1 });
-        tap(&mut app, DsButton::Up);
-        tap(&mut app, DsButton::A);
+        choose(&mut app, DsButton::Up);
+        choose(&mut app, DsButton::A);
         assert_eq!(app.scene, Scene::Dungeon);
         assert!(app.dungeon().is_some(), "entering builds the floor");
         // B is run, not back: the dungeon stays up until the stairs clear it.
         tap(&mut app, DsButton::B);
         assert_eq!(app.scene, Scene::Dungeon);
+    }
+
+    #[test]
+    fn the_menu_fades_in_and_ignores_input_until_it_is_up() {
+        let mut app = App::new(&ready(), None, RUN, false);
+        app.scene = Scene::Title;
+        tap(&mut app, DsButton::Start);
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        for _ in 0..crate::title::FADE_FRAMES {
+            app.tick(held(DsButton::Down));
+            app.tick(ButtonState::default());
+        }
+        assert_eq!(
+            app.scene,
+            Scene::Menu { cursor: 0 },
+            "the fade in reads no input"
+        );
+        tap(&mut app, DsButton::Down);
+        assert_eq!(app.scene, Scene::Menu { cursor: 1 });
+    }
+
+    #[test]
+    fn a_choice_leaves_after_a_32_frame_fade_out() {
+        let mut app = App::new(&ready(), None, RUN, false);
+        app.scene = Scene::Title;
+        tap(&mut app, DsButton::Start);
+        fade(&mut app);
+        app.tick(ButtonState::default());
+        app.tick(held(DsButton::Start));
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 }, "the fade out starts");
+        app.tick(held(DsButton::Down));
+        for _ in 0..crate::title::FADE_FRAMES - 3 {
+            app.tick(ButtonState::default());
+            assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        }
+        app.tick(ButtonState::default());
+        app.tick(ButtonState::default());
+        assert_eq!(app.scene, Scene::Dungeon);
+    }
+
+    #[test]
+    fn each_visit_to_the_menu_draws_a_backdrop_from_the_global_generator() {
+        let mut app = App::new(&ready(), None, RUN, false);
+        let mut rng = GlobalRng::from_state(RUN.seed);
+        app.scene = Scene::Title;
+        tap(&mut app, DsButton::Start);
+        assert_eq!(app.backdrop, title::backdrop_from(rng.next_u32()));
+        choose(&mut app, DsButton::A);
+        assert_eq!(app.scene, Scene::Dungeon);
+        app.back_to_menu();
+        app.tick(ButtonState::default());
+        assert_eq!(app.backdrop, title::backdrop_from(rng.next_u32()));
+        assert!(app.backdrop < title::BACKDROPS);
     }
 
     #[test]
@@ -1211,7 +1399,7 @@ mod tests {
     fn continue_from_title(app: &mut App) {
         tap(app, DsButton::Start);
         assert_eq!(app.scene, Scene::Menu { cursor: 0 });
-        tap(app, DsButton::A);
+        choose(app, DsButton::A);
     }
 
     #[test]
