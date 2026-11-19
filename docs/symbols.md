@@ -436,8 +436,8 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::02162F28 | ConvertHeldAndBagItems | void ConvertHeldAndBagItems(...) | tentative | Id `0x7C` in bag and held becomes `qty + 0x7D`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
 | ov_0001::0219E7B8 | PartyHasItem | bool PartyHasItem(int id) | tentative | bool PartyHasItem(int id): bag or any team member's held item. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
 | ov_0001::02197AF8 | BuildShopCandidateList | void BuildShopCandidateList(...) | tentative | Bag + held candidates for shop sell/steal. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
-| ov_0001::0200747C | IsValidShopItemA | void IsValidShopItemA(...) | tentative | Rejects ids 0, 0x69, 0x77..0x7A; used by `02195E18`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
-| ov_0001::02007400 | IsValidShopItemB | void IsValidShopItemB(...) | tentative | Same rejects as `0200747C`; used by `02197AF8`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| 0200747C | IsValidShopItemA | bool IsValidShopItemA(int id) | tentative | Rejects ids 0, 0x69, 0x77..0x7A, and requires `0200813C(id)` and `02008154(id)` nonzero; used by `02195E18`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| 02007400 | IsValidShopItemB | bool IsValidShopItemB(int id) | tentative | Same id rejects as `0200747C` but no item-table lookup (true for every other id); used by `02197AF8`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
 | ov_0001::02142DD0 | ClearHeldByMask | void ClearHeldByMask(...) | tentative | Clears the held Item of members matching a mask. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
 | ov_0001::02161838 | SwapHeldItems | void SwapHeldItems(...) | tentative | Swap of held Items between two entities. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
 | ov_0001::021629D0 | MoveHeldItem | void MoveHeldItem(...) | tentative | Moves the held Item, zeroes the source. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
