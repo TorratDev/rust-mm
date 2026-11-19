@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start one role session with its task (orchestrator: Session management). Picks the next free
-# name, the Ghidra copy, the model and the role's tab, writes the dispatch text, starts Claude
+# name, the Ghidra copy, the model and the session's own tab, writes the dispatch text, starts Claude
 # or pi under hc with the environment the role scripts read, and checks it came up.
 #
 # Usage: scripts/orch/spawn.sh ROLE --issue N [fields] [--engine pi|go|claude] [--model M] [--dry-run]
@@ -65,12 +65,12 @@ case "$role" in
   investigator)
     need points
     findings=${a[findings]:-$(cache_dir findings)/$n-$name.md}
-    files="" tab=investigators
+    files=""
     task="Dispatch: you are investigator ${name#investigator-}. Engine and model: $engine $model. Ghidra copy: $copy. Sub-issue #$n. Your points: ${a[points]}. Findings file: $findings. Start now." ;;
   executor)
     need slug objective files verify evidence link
     case "${a[link]}" in closes) link="Closes #$n" ;; refs) link="Refs #$n" ;; *) die "--link closes|refs" ;; esac
-    branch="$n-${a[slug]}" wt=$(wt_path "$branch" "$repo") files=${a[files]} tab=executors
+    branch="$n-${a[slug]}" wt=$(wt_path "$branch" "$repo") files=${a[files]}
     found=$(gh issue view "$n" --json comments --jq '[.comments[].body | select(test("suggested task|\\| ID \\|"; "i"))] | length')
     [ "$found" -gt 0 ] && findings="the investigator comments on #$n" || findings=none
     extra=""
@@ -80,7 +80,7 @@ case "$role" in
     task="Dispatch: you are executor ${name#executor-}. Engine and model: $engine $model. Sub-issue #$n. Worktree: $wt. Branch: $branch. Objective: ${a[objective]}. Files you may touch: $files. Verification: ${a[verify]}. Evidence to record: ${a[evidence]}. Findings: $findings. PR link: $link.$extra Start now." ;;
   reviewer)
     need pr slug objective files executor-line
-    branch="$n-${a[slug]}" wt=$(wt_path "$branch" "$repo") files=${a[files]} tab=reviewer
+    branch="$n-${a[slug]}" wt=$(wt_path "$branch" "$repo") files=${a[files]}
     task="Dispatch: you are $name. Engine and model: $engine $model. Ghidra copy: $copy. Sub-issue #$n. PR #${a[pr]}. Worktree: $wt. Branch: $branch. Objective: ${a[objective]}. Files the task named: $files. Executor's line: ${a[executor-line]}. Start now." ;;
 esac
 
@@ -98,19 +98,11 @@ else
   [ "$readonly_role" = 1 ] && agent+=(--exclude-tools edit,write)
 fi
 
-# The role's tab in the orchestrator's space; the first session of a role makes it.
-space="" tabid=""
-if [ -n "$orch" ]; then
-  space=$(hc get "$orch" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("labels") or {}).get("herdr.space",""))')
-  tabid=$(herdr-app ls | python3 -c 'import json,sys
-sp, label = sys.argv[1], sys.argv[2]
-for s in json.load(sys.stdin).get("spaces", []):
-    if s["id"] == sp:
-        print(next((t["id"] for t in s.get("tabs", []) if t.get("name") == label), ""))' "$space" "$tab")
-fi
+# Each session gets its own tab in the orchestrator's space, named after the session.
+space=""
+[ -n "$orch" ] && space=$(hc get "$orch" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("labels") or {}).get("herdr.space",""))')
 run=(hc run --bg --name "$name" --cwd "$repo" --label "task.issue=$n" --label "task.role=$role")
 [ -n "$space" ] && run+=(--label "herdr.space=$space")
-[ -n "$tabid" ] && run+=(--label "herdr.tab=$tabid")
 run+=("${env_args[@]}" "${agent[@]}")
 
 if [ "$dry" = 1 ]; then
@@ -126,13 +118,13 @@ if [ "$engine" = pi ]; then
   hc wait "$name" --timeout 60 >/dev/null
   hc send "$name" "$role_line $task" >/dev/null
 fi
-if [ -z "$tabid" ] && [ -n "$space" ]; then
+if [ -n "$space" ]; then
   tabid=$(herdr-app ls | python3 -c 'import json,sys
 sp, name = sys.argv[1], sys.argv[2]
 for s in json.load(sys.stdin).get("spaces", []):
     for t in s.get("tabs", []) if s["id"] == sp else []:
         if any(x.get("name") == name for x in t.get("terminals", [])): print(t["id"])' "$space" "$name" | head -1)
-  [ -z "$tabid" ] || herdr-app do tab.rename --id "$tabid" --name "$tab" >/dev/null
+  [ -z "$tabid" ] || herdr-app do tab.rename --id "$tabid" --name "$name" >/dev/null
 fi
 
 # Model check: Claude shows the family in its header (sonnet, opus), pi the model in its footer.
@@ -143,4 +135,4 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
 done
 [ "$seen" = 1 ] || echo "warning: '$want' not on $name's screen yet; check with hc read $name --lines 0" >&2
-echo "started $name engine=$engine model=$model ghidra=$copy tab=$tab"
+echo "started $name engine=$engine model=$model ghidra=$copy tab=$name"
