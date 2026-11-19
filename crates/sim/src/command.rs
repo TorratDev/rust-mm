@@ -70,9 +70,10 @@ pub enum Command {
         slot: u8,
         direction: Option<Direction>,
     },
-    /// Use inventory item `slot`. Using an item is not modelled yet (dropping and swapping are,
-    /// through [`crate::state::GameState::drop_item`] and
-    /// [`crate::state::GameState::swap_floor_item`]).
+    /// Use inventory item `slot` (actions `0x0C`/`0x0D`; an orb is action `0x31`, which needs
+    /// [`crate::state::GameState::step_with`]). See [`crate::item_use`]. Dropping and swapping
+    /// are [`crate::state::GameState::drop_item`] and
+    /// [`crate::state::GameState::swap_floor_item`].
     UseItem { slot: u8 },
     /// Pass a turn in place.
     Wait,

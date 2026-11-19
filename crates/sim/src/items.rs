@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command::Blocked;
 use crate::floor::{self, Floor};
+use crate::item_use::{START_MAX_BELLY, UseParams, UseResult};
 use crate::rng::DungeonRng;
 use crate::state::{Dungeon, TEAM_SLOTS};
 
@@ -145,6 +146,9 @@ pub struct ItemTables {
     pub floor_level: u8,
     /// `gDungeon+0x64C`: the player has a bag in this dungeon (`docs/re/items.md`, #464).
     pub has_inventory: bool,
+    /// The numbers of the item handlers (`docs/re/items.md`, P2).
+    #[serde(default)]
+    pub use_params: UseParams,
 }
 
 impl Default for ItemTables {
@@ -166,6 +170,7 @@ impl ItemTables {
             quantity_table: Vec::new(),
             floor_level: 0,
             has_inventory: true,
+            use_params: UseParams::new(),
         }
     }
 
@@ -303,6 +308,10 @@ pub struct ItemState {
     /// `numItems` (`gDungeon+0x3424`): one past the highest slot ever used and still held.
     pub(crate) num_items: u16,
     pub(crate) tables: ItemTables,
+    /// The belly maximum of each team slot, in thousandths (Apples raise it).
+    pub(crate) max_belly: [i32; TEAM_SLOTS],
+    /// The last item use (`Dungeon::last_item_use`).
+    pub(crate) last_use: Option<(u8, UseResult)>,
 }
 
 impl ItemState {
@@ -313,6 +322,8 @@ impl ItemState {
             floor: vec![None; FLOOR_ITEM_SLOTS],
             num_items: 0,
             tables,
+            max_belly: [START_MAX_BELLY; TEAM_SLOTS],
+            last_use: None,
         }
     }
 
