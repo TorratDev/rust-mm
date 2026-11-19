@@ -13,6 +13,17 @@
           }
         ]
       }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/session-limit-pr.sh",
+            "timeout": 120
+          }
+        ]
+      }
     ]
   }
 }
