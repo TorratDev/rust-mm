@@ -11,6 +11,7 @@ use crate::command::Blocked;
 use crate::floor::{self, Floor};
 use crate::item_use::{START_MAX_BELLY, UseParams, UseResult};
 use crate::rng::DungeonRng;
+use crate::shop::ShopTotals;
 use crate::state::{Dungeon, TEAM_SLOTS};
 
 /// Bag slots (`0x14`, the loop bound in `021441D8`, `02142B70`, `02007884`, `02007B68`).
@@ -28,7 +29,8 @@ pub const STACKABLE_BELOW: u8 = 9;
 
 /// Item flag bit 0: the slot holds an item.
 pub const FLAG_EXISTS: u8 = 0x01;
-/// Item flag bit 1: shop stock (set by the shop pass, which the sim does not run yet).
+/// Item flag bit 1: shop stock (set on the shop tiles at floor setup, and on sold items; see
+/// [`crate::shop`]).
 pub const FLAG_SHOP: u8 = 0x02;
 /// Item flag bit 3: sticky.
 pub const FLAG_STICKY: u8 = 0x08;
@@ -149,6 +151,12 @@ pub struct ItemTables {
     /// The numbers of the item handlers (`docs/re/items.md`, P2).
     #[serde(default)]
     pub use_params: UseParams,
+    /// The buy price by id (item record `+4`): what the player pays for shop stock. Empty: 0.
+    #[serde(default)]
+    pub buy_prices: Vec<u32>,
+    /// The sell price by id (item record `+8`): what the shop pays for an own item. Empty: 0.
+    #[serde(default)]
+    pub sell_prices: Vec<u32>,
 }
 
 impl Default for ItemTables {
@@ -171,6 +179,8 @@ impl ItemTables {
             floor_level: 0,
             has_inventory: true,
             use_params: UseParams::new(),
+            buy_prices: Vec::new(),
+            sell_prices: Vec::new(),
         }
     }
 
@@ -312,6 +322,8 @@ pub struct ItemState {
     pub(crate) max_belly: [i32; TEAM_SLOTS],
     /// The last item use (`Dungeon::last_item_use`).
     pub(crate) last_use: Option<(u8, UseResult)>,
+    /// The shop totals (`+0x67C`, `+0x680`, `+0x684`), kept by spawn and removal on shop tiles.
+    pub(crate) shop: ShopTotals,
 }
 
 impl ItemState {
@@ -324,6 +336,7 @@ impl ItemState {
             tables,
             max_belly: [START_MAX_BELLY; TEAM_SLOTS],
             last_use: None,
+            shop: ShopTotals::default(),
         }
     }
 
@@ -338,11 +351,21 @@ impl ItemState {
     }
 
     /// `021440B0`: lays `item` at `pos` in the first free slot. `None` when all 64 are used.
-    pub(crate) fn spawn(&mut self, pos: (i16, i16), item: Item) -> Option<usize> {
+    /// `shop` says whether `pos` is a shop tile (its totals then take the item).
+    pub(crate) fn spawn_on(&mut self, pos: (i16, i16), item: Item, shop: bool) -> Option<usize> {
         let slot = self.floor.iter().position(Option::is_none)?;
         self.floor[slot] = Some(FloorItem { pos, item });
         self.num_items = self.num_items.max(u16::try_from(slot + 1).unwrap_or(0));
+        if shop {
+            self.shop_account(item, 1);
+        }
         Some(slot)
+    }
+
+    /// [`Self::spawn_on`] for a tile that is not a shop tile.
+    #[cfg(test)]
+    pub(crate) fn spawn(&mut self, pos: (i16, i16), item: Item) -> Option<usize> {
+        self.spawn_on(pos, item, false)
     }
 
     /// The slot of the floor item on `pos`.
@@ -352,12 +375,19 @@ impl ItemState {
             .position(|f| f.is_some_and(|f| f.pos == pos))
     }
 
-    /// `02143F98`: removes the floor item of `slot`.
-    fn remove(&mut self, slot: usize) {
-        if let Some(entry) = self.floor.get_mut(slot) {
-            *entry = None;
+    /// `02143F98`: removes the floor item of `slot`. `shop` as in [`Self::spawn_on`].
+    pub(crate) fn remove_on(&mut self, slot: usize, shop: bool) {
+        let gone = self.floor.get_mut(slot).and_then(Option::take);
+        if let (true, Some(f)) = (shop, gone) {
+            self.shop_account(f.item, -1);
         }
         self.refresh_count();
+    }
+
+    /// [`Self::remove_on`] for a tile that is not a shop tile.
+    #[cfg(test)]
+    fn remove(&mut self, slot: usize) {
+        self.remove_on(slot, false);
     }
 }
 
@@ -448,7 +478,7 @@ impl Dungeon {
     /// match the second pass drops that condition. The sum clamps to 99 and the slot becomes
     /// sticky when the floor item was.
     pub fn pickup(&mut self, member: usize) -> Pickup {
-        self.pickup_from(member, false)
+        self.pickup_from(member, false, false)
     }
 
     /// Ally pickup (`02184E50`, action 0x3F). It has no `+0x46` gate. The candidates are the 20
@@ -460,31 +490,36 @@ impl Dungeon {
     // `info+0x98 != 1`, `info+8 != 1` and `0214067C` are not modelled; no AI action calls this
     // yet (the pickup decision is in `ai.md`, not ported).
     pub fn ally_pickup(&mut self, member: usize) -> Pickup {
-        self.pickup_from(member, true)
+        self.pickup_from(member, true, false)
     }
 
-    fn pickup_from(&mut self, member: usize, ally: bool) -> Pickup {
+    /// The pickup of shop stock by the ground menu's buy (`docs/re/items.md`, P6): the same
+    /// placement as [`Self::pickup`], but the stock is taken and keeps its shop flag, so it
+    /// stays owed until paid. `buy` lets the stock through the refusal.
+    pub(crate) fn pickup_from(&mut self, member: usize, ally: bool, buy: bool) -> Pickup {
         let Some(m) = self.team.get(member) else {
             return Pickup::NoItem;
         };
-        let Some(slot) = self.items.slot_at(m.pos) else {
+        let pos = m.pos;
+        let Some(slot) = self.items.slot_at(pos) else {
             return Pickup::NoItem;
         };
         let Some(floor_item) = self.items.floor[slot] else {
             return Pickup::NoItem;
         };
         let item = floor_item.item;
-        if item.flags & FLAG_SHOP != 0 {
+        if item.flags & FLAG_SHOP != 0 && !buy {
             return Pickup::ShopStock;
         }
         if self.runs_away(member) {
             return Pickup::RunAway;
         }
+        let shop = self.tile_is_shop(pos);
         let st = &mut self.items;
         if st.tables.category(item.id) == 6 {
             let amount = st.tables.money_value(item.qty);
             st.bag.add_money(amount);
-            st.remove(slot);
+            st.remove_on(slot, shop);
             return Pickup::Money(amount);
         }
         // The candidates: `None` is the held slot, `Some(i)` bag slot `i`.
@@ -530,7 +565,7 @@ impl Dungeon {
                         }
                     }
                 }
-                st.remove(slot);
+                st.remove_on(slot, shop);
                 return Pickup::Stacked;
             }
         }
@@ -543,7 +578,7 @@ impl Dungeon {
             }
             None => return Pickup::Full,
         }
-        st.remove(slot);
+        st.remove_on(slot, shop);
         Pickup::Placed
     }
 
@@ -586,6 +621,7 @@ impl Dungeon {
         let Some(pos) = self.team.first().map(|l| l.pos) else {
             return;
         };
+        let shop = self.tile_is_shop(pos);
         let st = &mut self.items;
         let Some(&entry) = st.bag.slots.get(usize::from(slot)) else {
             return;
@@ -594,7 +630,7 @@ impl Dungeon {
             flags: entry.flags & !FLAG_MARK,
             ..entry
         };
-        if st.spawn(pos, item).is_some() {
+        if st.spawn_on(pos, item, shop).is_some() {
             st.bag.slots[usize::from(slot)] = Item::default();
             st.bag.compact();
         }
@@ -637,6 +673,7 @@ impl Dungeon {
         let Some(pos) = self.team.first().map(|l| l.pos) else {
             return;
         };
+        let shop = self.tile_is_shop(pos);
         let st = &mut self.items;
         let Some(slot) = st.slot_at(pos) else {
             return;
@@ -652,12 +689,12 @@ impl Dungeon {
             SwapSource::Bag(s) => (st.bag.slots[usize::from(s)], unmark(floor_item.item)),
             SwapSource::Held => (st.held[0], unmark(floor_item.item)),
         };
-        st.remove(slot);
+        st.remove_on(slot, shop);
         match source {
             SwapSource::Bag(s) => st.bag.slots[usize::from(s)] = Item::default(),
             SwapSource::Held => st.held[0] = Item::default(),
         }
-        st.spawn(pos, unmark(down));
+        st.spawn_on(pos, unmark(down), shop);
         match source {
             SwapSource::Held => st.held[0] = up,
             SwapSource::Bag(_) => {
@@ -729,9 +766,12 @@ pub(crate) fn spawn_floor_items(
             if shop && !matches!(id, 0 | POKE | 0x77..=0x7A) {
                 item.flags |= FLAG_SHOP;
             }
-            state.spawn((x as i16, y as i16), item);
+            state.spawn_on((x as i16, y as i16), item, shop);
         }
     }
+    // The baseline is the stock laid at setup, and the credit starts at 0 (`0206DC20`).
+    state.shop.baseline = state.shop.stock;
+    state.shop.credit = 0;
     state
 }
 
