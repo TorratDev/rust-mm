@@ -23,7 +23,7 @@ are enforced by a guard, not only written down.
 2. **Phase B, orchestrator.** In `scripts/orch/`:
    - `spawn.sh`: next free name, Ghidra copy, tab, dispatch text, engine start and model check.
    - `reap.sh`: save the screen, kill, remove and stop the bridge.
-   - `epic-status.sh`: derive each sub-issue's state and next action from GitHub, worktrees
+   - `epic-status.py`: derive each sub-issue's state and next action from GitHub, worktrees
      and hc. This replaces `progress.md`; notes go in comments on the epic.
    - `merge.sh`: mark ready, check the checks and merge.
    - `cleanup-check.sh`: the end-of-epic checks.
@@ -38,8 +38,16 @@ are enforced by a guard, not only written down.
 ## Risks and open questions
 - The guard matches command text. It stops honest mistakes, not a model that tries to work
   around it (`sh -c`, `eval`).
-- `epic-status.sh` infers state from branch names (`<n>-<slug>`) and comment first lines
+- `epic-status.py` infers state from branch names (`<n>-<slug>`) and comment first lines
   (`PASS`, `REVISE`, ...). A branch or a verdict outside that format is not seen.
 
 ## Outcome
-Filled in when the plan is done or dropped.
+Phases A, B and C are written, each in its own PR.
+- `scripts/tests/harness-test.sh`: 38 checks pass (worktree, check-diff, commit, ship refusals,
+  report formats, guard rules).
+- `epic-status.py 7` gave the live epic's state in about 20 s. `spawn.sh --dry-run` built the
+  dispatch for each role.
+- The guard blocked `hc kill` for an executor in a live Claude session (hook) and a live pi
+  session (extension).
+- Not run yet: a full epic with the new scripts, `ship.sh` and `merge.sh` against GitHub, and
+  `spawn.sh` without `--dry-run`.

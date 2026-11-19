@@ -89,7 +89,8 @@ if [ "$engine" = claude ]; then
   agent=(claude --model "$model" "$role_line $task")
   [ "$readonly_role" = 1 ] && agent+=(--disallowedTools Edit Write NotebookEdit)
 else
-  agent=(pi --model "$model" --name "$name" --append-system-prompt "prompts/$role.md")
+  # Claude sessions get scripts/guard.sh from the hook in .claude/settings.json; pi from this extension.
+  agent=(pi --model "$model" --name "$name" --append-system-prompt "prompts/$role.md" -e "$repo/scripts/pi/guard.ts")
   [ "$readonly_role" = 1 ] && agent+=(--exclude-tools edit,write)
 fi
 

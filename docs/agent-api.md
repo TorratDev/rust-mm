@@ -70,6 +70,16 @@ writes only content. They read `TASK_FILES`, `AGENT_ROLE`, `AGENT_ENGINE`, `AGEN
 | `scripts/orch/merge.sh PR` | after a PASS: `gh pr ready`, then `gh_pr_finish` once checks pass; exit 75 while pending |
 | `scripts/orch/cleanup-check.sh` | end-of-epic checks: bridges, worktrees, sessions, stray files in the main checkout |
 
+## Guard
+
+`scripts/guard.sh` runs before every shell command of a session that has `AGENT_ROLE` set, through
+the Claude Code `PreToolUse` hook in [`.claude/settings.json`](../.claude/settings.json) and the pi
+extension [`scripts/pi/guard.ts`](../scripts/pi/guard.ts) (spawn.sh loads it). It blocks what the
+role must not run (bare `gh issue create` / `gh pr create`, merges and session control outside the
+orchestrator, executor `git commit`/`push` instead of the scripts, git writes in the main checkout,
+writes from read-only roles, another session's Ghidra copy) and says what to use instead.
+Sessions without `AGENT_ROLE` are not affected.
+
 ## Writes (GitHub)
 
 Run these as their own command, so the permission prompt shows what is written.
