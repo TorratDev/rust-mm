@@ -834,3 +834,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - The row-4 divergence before the fix was reproduced by investigator a, not again in this PR.
   - Belly is not in the trace and is not compared.
 - **Not run:** the trace was not recaptured; the reused capture's SHA-1 is recorded above.
+
+## #380 — Title screens from the ROM's art (logo screen and menu screen)
+
+- **Assumption:** investigator a's findings on #380: the logo screen is ground map `S02` (layer 0 over layer 1) on the lower screen with a black upper screen; the menu screen is a random `titlenK` backdrop (lower, engine A BG3 map 1 over BG2 map 0) and the `subdef` logo (upper, engine B), with the two windows (font frame tiles, message ids 2238/2239, descriptions 2261/2263) and a blinking `fontsp` tile 4 cursor; the 32-step fade with `titlemenu::fade_color` (#542).
+- **Date:** 2026-11-14.
+- **Environment:** rustc 1.97.0, Linux (X11). ROM: the main checkout's `pmdb.nds` as `RESCUE_ROM`.
+- **What changed:** `apps/game` only. `title.rs` reads the art (`S02` through `rescue_formats::ground`, `titlenK`/`subdef` through `titlemenu`, `system.sbin` `font`, `fontpal`, `fontsp`, `fontsppa`, `kanji_a`, and `message_e.str`) and draws both screens; `MenuClock` is the fade and blink timing. `app.rs` gates the menu: no input for the 32 fade-in ticks, 32 ticks of fade out before a choice (New Game, Adventure Log, Continue) takes effect, and a backdrop drawn from the global generator on each visit (`((r & 0xFFFF) * 3) >> 16`). `draw.rs` blits the title frames; without a ROM the placeholders stay.
+- **Evidence:**
+  - Headless: `title::` unit tests on synthetic art (backdrop number, 32-tick clock, the fade formula and its hold at 31, windows and cursor only after the fade in, the cursor blink, a taller window with a save) and `app::the_menu_fades_in_and_ignores_input_until_it_is_up`, `a_choice_leaves_after_a_32_frame_fade_out`, `each_visit_to_the_menu_draws_a_backdrop_from_the_global_generator`; the boot tests wait out the fades.
+  - ROM-gated: `title::tests::title_assets_load_and_draw` (skips without `RESCUE_ROM`): the assets load; `S02` is not blank; each of the three backdrops draws and differs from the others; counter 0 is black; the subdef logo and the text draw. `RESCUE_ROM=<main>/pmdb.nds cargo test -p rescue-game`: 64 passed.
+  - Live windowed run: `rescue --frames 3000 --no-settings` with `RESCUE_ROM` set, on X11, with Return sent through XTest. The window showed the logo screen (S02 over black) after the splash; Return opened the menu: a `titlen2` backdrop (Charmander, Bulbasaur, Pelipper), the subdef logo above, the New Game / Adventure Log window with the cursor, and the description "Start an entirely new adventure." in the lower window. Screenshots are in a scratch directory, not committed. The fade-in frames themselves were not captured live (the debug build starts slowly, so the capture came after the 32 ticks); the fade is covered by the unit tests.
+- **Shortcuts (in code, `shortcut:` and `[hypothesis]` comments):**
+  - English only: `subdef`, `S02` and `message_e.str`; the game picks them by `GetLanguage()`.
+  - The global generator is seeded from the run's seed, not the console's MAC address.
+  - The logo screen's camera is a centred, top-aligned window on the 312-pixel map; the game's scroll is not read. Its own fade and the 33-frame transition at START are not drawn.
+  - The cursor blink (8 frames on, 8 off), the item text origin (31, 25) and the cursor x/y are from few samples (investigator a: low confidence). A save-present menu has only Continue, New Game, Adventure Log; Delete Save Data, Friend Rescue, Trade Items and Wonder Mail are not entries yet.
+- **Not drawn:** `titleop1`/`titleop2`/`titleopc` (envelope and birds) and the demo before the logo screen.
+- **Not verified:** pixel equality with a retail capture of either screen (no capture was compared; the frames were checked by eye against investigator a's description).

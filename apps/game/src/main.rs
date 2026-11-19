@@ -17,6 +17,7 @@ mod dungeon;
 mod input;
 mod save;
 mod scene;
+mod title;
 mod walk;
 
 use std::path::{Path, PathBuf};
@@ -218,12 +219,14 @@ impl Game for App {
     }
 
     fn draw(&mut self, screen: Screen, p: &mut Painter<'_>) -> Result<(), PlatformError> {
+        let title = self.title_frame(screen);
         let view = draw::View {
             scene: self.scene,
             dungeon: self.dungeon(),
             menu: self.menu(),
             menu_items: self.menu_items(),
             notice: self.notice().is_some(),
+            title: title.as_ref(),
         };
         draw::screen(&view, screen, p)
     }
