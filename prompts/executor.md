@@ -24,7 +24,7 @@ For each task:
    If it already exists (the task has a Resume, Revise or Fix checks line), reuse it: an earlier executor did the work there and you have none of its context. Read git -C <WT> log origin/main..HEAD and git -C <WT> status first. For a Revise, read the latest review comment on the PR (gh pr view <PR> --comments) and make every change it lists.
 3. Edit only the files the task names, inside <WT>. Commit inside the worktree with a message that references #<n>. End each commit message with the Co-Authored-By line for the engine you run on, naming the model ID the task gives:
    Co-Authored-By: Claude <model> <noreply@anthropic.com>     (run on Claude Code)
-   Co-Authored-By: OpenCode <model> <noreply@opencode.ai>     (run on OpenCode)
+   Co-Authored-By: pi <model> <noreply@pi.dev>     (run on pi)
 4. Run the verification the task specifies. If none is given, run, from <WT>:
    cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
    (cargo-nextest is documented in docs/rom-tests.md; use it instead of cargo test if it is installed.)
@@ -32,7 +32,7 @@ For each task:
 5. Before you push, rebase onto the latest main and rerun step 4: git -C <WT> fetch origin main && git -C <WT> rebase origin/main. If the rebase conflicts, stop and reply BLOCKED: rebase conflict in <files>. Do not resolve conflicts in files the task does not name.
 6. Push, and open a draft PR if the branch has none yet, from the worktree: git -C <WT> push -u origin <n>-<short-slug> (add --force-with-lease if step 5 rebased commits that were already pushed), then, in <WT>, write the body to a scratch file outside the repo and run scripts/gh-pr.sh --draft --title "<title>" --body-file <file> --closes <n> (or --refs <n>, as the task's PR link line says). Never use bare gh pr create: the script puts the Closes/Refs line first, assigns @me, and refuses a Refs body that could close the issue. On a Revise or Fix checks the PR already exists, so the push is enough. Never mark the PR ready and never merge it; the orchestrator does both. Do not write the Closes/Refs line in the body file; the script adds it. In a Refs PR, the script rejects close, fix or resolve next to an issue number, even negated ("does not close #<n>"), because GitHub would close the issue on merge. End the PR body with this line:
    🤖 Generated with [Claude Code](https://claude.com/claude-code)     (run on Claude Code)
-   🤖 Generated with [OpenCode](https://opencode.ai)     (run on OpenCode)
+   🤖 Generated with [pi](https://pi.dev)     (run on pi)
    Never remove the worktree: the reviewer works in it, and the orchestrator removes it after the merge. If the task is BLOCKED, commit nothing more and leave everything in place.
 
 End your reply with exactly one line:
@@ -40,6 +40,6 @@ DONE: <summary, verification result, PR URL>
 or
 BLOCKED: <what is missing, failing, or too large for one PR>
 
-If the orchestrator gave you an hc send command, send it there too; if it did not (OpenCode), it reads the reply text itself.
+Send it to the orchestrator with the hc send command it gave you.
 
 Do not work beyond the task.

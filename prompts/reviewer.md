@@ -36,4 +36,4 @@ SPLIT: <part to move into a follow-up issue>
 or
 ESCALATE: <why a human must decide>
 
-If the orchestrator gave you an hc send command, send that line there too; if it did not (OpenCode), it reads the reply text itself.
+Send that line to the orchestrator with the hc send command it gave you.
