@@ -852,3 +852,13 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
   - The cursor blink (8 frames on, 8 off), the item text origin (31, 25) and the cursor x/y are from few samples (investigator a: low confidence). A save-present menu has only Continue, New Game, Adventure Log; Delete Save Data, Friend Rescue, Trade Items and Wonder Mail are not entries yet.
 - **Not drawn:** `titleop1`/`titleop2`/`titleopc` (envelope and birds) and the demo before the logo screen.
 - **Not verified:** pixel equality with a retail capture of either screen (no capture was compared; the frames were checked by eye against investigator a's description).
+
+## #465 — Bag layout, `numItems` and the bag gate at runtime
+
+- **Assumption:** the bag layout, the `numItems` high-water rule, floor-slot staleness, the use handler and the `gDungeon+0x64C` bag gate in [`re/items.md`](re/items.md) (P1, P7) hold on a running game.
+- **Date:** not recorded in the findings (investigator runs on #465).
+- **Environment:** py-desmume, the supported dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, not committed), new game booted to floor 1, savestate 60 frames after the dungeon pointer was set; bag item poked into slot 0 and `gDungeon+0x64C` set to 1 to drive the menu.
+- **Evidence:** exec hooks `02173CCC` (drop), `021440B0` (SpawnItem), `021441D8` (pickup), `02143F98` (RemoveItemAt), `0217371C` (use); bag, `numItems` and floor slots read at hook time and after each step. Results are in `re/items.md`. Command: `python verification/v7-trace/items_bag_probe.py <ROM> <OUT> --item 0x20 --steps drop` (and `--item 0x56 --steps use`). The repository script is a tidied copy of the investigators' probes: it was compiled (`py_compile`) but not re-run in this PR, so no output hash is recorded.
+- **Outcome:** confirmed in the findings' runs: drop 3 -> 4, top-slot pickup 4 -> 3, removal below the top keeps the count, floor bytes stay stale, use clears the slot, floor 1 has the bag gate off. Open: qty > 1 use, bag-full pickup, what sets `+0x64C`.
+- **Fallback adopted:** none.
+- **Notes:** the boot to floor 1 takes about 4.5 minutes; use `--save-state` once and `--state` after.
