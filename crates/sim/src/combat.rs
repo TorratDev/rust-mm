@@ -300,10 +300,8 @@ fn boosted_attack(
 }
 
 /// The damage of `mv` from a team member `attacker` against `target` (`CalcDamage`). Steps as
-/// `docs/re/combat.md` lists them. The attacker is always a team member (the leader), so the
-/// level term is the team branch.
-// shortcut: the wild attacker's term (`attack / 3`, after a second boost pass) is not modelled,
-// because the sim's attackers are the leader's moves only.
+/// `docs/re/combat.md` lists them. A team attacker's level term is `level * 2 / 3`, a wild
+/// attacker's is `attack / 3`.
 // shortcut: the held-item boosts, the Deoxys adjustment, the target's `+0xAE` defence stage and
 // the Wonder Guard branch are not modelled.
 // shortcut: Guts, Marvel Scale and Plus/Minus are not modelled: they need a negative status or a
@@ -362,7 +360,15 @@ fn damage_scaled(
     ) / 256;
 
     // Base damage x (steps 10 and 11): (attack - defence) / 8 plus the level term, in 48.16.
-    let level_term = i64::from(attacker.level) * TWO_THIRDS;
+    // A wild attacker (`isNotTeamMember != 0`) uses `attack / 3` instead: the raw attack stat
+    // (no move power, no stage) after a second `CalcStatBoosts` pass, divided in 48.16 without
+    // truncation (`0217bd94`, `docs/re/combat.md` step 10).
+    let level_term = if attacker.not_team_member {
+        let raw = i64::from(attacker.attack[split]);
+        boosted_attack(raw, physical, rolls.boost, attacker, target) * ONE / 3
+    } else {
+        i64::from(attacker.level) * TWO_THIRDS
+    };
     let x = (attack - defence) * ONE / 8 + level_term;
 
     // Base damage (step 12): x * x * 0.05 + (2x - defence + 10), clamped to [1, 999].
@@ -1407,6 +1413,31 @@ pub(crate) mod tests {
         let mut high = neutral.clone();
         high.offensive_stages = [15, 15];
         assert!(damage(&t, &mv, &high, &target, rolls).value > 38);
+    }
+
+    #[test]
+    fn a_wild_attacker_uses_attack_over_three_for_the_level_term() {
+        let t = tables();
+        let target = info([9, 0], [0, 0]);
+        let mv = tackle([100; 3], 0);
+        let rolls = Rolls {
+            boost: 100,
+            crit: 99,
+            variance: 0x2000,
+        };
+        // Attack 12 gives the term 12 / 3 = 4, the same as a team attacker of level 6
+        // (6 * 2 / 3), so the two damages are equal and differ from the level-10 team one.
+        let mut wild = info([0, 0], [0, 0]);
+        wild.attack = [12, 12];
+        wild.not_team_member = true;
+        let mut team6 = wild.clone();
+        team6.not_team_member = false;
+        team6.level = 6;
+        let mut team10 = team6.clone();
+        team10.level = 10;
+        let w = damage(&t, &mv, &wild, &target, rolls).value;
+        assert_eq!(w, damage(&t, &mv, &team6, &target, rolls).value);
+        assert!(w < damage(&t, &mv, &team10, &target, rolls).value);
     }
 
     #[test]
