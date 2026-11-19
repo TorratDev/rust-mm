@@ -94,6 +94,8 @@ impl Dungeon {
         act: impl FnOnce(&mut Dungeon),
     ) {
         let k = self.run_to_leader_gate(self.fractional_turn, data);
+        // The leader's action loop flushes the walks first (`02140FAC`).
+        self.flush_moves();
         self.spawn_step(k);
         // The floor's first pass skips the regeneration tick (`param` TRUE in the floor loop).
         if self.turn > 0 || k > 0 {
@@ -112,7 +114,7 @@ impl Dungeon {
         }
         // The swap pass follows the leader's Execute, before the team loop (`02140FAC`, `0214114C`).
         self.run_swap_pass();
-        self.pending_end_of_turns = self.pending_end_of_turns.saturating_add(1);
+        self.pending_end_of_turns = 1;
         self.run_other_monsters(k, data);
         self.weather_step(k);
         self.fractional_turn = self.run_to_leader_gate(next(k), data);
@@ -136,10 +138,7 @@ impl Dungeon {
     pub(crate) fn leave_floor_by_stairs(&mut self) {
         self.stairs_pending = false;
         self.regenerate_leader();
-        while self.pending_end_of_turns > 0 {
-            self.pending_end_of_turns -= 1;
-            self.leader_end_of_turn();
-        }
+        self.flush_moves();
     }
 
     /// Runs the steps of fractional turns from `k` on, up to the leader's next gate, and returns
@@ -257,10 +256,7 @@ impl Dungeon {
         if !acts(1, next(k)) {
             return;
         }
-        if self.pending_end_of_turns > 0 {
-            self.pending_end_of_turns -= 1;
-            self.leader_end_of_turn();
-        }
+        self.flush_moves();
         self.tick_sport_timers();
     }
 
@@ -313,7 +309,7 @@ impl Dungeon {
     /// lost); then the Shed Skin roll, `DungeonRandInt(100)`, drawn unconditionally so the floor
     /// generator stays in step with the game. Its result is unused until a status or ability
     /// reads it. The Warp Scarf roll and the weather damage (between the two) are not modelled.
-    fn leader_end_of_turn(&mut self) {
+    pub(crate) fn leader_end_of_turn(&mut self) {
         // shortcut: the held-item decrement terms (Tight Belt, Stamina Band, Energy Saver, Diet
         // Ribbon, Heal Ribbon, Munch Belt) and the linked-move term are not modelled; every turn
         // costs the base 0.1. The empty-belly alert counter (`dungeon+0x669`) is not kept: it

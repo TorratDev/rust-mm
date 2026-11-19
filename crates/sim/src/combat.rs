@@ -661,6 +661,8 @@ impl Dungeon {
         effect: &Effect,
         data: &CombatData<'_>,
     ) -> bool {
+        // Execute of an attack flushes the pending walks before its accuracy draws (#510).
+        self.flush_moves();
         let mut defeated = Vec::new();
         for &target in targets {
             if self.resolve(attacker, target, mv, effect, data) {

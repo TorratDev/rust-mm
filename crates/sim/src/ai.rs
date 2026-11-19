@@ -13,7 +13,7 @@
 //! Execute then draws the end-of-turn roll (`02186894`), unless the monster is flagged
 //! `aiAllySkip`, which defers it to the end of the loop.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::combat::{CombatData, REGULAR_ATTACK, REGULAR_ATTACK_ARG8};
 use crate::floor::{self, NO_ROOM};
@@ -127,6 +127,9 @@ struct TeamAi {
     prev: [(i16, i16); 4],
     /// `info+0x8A`, the tactic (0 is LETS_GO_TOGETHER, the default).
     tactic: u8,
+    /// The partner walked and its end of turn waits for the movement flush
+    /// ([`Dungeon::flush_moves`]).
+    pending_move: bool,
 }
 
 /// The AI state of a floor: the wild monsters' records and the team's.
@@ -141,6 +144,8 @@ struct TeamAi {
 pub(crate) struct AiState {
     wild: BTreeMap<(i16, i16), AiRecord>,
     team: Vec<TeamAi>,
+    /// The tiles of the wild monsters that walked and wait for the movement flush.
+    pending_wild: BTreeSet<(i16, i16)>,
     /// Team slots flagged `0x8000` by a leader swap, until the swap pass (`02140ED0`) runs.
     pub(crate) swapping: Vec<usize>,
     /// Team slots flagged `0x4000`: the team loop skips each once and clears the flag.
@@ -194,6 +199,7 @@ impl Dungeon {
         self.sync_team_ai();
         let live: Vec<_> = self.wild.iter().map(|m| m.pos).collect();
         self.ai.wild.retain(|p, _| live.contains(p));
+        self.ai.pending_wild.retain(|p| live.contains(p));
         let mut deferred = Vec::new();
         let mut i = 0;
         while i < self.wild.len() {
@@ -412,8 +418,8 @@ impl Dungeon {
             m.pos = step(m.pos, dir);
             m.info.direction = dir as u8;
         }
-        if !skip {
-            self.ally_end_of_turn(i);
+        if !skip && let Some(t) = self.ai.team.get_mut(i) {
+            t.pending_move = true;
         }
         skip
     }
@@ -479,6 +485,33 @@ impl Dungeon {
             s.sleep = status::SLEEP;
             s.sleep_turns = status::NO_END;
         }
+    }
+
+    /// The movement flush (`DisplayActions_Async`, `0218766C`): the end of turn of every monster
+    /// that walked since the last flush, the leader first, then the team slots, then the wild
+    /// monsters in list order. A walker only marks itself; Execute of a non-walk action, the
+    /// weather step and the leader's next action flush (`docs/re/turns.md`, #510).
+    pub(crate) fn flush_moves(&mut self) {
+        if self.pending_end_of_turns > 0 {
+            self.pending_end_of_turns = 0;
+            self.leader_end_of_turn();
+        }
+        for i in 1..self.team.len() {
+            if self
+                .ai
+                .team
+                .get_mut(i)
+                .is_some_and(|t| std::mem::take(&mut t.pending_move))
+            {
+                self.ally_end_of_turn(i);
+            }
+        }
+        for i in 0..self.wild.len() {
+            if self.ai.pending_wild.remove(&self.wild[i].pos) {
+                self.monster_end_of_turn(i);
+            }
+        }
+        self.ai.pending_wild.clear();
     }
 
     /// `DoEndOfTurnEffects` for a partner: the one draw it makes, `DungeonRandInt(100)`
@@ -587,7 +620,9 @@ impl Dungeon {
             m.info.direction = dir as u8;
         }
         if !skip {
-            self.monster_end_of_turn(i);
+            let at = self.wild[i].pos;
+            self.ai.pending_wild.remove(&me);
+            self.ai.pending_wild.insert(at);
         }
         skip
     }
@@ -1258,6 +1293,7 @@ mod tests {
         actual.rng = crate::rng::DungeonRng::new(seed);
         let mut model = actual.clone();
         actual.run_wild_monsters(K, Some(&data));
+        actual.flush_moves();
 
         let roll = pick.map_or(0, |total| model.rng.int(total));
         let attack = Effect::Damage {
@@ -1347,6 +1383,7 @@ mod tests {
             actual.rng = crate::rng::DungeonRng::new(seed);
             let mut model = actual.clone();
             actual.run_wild_monsters(K, Some(&data));
+            actual.flush_moves();
             let roll = model.rng.int(total);
             if roll <= i32::from(weight) {
                 by_move = true;
@@ -1403,6 +1440,7 @@ mod tests {
             actual.rng = crate::rng::DungeonRng::new(seed);
             let mut model = actual.clone();
             actual.run_wild_monsters(K, Some(&data));
+            actual.flush_moves();
             if model.rng.int(45) > 10 {
                 continue; // the roll landed on the regular attack
             }
@@ -1443,6 +1481,7 @@ mod tests {
             actual.rng = crate::rng::DungeonRng::new(seed);
             let mut model = actual.clone();
             actual.run_wild_monsters(K, Some(&data));
+            actual.flush_moves();
             // No pick; the target draw, Struggle's resolve and recoil, then the end-of-turn roll.
             model.rng.int(1);
             let mv = &moves[usize::from(move_effects::STRUGGLE)];
@@ -1487,6 +1526,7 @@ mod tests {
         };
         let mut model = d.clone();
         d.run_wild_monsters(K, Some(&data));
+        d.flush_moves();
         let mv = &moves[usize::from(move_effects::STRUGGLE)];
         // A: target draw, Struggle, removed (no end of turn). B, now at index 0: the same, then
         // its end of turn.
@@ -1528,6 +1568,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_wild_monsters(K, Some(&data));
+        d.flush_moves();
         // The pick, then the end-of-turn roll; the walk draws nothing.
         expected.int(6 + REGULAR[1]);
         expected.int(100);
@@ -1571,12 +1612,37 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         // `Int(35)@02193260`, then `Int(100)@02186894`; the walk itself draws nothing.
         expected.int(35);
         expected.int(100);
         assert_eq!(d.rng, expected);
         assert_eq!(d.wild[0].pos, (6, 5));
         assert_eq!(d.wild[0].info.direction, 2);
+    }
+
+    #[test]
+    fn a_walker_draws_its_end_of_turn_at_the_flush_after_the_leaders() {
+        // #510: a walk only marks the monster; the flush draws the leader's, then the walkers'.
+        let mut g = room_with((12, 5), &[(5, 5)]);
+        let d = g.dungeon_mut().unwrap();
+        let belly = d.team[0].info.belly;
+        d.pending_end_of_turns = 1;
+        let mut expected = d.rng;
+        d.run_wild_monsters(K, None);
+        // The pick only: no end-of-turn draw yet, the leader's belly has not ticked.
+        expected.int(35);
+        assert_eq!(d.rng, expected);
+        assert_eq!(d.team[0].info.belly, belly);
+        d.flush_moves();
+        expected.int(100); // the leader
+        expected.int(100); // the wild walker
+        assert_eq!(d.rng, expected);
+        assert!(d.team[0].info.belly < belly);
+        assert_eq!(d.pending_end_of_turns, 0);
+        // Nothing is pending any more.
+        d.flush_moves();
+        assert_eq!(d.rng, expected);
     }
 
     #[test]
@@ -1594,6 +1660,7 @@ mod tests {
         d.floor.rooms.clear();
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         expected.int(35);
         let roll = expected.int(8) as usize;
         expected.int(100);
@@ -1626,6 +1693,7 @@ mod tests {
         let rec = *d.ai.wild.values().next().unwrap();
         assert_eq!(rec.objective, LEAVE_ROOM);
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         expected.int(35);
         expected.int(100);
         assert_eq!(d.rng, expected);
@@ -1778,6 +1846,7 @@ mod tests {
         assert_eq!(d.floor.room_exits(0), exits);
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         // Pick, the exit draw (`Int(count)`, one try as it is not the monster's tile), end.
         expected.int(35);
         let goal = exits[expected.int(2) as usize];
@@ -1790,6 +1859,7 @@ mod tests {
         // Objective 4 stays: the next turns draw the pick and the end of turn only.
         for _ in 0..3 {
             d.run_wild_monsters(K, None);
+            d.flush_moves();
             expected.int(35);
             expected.int(100);
             assert_eq!(d.rng, expected);
@@ -1816,6 +1886,7 @@ mod tests {
         d.ai.wild.insert((5, 5), held);
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         // Pick, the direction roll of the step-out, end of turn: no `Int(count)` is drawn.
         expected.int(35);
         expected.int(8);
@@ -1840,6 +1911,7 @@ mod tests {
             run.rng = crate::rng::DungeonRng::new(seed);
             let mut model = run.rng;
             run.run_wild_monsters(K, None);
+            run.flush_moves();
             model.int(35);
             // Only the other exit can be taken, so the draws end at the first one that is not (5, 5).
             for tries in 1.. {
@@ -1864,6 +1936,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         expected.int(35);
         let dir = expected.int(8) as usize;
         expected.int(100);
@@ -1878,6 +1951,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         // Turn 1: the leader is seen (objective 1).
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         assert_eq!(d.ai.wild.values().next().map(|r| r.objective), Some(1));
         // The leader steps out of sight, leaving (12, 5) first in its trail.
         d.floor.rooms[0].x1 = 20;
@@ -1885,6 +1959,7 @@ mod tests {
         d.team[0].pos = (50, 28);
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         // Pick and end of turn only: no wander draw, the goal is the remembered tile.
         expected.int(35);
         expected.int(100);
@@ -1905,6 +1980,7 @@ mod tests {
         }
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         // A: pick. B: pick, end of turn. Then A's deferred end of turn.
         for cap in [35, 35, 100, 100] {
             expected.int(cap);
@@ -1919,6 +1995,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         for cap in [35, 1, 100] {
             expected.int(cap);
         }
@@ -1945,13 +2022,16 @@ mod tests {
         d.wild[1].info.speed_up[0] = 9;
         let moved = |d: &Dungeon| (d.wild[0].pos != (5, 5), d.wild[1].pos != (5, 20));
         d.run_wild_monsters(3, None);
+        d.flush_moves();
         assert_eq!(moved(d), (false, true));
         // At 1 only the hasted one acts: its draws advance the generator, a paralysed one's would too.
         let before = d.rng;
         d.run_wild_monsters(1, None);
+        d.flush_moves();
         assert_ne!(d.rng, before);
         assert_eq!(d.wild[0].pos, (5, 5));
         d.run_wild_monsters(7, None);
+        d.flush_moves();
         assert!(d.wild[0].pos != (5, 5));
     }
 
@@ -1967,6 +2047,7 @@ mod tests {
             },
         );
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         assert_eq!(d.wild[0].pos, (5, 5));
         d.ai.wild.insert(
             (5, 5),
@@ -1976,8 +2057,10 @@ mod tests {
             },
         );
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         assert_eq!((d.wild[0].pos, d.ai.wild[&(5, 5)].flags), ((5, 5), 0));
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         assert_ne!(d.wild[0].pos, (5, 5));
     }
 
@@ -1993,6 +2076,7 @@ mod tests {
             },
         );
         d.run_wild_monsters(1, None);
+        d.flush_moves();
         assert_eq!((d.wild[0].pos, d.ai.wild[&(5, 5)].flags), ((5, 5), 0));
     }
 
@@ -2004,6 +2088,7 @@ mod tests {
         d.wild[0].info.status.sleep_turns = 3;
         let mut expected = d.rng;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         expected.int(100);
         assert_eq!(d.rng, expected);
         assert_eq!(d.wild[0].pos, (5, 5));
@@ -2046,6 +2131,7 @@ mod tests {
             let hp = d.team[0].info.hp;
             let mut expected = d.rng;
             d.run_wild_monsters(K, Some(&data));
+            d.flush_moves();
             // No weighted pick and no attack: only the end-of-turn roll (a sleeper stays; the
             // others take the movement step, which here is blocked by the leader).
             expected.int(100);
@@ -2070,6 +2156,7 @@ mod tests {
         skipped.rng = crate::rng::DungeonRng::new(seed_with(true));
         let mut model = skipped.rng;
         skipped.run_wild_monsters(K, Some(&data));
+        skipped.flush_moves();
         model.outcome(70);
         model.int(100);
         assert_eq!(skipped.rng, model);
@@ -2086,7 +2173,9 @@ mod tests {
         plain.rng = rolled.rng;
         plain.rng.outcome(70);
         rolled.run_wild_monsters(K, Some(&data));
+        rolled.flush_moves();
         plain.run_wild_monsters(K, Some(&data));
+        plain.flush_moves();
         assert_eq!(rolled.rng, plain.rng);
         assert_eq!(rolled.team[0].info.hp, plain.team[0].info.hp);
     }
@@ -2108,6 +2197,7 @@ mod tests {
         let mut model = d.rng;
         let start = d.wild[0].pos;
         d.run_wild_monsters(K, Some(&data));
+        d.flush_moves();
         model.outcome(70);
         model.int(REGULAR[1] + 6);
         model.int(100);
@@ -2156,6 +2246,7 @@ mod tests {
         d.wild[0].info.status.sleep = 1;
         d.wild[0].info.status.sleep_turns = 1;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         assert_eq!(d.wild[0].info.status.sleep, 0);
         assert_eq!(d.wild[0].pos, (6, 5));
     }
@@ -2168,6 +2259,7 @@ mod tests {
         d.wild[0].info.status.burn_class = 1;
         d.wild[0].info.status.burn_turns = 128;
         d.run_wild_monsters(K, None);
+        d.flush_moves();
         assert_eq!(d.wild[0].info.hp, hp - 5);
         assert_eq!(d.wild[0].info.status.burn_turns, 127);
     }
@@ -2197,9 +2289,11 @@ mod tests {
         assert_eq!(d.team[1].pos, (5, 5));
         let after_pass = d.rng;
         d.run_team_members(None);
+        d.flush_moves();
         assert_eq!(d.rng, after_pass);
         // The flag is cleared by the skip: the next team loop runs the partner.
         d.run_team_members(None);
+        d.flush_moves();
         assert_ne!(d.rng, after_pass);
     }
 
@@ -2209,6 +2303,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
+        d.flush_moves();
         // `Int(65)@02193260` once (a walking turn), then `Int(100)@02186894`.
         expected.int(65);
         expected.int(100);
@@ -2224,6 +2319,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
+        d.flush_moves();
         expected.int(65);
         expected.int(100);
         assert_eq!(d.rng, expected);
@@ -2289,6 +2385,7 @@ mod tests {
             actual.rng = crate::rng::DungeonRng::new(seed);
             let mut model = actual.clone();
             actual.run_team_members(Some(&data));
+            actual.flush_moves();
             // `Int(65)@02193260`, 0-based: Growl 1..=10, Scratch 11..=35, the regular attack after.
             let roll = model.rng.int(65);
             let entry = match roll {
@@ -2364,6 +2461,7 @@ mod tests {
             let mut d = g.dungeon().unwrap().clone();
             d.rng = crate::rng::DungeonRng::new(seed);
             d.run_team_members(Some(&data));
+            d.flush_moves();
             let pp = [20, 22];
             for (i, m) in d.team[1].info.moves.iter().take(2).enumerate() {
                 assert_eq!(m.pp, pp[i] - u8::from(i == slot), "roll {want} slot {i}");
@@ -2390,6 +2488,7 @@ mod tests {
         d.rng = crate::rng::DungeonRng::new(seed);
         let mut model = d.clone();
         d.run_team_members(Some(&data));
+        d.flush_moves();
         model.rng.int(65);
         let mv = &moves[usize::from(REGULAR_ATTACK)];
         let attack = Effect::Damage {
@@ -2415,6 +2514,7 @@ mod tests {
         }
         let mut expected = d.rng;
         d.run_team_members(None);
+        d.flush_moves();
         // Phase 1: A picks once (blocked, flagged); B picks once and steps on, end of turn.
         // Phase 2: A, `recalculateFollow` set, picks once and steps into the freed tile with
         // its end of turn; nothing is left for the final pass.
@@ -2434,6 +2534,7 @@ mod tests {
         let d = g.dungeon_mut().unwrap();
         let mut expected = d.rng;
         d.run_team_members(None);
+        d.flush_moves();
         for cap in [65, 65, 100] {
             expected.int(cap);
         }
@@ -2451,6 +2552,7 @@ mod tests {
         t.room = NO_ROOM;
         assert!(!d.in_view((40, 20), (10, 10)));
         d.run_team_members(None);
+        d.flush_moves();
         assert_ne!(d.ai.team[1].rec.objective, CHASE_TARGET);
         assert_ne!(d.ai.team[1].rec.goal, (10, 10));
     }
@@ -2463,6 +2565,7 @@ mod tests {
         d.sync_team_ai();
         d.ai.team[1].tactic = 1;
         d.run_team_members(None);
+        d.flush_moves();
         assert_eq!(d.team[1].pos, (11, 10), "it heads for the foe");
         assert!(TACTIC_SKIPS_SCAN[0] && !TACTIC_SKIPS_SCAN[1]);
         assert!([4, 5, 6, 7, 8, 10].iter().all(|&t| TACTIC_SKIPS_SCAN[t]));
