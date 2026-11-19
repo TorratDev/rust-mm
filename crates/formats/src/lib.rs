@@ -21,3 +21,4 @@ pub mod sir0;
 pub mod sprite;
 pub mod text;
 pub mod tileset;
+pub mod titlemenu;
