@@ -15,6 +15,7 @@ mod combat;
 mod draw;
 mod dungeon;
 mod input;
+mod save;
 mod scene;
 mod walk;
 
@@ -217,7 +218,14 @@ impl Game for App {
     }
 
     fn draw(&mut self, screen: Screen, p: &mut Painter<'_>) -> Result<(), PlatformError> {
-        draw::screen(self.scene, self.dungeon(), self.menu(), screen, p)
+        let view = draw::View {
+            scene: self.scene,
+            dungeon: self.dungeon(),
+            menu: self.menu(),
+            menu_items: self.menu_items(),
+            notice: self.notice().is_some(),
+        };
+        draw::screen(&view, screen, p)
     }
 }
 
@@ -280,7 +288,12 @@ fn main() -> ExitCode {
         speed: opts.speed,
         start_paused: opts.pause,
     };
-    let mut app = App::new(&rom, rom_bytes, run, opts.open_dungeon);
+    let save_path = match opts.settings {
+        // A headless --frames run must not touch the user's save.
+        _ if opts.frames.is_some() => None,
+        _ => save::default_path(),
+    };
+    let mut app = App::new(&rom, rom_bytes, run, opts.open_dungeon).with_save_path(save_path);
     match rescue_platform::run(&config, &mut app) {
         Ok(stats) => {
             println!(

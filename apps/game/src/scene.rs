@@ -3,8 +3,8 @@
 //!
 //! Order (from the title loop in `docs/re/execution-model.md`, "Start-up and the title
 //! menu"): splash, then title, then the menu. A fresh boot shows New Game and Adventure
-//! Log only (`docs/verification.md`, overlay 7 entry). Continue is added to the menu when a
-//! save exists, which needs the save crate (#77).
+//! Log only (`docs/verification.md`, overlay 7 entry). Continue is added as the first entry when
+//! a suspend save exists; `app` loads it.
 
 use rescue_platform::{ButtonState, DsButton};
 
@@ -14,12 +14,26 @@ pub const SPLASH_TICKS: u32 = 90;
 /// Main menu entries, in on-screen order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuItem {
+    Continue,
     NewGame,
     AdventureLog,
 }
 
 impl MenuItem {
     pub const ALL: [MenuItem; 2] = [MenuItem::NewGame, MenuItem::AdventureLog];
+
+    /// The entries on screen: Continue first when a save exists.
+    pub fn list(has_save: bool) -> &'static [MenuItem] {
+        if has_save {
+            &[
+                MenuItem::Continue,
+                MenuItem::NewGame,
+                MenuItem::AdventureLog,
+            ]
+        } else {
+            &Self::ALL
+        }
+    }
 }
 
 /// The screen the game is on.
@@ -45,7 +59,15 @@ pub enum Scene {
 impl Scene {
     /// Advances one logic tick. `pressed` holds the buttons that went down this tick,
     /// not the ones held.
+    #[cfg(test)]
     pub fn step(self, pressed: ButtonState) -> Scene {
+        self.step_with(pressed, false)
+    }
+
+    /// [`Scene::step`] with the menu's Continue entry when `has_save`. Confirming Continue
+    /// leaves the scene on the menu: `app` loads the save and opens the dungeon, or reports it.
+    pub fn step_with(self, pressed: ButtonState, has_save: bool) -> Scene {
+        let items = MenuItem::list(has_save);
         let confirm = pressed.is_held(DsButton::A) || pressed.is_held(DsButton::Start);
         let back = pressed.is_held(DsButton::B);
         match self {
@@ -67,10 +89,11 @@ impl Scene {
             Scene::Menu { cursor } => {
                 if pressed.is_held(DsButton::Up) || pressed.is_held(DsButton::Down) {
                     Scene::Menu {
-                        cursor: (cursor + 1) % MenuItem::ALL.len(),
+                        cursor: (cursor + 1) % items.len(),
                     }
                 } else if confirm {
-                    match MenuItem::ALL[cursor] {
+                    match items.get(cursor).copied().unwrap_or(MenuItem::NewGame) {
+                        MenuItem::Continue => self,
                         MenuItem::NewGame => Scene::Dungeon,
                         MenuItem::AdventureLog => Scene::AdventureLog,
                     }
@@ -78,7 +101,12 @@ impl Scene {
                     self
                 }
             }
-            Scene::AdventureLog if back => Scene::Menu { cursor: 1 },
+            Scene::AdventureLog if back => Scene::Menu {
+                cursor: items
+                    .iter()
+                    .position(|i| *i == MenuItem::AdventureLog)
+                    .unwrap_or(0),
+            },
             _ => self,
         }
     }
@@ -153,6 +181,23 @@ mod tests {
         assert_eq!(
             Scene::AdventureLog.step(press(DsButton::A)),
             Scene::AdventureLog
+        );
+    }
+
+    #[test]
+    fn continue_is_the_first_entry_with_a_save_and_stays_on_the_menu() {
+        assert_eq!(MenuItem::list(true)[0], MenuItem::Continue);
+        assert_eq!(MenuItem::list(false), MenuItem::ALL);
+        let at = Scene::Menu { cursor: 0 };
+        assert_eq!(at.step_with(press(DsButton::A), true), at);
+        let down = at.step_with(press(DsButton::Down), true);
+        assert_eq!(down, Scene::Menu { cursor: 1 });
+        assert_eq!(down.step_with(press(DsButton::A), true), Scene::Dungeon);
+        let log = Scene::Menu { cursor: 2 }.step_with(press(DsButton::A), true);
+        assert_eq!(log, Scene::AdventureLog);
+        assert_eq!(
+            log.step_with(press(DsButton::B), true),
+            Scene::Menu { cursor: 2 }
         );
     }
 

@@ -2813,6 +2813,7 @@ dependencies = [
  "rescue-nds",
  "rescue-platform",
  "rescue-render",
+ "rescue-save",
  "rescue-sim",
  "rescue-tests",
 ]

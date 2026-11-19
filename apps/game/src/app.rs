@@ -7,6 +7,7 @@
 //! menu (the dungeon is cleared).
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use rescue_data::dungeon::MonsterSpawn;
 use rescue_platform::{ButtonState, Flow};
@@ -20,7 +21,8 @@ use crate::boot::RomCheck;
 use crate::combat::{self, Act, ActKind, LOG_LINES, Tables};
 use crate::dungeon::{self, Dungeon, Figure, FloorData, IDLE_GROUP, MonsterArt, WALK_GROUP};
 use crate::input::{self, MenuInput};
-use crate::scene::Scene;
+use crate::save;
+use crate::scene::{MenuItem, Scene};
 use crate::walk::Walk;
 
 /// The leader's attack pose: group 2, the close-range strike (docs/formats/sprites.md).
@@ -96,6 +98,12 @@ pub struct App {
     menu: Option<usize>,
     /// The last lines of the message log.
     log: Vec<String>,
+    /// The suspend save's file. `None`: no suspend, no Continue.
+    save_path: Option<PathBuf>,
+    /// Whether the save file exists, which adds Continue to the menu.
+    has_save: bool,
+    /// Why the last suspend or Continue failed, shown on the menu until the next try.
+    notice: Option<String>,
 }
 
 impl App {
@@ -132,11 +140,32 @@ impl App {
             ticks: 0,
             menu: None,
             log: Vec::new(),
+            save_path: None,
+            has_save: false,
+            notice: None,
         };
         if app.scene == Scene::Dungeon {
             app.enter_dungeon();
         }
         app
+    }
+
+    /// Sets the suspend save's file; Continue is offered while it exists.
+    #[must_use]
+    pub fn with_save_path(mut self, path: Option<PathBuf>) -> App {
+        self.has_save = path.as_deref().is_some_and(|p| p.is_file());
+        self.save_path = path;
+        self
+    }
+
+    /// The number of entries on the main menu.
+    pub fn menu_items(&self) -> usize {
+        MenuItem::list(self.has_save).len()
+    }
+
+    /// Why the last suspend or Continue failed, if it did.
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
     }
 
     /// The floor view while the dungeon scene is up.
@@ -170,7 +199,11 @@ impl App {
                 Flow::Continue
             };
         }
-        self.scene = self.scene.step(pressed);
+        if self.continue_pressed(pressed) {
+            self.continue_run();
+        } else {
+            self.scene = self.scene.step_with(pressed, self.has_save);
+        }
         if self.scene == Scene::Dungeon {
             if self.game.is_none() {
                 self.enter_dungeon();
@@ -182,6 +215,79 @@ impl App {
             self.leave_dungeon();
         }
         Flow::Continue
+    }
+
+    /// Whether this tick confirms Continue on the menu.
+    fn continue_pressed(&self, pressed: ButtonState) -> bool {
+        let confirm = pressed.is_held(rescue_platform::DsButton::A)
+            || pressed.is_held(rescue_platform::DsButton::Start);
+        confirm
+            && matches!(self.scene, Scene::Menu { cursor }
+                if MenuItem::list(self.has_save).get(cursor) == Some(&MenuItem::Continue))
+    }
+
+    /// Loads the suspend save and resumes the run on the turn it was suspended on. A save that
+    /// does not read is reported and not loaded; the menu stays up.
+    fn continue_run(&mut self) {
+        self.notice = None;
+        let Some(path) = self.save_path.clone() else {
+            return;
+        };
+        let game = match save::read(&path) {
+            Ok(game) => game,
+            Err(e) => return self.refuse(format!("the save was not loaded: {e}")),
+        };
+        // The run's floor on the ROM: the start floor, then one per set of stairs taken.
+        let climbed = game.floors_entered().saturating_sub(1);
+        let floor = u8::try_from(u32::from(self.config.floor) + climbed).unwrap_or(u8::MAX);
+        let data = if self.rom.is_some() {
+            match self.load_floor(floor) {
+                Ok(data) => Some(data),
+                Err(e) => return self.refuse(format!("the saved floor did not load: {e}")),
+            }
+        } else {
+            None
+        };
+        self.leave_dungeon();
+        self.floor = floor;
+        self.data = data;
+        self.facing = Direction::Down;
+        if self.tables.is_none() {
+            self.tables = self.rom.as_deref().and_then(|rom| {
+                Tables::from_rom(rom, self.config.species)
+                    .map_err(|e| eprintln!("rescue: attacks are not modelled, no tables: {e}"))
+                    .ok()
+            });
+        }
+        self.game = Some(game);
+        if self.show_floor() {
+            self.scene = Scene::Dungeon;
+        } else {
+            self.leave_dungeon();
+            self.refuse(String::from("the saved run has no floor to show"));
+        }
+    }
+
+    /// Writes the run to the suspend save and goes back to the title. If it cannot be written
+    /// the run goes on and the reason is reported.
+    fn suspend(&mut self) {
+        self.notice = None;
+        let (Some(path), Some(game)) = (self.save_path.clone(), self.game.as_ref()) else {
+            return self.refuse(String::from("there is nowhere to save the run"));
+        };
+        match save::write(&path, game) {
+            Ok(()) => {
+                self.has_save = true;
+                self.leave_dungeon();
+                self.scene = Scene::Title;
+            }
+            Err(e) => self.refuse(format!("the run was not saved: {e}")),
+        }
+    }
+
+    fn refuse(&mut self, why: String) {
+        eprintln!("rescue: {why}");
+        self.notice = Some(why);
     }
 
     /// The ROM's data for `floor` of the run's dungeon. `Err` without a ROM or if it does not
@@ -321,6 +427,10 @@ impl App {
             MenuInput::Stay => {}
             MenuInput::Cursor(to) => self.menu = Some(to),
             MenuInput::Close => self.menu = None,
+            MenuInput::Suspend => {
+                self.menu = None;
+                self.suspend();
+            }
             MenuInput::Use(slot) => {
                 self.menu = None;
                 self.take_turn(Command::UseMove {
@@ -709,6 +819,8 @@ fn leader_monster(pos: (i16, i16), species: u16) -> Monster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
     use rescue_data::dungeon::FLOOR_PROPERTIES;
     use rescue_nds::rom::RomId;
     use rescue_platform::DsButton;
@@ -1059,5 +1171,130 @@ mod tests {
             app.show_attack(Direction::Left, &[], &[]);
         }
         assert_eq!(app.log().len(), 4);
+    }
+
+    /// A fresh path for a save file, in the temp dir.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("rescue-game-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("suspend.sav")
+    }
+
+    fn saving_app(path: &Path) -> App {
+        App::new(&ready(), None, RUN, true).with_save_path(Some(path.to_path_buf()))
+    }
+
+    /// Taps `button`, then waits out any walk.
+    fn step(app: &mut App, button: DsButton) {
+        tap(app, button);
+        for _ in 0..TILE_FRAMES * 2 {
+            app.tick(ButtonState::default());
+        }
+    }
+
+    const MOVES: [DsButton; 4] = [
+        DsButton::Right,
+        DsButton::Down,
+        DsButton::Left,
+        DsButton::Down,
+    ];
+
+    /// Opens the move menu and picks its last row, Suspend.
+    fn suspend_from_menu(app: &mut App) {
+        tap(app, DsButton::X);
+        assert!(app.menu().is_some());
+        tap(app, DsButton::Up);
+        assert_eq!(app.menu(), Some(crate::input::MENU_SLOTS));
+        tap(app, DsButton::A);
+    }
+
+    fn continue_from_title(app: &mut App) {
+        tap(app, DsButton::Start);
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        tap(app, DsButton::A);
+    }
+
+    #[test]
+    fn suspend_then_continue_resumes_the_run_and_matches_one_that_never_stopped() {
+        let path = scratch("resume");
+        let mut app = saving_app(&path);
+        let mut control = App::new(&ready(), None, RUN, true);
+        for b in MOVES {
+            step(&mut app, b);
+            step(&mut control, b);
+        }
+        let before = app.game.clone();
+        assert!(before.is_some());
+        suspend_from_menu(&mut app);
+        assert_eq!(app.scene, Scene::Title);
+        assert!(app.game.is_none(), "suspend drops the run");
+        assert!(path.is_file());
+        assert_eq!(app.menu_items(), 3, "Continue is offered");
+
+        continue_from_title(&mut app);
+        assert_eq!(app.scene, Scene::Dungeon);
+        assert!(app.dungeon().is_some());
+        assert_eq!(app.game, before, "the run is as it was");
+        assert_eq!(app.game, control.game);
+        for b in MOVES.into_iter().rev() {
+            step(&mut app, b);
+            step(&mut control, b);
+            assert_eq!(app.game, control.game, "the next steps match");
+        }
+        let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+    }
+
+    #[test]
+    fn a_fresh_boot_has_no_continue_and_a_new_app_sees_an_existing_save() {
+        let path = scratch("exists");
+        let mut app = saving_app(&path);
+        assert_eq!(app.menu_items(), 2);
+        suspend_from_menu(&mut app);
+        let again = App::new(&ready(), None, RUN, false).with_save_path(Some(path.clone()));
+        assert_eq!(again.menu_items(), 3);
+        let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+    }
+
+    #[test]
+    fn a_corrupted_save_is_reported_and_not_loaded() {
+        let path = scratch("corrupt");
+        let mut app = saving_app(&path);
+        suspend_from_menu(&mut app);
+        let good = std::fs::read(&path).expect("the save");
+        let mut flipped = good.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 0x40;
+        let bad_files = [
+            flipped,
+            good[..good.len() / 2].to_vec(),
+            Vec::new(),
+            b"RSAV".to_vec(),
+        ];
+        for bad in bad_files {
+            std::fs::write(&path, bad).expect("write");
+            let mut app = saving_app(&path);
+            app.scene = Scene::Title;
+            continue_from_title(&mut app);
+            assert_eq!(app.scene, Scene::Menu { cursor: 0 }, "the menu stays up");
+            assert!(app.game.is_none(), "nothing is loaded");
+            assert!(app.notice().is_some(), "the refusal is reported");
+        }
+        // A missing file is refused too, with no crash.
+        std::fs::remove_file(&path).expect("remove");
+        let mut app = saving_app(&path);
+        app.has_save = true;
+        app.scene = Scene::Title;
+        continue_from_title(&mut app);
+        assert!(app.game.is_none() && app.notice().is_some());
+        let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+    }
+
+    #[test]
+    fn suspend_with_nowhere_to_save_keeps_the_run() {
+        let mut app = App::new(&ready(), None, RUN, true);
+        suspend_from_menu(&mut app);
+        assert_eq!(app.scene, Scene::Dungeon);
+        assert!(app.game.is_some());
+        assert!(app.notice().is_some());
     }
 }
