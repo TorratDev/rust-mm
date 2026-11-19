@@ -373,7 +373,7 @@ Named callers of `FUN_0201A110` (from the earlier pass; the full list is above):
 
 - **DISPCNT does not change between scenes.** From frame 20 to the dungeon (frame 25270, 11 change records in all), every sample reads engine A `0x08817F10` and engine B `0x00811F10`. Also constant: POWCNT1 `0x020F`, MASTER_BRIGHT A and B at 0, the BGCNT values, and the BG scroll registers, which read back 0 because they are write-only (the live scroll is the shadow copy; see [BG3 floor scroll](ui-screens.md#7-bg3-floor-scroll)). Frame 0 differs (DISPCNT 0, POWCNT1 `0x820F`), before the boot display init. **[blue-verified]**
 - **Decoded.** BG0 to BG3 and OBJ are enabled on both engines (bits 8 to 12). Engine A also enables windows 0 and 1 (bits 13 and 14); engine B does not. BG mode 0. Bit 3 (BG0 3D) is clear, so BG0 is a normal tile layer. Bits 16 and 17 are 1 (normal display). The window bits agree with the WIN0H to WIN1V writes of `0xC0` in [OAM writers](#oam-writers). **[blue-verified]**, decode of the register values.
-- **BGCNT** (the same in every sample). Engine A BG0 to BG3: `0x0000`, `0x0101`, `0x420A`, `0x440B` (priority 0 to 3; screen blocks 0, 1, 10 and 11). Engine B: `0x0C00`, `0x0D01`, `0x0E0A`, `0x0F0B` (priority 0 to 3; screen blocks 12 to 15). Engine A BG2 and BG3 have the size bits set (size 1, 512 by 256), so their second screen block is not counted below.
+- **BGCNT** (the same in every sample). Engine A BG0 to BG3: `0x0000`, `0x0101`, `0x420A`, `0x440B` (priority 0 to 3). **Correction (#380, investigator A, [blue-verified]):** the screen base is bits 8 to 12, so engine A's screen blocks are 0, 1, 2 and 4 (not 0, 1, 10, 11; `0x420A` and `0x440B` hold base 2 and 4 in bits 8 to 12 and the size bits above). With the DISPCNT screen-base offset of `+0x10000` the maps are at `0x06010000`, `0x06010800`, `0x06011000` and `0x06012000`, as in [`ui-screens.md`](ui-screens.md). Engine B: `0x0C00`, `0x0D01`, `0x0E0A`, `0x0F0B` (priority 0 to 3; screen blocks 12 to 15). Engine A BG2 and BG3 have the size bits set (size 1, 512 by 256), so their second screen block is not counted below.
 
 **Occupancy:** non-zero 16-bit entries out of 1024 in each BG's first 32 by 32 screen block, at the scenes sampled. The scene names come from screenshots. **[blue-verified]** for the counts.
 
@@ -383,7 +383,7 @@ Named callers of `FUN_0201A110` (from the earlier pass; the full list is above):
 | 400 | publisher logo, map 235 | 24 / 768 / 0 / 768 | 0 / 0 / 0 / 0 |
 | 700, 1000 | ground scenes (map 6) | 24 / 768 / 0 / 864 | 0 / 0 / 0 / 0 |
 | 1500 | ground (map 234) | 24 / 768 / 0 / 864 | 0 / 0 / 0 / 0 |
-| 2000 | title screen (map 229) | 24 / 768 / 864 / 864 | 0 / 0 / 0 / 0 |
+| 2000 | logo screen before the menu (map 229, S02) | 24 / 768 / 864 / 864 | 0 / 0 / 0 / 0 |
 | 5000 | partner nickname keyboard (map 228) | 522 / 768 / 864 / 864 | 0 / 0 / 540 / 768 |
 | 11000 | ground cutscene dialogue (map 183) | 154 / 768 / 0 / 864 | 0 / 0 / 540 / 768 |
 | 25100 | floor intro banner (dungeon) | 248 / 544 / 0 / 892 | 0 / 0 / 0 / 768 |
@@ -456,7 +456,8 @@ Named callers of `FUN_0201A110` (from the earlier pass; the full list is above):
 - `FUN_02011D24` (`0x02011D24`) and `FUN_02011B4C` (`0x02011B4C`) clamp the brightness to 0..31. Each writes its source colour, scaled as `c * brightness / 256` (the divide is `FUN_0208625C`), as a 15-bit RGB word. `FUN_02011D24` writes into `DAT_02011E44 + i*2` and `FUN_02011B4C` into `DAT_02011C6C + i*2`. Each also sets a dirty flag for entry `i`.
 - So the fade is software. It scales palette values per frame, and the result reaches palette RAM through the per-frame palette transfer (`TransferBGPaletteBuffer`, frame action #14 in `MainLoops_RunFrameActions`). This matches the absence of BLDY and brightness register writes.
 - **[hypothesis]** Which buffer is the BG palette and which is the OBJ palette.
-- **[open]** The fade-out is not decoded. The 0x20 count is the fade-in.
+- **Corrections and fade-out (#380, investigator A, [blue-verified], high).** The counter is `*0x0210E63C` (`DAT_0201F808`), reset to 0 after `FUN_0201F008` (the title graphics loader). The buffers are identified: `FUN_02011D24` writes `0x020E8BE8` (engine A BG palette, fed from `titlenKp`, handle `*0x020DF904`) and `FUN_02011B4C` writes `0x020E87E8` (engine B BG palette, fed from `subdefp`, handle `*0x020DF900`); palette RAM matches the sources 224 of 224. The per-colour value is `lvl = clamp(cnt, 0, 31)`, each channel `c * lvl >> 8` masked to 5 bits, so the end value is `c * 31 >> 8`, not `c >> 3` (see [`graphics.md`](../formats/graphics.md#title-menu-screens)). The counter steps once per frame: 2 at frame 2418 and 32 at 2448 in the run.
+- **Fade-out [blue-verified].** After the menu returns a choice (2 to 5), the same loop runs in reverse: `while (cnt > 0) { cnt--; same two calls; frame }`, 32 frames (counter 32 at frame 2530, 0 at 2562; BG palette entry 62 reads `0x7BDE` at 2529, `0x0842` at 2559, 0 at 2562). Then `FUN_0201A22C` frees both palette handles and the choice switch runs. MASTER_BRIGHT stays 0 throughout.
 
 ## File loading
 
@@ -681,7 +682,7 @@ Screens and fades:
 - **[hypothesis]** The ARM7 meaning of IPC command 8 (#177 P2b): power management (investigator A, low, from SDK memory) or brightness or backlight (earlier guess). Not checked; the ARM7 binary is not in the project. The payloads are closed (see [Fade IPC and brightness](#fade-ipc-and-brightness-177-p2)).
 - Closed (#177 P2c): the helper that receives the two `MASTER_BRIGHT` addresses is `FUN_02074E48`; see [Fade IPC and brightness](#fade-ipc-and-brightness-177-p2).
 - Closed (#177 P2d): the caller chain of `FUN_02018B44` is in [Scene switch and reset](#scene-switch-and-reset). Still open: what ARM7 sends for message `0x11`, and what clears the flag at `0x02137CC0`.
-- **[open]** P3: the title fade-out is not decoded. The 32-frame fade-in is located in `GameLoop_Async`. Which palette buffer is BG and which is OBJ is **[hypothesis]**.
+- Closed (#380): the title fade-out is decoded and the palette buffers are BG A and BG B; see [Title fade](#title-fade-177-p3).
 - **[open]** Which element each BG draws (#177 P1b). The occupancy per scene is in [Layer occupancy](#layer-occupancy-per-scene-177-p1b).
 - **[blue-verified]** Closed (#177 P5): the cross-reference attribution is correct. The POWCNT1 (`0x04000304`) accesses at `0x0207D68C`, `0x0207D694`, `0x0207D6A4` and `0x0207D6B4` go through `DAT_0207D700` = `0x04000304` and are in `FUN_0207D614`, which sets and clears bit 0 through that pointer. The `0x0207D5DC` read in `FUN_0207D5D8` goes through `DAT_0207D5F0` = `0x04000304`. This settles the earlier note that the decompile of `FUN_0207D614` had no POWCNT access.
 - **[open]** P4a: the OAM entry format (attr1 and attr2) and the sources of `DAT_02012AE4` and `DAT_02012AE0`. The jump table that holds `0x0206DC18`, and so the scene that calls `ClearOamA` (`FUN_0201ADA0`), is not identified.

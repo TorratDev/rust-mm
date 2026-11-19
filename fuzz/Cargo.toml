@@ -55,6 +55,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "formats_titlemenu"
+path = "fuzz_targets/formats_titlemenu.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "formats_containers"
 path = "fuzz_targets/formats_containers.rs"
 test = false
