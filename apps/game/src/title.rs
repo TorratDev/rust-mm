@@ -12,7 +12,7 @@
 //! before the logo screen; the logo screen's own fade and the 33-frame transition at START.
 
 use rescue_formats::archive::Archive;
-use rescue_formats::font::parse_font;
+use rescue_formats::font::{Glyph, parse_font};
 use rescue_formats::gfx::{self, Rgba};
 use rescue_formats::graphics::Palette;
 use rescue_formats::ground;
@@ -21,7 +21,7 @@ use rescue_formats::titlemenu::{self, TitleScreen};
 use rescue_nds::fs::Filesystem;
 use rescue_nds::header::Header;
 use rescue_render::bg::{BgLayer, Frame, compose, ground_layer};
-use rescue_render::text::{Canvas, DEFAULT_COLOUR, Font, LINE_PITCH, draw_glyph};
+use rescue_render::text::{Canvas, DEFAULT_COLOUR, LINE_PITCH, draw_glyph};
 use rescue_render::ui::{TileRect, TileSet, draw_cursor, draw_fill, draw_menu_frame};
 use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
@@ -57,20 +57,69 @@ const DESC_WINDOW: TileRect = TileRect {
 const ITEM_CANVAS: (usize, usize) = (96, 12);
 const DESC_CANVAS: (usize, usize) = (216, 24);
 
-/// Message ids (1-based, `docs/formats/text.md`) of a menu entry and its two description lines.
-fn text_ids(item: MenuItem) -> (u32, [u32; 2]) {
+/// Message ids (1-based, `docs/formats/text.md`) of a menu entry and its description lines.
+/// Names: 2238 to 2243 and 2247 are `[blue-verified]` (#380). Descriptions: 2261 to 2264,
+/// 2267 and 2268 are `[blue-verified]`; Delete Save Data's 2269 and 2270 are `[hypothesis]`
+/// (the findings say "2269..", not checked). The three DS entries' descriptions are not
+/// known, so none is shown.
+fn text_ids(item: MenuItem) -> (u32, &'static [u32]) {
     match item {
-        MenuItem::Continue => (2240, [2267, 2268]),
-        MenuItem::NewGame => (2238, [2261, 2262]),
-        MenuItem::AdventureLog => (2239, [2263, 2264]),
+        MenuItem::Continue => (2240, &[2267, 2268]),
+        MenuItem::NewGame => (2238, &[2261, 2262]),
+        MenuItem::DeleteSave => (2241, &[2269, 2270]),
+        MenuItem::AdventureLog => (2239, &[2263, 2264]),
+        MenuItem::FriendRescue => (2242, &[]),
+        MenuItem::TradeItems => (2243, &[]),
+        MenuItem::WonderMail => (2247, &[]),
     }
 }
 
-const ITEMS: [MenuItem; 3] = [
+const ITEMS: [MenuItem; 7] = [
     MenuItem::Continue,
     MenuItem::NewGame,
+    MenuItem::DeleteSave,
     MenuItem::AdventureLog,
+    MenuItem::FriendRescue,
+    MenuItem::TradeItems,
+    MenuItem::WonderMail,
 ];
+
+/// The glyphs of the dialogue font, sorted by character code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Glyphs(Vec<Glyph>);
+
+impl Glyphs {
+    fn new(mut glyphs: Vec<Glyph>) -> Self {
+        glyphs.sort_by_key(|g| g.code);
+        Glyphs(glyphs)
+    }
+
+    fn get(&self, code: u16) -> Option<&Glyph> {
+        self.0
+            .binary_search_by_key(&code, |g| g.code)
+            .ok()
+            .and_then(|i| self.0.get(i))
+    }
+}
+
+/// A message screen on the menu's backdrop: a window of `lines`, then `choices` (the row at
+/// `cursor` has the cursor), as the confirmation and the not-available message use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelView<'a> {
+    pub backdrop: usize,
+    pub lines: &'a [String],
+    pub choices: &'a [&'a str],
+    pub cursor: usize,
+}
+
+const PANEL_WINDOW: TileRect = TileRect {
+    col: 2,
+    row: 2,
+    cols: 28,
+    rows: 19,
+};
+const PANEL_TEXT: (i32, i32) = (28, 24);
+const PANEL_CANVAS: (usize, usize) = (200, 12);
 
 /// What the menu screen shows besides the backdrop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,13 +172,14 @@ pub struct TitleArt {
     subdef: Picture,
     frames: TileSet,
     sprites: TileSet,
-    /// Per `ITEMS`: the entry's text, and its two description lines.
+    glyphs: Glyphs,
+    /// Per `ITEMS`: the entry's text, and its description lines.
     texts: Vec<(Canvas, Canvas)>,
 }
 
 /// Draws `lines` (message strings) into a canvas, one line per string, with `font`. Only plain
 /// text and line breaks are drawn; no menu string uses a control code.
-fn render_lines(font: &Font, lines: &[&[u8]], (w, h): (usize, usize)) -> Canvas {
+fn render_lines(font: &Glyphs, lines: &[&[u8]], (w, h): (usize, usize)) -> Canvas {
     let mut canvas = Canvas::new(w, h);
     let mut y = 0;
     for line in lines {
@@ -207,7 +257,7 @@ impl TitleArt {
         let sget = |name: &str| sarc.get(sys, name).map_err(err);
         let frames = TileSet::new(sget("font")?, sget("fontpal")?).map_err(err)?;
         let sprites = TileSet::new(sget("fontsp")?, sget("fontsppa")?).map_err(err)?;
-        let font = Font::new(parse_font(sget("kanji_a")?).map_err(err)?);
+        let font = Glyphs::new(parse_font(sget("kanji_a")?).map_err(err)?);
 
         let strings = text::parse_str(file("message_e.str")?).map_err(err)?;
         let string = |id: u32| -> Result<&[u8], String> {
@@ -220,9 +270,11 @@ impl TitleArt {
             .iter()
             .map(|item| {
                 let (name, desc) = text_ids(*item);
+                // A description that is not in the table is left out; the name must be there.
+                let desc: Vec<&[u8]> = desc.iter().filter_map(|id| string(*id).ok()).collect();
                 Ok((
                     render_lines(&font, &[string(name)?], ITEM_CANVAS),
-                    render_lines(&font, &[string(desc[0])?, string(desc[1])?], DESC_CANVAS),
+                    render_lines(&font, &desc, DESC_CANVAS),
                 ))
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -234,6 +286,7 @@ impl TitleArt {
             subdef,
             frames,
             sprites,
+            glyphs: font,
             texts,
         })
     }
@@ -295,6 +348,33 @@ impl TitleArt {
         if (v.blink / BLINK_FRAMES).is_multiple_of(2) {
             let y = CURSOR_AT.1 + ROW_PITCH * v.cursor as i32;
             draw_cursor(&mut frame, &self.sprites, CURSOR_AT.0, y);
+        }
+        frame
+    }
+
+    /// The lower screen of a message screen: the backdrop, a window, the lines and the choices.
+    pub fn panel_bottom(&self, v: &PanelView<'_>) -> Frame {
+        let Some(backdrop) = self.backdrops.get(v.backdrop) else {
+            return Self::black();
+        };
+        let mut frame = backdrop.render(FADE_FRAMES);
+        draw_fill(&mut frame, &self.frames, PANEL_WINDOW);
+        draw_menu_frame(&mut frame, &self.frames, PANEL_WINDOW);
+        let palette = self.frames.palette();
+        let mut y = PANEL_TEXT.1;
+        for line in v.lines {
+            let c = render_lines(&self.glyphs, &[line.as_bytes()], PANEL_CANVAS);
+            blit_canvas(&mut frame, &c, (PANEL_TEXT.0, y), palette);
+            y += ROW_PITCH;
+        }
+        y += ROW_PITCH;
+        for (i, choice) in v.choices.iter().enumerate() {
+            let c = render_lines(&self.glyphs, &[choice.as_bytes()], PANEL_CANVAS);
+            blit_canvas(&mut frame, &c, (PANEL_TEXT.0 + 12, y), palette);
+            if i == v.cursor {
+                draw_cursor(&mut frame, &self.sprites, PANEL_TEXT.0, y + 2);
+            }
+            y += ROW_PITCH;
         }
         frame
     }
@@ -445,6 +525,7 @@ mod tests {
             subdef: screen(2),
             frames,
             sprites,
+            glyphs: Glyphs::new(vec![]),
             texts: ITEMS
                 .iter()
                 .map(|_| (text(96, 12), text(216, 24)))
@@ -525,14 +606,9 @@ mod tests {
     #[test]
     fn a_longer_menu_has_a_taller_window() {
         let art = synthetic();
-        let three = [
-            MenuItem::Continue,
-            MenuItem::NewGame,
-            MenuItem::AdventureLog,
-        ];
         let mut v = view(32, true, 0);
         let short = art.menu_bottom(&v);
-        v.items = &three;
+        v.items = MenuItem::list(true);
         let tall = art.menu_bottom(&v);
         // Row 8 (y 64 to 71) is inside the three-item window only.
         assert_eq!(
@@ -540,6 +616,24 @@ mod tests {
             art.menu_bottom(&view(32, false, 0)).get(60, 66)
         );
         assert_ne!(tall.get(60, 66), short.get(60, 66));
+    }
+
+    #[test]
+    fn a_panel_draws_a_window_and_the_choice_cursor() {
+        let art = synthetic();
+        let lines = [String::from("Delete?")];
+        let panel = |cursor| {
+            art.panel_bottom(&PanelView {
+                backdrop: 1,
+                lines: &lines,
+                choices: &["No", "Yes"],
+                cursor,
+            })
+        };
+        let bare = art.menu_bottom(&view(32, false, 0));
+        assert_ne!(panel(0), bare, "the window is drawn");
+        assert_ne!(panel(0), panel(1), "the cursor moves between the choices");
+        assert_eq!(panel(0).get(250, 100), bare.get(250, 100));
     }
 
     rescue_tests::rom_test! {
