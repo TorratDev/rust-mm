@@ -15,6 +15,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::combat::{CombatData, REGULAR_ATTACK, REGULAR_ATTACK_ARG8};
 use crate::floor::{self, NO_ROOM};
 use crate::move_effects::{self, Effect};
@@ -106,7 +108,7 @@ const STAND_STILL: u8 = 6;
 // shortcut: the generation ID (`+0x74`) is not kept: a team slot is never reused on a floor
 // here, so the ID always matches. The record is cleared nowhere else (`0216C638`, petrify and decoy resets are not
 // modelled, as the sim has no such statuses).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct AiRecord {
     objective: u8,
     goal: (i16, i16),
@@ -120,7 +122,7 @@ pub(crate) struct AiRecord {
 
 /// A team member's AI record and its last four positions (`info+0x5E`, written by the move
 /// helper `02177700`: the tiles it left, newest first).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct TeamAi {
     rec: AiRecord,
     last: (i16, i16),
@@ -137,10 +139,9 @@ struct TeamAi {
 // modules remove and add them), so a monster moved by something other than its own walk starts
 // a fresh record, and a monster that spawns on the tile of one that just fell inherits its
 // record until the next wild loop prunes it.
-// shortcut: `DungeonSnapshot` (its literals are in `apps/trace-harness`) does not hold this
-// state, so a restored floor starts with fresh records and trails (#467), and equality ignores
-// it, so a snapshot round trip compares equal.
-#[derive(Clone, Debug, Default)]
+// `Snapshot` does not hold this state (its literals are in `apps/trace-harness`); the save's
+// [`Resume`](crate::state::Resume) does, through [`AiSnapshot`] (#535).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AiState {
     wild: BTreeMap<(i16, i16), AiRecord>,
     team: Vec<TeamAi>,
@@ -158,13 +159,42 @@ pub(crate) struct AiState {
     pub(crate) chance_asleep: Vec<u8>,
 }
 
-impl PartialEq for AiState {
-    fn eq(&self, _: &Self) -> bool {
-        true
-    }
+/// An [`AiState`] as serde data (JSON has no tuple map keys, so the wild map is a list). The
+/// run's `chance_asleep` table is saved once, by the state, not here.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiSnapshot {
+    wild: Vec<((i16, i16), AiRecord)>,
+    team: Vec<TeamAi>,
+    pending_wild: Vec<(i16, i16)>,
+    swapping: Vec<usize>,
+    held: Vec<usize>,
+    slots: Vec<u8>,
 }
 
-impl Eq for AiState {}
+impl AiState {
+    pub(crate) fn capture(&self) -> AiSnapshot {
+        AiSnapshot {
+            wild: self.wild.iter().map(|(k, v)| (*k, *v)).collect(),
+            team: self.team.clone(),
+            pending_wild: self.pending_wild.iter().copied().collect(),
+            swapping: self.swapping.clone(),
+            held: self.held.clone(),
+            slots: self.slots.clone(),
+        }
+    }
+
+    pub(crate) fn from_snapshot(s: &AiSnapshot, chance_asleep: Vec<u8>) -> Self {
+        Self {
+            wild: s.wild.iter().copied().collect(),
+            team: s.team.clone(),
+            pending_wild: s.pending_wild.iter().copied().collect(),
+            swapping: s.swapping.clone(),
+            held: s.held.clone(),
+            slots: s.slots.clone(),
+            chance_asleep,
+        }
+    }
+}
 
 /// What a turn's decision step ended with.
 enum Plan {

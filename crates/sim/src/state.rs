@@ -18,7 +18,7 @@ use rescue_data::dungeon::{FLOOR_PROPERTIES, MapParam, MonsterSpawn};
 use rescue_data::moves::Move;
 use rescue_data::species::Species;
 
-use crate::ai::AiState;
+use crate::ai::{AiSnapshot, AiState};
 use crate::combat::CombatData;
 use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
@@ -1113,6 +1113,51 @@ impl GameState {
         }
     }
 
+    /// What [`GameState::snapshot`] leaves out (see [`Resume`]).
+    #[must_use]
+    pub fn resume(&self) -> Resume {
+        Resume {
+            chance_asleep: self.chance_asleep.clone(),
+            dungeon: self.dungeon.as_ref().map(|d| DungeonResume {
+                mud_sport: d.mud_sport,
+                water_sport: d.water_sport,
+                spawns: d
+                    .spawns
+                    .iter()
+                    .map(|s| (s.species, s.level, s.weights))
+                    .collect(),
+                spawn_counter: d.spawn_counter,
+                enemy_density: d.enemy_density,
+                ai: d.ai.capture(),
+            }),
+        }
+    }
+
+    /// [`GameState::restore`], then the state a [`Resume`] holds, so the run continues as if
+    /// it had not stopped. A resume without a dungeon part leaves the restored floor as
+    /// `restore` made it.
+    pub fn restore_with(snapshot: &Snapshot, resume: &Resume) -> Result<Self, StateError> {
+        let mut state = Self::restore(snapshot)?;
+        state.chance_asleep.clone_from(&resume.chance_asleep);
+        if let (Some(d), Some(r)) = (state.dungeon.as_mut(), resume.dungeon.as_ref()) {
+            d.mud_sport = r.mud_sport;
+            d.water_sport = r.water_sport;
+            d.spawns = r
+                .spawns
+                .iter()
+                .map(|&(species, level, weights)| MonsterSpawn {
+                    species,
+                    level,
+                    weights,
+                })
+                .collect();
+            d.spawn_counter = r.spawn_counter;
+            d.enemy_density = r.enemy_density;
+            d.ai = AiState::from_snapshot(&r.ai, resume.chance_asleep.clone());
+        }
+        Ok(state)
+    }
+
     /// Rebuilds a state from a snapshot. Checks the sizes and the generator states, and
     /// fails rather than guess.
     pub fn restore(snapshot: &Snapshot) -> Result<Self, StateError> {
@@ -1153,19 +1198,18 @@ impl GameState {
                     stairs_pending: d.stairs_pending,
                     // Clamped to the two bits the setting uses.
                     darkness: d.darkness & 3,
-                    // shortcut: the sport timers are not in `DungeonSnapshot` (its literals in
-                    // `apps/trace-harness` would need the fields), so a restored floor has none
-                    // active (#421).
+                    // Not in `Snapshot` (the harness builds it); `restore_with` sets these
+                    // from a `Resume`. Plain `restore` leaves no sport active (#421).
                     mud_sport: 0,
                     water_sport: 0,
-                    // shortcut: the spawn state is not in `DungeonSnapshot` (as the sport
-                    // timers), so a restored floor has no spawn list and spawns nothing (#451).
+                    // As the sport timers: plain `restore` has no spawn list, so the floor
+                    // spawns nothing (#451); `restore_with` brings it back.
                     spawns: Vec::new(),
                     spawn_counter: 0,
                     enemy_density: 0,
                     ai: AiState::default(),
                 };
-                // shortcut: the snapshot holds no AI records, so every restored wild monster gets
+                // shortcut: plain `restore` has no AI records, so every restored wild monster gets
                 // the floor-generation record without the draws (see `seed_wild_ai`; the game's
                 // step is in docs/re/ai.md, "Initial wild AI records"), right only for a
                 // snapshot taken before the wild monsters' first turn (the harness's row 1).
@@ -1186,6 +1230,29 @@ impl GameState {
             chance_asleep: Vec::new(),
         })
     }
+}
+
+/// What [`Snapshot`] leaves out and a save must keep to continue a run exactly (#535): the
+/// floor's spawn state, the sport timers, the AI records and the species sleep chances.
+/// [`Snapshot`] stays as the trace harness builds it; the save stores this beside it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resume {
+    /// `Species::chance_asleep` by species ID (see [`GameState::with_species_sleep_chances`]).
+    pub chance_asleep: Vec<u8>,
+    /// The current floor's extra state, `None` when no dungeon is loaded.
+    pub dungeon: Option<DungeonResume>,
+}
+
+/// The floor part of [`Resume`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DungeonResume {
+    pub mud_sport: u8,
+    pub water_sport: u8,
+    /// The spawn list as (species, level, weights); `MonsterSpawn` has no serde.
+    pub spawns: Vec<(u16, u8, [i16; 2])>,
+    pub spawn_counter: i16,
+    pub enemy_density: u8,
+    pub ai: AiSnapshot,
 }
 
 /// One tile, as a snapshot: the fields of [`Tile`].
@@ -2315,6 +2382,28 @@ mod tests {
         let r = GameState::restore(&crafted).unwrap();
         assert_eq!(r.dungeon().unwrap().fractional_turn(), 6);
         assert_eq!(r.dungeon().unwrap().speed_stage(), Some(MAX_SPEED_STAGE));
+    }
+
+    #[test]
+    fn restore_with_brings_back_what_the_snapshot_lacks() {
+        let mut g = GameState::in_dungeon(3, Floor::new(), vec![], 0)
+            .unwrap()
+            .with_species_sleep_chances(vec![0, 7]);
+        let d = g.dungeon_mut().unwrap();
+        d.mud_sport = 5;
+        d.water_sport = 6;
+        d.spawn_counter = 9;
+        d.enemy_density = 4;
+        d.spawns = vec![MonsterSpawn {
+            species: 1,
+            level: 2,
+            weights: [3, 4],
+        }];
+        let back = GameState::restore_with(&g.snapshot(), &g.resume()).unwrap();
+        assert_eq!(back, g);
+        assert_eq!(back.resume(), g.resume());
+        let plain = GameState::restore(&g.snapshot()).unwrap();
+        assert_eq!(plain.dungeon().unwrap().spawns.len(), 0);
     }
 
     #[test]
