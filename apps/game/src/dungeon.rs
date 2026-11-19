@@ -99,6 +99,8 @@ pub struct FloorData {
     minimap_palette: Palette,
     /// The leader species' movement speed (`monster_md` `+0xC`), for the sim's speed stage.
     leader_speed: i32,
+    /// `Species::chance_asleep` by species ID, for the sim's spawn sleep roll.
+    sleep_chances: Vec<u8>,
     /// The leader's sprite and its palette, drawn at any pose by `leader_image`.
     sprite: Sprite,
     species_palette: u8,
@@ -185,6 +187,7 @@ impl FloorData {
             patterns,
             minimap_palette,
             leader_speed: entry.movement_speed,
+            sleep_chances: species_table.iter().map(|s| s.chance_asleep).collect(),
             sprite,
             species_palette: entry.palette,
             palettes,
@@ -199,6 +202,11 @@ impl FloorData {
     /// The floor's monster spawn list: the wild monsters of the floor are made from it.
     pub fn wild_spawns(&self) -> &[MonsterSpawn] {
         &self.wild
+    }
+
+    /// The species' sleep chances by species ID (`Species::chance_asleep`).
+    pub fn sleep_chances(&self) -> &[u8] {
+        &self.sleep_chances
     }
 
     /// The leader species' movement speed.
