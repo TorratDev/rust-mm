@@ -54,6 +54,20 @@ Reconciled with investigator b, who did not find a `numItems` reader: investigat
 
 Not verified: other limits in other modes. The gate `02180B68`, `+0x64C` and the money table are settled in the next section.
 
+### Bag and floor-slot runtime check (#465)
+
+Runtime on the retail dump (py-desmume, new game, floor 1 = Tiny Woods B1F; two investigator runs; probe [`items_bag_probe.py`](../../verification/v7-trace/items_bag_probe.py), see [`verification.md`](../verification.md)). All [blue-verified].
+
+- **Layout.** `*(u32*)0x020DECF8` = `0x020E791C` here; bag at `+0`, 20 x {flags, qty, id}; money s32 at `+0x234`. Money pickup (id `0x69`) moved money 0 -> 38 -> 60 and took no bag slot. Poking `[1,qty,id]` into slot 0 makes the Items menu list the item.
+- **`numItems` is a high-water mark, both ways.** Floor generation: three `021440B0` calls, `numItems` 0 -> 3. Removing slots 0 and 1 of 3 (`021441D8` then `02143F98`): stays 3. Drop (`02173CCC`, then `021440B0`): bag slot cleared and compacted, floor slot 3 = `{1,1,0x20}`, 3 -> 4. Picking that item up (`021441D8`, `02143F98`): bag slot 0 = `{1,1,0x20}`, 4 -> 3, i.e. 1 + highest used index (2).
+- **Stale floor slot bytes.** After `02143F98` the removed slot's 3 bytes are not cleared (slot 3 still read `{1,1,0x20}` with `numItems` 3). Read floor items below `numItems` and only where the entity pointer (`gDungeon+0x113B4+4i`) is non-zero with type 3; never the whole 64-slot array.
+- **Use** (White Gummi `0x56`, qty 1, slot 0): hook `0217371C`; afterwards the slot is `{0,0,0}`, `numItems` unchanged (3), money unchanged.
+- **Gate.** On floor 1 `gDungeon+0x64C` = 0 and the Items entry says "There are no items." even with a bag item; poked to 1 the list shows. Matches the P1 gate; what sets it is not traced.
+- **Menu path** used: Items entries on floor 1 are Moves, Items, Team, Others, Ground; a ribbon's submenu is Give, Place (drop), Throw, Info.
+- **Hook note.** `02007B68` (compact) fires every few frames in the dungeon; it is not a removal marker. Use `02143F98`.
+- **Not run:** use of a stack with qty > 1 (static reading says decrement and re-add through `021440B0`), bag-full pickup, sticky and shop flags. Confidence high; medium for those.
+- **For the trace (#352):** bag u8[60] through one deref, money, raw `numItems`, floor items by live type-3 entity.
+
 ### Pickup gate and `+0x64C` (#464)
 
 Sources: the text export and read-only live ghidra-cli words; no emulator run, so nothing is trace-confirmed. Red names are `[red-hypothesis]` labels.
@@ -323,7 +337,7 @@ Static decompile only (text export), no emulator run.
 ## P7. Team inventory layout
 
 Largely in [`structs.md`](structs.md) ("Team inventory"). Added here:
-- Access: u32 at `0x020DECF8` (`gTeamInventoryRef`; 125 reader functions), then offsets from that pointer; total size `0x23C`. A trace reader needs one extra deref.
+- Access: u32 at `0x020DECF8` (`gTeamInventoryRef`; 125 reader functions), then offsets from that pointer; total size `0x23C`. A trace reader needs one extra deref. Runtime-checked in [P1 (#465)](#bag-and-floor-slot-runtime-check-465): bag at `+0`, money at `+0x234`.
 - `+0x000` 20 `Item` slots (flags bit 1 exists, bit 2 shop stock, bit 8 sticky, bit 0x10 L+R throw flag; quantity; id). `+0x03C` 240 u16 storage counts. `+0x21C` 8 shop items (id, quantity). `+0x22C` 4 ware items. `+0x234` money (s32). `+0x238` savings (s32).
 - Dungeon floor items: 64 entity pointers at `gDungeon+0x113B4`, `Item` of entity `i` at `gDungeon+0x3364 + 3*i`, `numItems` at `+0x3424` (see P1).
 - In the dungeon the shop code uses the same structure (`02195C88` walks the bag, `02195E18` reads money at `+0x234`): no separate copy.
