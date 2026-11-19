@@ -7,7 +7,7 @@
 //! menu (the dungeon is cleared).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use rescue_data::dungeon::MonsterSpawn;
 use rescue_platform::{ButtonState, Flow};
@@ -819,6 +819,8 @@ fn leader_monster(pos: (i16, i16), species: u16) -> Monster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
     use rescue_data::dungeon::FLOOR_PROPERTIES;
     use rescue_nds::rom::RomId;
     use rescue_platform::DsButton;
