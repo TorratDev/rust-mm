@@ -47,8 +47,10 @@ pub fn command_for_press(
         .filter(|c| !matches!(c, Command::Attack(_)) || pressed.is_held(DsButton::A))
 }
 
-/// Move slots in the move menu.
+/// Move slots in the move menu. The row after them is Suspend.
 pub const MENU_SLOTS: usize = 4;
+/// Rows in the move menu: the move slots and Suspend.
+pub const MENU_ROWS: usize = MENU_SLOTS + 1;
 
 /// What one frame's presses do in the move menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,8 @@ pub enum MenuInput {
     Cursor(usize),
     /// Use this move slot.
     Use(usize),
+    /// Suspend the run: write the quicksave and go back to the title.
+    Suspend,
     Close,
 }
 
@@ -68,16 +72,20 @@ pub fn opens_menu(pressed: ButtonState) -> bool {
 }
 
 /// The menu's reply to the buttons that went down this frame, with the cursor on `cursor`.
-/// Up and Down move it (wrapping), A uses the slot, B closes.
+/// Up and Down move it (wrapping), A uses the slot (or suspends, on the last row), B closes.
 pub fn menu_input(pressed: ButtonState, cursor: usize) -> MenuInput {
     if pressed.is_held(DsButton::B) {
         MenuInput::Close
     } else if pressed.is_held(DsButton::A) {
-        MenuInput::Use(cursor)
+        if cursor >= MENU_SLOTS {
+            MenuInput::Suspend
+        } else {
+            MenuInput::Use(cursor)
+        }
     } else if pressed.is_held(DsButton::Down) {
-        MenuInput::Cursor((cursor + 1) % MENU_SLOTS)
+        MenuInput::Cursor((cursor + 1) % MENU_ROWS)
     } else if pressed.is_held(DsButton::Up) {
-        MenuInput::Cursor((cursor + MENU_SLOTS - 1) % MENU_SLOTS)
+        MenuInput::Cursor((cursor + MENU_ROWS - 1) % MENU_ROWS)
     } else {
         MenuInput::Stay
     }
@@ -188,18 +196,27 @@ mod tests {
         use MenuInput::*;
         let got: Vec<MenuInput> = [
             (vec![], 0),
-            (vec![DsButton::Down], 3),
+            (vec![DsButton::Down], 4),
             (vec![DsButton::Up], 0),
             (vec![DsButton::Down], 1),
             (vec![DsButton::A], 2),
             (vec![DsButton::B], 2),
+            (vec![DsButton::A], 4),
         ]
         .iter()
         .map(|(b, c)| menu_input(held(b), *c))
         .collect();
         assert_eq!(
             got,
-            vec![Stay, Cursor(0), Cursor(3), Cursor(2), Use(2), Close]
+            vec![
+                Stay,
+                Cursor(0),
+                Cursor(4),
+                Cursor(2),
+                Use(2),
+                Close,
+                Suspend
+            ]
         );
     }
 }

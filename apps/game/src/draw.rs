@@ -6,7 +6,7 @@ use rescue_render::bg::Frame;
 use rescue_render::{SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use crate::dungeon::Dungeon;
-use crate::scene::{MenuItem, SPLASH_TICKS, Scene};
+use crate::scene::{SPLASH_TICKS, Scene};
 
 const BACKGROUND: Rgb = Rgb(24, 32, 72);
 const REFUSED: Rgb = Rgb(120, 24, 24);
@@ -15,21 +15,32 @@ const ROW: Rgb = Rgb(40, 90, 56);
 const ROW_CURSOR: Rgb = Rgb(250, 250, 250);
 const BOTTOM: Rgb = Rgb(16, 56, 32);
 
-/// Draws one screen of `scene`. `dungeon` is the floor while the dungeon scene is up; `menu` is
-/// the move menu's cursor while it is open, drawn over the lower screen.
-pub fn screen(
-    scene: Scene,
-    dungeon: Option<&Dungeon>,
-    menu: Option<usize>,
-    screen: Screen,
-    p: &mut Painter<'_>,
-) -> Result<(), PlatformError> {
+/// What the screens show: the `scene`; `dungeon`, the floor while the dungeon scene is up;
+/// `menu`, the move menu's cursor while it is open (drawn over the lower screen); `menu_items`,
+/// the main menu's entries; and whether a `notice` (a refused save) is up.
+pub struct View<'a> {
+    pub scene: Scene,
+    pub dungeon: Option<&'a Dungeon>,
+    pub menu: Option<usize>,
+    pub menu_items: usize,
+    pub notice: bool,
+}
+
+/// Draws one screen of the view.
+pub fn screen(view: &View<'_>, screen: Screen, p: &mut Painter<'_>) -> Result<(), PlatformError> {
+    let View {
+        scene,
+        dungeon,
+        menu,
+        menu_items,
+        notice,
+    } = *view;
     match screen {
-        Screen::Top => top(scene, dungeon, p),
+        Screen::Top => top(scene, dungeon, (menu_items, notice), p),
         Screen::Bottom if scene == Scene::Dungeon && menu.is_some() => {
             p.clear(BOTTOM);
-            // shortcut: no text is drawn yet, so a move's name is not shown: one row per slot.
-            for i in 0..crate::input::MENU_SLOTS {
+            // shortcut: no text is drawn yet, so a move's name is not shown: one row per slot, and the last one is Suspend.
+            for i in 0..crate::input::MENU_ROWS {
                 let colour = if menu == Some(i) { ROW_CURSOR } else { ROW };
                 p.fill_rect(64, 40 + 24 * i as i32, 128, 16, colour)?;
             }
@@ -50,7 +61,12 @@ pub fn screen(
     }
 }
 
-fn top(scene: Scene, dungeon: Option<&Dungeon>, p: &mut Painter<'_>) -> Result<(), PlatformError> {
+fn top(
+    scene: Scene,
+    dungeon: Option<&Dungeon>,
+    (menu_items, notice): (usize, bool),
+    p: &mut Painter<'_>,
+) -> Result<(), PlatformError> {
     if scene == Scene::Refused {
         p.clear(REFUSED);
         return Ok(());
@@ -69,9 +85,13 @@ fn top(scene: Scene, dungeon: Option<&Dungeon>, p: &mut Painter<'_>) -> Result<(
         Scene::Title => p.fill_rect(48, 80, 160, 32, BAR)?,
         Scene::Menu { cursor } => {
             p.fill_rect(48, 24, 160, 24, BAR)?;
-            for i in 0..MenuItem::ALL.len() {
+            for i in 0..menu_items {
                 let colour = if i == cursor { ROW_CURSOR } else { ROW };
                 p.fill_rect(64, 96 + 24 * i as i32, 128, 16, colour)?;
+            }
+            // shortcut: no text is drawn yet, so a refused save is a red bar (the reason is printed).
+            if notice {
+                p.fill_rect(32, 176, 192, 8, REFUSED)?;
             }
         }
         Scene::AdventureLog | Scene::Dungeon => p.fill_rect(48, 80, 160, 32, ROW)?,
