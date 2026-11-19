@@ -13,6 +13,8 @@ const REFUSED: Rgb = Rgb(120, 24, 24);
 const BAR: Rgb = Rgb(240, 200, 64);
 const ROW: Rgb = Rgb(40, 90, 56);
 const ROW_CURSOR: Rgb = Rgb(250, 250, 250);
+/// The notice bar: x, y, width, height.
+const NOTICE: (u32, u32, u32, u32) = (32, 176, 192, 8);
 const BOTTOM: Rgb = Rgb(16, 56, 32);
 
 /// What the screens show: the `scene`; `dungeon`, the floor while the dungeon scene is up;
@@ -39,6 +41,9 @@ pub fn screen(view: &View<'_>, screen: Screen, p: &mut Painter<'_>) -> Result<()
         title,
     } = *view;
     if let Some(frame) = title {
+        if screen == Screen::Top && notice && matches!(scene, Scene::Menu { .. }) {
+            return blit(&with_notice(frame), p);
+        }
         return blit(frame, p);
     }
     match screen {
@@ -97,12 +102,31 @@ fn top(
             }
             // shortcut: no text is drawn yet, so a refused save is a red bar (the reason is printed).
             if notice {
-                p.fill_rect(32, 176, 192, 8, REFUSED)?;
+                p.fill_rect(
+                    NOTICE.0 as i32,
+                    NOTICE.1 as i32,
+                    NOTICE.2,
+                    NOTICE.3,
+                    REFUSED,
+                )?;
             }
         }
         Scene::AdventureLog | Scene::Dungeon => p.fill_rect(48, 80, 160, 32, ROW)?,
     }
     Ok(())
+}
+
+/// `frame` with the refused-save bar over its bottom edge, as the placeholder menu draws it.
+// shortcut: no text is drawn over the ROM art either, so a failed Continue is a red bar.
+fn with_notice(frame: &Frame) -> Frame {
+    let mut out = frame.clone();
+    for y in NOTICE.1..NOTICE.1 + NOTICE.3 {
+        for x in NOTICE.0..NOTICE.0 + NOTICE.2 {
+            let i = ((y * SCREEN_WIDTH + x) * 4) as usize;
+            out.pixels[i..i + 4].copy_from_slice(&[REFUSED.0, REFUSED.1, REFUSED.2, 255]);
+        }
+    }
+    out
 }
 
 /// Copies `frame` to the top screen, one fill per run of equal pixels in a row.
@@ -120,4 +144,24 @@ fn blit(frame: &Frame, p: &mut Painter<'_>) -> Result<(), PlatformError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notice_bar_is_drawn_over_the_title_frame() {
+        let frame = Frame::filled([1, 2, 3, 255]);
+        let out = with_notice(&frame);
+        assert_eq!(out.get(32, 176), [REFUSED.0, REFUSED.1, REFUSED.2, 255]);
+        assert_eq!(out.get(223, 183), [REFUSED.0, REFUSED.1, REFUSED.2, 255]);
+        assert_eq!(out.get(31, 176), [1, 2, 3, 255]);
+        assert_eq!(out.get(32, 184), [1, 2, 3, 255]);
+        assert_eq!(
+            frame.get(32, 176),
+            [1, 2, 3, 255],
+            "the source frame is untouched"
+        );
+    }
 }

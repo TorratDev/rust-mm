@@ -34,7 +34,8 @@ pub const BACKDROPS: usize = 3;
 /// Frames the cursor is shown, then hidden. `[hypothesis]`: from six samples of OAM slot 127
 /// (visible f2541, hidden f2544 to 2550, visible f2553 to 2559, hidden f2562 to 2565).
 pub const BLINK_FRAMES: u32 = 8;
-/// The cursor's top-left on the first row, and the pitch between rows (OAM samples y = 27, 39).
+/// The cursor's top-left on the first row, and the pitch between rows. `[hypothesis]`: low
+/// confidence, from two OAM samples (y = 27, 39).
 const CURSOR_AT: (i32, i32) = (24, 27);
 const ROW_PITCH: i32 = 12;
 /// Item text origin. `[hypothesis]`: x about 31 from the notes; y is the cursor's minus 2.
