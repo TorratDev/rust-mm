@@ -33,9 +33,9 @@ case "$engine" in pi|go|claude) ;; *) die "--engine must be pi, go or claude" ;;
 
 # Model per role and engine; this table is the one source (orchestrator.md points here).
 declare -A models=(
-  [pi.investigator]=anthropic/claude-sonnet-5-5:high [go.investigator]=opencode-go/beam-free:high
-  [pi.executor]=anthropic/claude-sonnet-5-5:high     [go.executor]=opencode-go/glm-5.3-flash:high
-  [pi.reviewer]=anthropic/claude-opus-5-5:high       [go.reviewer]=opencode-go/beam-free:max
+  [pi.investigator]=anthropic/claude-sonnet-5-5 [go.investigator]=opencode-go/beam-free
+  [pi.executor]=anthropic/claude-sonnet-5-5     [go.executor]=opencode-go/glm-5.3-flash
+  [pi.reviewer]=anthropic/claude-opus-5-5       [go.reviewer]=opencode-go/beam-free
   [claude.investigator]=claude-sonnet-5-5 [claude.executor]=claude-sonnet-5-5 [claude.reviewer]=claude-opus-5-5
 )
 model=${a[model]:-${models[$engine.$role]:-}}

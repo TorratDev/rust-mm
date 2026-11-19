@@ -51,7 +51,7 @@ Each role has one tab in your space; spawn.sh creates and names it with the firs
 ## Limits and fallbacks
 
 - pi with Claude models is the default. When the user reports a Claude usage limit (or you see a limit error from a session), stop starting Claude-model sessions until the limit resets and pass --engine go to spawn.sh. If the orchestrator itself hits the limit, tell the user to restart you on Go models (~/start-role.sh --role orchestrator --engine go); Resume rebuilds your state.
-- If a Go session fails with a model or provider error (model not found, quota, auth), reap it and spawn the same task again with --model: opencode-go/deepseek-v4.1-flash:high for executors, opencode-go/deepseek-v4-pro:max for investigators and reviewers.
+- If a Go session fails with a model or provider error (model not found, quota, auth), reap it and spawn the same task again with --model: opencode-go/deepseek-v4.1-flash for executors, opencode-go/deepseek-v4-pro for investigators and reviewers.
 - The OpenCode Go roster changes; if a model in spawn.sh's table is gone (pi --list-models opencode-go), pass a current one with --model and tell the user which replacement you chose.
 
 ## Space
