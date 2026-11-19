@@ -905,7 +905,8 @@ mod tests {
         );
         assert_eq!(outcome, Outcome::Applied);
         assert_eq!(leader_pp(&g), before_pp - 1);
-        assert!((10..=11).contains(&g.dungeon().unwrap().water_sport));
+        // 10 or 11 turns by the draw; the turn's own tick may already have taken one.
+        assert!((9..=11).contains(&g.dungeon().unwrap().water_sport));
     }
 
     /// The rng after `n` draws (of any cap: each takes one step) from `rng`.

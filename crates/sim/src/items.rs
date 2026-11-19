@@ -139,8 +139,10 @@ pub struct ItemTables {
     /// The money value by quantity (the 100-entry table at `02091FA8`). With none, the money
     /// of a Poké item is its quantity.
     pub money_values: Vec<u32>,
-    /// The thresholds of the quantity roll of a Poké floor item (`02143290`).
-    pub money_roll: Vec<u8>,
+    /// The int[100] table of the quantity roll of a Poké floor item (`DAT_021432e4`, `02143290`).
+    pub quantity_table: Vec<i32>,
+    /// The floor's item level, the byte at `gDungeon+0x1A30D`: the roll's limit is `level * 0x28`.
+    pub floor_level: u8,
     /// `gDungeon+0x64C`: the player has a bag in this dungeon (`docs/re/items.md`, #464).
     pub has_inventory: bool,
 }
@@ -161,9 +163,21 @@ impl ItemTables {
             stack_amount: Vec::new(),
             sticky_chance: 0,
             money_values: Vec::new(),
-            money_roll: Vec::new(),
+            quantity_table: Vec::new(),
+            floor_level: 0,
             has_inventory: true,
         }
+    }
+
+    /// `020082FC`: the category of item `id`. An id past the table reads 0, except that Poké
+    /// reads 6 when the caller gave no table (it is the money item, see [`POKE`]).
+    #[must_use]
+    pub fn category(&self, id: u8) -> u8 {
+        let default = if id == POKE { 6 } else { 0 };
+        self.categories
+            .get(usize::from(id))
+            .copied()
+            .unwrap_or(default)
     }
 
     /// `02007350`: the money a Poké item of quantity `qty` is worth.
@@ -182,13 +196,12 @@ impl ItemTables {
     }
 }
 
-/// `02138B74(row)`: the weighted floor-item pick. Draws `DungeonRandInt(0x2710)` for the
-/// category; a hit gives a second `DungeonRandInt(0x2710)` for the item of that category. The
-/// first item (by id) of the category whose cumulative weight is above the roll wins; no hit
-/// at either roll gives [`POKE`].
-// shortcut: the walk (first cumulative weight above the roll, items of the category in id
-// order) is read from the table layout and the fallback, not from the function body; no second
-// roll is drawn after a category miss. Medium confidence (`docs/re/items.md`, P2 #459).
+/// `02138B74(row)`: the weighted floor-item pick. Draws `DungeonRandInt(0x2710)` first. The
+/// first category (0 to 11) with a non-zero weight at or above the roll wins; with no hit the
+/// result is [`POKE`] and no second roll is drawn. A hit draws a second `DungeonRandInt(0x2710)`
+/// and takes the first item id (0 to 239) with a non-zero weight at or above that roll whose
+/// category (`020082FC`) is the winner; no such item gives [`POKE`]. Both tests are
+/// `roll <= weight` (the weights are cumulative).
 pub fn pick_floor_item(tables: &ItemTables, row: usize, rng: &mut DungeonRng) -> u8 {
     let roll = rng.int(PICKER_ROLL);
     let Some(r) = tables.rows.get(row) else {
@@ -198,7 +211,7 @@ pub fn pick_floor_item(tables: &ItemTables, row: usize, rng: &mut DungeonRng) ->
         .categories
         .iter()
         .take(PICKER_CATEGORIES)
-        .position(|&w| roll < i32::from(w))
+        .position(|&w| w != 0 && roll <= i32::from(w))
     else {
         return POKE;
     };
@@ -208,41 +221,65 @@ pub fn pick_floor_item(tables: &ItemTables, row: usize, rng: &mut DungeonRng) ->
         .take(PICKER_ITEMS)
         .enumerate()
         .find(|&(id, &w)| {
-            roll < i32::from(w)
-                && tables.categories.get(id).copied().map(usize::from) == Some(category)
+            w != 0
+                && roll <= i32::from(w)
+                && u8::try_from(id).is_ok_and(|id| usize::from(tables.category(id)) == category)
         })
         .and_then(|(id, _)| u8::try_from(id).ok())
         .unwrap_or(POKE)
 }
 
-/// `021448A0` (mode 0) for a floor item of `id`: the quantity and sticky flag. A Poké item
-/// rolls its quantity (`02143290`: `DungeonRandInt(100)` against the thresholds); anything else
-/// draws `DungeonRandInt(100)` against the sticky chance.
-// shortcut: the quantity roll walk of `02143290` halves an index over a table the sim does not
-// read; it takes the highest threshold at or below the roll (quantity 1 when none). A thrown
-// stack takes its table amount without a draw (the game's range roll `020083D4` is not read).
+/// `02007400(id)`: whether the sticky roll applies. False for 0, Poké and `0x77` to `0x7A`.
+const fn can_be_sticky(id: u8) -> bool {
+    !matches!(id, 0 | POKE | 0x77..=0x7A)
+}
+
+/// `02143290(item, limit)`: the quantity of a Poké floor item. Draws `DungeonRandInt(100)` as an
+/// index into the table, then up to 200 times: when `table[index] <= limit` the index is the
+/// quantity, otherwise the index halves. After 200 misses the quantity is 1.
+fn money_quantity(tables: &ItemTables, rng: &mut DungeonRng) -> u8 {
+    let limit = i32::from(tables.floor_level) * 0x28;
+    let mut q = rng.int(100);
+    for _ in 0..200 {
+        let hit = usize::try_from(q)
+            .ok()
+            .and_then(|i| tables.quantity_table.get(i))
+            .is_some_and(|&t| t <= limit);
+        if hit {
+            return u8::try_from(q).unwrap_or(1);
+        }
+        q /= 2;
+    }
+    1
+}
+
+/// `021448A0(item, id, 0)` for a floor item of `id`: `02008458` makes the item, then the sticky
+/// roll `DungeonRandInt(100) < sticky_chance` is drawn when [`can_be_sticky`] holds, then a
+/// category 6 item rolls its quantity ([`money_quantity`]).
+// shortcut: `02008458` sets a thrown stack's quantity with `02011924(min, max)`, which draws on
+// the non-dungeon generator (`0201198C`); the sim takes the table amount, and takes ids 1 to 8
+// for the items `02008504` marks as stacking (that function is not read). A category 6 item
+// starts at quantity 1 and any other at 0, as in `02008458`.
 fn new_floor_item(tables: &ItemTables, id: u8, rng: &mut DungeonRng) -> Item {
-    let mut item = Item::new(id, 1);
-    if id == POKE {
-        let n = rng.int(100);
-        let hit = tables
-            .money_roll
-            .iter()
-            .rposition(|&t| i32::from(t) <= n)
-            .and_then(|i| u8::try_from(i).ok());
-        item.qty = hit.unwrap_or(1).max(1);
-        return item;
+    if id == 0 {
+        return Item::default();
     }
-    if rng.int(100) < i32::from(tables.sticky_chance) {
-        item.flags |= FLAG_STICKY;
-    }
-    if id < STACKABLE_BELOW {
+    let mut item = Item::new(id, 0);
+    if id < STACKABLE_BELOW && id != 0 {
         item.qty = tables
             .stack_amount
             .get(usize::from(id))
             .copied()
             .unwrap_or(1)
             .clamp(1, STACK_CAP);
+    } else if tables.category(id) == 6 {
+        item.qty = 1;
+    }
+    if can_be_sticky(id) && rng.int(100) < i32::from(tables.sticky_chance) {
+        item.flags |= FLAG_STICKY;
+    }
+    if tables.category(id) == 6 {
+        item.qty = money_quantity(tables, rng);
     }
     item
 }
@@ -391,11 +428,14 @@ impl Dungeon {
 
     /// Pickup for team member `member` on its tile (`021441D8` for the leader, `02184E50` for
     /// an ally; the bodies are the same). Order: the floor item, the shop-stock refusal, the
-    /// run-away gate, money, stacking, the first free slot, bag full.
+    /// run-away gate, money (category 6), stacking, the first free slot, bag full.
     ///
-    /// With no bag (`+0x64C == 0`) or a member that is not on the team, only the held slot is a
-    /// candidate. A stack needs the same id (below 9), neither item sticky, and room (not 99);
-    /// the fullest match wins, the bag before the held slot on a tie.
+    /// The candidates are the member's held slot alone when `+0x64C == 0`, else the 20 bag
+    /// slots alone. A stack needs an id below 9 and a floor item that is not shop stock; a
+    /// candidate must exist, not be shop stock, share the id, not be at 99, and be strictly the
+    /// fullest (the first wins a tie). The first pass also needs the same sticky bit; with no
+    /// match the second pass drops that condition. The sum clamps to 99 and the slot becomes
+    /// sticky when the floor item was.
     // shortcut: the ally guards on the species byte (`info+0x40` not 'J' or 'G') and on
     // `info+0x98 != 1`, `info+8 != 1` and `0214067C` are not modelled; no AI action calls this
     // for an ally yet (the pickup decision is in `ai.md`, not ported).
@@ -403,8 +443,7 @@ impl Dungeon {
         let Some(m) = self.team.get(member) else {
             return Pickup::NoItem;
         };
-        let (pos, off_team) = (m.pos, m.info.not_team_member);
-        let Some(slot) = self.items.slot_at(pos) else {
+        let Some(slot) = self.items.slot_at(m.pos) else {
             return Pickup::NoItem;
         };
         let Some(floor_item) = self.items.floor[slot] else {
@@ -418,55 +457,63 @@ impl Dungeon {
             return Pickup::RunAway;
         }
         let st = &mut self.items;
-        if item.id == POKE {
+        if st.tables.category(item.id) == 6 {
             let amount = st.tables.money_value(item.qty);
             st.bag.add_money(amount);
             st.remove(slot);
             return Pickup::Money(amount);
         }
-        let use_bag = st.tables.has_inventory && !off_team;
-        if item.id < STACKABLE_BELOW && !item.sticky() {
-            // Candidates in order: the bag slots, then the held slot.
-            let fits = |c: Item| c.exists() && c.id == item.id && !c.sticky() && c.qty != STACK_CAP;
-            let mut best: Option<(usize, u8)> = None;
-            if use_bag {
-                for (i, c) in st.bag.slots.iter().enumerate() {
-                    if fits(*c) && best.is_none_or(|(_, q)| c.qty > q) {
-                        best = Some((i, c.qty));
+        // The candidates: `None` is the held slot, `Some(i)` bag slot `i`.
+        let candidates: Vec<Option<usize>> = if st.tables.has_inventory {
+            (0..BAG_SLOTS).map(Some).collect()
+        } else {
+            vec![None]
+        };
+        let get = |st: &ItemState, c: Option<usize>| match c {
+            Some(i) => st.bag.slots[i],
+            None => st.held.get(member).copied().unwrap_or_default(),
+        };
+        if item.id < STACKABLE_BELOW {
+            let fullest = |same_sticky: bool| {
+                let mut best: Option<(Option<usize>, u8)> = None;
+                for &c in &candidates {
+                    let it = get(st, c);
+                    if it.exists()
+                        && it.flags & FLAG_SHOP == 0
+                        && it.id == item.id
+                        && (!same_sticky || it.sticky() == item.sticky())
+                        && it.qty != STACK_CAP
+                        && best.is_none_or(|(_, q)| it.qty > q)
+                    {
+                        best = Some((c, it.qty));
                     }
                 }
-            }
-            let held = st.held.get(member).copied().unwrap_or_default();
-            let held_wins = fits(held) && best.is_none_or(|(_, q)| held.qty > q);
-            let merged = |c: Item| Item {
-                qty: c.qty.saturating_add(item.qty).min(STACK_CAP),
-                ..c
+                best
             };
-            if held_wins {
-                st.held[member] = merged(held);
-                st.remove(slot);
-                return Pickup::Stacked;
-            }
-            if let Some((i, _)) = best {
-                st.bag.slots[i] = merged(st.bag.slots[i]);
+            if let Some((c, _)) = fullest(true).or_else(|| fullest(false)) {
+                let mut merged = get(st, c);
+                merged.qty = merged.qty.saturating_add(item.qty).min(STACK_CAP);
+                merged.flags |= item.flags & FLAG_STICKY;
+                match c {
+                    Some(i) => st.bag.slots[i] = merged,
+                    None => {
+                        if let Some(h) = st.held.get_mut(member) {
+                            *h = merged;
+                        }
+                    }
+                }
                 st.remove(slot);
                 return Pickup::Stacked;
             }
         }
-        if use_bag {
-            if !st.bag.add(item) {
-                return Pickup::Full;
-            }
-        } else {
-            match st.held.get_mut(member) {
-                Some(h) if !h.exists() => {
-                    *h = Item {
-                        flags: item.flags & !FLAG_MARK,
-                        ..item
-                    }
+        match candidates.iter().find(|&&c| !get(st, c).exists()) {
+            Some(Some(i)) => st.bag.slots[*i] = item,
+            Some(None) => {
+                if let Some(h) = st.held.get_mut(member) {
+                    *h = item;
                 }
-                _ => return Pickup::Full,
             }
+            None => return Pickup::Full,
         }
         st.remove(slot);
         Pickup::Placed
@@ -525,77 +572,133 @@ impl Dungeon {
         }
     }
 
-    /// `02173A48` (action 0x0A): swaps bag slot `slot` with the leader's held item. Refused with
-    /// no item in the slot, or when either item is sticky.
-    // shortcut: "refuses sticky pairs" is read as either item being sticky; the function body
-    // beyond the refusal and the `info+0x5A..5C` write is not read.
-    pub(crate) fn swap_check(&self, slot: u8) -> Result<(), Blocked> {
-        if self.team.is_empty() {
-            return Err(Blocked::NoLeader);
+    /// `02173A48` (action 0x0A): swaps the floor item underfoot with `source`, a bag slot or the
+    /// leader's held item. Refusals: no floor item underfoot (the game wants the `0x80`
+    /// selector), an empty source, a bag item that is sticky and carries the marker, a held
+    /// item that is sticky.
+    // shortcut: a trap on the tile (the tile object not being an item) is not checked: the sim
+    // has no traps. `021440B0` cannot fail here (the floor item's slot was just freed), so the
+    // game's failure branch (a message, both items lost) is not modelled.
+    pub(crate) fn swap_check(&self, source: SwapSource) -> Result<(), Blocked> {
+        let leader = self.team.first().ok_or(Blocked::NoLeader)?;
+        if self.items.slot_at(leader.pos).is_none() {
+            return Err(Blocked::NoItem);
         }
-        let item = self
-            .items
-            .bag
-            .slots
-            .get(usize::from(slot))
-            .copied()
-            .filter(|i| i.exists())
-            .ok_or(Blocked::NoItem)?;
-        if item.sticky() || self.items.held[0].sticky() {
+        let item = match source {
+            SwapSource::Bag(slot) => self.items.bag.slots.get(usize::from(slot)).copied(),
+            SwapSource::Held => Some(self.items.held[0]),
+        }
+        .filter(|i| i.exists())
+        .ok_or(Blocked::NoItem)?;
+        let refused = match source {
+            SwapSource::Bag(_) => item.flags & FLAG_MARK != 0 && item.sticky(),
+            SwapSource::Held => item.sticky(),
+        };
+        if refused {
             return Err(Blocked::ItemSticky);
         }
         Ok(())
     }
 
-    /// The effect of a checked swap (see [`Self::swap_check`]). The held item never carries the
-    /// marker. An empty held slot leaves the bag slot empty, and the bag is compacted.
-    pub(crate) fn swap_apply(&mut self, slot: u8) {
-        let st = &mut self.items;
-        let Some(entry) = st.bag.slots.get_mut(usize::from(slot)) else {
+    /// The effect of a checked swap (see [`Self::swap_check`]). Both items lose the marker. The
+    /// floor item goes to the held slot (for a held source) or to the first free bag slot, and the
+    /// bag is compacted.
+    pub(crate) fn swap_apply(&mut self, source: SwapSource) {
+        let Some(pos) = self.team.first().map(|l| l.pos) else {
             return;
         };
-        let incoming = Item {
-            flags: entry.flags & !FLAG_MARK,
-            ..*entry
+        let st = &mut self.items;
+        let Some(slot) = st.slot_at(pos) else {
+            return;
         };
-        *entry = std::mem::replace(&mut st.held[0], incoming);
-        if !entry.exists() {
-            *entry = Item::default();
+        let Some(floor_item) = st.floor[slot] else {
+            return;
+        };
+        let unmark = |i: Item| Item {
+            flags: i.flags & !FLAG_MARK,
+            ..i
+        };
+        let (down, up) = match source {
+            SwapSource::Bag(s) => (st.bag.slots[usize::from(s)], unmark(floor_item.item)),
+            SwapSource::Held => (st.held[0], unmark(floor_item.item)),
+        };
+        st.remove(slot);
+        match source {
+            SwapSource::Bag(s) => st.bag.slots[usize::from(s)] = Item::default(),
+            SwapSource::Held => st.held[0] = Item::default(),
+        }
+        st.spawn(pos, unmark(down));
+        match source {
+            SwapSource::Held => st.held[0] = up,
+            SwapSource::Bag(_) => {
+                st.bag.add(up);
+            }
         }
         st.bag.compact();
     }
 }
 
-/// `02144714`: the floor items of a floor just generated. Each tile with the item spawn mark,
-/// in column order (x outer, y inner), takes the picker row of its terrain (3 for a tile with
-/// terrain type 0, 1 for the shop bit, 2 for the monster-house bit, else 0), the pick
-/// ([`pick_floor_item`]), then the item's own draws. Returns the slots, at most
-/// [`FLOOR_ITEM_SLOTS`]; a mark past the 64th makes no item.
-// shortcut: the scan order (column order, as the enemy marks) and the draw order inside one
-// tile (pick, then quantity or sticky) are not read from `02144714`; the monster-house tiles
-// are placed like any others (the house's own item list is not read).
+/// The item that [`GameState::swap_floor_item`] puts down for the one underfoot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapSource {
+    /// Bag slot `n` (0-based; the game's selector is `n + 1`).
+    Bag(u8),
+    /// The leader's held item (selector `0x81`).
+    Held,
+}
+
+/// The item spawn mark in a tile's spawn word (`puVar7[1] & 2` in `02144714`).
+const SPAWN_ITEM: u16 = 0x2;
+
+/// `02144714`: the floor items of a floor just generated. `numItems` is set to 0, then
+/// `DungeonRandInt(0x38)` (x0) and `DungeonRandInt(0x20)` (y0) are drawn. The scan runs row by
+/// row, y from y0 + 1 wrapping through 0x20 rows, and in each row x from x0 + 1 wrapping through
+/// 0x38 columns. A tile without the stairs bit (terrain `0x200`) and with the item mark takes its
+/// picker row (the shop bit `0x20` first: row 1; else terrain type 0: row 3; else the monster
+/// house bit `0x40`: row 2; else 0), the pick ([`pick_floor_item`]), then the item's own draws
+/// ([`new_floor_item`]). A shop tile marks the item as shop stock (flag `0x02`) when `0200747C`
+/// holds. At most [`FLOOR_ITEM_SLOTS`] items are laid; a mark past the 64th makes none (its
+/// draws still happen).
+// shortcut: `0200747C` also reads `0200813C` and `02008154`, which are not read: every id but
+// 0, Poké and `0x77` to `0x7A` counts as stock.
 pub(crate) fn spawn_floor_items(
     floor: &Floor,
     tables: &ItemTables,
     rng: &mut DungeonRng,
 ) -> ItemState {
     let mut state = ItemState::new(Bag::default(), tables.clone());
-    for pos in floor::item_spawn_spots(floor) {
-        let Some(tile) = floor.tile(i32::from(pos.0), i32::from(pos.1)) else {
-            continue;
-        };
-        let row = if tile.terrain & floor::TERRAIN_TYPE_MASK == 0 {
-            3
-        } else if tile.terrain & floor::TERRAIN_SHOP != 0 {
-            1
-        } else if tile.terrain & floor::TERRAIN_MONSTER_HOUSE != 0 {
-            2
-        } else {
-            0
-        };
-        let id = pick_floor_item(tables, row, rng);
-        let item = new_floor_item(tables, id, rng);
-        state.spawn(pos, item);
+    let (w, h) = (floor::WIDTH as i32, floor::HEIGHT as i32);
+    let x0 = rng.int(w);
+    let y0 = rng.int(h);
+    for dy in 1..=h {
+        let y = (y0 + dy) % h;
+        for dx in 1..=w {
+            let x = (x0 + dx) % w;
+            let Some(tile) = floor.tile(x, y) else {
+                continue;
+            };
+            if tile.terrain & floor::TERRAIN_STAIRS != 0
+                || tile.spawn_or_visibility & SPAWN_ITEM == 0
+            {
+                continue;
+            }
+            let shop = tile.terrain & floor::TERRAIN_SHOP != 0;
+            let row = if shop {
+                1
+            } else if tile.terrain & floor::TERRAIN_TYPE_MASK == 0 {
+                3
+            } else if tile.terrain & floor::TERRAIN_MONSTER_HOUSE != 0 {
+                2
+            } else {
+                0
+            };
+            let id = pick_floor_item(tables, row, rng);
+            let mut item = new_floor_item(tables, id, rng);
+            if shop && !matches!(id, 0 | POKE | 0x77..=0x7A) {
+                item.flags |= FLAG_SHOP;
+            }
+            state.spawn((x as i16, y as i16), item);
+        }
     }
     state
 }
@@ -745,20 +848,73 @@ mod tests {
     }
 
     #[test]
-    fn floor_items_come_from_the_marks_in_column_order() {
+    fn picker_hits_when_the_roll_equals_a_weight_and_skips_zero_weights() {
+        let mut probe = DungeonRng::new(21);
+        let r1 = probe.int(0x2710);
+        let r2 = probe.int(0x2710);
+        let w = |r: i32| u16::try_from(r).unwrap();
+        let mut cats = vec![0u16; PICKER_CATEGORIES];
+        cats[2] = w(r1); // equal to the roll: a hit
+        let mut items = vec![0u16; PICKER_ITEMS];
+        items[0x20] = w(r2); // equal to the roll: a hit
+        let mut tables = ItemTables {
+            categories: vec![0; 256],
+            ..ItemTables::default()
+        };
+        tables.categories[0x20] = 2;
+        tables.rows.push(PickerRow {
+            categories: cats.clone(),
+            items: items.clone(),
+        });
+        assert_eq!(pick_floor_item(&tables, 0, &mut DungeonRng::new(21)), 0x20);
+        // One below the roll misses (and draws no second roll).
+        tables.rows[0].categories[2] = w(r1 - 1);
+        let mut a = DungeonRng::new(21);
+        let mut b = a;
+        assert_eq!(pick_floor_item(&tables, 0, &mut a), POKE);
+        b.int(0x2710);
+        assert_eq!(a.state(), b.state());
+        // A zero weight never hits, even with a roll of 0 or more.
+        tables.rows[0].categories = vec![0; PICKER_CATEGORIES];
+        assert_eq!(pick_floor_item(&tables, 0, &mut DungeonRng::new(21)), POKE);
+        // An item weight below the roll misses: Poké, after both draws.
+        tables.rows[0].categories = cats;
+        tables.rows[0].items[0x20] = w(r2 - 1);
+        let mut c = DungeonRng::new(21);
+        assert_eq!(pick_floor_item(&tables, 0, &mut c), POKE);
+        assert_eq!(c.state(), probe.state());
+    }
+
+    #[test]
+    fn floor_items_come_from_the_marks_scanning_rows_from_the_two_start_draws() {
         let mut floor = open_floor();
-        for (x, y) in [(10, 3), (3, 8), (3, 2)] {
+        let marks = [(10, 3), (3, 8), (3, 2), (50, 2)];
+        for (x, y) in marks {
             floor.tile_mut(x, y).unwrap().spawn_or_visibility |= 0x2;
         }
+        // The stairs bit rules a marked tile out.
+        floor.tile_mut(50, 2).unwrap().terrain |= floor::TERRAIN_STAIRS;
         let tables = ItemTables::default();
         let mut rng = DungeonRng::new(5);
-        let st = spawn_floor_items(&floor, &tables, &mut rng);
-        let at: Vec<_> = st.floor.iter().flatten().map(|f| f.pos).collect();
-        assert_eq!(at, vec![(3, 2), (3, 8), (10, 3)]);
-        assert_eq!(st.num_items, 3);
-        // Default tables: a Poké item per mark, each with the pick roll and the quantity roll.
-        assert!(st.floor.iter().flatten().all(|f| f.item.id == POKE));
         let mut by_hand = DungeonRng::new(5);
+        let (x0, y0) = (by_hand.int(0x38), by_hand.int(0x20));
+        let st = spawn_floor_items(&floor, &tables, &mut rng);
+        // Slots follow the scan: y from y0 + 1 with wrap, x from x0 + 1 with wrap in each row.
+        let mut expect = Vec::new();
+        for dy in 1..=0x20 {
+            for dx in 1..=0x38 {
+                let p = ((x0 + dx) % 0x38, (y0 + dy) % 0x20);
+                if marks[..3].contains(&p) {
+                    expect.push((p.0 as i16, p.1 as i16));
+                }
+            }
+        }
+        let at: Vec<_> = st.floor.iter().flatten().map(|f| f.pos).collect();
+        assert_eq!(at, expect);
+        assert_eq!(at.len(), 3);
+        assert_eq!(st.num_items, 3);
+        // Default tables: a Poké item per mark, with the pick roll and the quantity roll.
+        assert!(st.floor.iter().flatten().all(|f| f.item.id == POKE));
         for _ in 0..3 {
             by_hand.int(0x2710);
             by_hand.int(100);
@@ -773,7 +929,8 @@ mod tests {
         floor.tile_mut(2, 1).unwrap().terrain = TERRAIN_FLOOR | floor::TERRAIN_SHOP; // row 1
         floor.tile_mut(3, 1).unwrap().terrain = TERRAIN_FLOOR | floor::TERRAIN_MONSTER_HOUSE; // row 2
         floor.tile_mut(4, 1).unwrap().terrain = TERRAIN_FLOOR; // row 0
-        for x in 1..=4 {
+        floor.tile_mut(5, 1).unwrap().terrain = floor::TERRAIN_SHOP; // the shop bit before type 0
+        for x in 1..=5 {
             floor.tile_mut(x, 1).unwrap().spawn_or_visibility |= 0x2;
         }
         // Each row holds one category-0 item of its own id.
@@ -792,13 +949,24 @@ mod tests {
             });
         }
         let st = spawn_floor_items(&floor, &tables, &mut DungeonRng::new(1));
-        let ids: Vec<_> = st
+        let mut ids: Vec<_> = st
             .floor
             .iter()
             .flatten()
-            .map(|f| (f.pos.0, f.item.id))
+            .map(|f| (f.pos.0, f.item.id, f.item.flags & FLAG_SHOP != 0))
             .collect();
-        assert_eq!(ids, vec![(1, 13), (2, 11), (3, 12), (4, 10)]);
+        ids.sort_unstable();
+        // The shop tiles' stock carries the shop flag.
+        assert_eq!(
+            ids,
+            vec![
+                (1, 13, false),
+                (2, 11, true),
+                (3, 12, false),
+                (4, 10, false),
+                (5, 11, true)
+            ]
+        );
     }
 
     #[test]
@@ -833,6 +1001,95 @@ mod tests {
         st.remove(1);
         st.remove(0);
         assert_eq!(st.num_items, 0);
+    }
+
+    #[test]
+    fn a_floor_item_draws_sticky_before_the_quantity_and_only_for_stickable_ids() {
+        let mut tables = ItemTables {
+            sticky_chance: 100,
+            quantity_table: vec![0; 100],
+            floor_level: 1,
+            categories: vec![0; 256],
+            ..ItemTables::default()
+        };
+        tables.categories[usize::from(POKE)] = 6;
+        // A plain item: one sticky draw, always sticky at 100 percent.
+        let mut rng = DungeonRng::new(3);
+        let mut by_hand = rng;
+        let item = new_floor_item(&tables, 0x40, &mut rng);
+        by_hand.int(100);
+        assert!(item.sticky());
+        assert_eq!(rng.state(), by_hand.state());
+        // Poké and 0x77 to 0x7A: no sticky draw.
+        for id in [POKE, 0x77, 0x78, 0x79, 0x7A] {
+            let mut r = DungeonRng::new(3);
+            let item = new_floor_item(&tables, id, &mut r);
+            assert!(!item.sticky());
+            let mut h = DungeonRng::new(3);
+            if id == POKE {
+                h.int(100);
+            }
+            assert_eq!(r.state(), h.state(), "id {id:#x}");
+        }
+        // A category 6 item that can be sticky draws the sticky roll first, then the quantity.
+        tables.categories[0x50] = 6;
+        let mut r = DungeonRng::new(3);
+        let item = new_floor_item(&tables, 0x50, &mut r);
+        let mut h = DungeonRng::new(3);
+        h.int(100);
+        h.int(100);
+        assert!(item.sticky());
+        assert_eq!(r.state(), h.state());
+    }
+
+    #[test]
+    fn the_money_quantity_halves_the_index_until_the_table_fits_the_limit() {
+        let mut table = vec![1000; 100];
+        let roll = DungeonRng::new(9).int(100);
+        // The table fits (<= level * 0x28 = 40) only at index roll / 4 (two halvings, when
+        // roll >= 4).
+        let want = roll / 4;
+        table[usize::try_from(want).unwrap()] = 40;
+        let tables = ItemTables {
+            quantity_table: table,
+            floor_level: 1,
+            ..ItemTables::default()
+        };
+        let mut rng = DungeonRng::new(9);
+        // The roll's own entry and its first halving are 1000, so the pick is `want` unless an
+        // earlier step in the chain fits; the chain is roll, roll/2, roll/4.
+        let q = money_quantity(&tables, &mut rng);
+        let mut chain = roll;
+        let mut expect = 1;
+        for _ in 0..200 {
+            if tables.quantity_table[usize::try_from(chain).unwrap()] <= 40 {
+                expect = u8::try_from(chain).unwrap();
+                break;
+            }
+            chain /= 2;
+        }
+        assert_eq!(q, expect);
+        // No entry ever fits: 200 misses give 1, with only the one draw.
+        let none = ItemTables {
+            quantity_table: vec![1000; 100],
+            floor_level: 1,
+            ..ItemTables::default()
+        };
+        let mut r = DungeonRng::new(9);
+        assert_eq!(money_quantity(&none, &mut r), 1);
+        let mut h = DungeonRng::new(9);
+        h.int(100);
+        assert_eq!(r.state(), h.state());
+        // An entry equal to the limit fits (the test is <=).
+        let at_limit = ItemTables {
+            quantity_table: vec![80; 100],
+            floor_level: 2,
+            ..ItemTables::default()
+        };
+        assert_eq!(
+            i32::from(money_quantity(&at_limit, &mut DungeonRng::new(9))),
+            roll
+        );
     }
 
     fn lay(g: &mut GameState, pos: (i16, i16), item: Item) {
@@ -897,31 +1154,95 @@ mod tests {
         assert!(d.floor_item_at((5, 5)).is_none());
     }
 
+    fn sticky(id: u8, qty: u8) -> Item {
+        Item {
+            flags: FLAG_EXISTS | FLAG_STICKY,
+            qty,
+            id,
+        }
+    }
+
     #[test]
-    fn only_ids_below_9_stack_and_sticky_items_do_not() {
+    fn only_ids_below_9_stack() {
         let mut g = run();
         dungeon(&mut g).items.bag.slots[0] = Item::new(9, 1);
         lay(&mut g, (5, 5), Item::new(9, 1));
         assert_eq!(dungeon(&mut g).pickup(0), Pickup::Placed);
         assert_eq!(g.dungeon().unwrap().bag().slots[1].id, 9);
-        // A sticky floor item of id 3 does not merge.
+    }
+
+    #[test]
+    fn a_shop_stock_floor_item_or_slot_never_stacks() {
+        // The floor item is stock: the pickup stops at the shop refusal.
         let mut g = run();
         dungeon(&mut g).items.bag.slots[0] = Item::new(3, 5);
         lay(
             &mut g,
             (5, 5),
             Item {
-                flags: FLAG_EXISTS | FLAG_STICKY,
+                flags: FLAG_EXISTS | FLAG_SHOP,
                 qty: 2,
                 id: 3,
             },
         );
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::ShopStock);
+        // A bag slot with the shop flag is not a candidate.
+        let mut g = run();
+        dungeon(&mut g).items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_SHOP,
+            qty: 5,
+            id: 3,
+        };
+        lay(&mut g, (5, 5), Item::new(3, 2));
         assert_eq!(dungeon(&mut g).pickup(0), Pickup::Placed);
         assert_eq!(g.dungeon().unwrap().bag().slots[0].qty, 5);
+        assert_eq!(g.dungeon().unwrap().bag().slots[1], Item::new(3, 2));
     }
 
     #[test]
-    fn a_stack_can_merge_into_the_held_slot() {
+    fn stacking_prefers_the_same_sticky_bit_and_falls_back_to_any() {
+        // Pass 1: the matching sticky bit wins over a fuller plain stack.
+        let mut g = run();
+        {
+            let d = dungeon(&mut g);
+            d.items.bag.slots[0] = Item::new(3, 50);
+            d.items.bag.slots[1] = sticky(3, 10);
+        }
+        lay(&mut g, (5, 5), sticky(3, 4));
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::Stacked);
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.bag().slots[1], sticky(3, 14));
+        assert_eq!(d.bag().slots[0].qty, 50);
+        // Pass 2: a sticky floor item stacks onto a plain slot, which turns sticky.
+        let mut g = run();
+        dungeon(&mut g).items.bag.slots[0] = Item::new(3, 5);
+        lay(&mut g, (5, 5), sticky(3, 2));
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::Stacked);
+        assert_eq!(g.dungeon().unwrap().bag().slots[0], sticky(3, 7));
+        // And a plain floor item onto a sticky slot, which stays sticky.
+        let mut g = run();
+        dungeon(&mut g).items.bag.slots[0] = sticky(3, 5);
+        lay(&mut g, (5, 5), Item::new(3, 2));
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::Stacked);
+        assert_eq!(g.dungeon().unwrap().bag().slots[0], sticky(3, 7));
+    }
+
+    #[test]
+    fn a_tie_goes_to_the_first_slot() {
+        let mut g = run();
+        {
+            let d = dungeon(&mut g);
+            d.items.bag.slots[0] = Item::new(3, 20);
+            d.items.bag.slots[1] = Item::new(3, 20);
+        }
+        lay(&mut g, (5, 5), Item::new(3, 1));
+        dungeon(&mut g).pickup(0);
+        let d = g.dungeon().unwrap();
+        assert_eq!((d.bag().slots[0].qty, d.bag().slots[1].qty), (21, 20));
+    }
+
+    #[test]
+    fn with_the_bag_in_use_the_held_slot_is_not_a_candidate() {
         let mut g = run();
         {
             let d = dungeon(&mut g);
@@ -930,8 +1251,16 @@ mod tests {
         }
         lay(&mut g, (5, 5), Item::new(2, 3));
         assert_eq!(dungeon(&mut g).pickup(0), Pickup::Stacked);
-        assert_eq!(g.dungeon().unwrap().held_item(0).unwrap().qty, 53);
-        assert_eq!(g.dungeon().unwrap().bag().slots[0].qty, 20);
+        assert_eq!(g.dungeon().unwrap().held_item(0).unwrap().qty, 50);
+        assert_eq!(g.dungeon().unwrap().bag().slots[0].qty, 23);
+        // With the bag full of other items the pickup does not fall back to the held slot.
+        let mut g = run();
+        for i in 0..BAG_SLOTS {
+            dungeon(&mut g).items.bag.slots[i] = Item::new(0x50, 1);
+        }
+        dungeon(&mut g).items.held[0] = Item::default();
+        lay(&mut g, (5, 5), Item::new(0x40, 1));
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::Full);
     }
 
     #[test]
@@ -969,14 +1298,35 @@ mod tests {
     }
 
     #[test]
-    fn a_member_not_on_the_team_uses_the_held_slot_only() {
+    fn an_ally_uses_the_bag_like_the_leader() {
+        // The gate is `+0x64C` alone (`021441D8`); the entity is not read.
         let mut g = run();
-        dungeon(&mut g).team[1].info.not_team_member = true;
         lay(&mut g, (9, 9), Item::new(0x40, 1));
         assert_eq!(dungeon(&mut g).pickup(1), Pickup::Placed);
         let d = g.dungeon().unwrap();
-        assert_eq!(d.held_item(1), Some(Item::new(0x40, 1)));
-        assert!(!d.bag().slots[0].exists());
+        assert_eq!(d.bag().slots[0], Item::new(0x40, 1));
+        assert!(d.held_item(1).is_some_and(|h| !h.exists()));
+    }
+
+    #[test]
+    fn money_is_category_6_not_the_id() {
+        let mut g = run();
+        {
+            let d = dungeon(&mut g);
+            d.items.tables.categories = vec![0; 256];
+            d.items.tables.categories[0x60] = 6;
+        }
+        lay(&mut g, (5, 5), Item::new(0x60, 12));
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::Money(12));
+        assert!(!g.dungeon().unwrap().bag().slots[0].exists());
+        // Poké with a table that says otherwise is an ordinary item.
+        let mut g = run();
+        {
+            let d = dungeon(&mut g);
+            d.items.tables.categories = vec![0; 256];
+        }
+        lay(&mut g, (5, 5), Item::new(POKE, 12));
+        assert_eq!(dungeon(&mut g).pickup(0), Pickup::Placed);
     }
 
     #[test]
@@ -1095,7 +1445,7 @@ mod tests {
     }
 
     #[test]
-    fn swap_exchanges_the_bag_item_and_the_held_item() {
+    fn swap_puts_the_bag_item_down_and_takes_the_floor_item_into_the_bag() {
         use crate::command::Outcome;
         let mut g = run();
         {
@@ -1106,50 +1456,82 @@ mod tests {
                 qty: 1,
                 id: 0x11,
             };
-            d.items.held[0] = Item::new(0x12, 1);
+            d.items.bag.slots[2] = Item::new(0x12, 1);
         }
-        assert_eq!(g.swap_held_item(1), Outcome::Applied);
+        lay(&mut g, (5, 5), Item::new(0x30, 1));
+        assert_eq!(g.swap_floor_item(SwapSource::Bag(1)), Outcome::Applied);
         let d = g.dungeon().unwrap();
-        // The marker is stripped from the held item; the old held item takes the bag slot.
-        assert_eq!(d.held_item(0), Some(Item::new(0x11, 1)));
-        assert_eq!(d.bag().slots[1], Item::new(0x12, 1));
-        // With an empty held slot the bag slot empties and the bag compacts.
+        // The marker is gone from the item put down; the floor item took the freed slot.
+        assert_eq!(d.floor_item_at((5, 5)), Some(Item::new(0x11, 1)));
+        assert_eq!(d.bag().slots[1], Item::new(0x30, 1));
+        assert_eq!(d.bag().slots[0].id, 0x10);
+        assert_eq!(d.bag().slots[2].id, 0x12);
+        assert_eq!(d.num_items(), 1);
+        assert_eq!(d.turn(), 1);
+    }
+
+    #[test]
+    fn swap_with_the_held_item_puts_the_floor_item_in_the_held_slot() {
+        use crate::command::Outcome;
         let mut g = run();
-        {
-            let d = dungeon(&mut g);
-            d.items.bag.slots[0] = Item::new(0x10, 1);
-            d.items.bag.slots[1] = Item::new(0x11, 1);
-        }
-        assert_eq!(g.swap_held_item(0), Outcome::Applied);
+        dungeon(&mut g).items.held[0] = Item::new(0x12, 1);
+        dungeon(&mut g).items.bag.slots[0] = Item::new(0x10, 1);
+        lay(
+            &mut g,
+            (5, 5),
+            Item {
+                flags: FLAG_EXISTS | FLAG_MARK,
+                qty: 1,
+                id: 0x30,
+            },
+        );
+        assert_eq!(g.swap_floor_item(SwapSource::Held), Outcome::Applied);
         let d = g.dungeon().unwrap();
-        assert_eq!(d.held_item(0), Some(Item::new(0x10, 1)));
-        assert_eq!(d.bag().slots[0].id, 0x11);
-        assert!(!d.bag().slots[1].exists());
+        assert_eq!(d.held_item(0), Some(Item::new(0x30, 1)));
+        assert_eq!(d.floor_item_at((5, 5)), Some(Item::new(0x12, 1)));
+        assert_eq!(d.bag().slots[0], Item::new(0x10, 1));
     }
 
     #[test]
     fn swap_refusals() {
         use crate::command::{Blocked, Outcome};
         let mut g = run();
-        assert_eq!(g.swap_held_item(0), Outcome::Blocked(Blocked::NoItem));
-        let sticky = Item {
-            flags: FLAG_EXISTS | FLAG_STICKY,
+        dungeon(&mut g).items.bag.slots[0] = Item::new(0x10, 1);
+        // Nothing underfoot.
+        assert_eq!(
+            g.swap_floor_item(SwapSource::Bag(0)),
+            Outcome::Blocked(Blocked::NoItem)
+        );
+        lay(&mut g, (5, 5), Item::new(0x30, 1));
+        // An empty bag slot or an empty held slot.
+        assert_eq!(
+            g.swap_floor_item(SwapSource::Bag(1)),
+            Outcome::Blocked(Blocked::NoItem)
+        );
+        assert_eq!(
+            g.swap_floor_item(SwapSource::Held),
+            Outcome::Blocked(Blocked::NoItem)
+        );
+        // A bag item that is sticky and marked.
+        dungeon(&mut g).items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_STICKY | FLAG_MARK,
             qty: 1,
-            id: 0x13,
+            id: 0x10,
         };
-        {
-            let d = dungeon(&mut g);
-            d.items.bag.slots[0] = Item::new(0x10, 1);
-            d.items.held[0] = sticky;
-        }
-        assert_eq!(g.swap_held_item(0), Outcome::Blocked(Blocked::ItemSticky));
-        {
-            let d = dungeon(&mut g);
-            d.items.held[0] = Item::default();
-            d.items.bag.slots[0] = sticky;
-        }
-        assert_eq!(g.swap_held_item(0), Outcome::Blocked(Blocked::ItemSticky));
+        assert_eq!(
+            g.swap_floor_item(SwapSource::Bag(0)),
+            Outcome::Blocked(Blocked::ItemSticky)
+        );
+        // A sticky bag item without the marker swaps.
+        dungeon(&mut g).items.bag.slots[0].flags = FLAG_EXISTS | FLAG_STICKY;
+        // A sticky held item is refused.
+        dungeon(&mut g).items.held[0] = sticky(0x13, 1);
+        assert_eq!(
+            g.swap_floor_item(SwapSource::Held),
+            Outcome::Blocked(Blocked::ItemSticky)
+        );
         assert_eq!(g.dungeon().unwrap().turn(), 0);
+        assert_eq!(g.swap_floor_item(SwapSource::Bag(0)), Outcome::Applied);
     }
 
     #[test]

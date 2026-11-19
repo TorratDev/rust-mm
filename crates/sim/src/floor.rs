@@ -2585,18 +2585,6 @@ pub fn enemy_spawn_spots(floor: &Floor) -> Vec<(i16, i16)> {
         .collect()
 }
 
-/// The item spawn marks of `floor`, in column order (x outer, y inner): the tiles that
-/// [`spawn_non_enemies`] and the house pass marked for an item. Each one becomes a floor item at
-/// floor entry (see [`crate::items`]); the marks are read before the visibility pass clears
-/// the word.
-#[must_use]
-pub fn item_spawn_spots(floor: &Floor) -> Vec<(i16, i16)> {
-    tile_positions(floor, |_, s, _| s & SPAWN_ITEM != 0)
-        .into_iter()
-        .map(|(x, y)| (i16::from(x), i16::from(y)))
-        .collect()
-}
-
 /// The tile pick of the per-turn wild spawn (`ov_0001::0219BFE0`; `docs/re/turns.md`, "Wild
 /// monster spawn (#358 P1)"). Up to 3 passes; each draws x (`0x38`) and y (`0x20`), scans every
 /// column from x with wrap, each column from y with wrap, and collects up to `0x700` fitting

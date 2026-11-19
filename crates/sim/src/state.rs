@@ -24,7 +24,7 @@ use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
 use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
 use crate::items::{
-    Bag, FLOOR_ITEM_SLOTS, FloorItem, Item, ItemState, ItemTables, spawn_floor_items,
+    Bag, FLOOR_ITEM_SLOTS, FloorItem, Item, ItemState, ItemTables, SwapSource, spawn_floor_items,
 };
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::status::{self, Status};
@@ -717,8 +717,8 @@ enum Input {
     Command(Command),
     /// Drop bag slot (`02173CCC`).
     Drop(u8),
-    /// Swap bag slot with the held item (`02173A48`).
-    SwapHeld(u8),
+    /// Swap the floor item underfoot with a bag slot or the held item (`02173A48`).
+    Swap(SwapSource),
 }
 
 /// Everything the sim owns for one run.
@@ -803,10 +803,10 @@ impl GameState {
         self.apply_input(Input::Drop(slot), None)
     }
 
-    /// Swaps bag slot `slot` with the leader's held item (action 0x0A, `02173A48`). It takes
-    /// the leader's turn. Refusals change nothing (see [`Blocked`]).
-    pub fn swap_held_item(&mut self, slot: u8) -> Outcome {
-        self.apply_input(Input::SwapHeld(slot), None)
+    /// Swaps the floor item underfoot with `source`, a bag slot or the held item (action 0x0A,
+    /// `02173A48`). It takes the leader's turn. Refusals change nothing (see [`Blocked`]).
+    pub fn swap_floor_item(&mut self, source: SwapSource) -> Outcome {
+        self.apply_input(Input::Swap(source), None)
     }
 
     /// The run with the species' sleep chances (`Species::chance_asleep`, indexed by species
@@ -1046,7 +1046,7 @@ impl GameState {
         let asleep = dungeon.team.first().is_some_and(|l| l.info.is_asleep());
         let command = match input {
             Input::Command(command) => command,
-            Input::Drop(_) | Input::SwapHeld(_) if asleep => {
+            Input::Drop(_) | Input::Swap(_) if asleep => {
                 dungeon.take_leader_turn(data, |_| {});
                 return Outcome::Applied;
             }
@@ -1059,10 +1059,10 @@ impl GameState {
                     Err(blocked) => Outcome::Blocked(blocked),
                 };
             }
-            Input::SwapHeld(slot) => {
-                return match dungeon.swap_check(slot) {
+            Input::Swap(source) => {
+                return match dungeon.swap_check(source) {
                     Ok(()) => {
-                        dungeon.take_leader_turn(data, |d| d.swap_apply(slot));
+                        dungeon.take_leader_turn(data, |d| d.swap_apply(source));
                         self.after_turn(Outcome::Applied)
                     }
                     Err(blocked) => Outcome::Blocked(blocked),
