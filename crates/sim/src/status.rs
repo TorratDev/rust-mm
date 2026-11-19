@@ -137,7 +137,12 @@ impl Inflict {
 /// `CalculateStatusTurns` (`0219CF28`): one `DungeonRandRange` on `pair`, then, with `flag`, a cap
 /// of 5 above 4 for ability `0x14`, and at least 1.
 // shortcut: the IQ skill `0x12` halving (`021805B0`) is not applied: the sim keeps no IQ skills.
-fn status_turns(rng: &mut DungeonRng, target: &EntityInfo, pair: (i32, i32), flag: bool) -> u8 {
+pub(crate) fn status_turns(
+    rng: &mut DungeonRng,
+    target: &EntityInfo,
+    pair: (i32, i32),
+    flag: bool,
+) -> u8 {
     let mut roll = rng.range(pair.0, pair.1);
     if flag && target.has_ability(TURNS_CAP) && roll != i32::from(NO_END) && roll > 4 {
         roll = 5;
@@ -171,7 +176,7 @@ pub(crate) fn inflict(
 
 /// `021885A0`: Limber blocks; an already paralysed target keeps its turns; the draw comes after
 /// both. Resets the burn countdown, which shares the class.
-fn paralyse(rng: &mut DungeonRng, t: &mut EntityInfo) {
+pub(crate) fn paralyse(rng: &mut DungeonRng, t: &mut EntityInfo) {
     if t.has_ability(LIMBER) || t.status.burn_class == PARALYSIS {
         return;
     }
@@ -184,7 +189,7 @@ fn paralyse(rng: &mut DungeonRng, t: &mut EntityInfo) {
 /// constant pair, so no draw.
 // shortcut: the water-tile block (a water tile with a non-lava dungeon) is not modelled: floors
 // 1 to 3 of dungeon 0 have no such tile in the notes, and the sim keeps no per-monster tile test.
-fn burn(rng: &mut DungeonRng, t: &mut EntityInfo) {
+pub(crate) fn burn(rng: &mut DungeonRng, t: &mut EntityInfo) {
     if t.has_ability(WATER_VEIL) || t.types.contains(&FIRE) || t.status.burn_class == BURN {
         return;
     }
@@ -200,7 +205,12 @@ fn burn(rng: &mut DungeonRng, t: &mut EntityInfo) {
 // (no reflect-class state, IQ skills or held items); the sleepless (2) and napping (5) blocks are
 // not reachable, as no first-dungeon move sets them.
 fn sleep(rng: &mut DungeonRng, t: &mut EntityInfo) {
-    let mut turns = status_turns(rng, t, SLEEP_TURNS, true);
+    sleep_with(rng, t, SLEEP_TURNS);
+}
+
+/// [`sleep`] with the duration range of the caller (the Sleep Seed's, `02146840`).
+pub(crate) fn sleep_with(rng: &mut DungeonRng, t: &mut EntityInfo, pair: (i32, i32)) {
+    let mut turns = status_turns(rng, t, pair, true);
     if t.has_ability(INSOMNIA) || t.has_ability(VITAL_SPIRIT) || t.status.sleep == SLEEP {
         return;
     }
@@ -209,6 +219,38 @@ fn sleep(rng: &mut DungeonRng, t: &mut EntityInfo) {
     }
     t.status.sleep = SLEEP;
     t.status.sleep_turns = turns;
+}
+
+/// `0218FD80`: ends the burn-class status (`+0x9B`) when its class is one of `classes`; returns
+/// whether it did (else the handler prints a "nothing" message).
+pub(crate) fn cure_burn_class(t: &mut EntityInfo, classes: &[u8]) -> bool {
+    if !classes.contains(&t.status.burn_class) {
+        return false;
+    }
+    t.status.burn_class = 0;
+    t.status.burn_turns = 0;
+    t.status.burn_countdown = 0;
+    true
+}
+
+/// `02190100`, the Heal Seed's cure-all: clears every modelled bad status.
+// hypothesis: which of the nine clearing calls (`0218FE64` ... `0218F27C`) maps to which sim
+// field is not read; the sleep, burn class, cringe, leech seed and Whiffer fields are cleared, and
+// the Enraged and Focus Energy classes are kept as not bad.
+pub(crate) fn cure_all(t: &mut EntityInfo) {
+    t.status.sleep = 0;
+    t.status.sleep_turns = 0;
+    cure_burn_class(t, &[BURN, PARALYSIS]);
+    t.status.cringe = 0;
+    t.status.cringe_turns = 0;
+    t.status.leech_seed = 0;
+    t.status.leech_turns = 0;
+    t.status.leech_countdown = 0;
+    t.status.seeder_slot = 0xFF;
+    if t.status.sure_shot == WHIFFER {
+        t.status.sure_shot = 0;
+        t.status.sure_shot_turns = 0;
+    }
 }
 
 /// `021887E0`: ability `0x1F` blocks; an already flinching target keeps its turns. The pair is

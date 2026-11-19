@@ -1109,7 +1109,8 @@ impl GameState {
                 Some(data) => dungeon.regular_attack(dir, data),
                 None => Outcome::NotModelled,
             },
-            Command::UseItem { .. } | Command::Menu(_) => Outcome::NotModelled,
+            Command::UseItem { slot } => dungeon.use_item_command(slot, data),
+            Command::Menu(_) => Outcome::NotModelled,
         };
         self.after_turn(outcome)
     }
@@ -2044,11 +2045,15 @@ mod tests {
                 slot: 2,
                 direction: Some(Direction::Up),
             },
-            Command::UseItem { slot: 0 },
             Command::Menu(MenuAction::Confirm),
         ] {
             assert_eq!(g.step(c), Outcome::NotModelled, "{c:?}");
         }
+        // Using an item is modelled: an empty slot is refused with no change.
+        assert_eq!(
+            g.step(Command::UseItem { slot: 0 }),
+            Outcome::Blocked(Blocked::NoItem)
+        );
         assert_eq!(g, before);
     }
 

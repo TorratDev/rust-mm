@@ -12,6 +12,7 @@ pub mod combat;
 pub mod command;
 pub mod floor;
 pub mod floor_gen;
+pub mod item_use;
 pub mod items;
 mod move_effects;
 pub mod rng;

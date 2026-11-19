@@ -20,6 +20,7 @@ use rescue_data::moves::Move;
 use rescue_data::species::LevelData;
 
 use crate::command::{Blocked, Direction, Outcome};
+use crate::items::Item;
 use crate::move_effects::{self, Effect, SPORT_TURNS, Sport};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
 use crate::status::{self, FOCUS_ENERGY, Inflict, WHIFFER};
@@ -483,7 +484,103 @@ impl Dungeon {
             return Outcome::NotModelled;
         };
         let facing = self.facing(direction);
-        let targets = match effect {
+        let targets = self.effect_targets(&effect, mv, facing);
+        let Some(targets) = targets.filter(|t| !t.is_empty()) else {
+            return Outcome::NotModelled;
+        };
+        self.cast(mv, &effect, &targets, Some(usize::from(slot)), None, data)
+    }
+
+    /// Action `0x31` (`02191A7C`): the leader uses orb `item` from bag slot `slot`, as the orb's
+    /// move (`UseParams::orb_moves`), through the same path as a move: no PP, and the orb is
+    /// consumed with the turn. A move that is not modelled, or whose range hits no modelled
+    /// monster, is `NotModelled` and changes nothing.
+    // hypothesis: the orb is consumed at the start of the action, before the move's draws
+    // (`02141680` before `0215B384`, as the eat flow orders it); the call order of `02191A7C` is
+    // only read for ids `0xB6` and `0xBF`.
+    // shortcut: ids `0xB6` and `0xBF` (the `02141680(.., 0x7A)` path with flags `|0xC`) are not
+    // modelled; the orb's move table is the caller's (`UseParams::orb_moves`).
+    pub(crate) fn use_orb(
+        &mut self,
+        slot: u8,
+        item: Item,
+        direction: Option<Direction>,
+        data: &CombatData<'_>,
+    ) -> Outcome {
+        let Some(leader) = self.team.first() else {
+            return Outcome::Blocked(Blocked::NoLeader);
+        };
+        if leader.info.attack_refused() {
+            return Outcome::NotModelled;
+        }
+        let move_id = self.items.tables.use_params.orb_move(item.id);
+        let Some(effect) = move_id.and_then(move_effects::effect_of) else {
+            return Outcome::NotModelled;
+        };
+        let Some(mv) = move_id.and_then(|id| data.moves.get(usize::from(id))) else {
+            return Outcome::NotModelled;
+        };
+        let facing = self.facing(direction);
+        let Some(targets) = self
+            .effect_targets(&effect, mv, facing)
+            .filter(|t| !t.is_empty())
+        else {
+            return Outcome::NotModelled;
+        };
+        self.cast(mv, &effect, &targets, None, Some(slot), data)
+    }
+
+    /// The leader's use of `mv` on `targets` at its turn: the refusals before any draw, then the
+    /// turn. `pp_slot` is the move slot that pays the PP (`None` for an orb), `orb_slot` the bag
+    /// slot an orb leaves.
+    fn cast(
+        &mut self,
+        mv: &Move,
+        effect: &Effect,
+        targets: &[Slot],
+        pp_slot: Option<usize>,
+        orb_slot: Option<u8>,
+        data: &CombatData<'_>,
+    ) -> Outcome {
+        // Absorb on a Liquid Ooze target takes the ooze branch, which damages the user through
+        // `0217BCA4`; that routine is not read, so the use is refused before any draw (#421).
+        if *effect == Effect::Absorb
+            && targets
+                .iter()
+                .any(|&t| self.info_of(t).is_some_and(|i| i.has_ability(LIQUID_OOZE)))
+        {
+            return Outcome::NotModelled;
+        }
+        // Low Kick needs the weight of each target's species; a species with no weight in the
+        // table is refused before any draw, rather than dealing a damage of 0.
+        if *effect == Effect::LowKick
+            && targets.iter().any(|&t| {
+                self.info_of(t)
+                    .is_none_or(|i| weight_of(data, i.apparent_species).is_none())
+            })
+        {
+            return Outcome::NotModelled;
+        }
+        let mut leader_down = false;
+        self.take_leader_turn(Some(data), |d| {
+            if let Some(bag_slot) = orb_slot {
+                d.consume_bag_slot(bag_slot);
+            }
+            leader_down = match pp_slot {
+                Some(pp) => d.strike(Slot::Team(0), pp, targets, mv, effect, data),
+                None => d.resolve_all(Slot::Team(0), targets, mv, effect, data),
+            };
+        });
+        if leader_down {
+            return Outcome::LeaderDefeated;
+        }
+        Outcome::Applied
+    }
+
+    /// The targets of `effect` for the leader facing `facing`: the user alone for the self
+    /// effects, else the range of `mv` (see [`Self::targets_of`]).
+    fn effect_targets(&self, effect: &Effect, mv: &Move, facing: Direction) -> Option<Vec<Slot>> {
+        match *effect {
             // A sport's and Withdraw's range is the user (`0x73`, the move row's executor value):
             // a sport's handler sets a floor counter and reads no target, and Withdraw's raises
             // the user's stage, so the user is the one target of each. Focus Energy and Rage
@@ -507,38 +604,7 @@ impl Dungeon {
             )
             .filter(|t| t.as_slice() == [Slot::Team(0)]),
             _ => self.targets_of(Slot::Team(0), mv, facing),
-        };
-        let Some(targets) = targets.filter(|t| !t.is_empty()) else {
-            return Outcome::NotModelled;
-        };
-        // Absorb on a Liquid Ooze target takes the ooze branch, which damages the user through
-        // `0217BCA4`; that routine is not read, so the use is refused before any draw (#421).
-        if effect == Effect::Absorb
-            && targets
-                .iter()
-                .any(|&t| self.info_of(t).is_some_and(|i| i.has_ability(LIQUID_OOZE)))
-        {
-            return Outcome::NotModelled;
         }
-        // Low Kick needs the weight of each target's species; a species with no weight in the
-        // table is refused before any draw, rather than dealing a damage of 0.
-        if effect == Effect::LowKick
-            && targets.iter().any(|&t| {
-                self.info_of(t)
-                    .is_none_or(|i| weight_of(data, i.apparent_species).is_none())
-            })
-        {
-            return Outcome::NotModelled;
-        }
-        let slot = usize::from(slot);
-        let mut leader_down = false;
-        self.take_leader_turn(Some(data), |d| {
-            leader_down = d.strike(Slot::Team(0), slot, &targets, mv, &effect, data);
-        });
-        if leader_down {
-            return Outcome::LeaderDefeated;
-        }
-        Outcome::Applied
     }
 
     /// The leader's Regular Attack (action `0x32`) at `direction`: move `0x163` with no move slot
@@ -2331,5 +2397,69 @@ pub(crate) mod tests {
             1,
             "a leader's defeat removes no wild monster"
         );
+    }
+
+    /// Orb `0xB7` of the test table runs move `0x9A` (action `0x31`): the damage is the move's,
+    /// no PP is taken, and the orb is consumed; without the data, a move the sim lacks or no
+    /// target, nothing changes.
+    #[test]
+    fn an_orb_runs_its_move_through_the_move_path_and_is_consumed() {
+        use crate::items::{Item, ItemTables};
+        let t = tables();
+        let moves = table(&[tackle([100; 3], 0)]);
+        let data = CombatData {
+            tables: &t,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let setup = || {
+            let mut g = battle([100; 3], 0);
+            let mut tb = ItemTables {
+                categories: vec![0; 256],
+                ..ItemTables::default()
+            };
+            tb.categories[0xB7] = 9;
+            tb.use_params.orb_moves = vec![0; 256];
+            tb.use_params.orb_moves[0xB7] = 0x9A;
+            let d = g.dungeon_mut().unwrap();
+            d.items.tables = tb;
+            d.items.bag.slots[0] = Item::new(0xB7, 1);
+            d.items.bag.slots[1] = Item::new(0x37, 1);
+            g
+        };
+        let use_it = Command::UseItem { slot: 0 };
+        let mut g = setup();
+        let mut by_move = battle([100; 3], 0);
+        let rng_before = *g.dungeon().unwrap().rng();
+        assert_eq!(g.step_with(use_it, &data), Outcome::Applied);
+        assert_eq!(
+            by_move.step_with(
+                Command::UseMove {
+                    slot: 0,
+                    direction: Some(Direction::Right)
+                },
+                &data
+            ),
+            Outcome::Applied
+        );
+        assert_ne!(*g.dungeon().unwrap().rng(), rng_before);
+        // The same hit as the move command: same damage, same draws.
+        assert_eq!(wild_hp(&g), wild_hp(&by_move));
+        assert!(wild_hp(&g) < 100);
+        assert_eq!(g.dungeon().unwrap().rng(), by_move.dungeon().unwrap().rng());
+        // No PP taken; the orb is gone and the next item moved up.
+        assert_eq!(leader_pp(&g), 10);
+        assert_eq!(g.dungeon().unwrap().bag().slots[0].id, 0x37);
+        // Without the data the orb stays and nothing happens.
+        let mut g = setup();
+        assert_eq!(g.step(use_it), Outcome::NotModelled);
+        assert_eq!(g.dungeon().unwrap().bag().slots[0].id, 0xB7);
+        // An orb with no move in the table stays too.
+        let mut g = setup();
+        g.dungeon_mut().unwrap().items.tables.use_params.orb_moves[0xB7] = 0;
+        assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
+        assert_eq!(g.dungeon().unwrap().bag().slots[0].id, 0xB7);
     }
 }
