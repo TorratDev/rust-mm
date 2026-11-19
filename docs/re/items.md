@@ -161,10 +161,10 @@ Findings for [#459](https://github.com/TorratDev/rust-mm/issues/459), investigat
 | 0x0D | Patsy Band | 0217BD94 |
 | 0x0E | Nostick Cap | 02197AF8 |
 | 0x0F | Pierce Band | 021732C4 |
-| 0x10 | Joy Ribbon | 0217D5FC |
-| 0x11 | X Ray Specs | 0213C0F8 |
-| 0x12 | Persim Band | 0218E27C |
-| 0x13 | Power Band | 0217BD94 |
+| 0x10 | inline | damage trap (Red chestnut): `0217BCA4(t, s16 *PTR_021AA084, 0xF, msg)` is `DealDamageToEntity_Async` ([`symbols.md`](../symbols.md)): damage read through the pointer slot, residual type argument 0xF, which calls `HandleDealingDamage_Async 0217E890`. [blue-verified runtime: HP loss; the damage values behind the pointer slots are in the pool and not recorded here] The earlier "status for 15 turns" reading is wrong |
+| 0x11 | `02197404` | tail call through the slot `PTR_FUN_0218E5CC` with `(user, target, 0)`: wonder tile. Placement gives byte 1 = 2 and seen 1; the dispatcher skips the avoid roll. [blue-verified runtime: first-floor traps were all 0x11, wild monsters stepping on them never reached the dispatcher] |
+| 0x12 | `0219706C(user,pos)` | items to monsters; consumes the trap (`021982C0`). Skips if `0206D49C()` is non-zero. Area: the trap tile's room (tile `+5 != 0xFF`, bounds +/-1) or a square of radius `gDungeon+0x15FA1` (2 if 0). Each tile holding an item entity (type 3) whose item byte 0 bit 1 is clear: up to 100 tries of `021388D4(0)` (species 0x17C if `gDungeon+0x65E != 0`) until `02175BA0` accepts, spawn `02179CFC`, on success `02143F98`; `0213CD5C` refresh. [blue-verified static; effect unverified at runtime, no item on the probe tiles] |
+| 0x13 | inline | spike trap (Red order): `0217BCA4(t, s16 *PTR_021AA0A8, 10, msg)`, the same damage call with residual type argument 10. [blue-verified runtime: leader HP 25 to 1] |
 | 0x14 | Pecha Scarf | 0218A140, 0218A410 |
 | 0x15 | Insomniscope | 0218B140 |
 | 0x16 | Warp Scarf | 021861E8 |
@@ -199,18 +199,30 @@ Findings for [#459](https://github.com/TorratDev/rust-mm/issues/459), investigat
 
 **P5a. Who calls the trap writer** [blue-verified, static]. `ov_0001::02198824` (random trap placement) is called from the ARM9 function `RunDungeon_Async 0206DC20` at `0206E440`, an ARM9-to-overlay call, which is why it has no overlay-local xref (`xrefs.tsv`: `0206e440 FUN_0206dc20 UNCONDITIONAL_CALL 02198824`). `0206DC20` is called from `LoadAndRunDungeon_Async 0201DB70` at `0201DC60`. It sits in the non-resume branch: `02179E2C`, then `02198824`, `02144714`, then `+0x684 = +0x67C` and `+0x680 = 0` (P6), then `02152ABC`, `0214809C`. `GenerateFloor 02151E7C` runs earlier in the same loop body. No runtime hook result exists (see Open questions).
 
-**P5b. Step trigger** [blue-verified reading]. A trap is the tile object (tile `+0x10`) with entity type 2 (`02142ADC` returns the type; `02142ACC` returns the 2-byte trap record: byte 0 = trap id, byte 1 = flag). All paths end in the dispatcher `ov_0001::02197D88(entity, pos, a3, a4)`:
+**P5b. Step trigger** [blue-verified reading]. A trap is the tile object (tile `+0x10`) with entity type 2 (`02142ADC` returns the type; `02142ACC` returns the 2-byte trap record: byte 0 = trap id, byte 1 = who laid the trap, see below). All paths end in the dispatcher `ov_0001::02197D88(entity, pos, a3, a4)`:
 - `02165B00` (leader step, from `0218766C`): type 2 with the see-traps effect (`021805B0(e, 0x13)`) and trap visible flag (`+0x20`) 0 sets it to 1, redraws (`02148B7C`) and does not fire. Otherwise, with record byte 1 equal to 0 or 2 it calls `02197D88(leader, leader+4, 0, 1)`; byte 1 equal to 1 does not fire on the leader.
-- `02187420` (any monster step, from `0218766C`): same reveal, then fires when byte 1 is 0, the trap is visible and `info+6 == 0`; or byte 1 is 1 and `info+6 != 0`; or byte 1 is 2 and `info+6 == 0`. Which side each byte-1 value means is [hypothesis].
+- `02187420` (any monster step, from `0218766C`): same reveal, then fires when byte 1 is 0, the trap is visible and `info+6 == 0`; or byte 1 is 1 and `info+6 != 0`; or byte 1 is 2 and `info+6 == 0`. Meaning of byte 1 and `info+6` below.
 - `0218453C` action helper (action 0x25): `02197D88(e, e+4, 0, 0)`.
 
 Dispatcher shape: reads the object, checks it is a trap, `02198220(id)` (name lookup), sets entity `+0x20 = 1` (seen), prints the sprung message (`0213F50C(0, 0x15C)`, `0213F2F8`), runs `0217BB20(target, flag)` when byte 1 is 1 or 2, then `switch(trap id)`, then `02183BB4` if the target lives, and `021982C0(pos, 1)` for consuming traps (ids 4 and 0x12). When the target is not the leader's team, `a4 != 0` and the id is not 0x11, a `DungeonRandInt(100)` under 15 makes the monster avoid it (message `02154B8C`); with `a3 == 0` that path returns early.
 
-**P5c. Handler map** (switch in `02197D88`; case-to-address blue-verified, names red-hypothesis from Red's `TrapID` order, ids 0 and 8 to 0x13 low confidence). Effects of 0xB to 0x13 are read from callee names only.
+**Trap record byte 1 and `info+6`** (#461). `info+6` is `isNotTeamMember` (0 team, 1 wild; [`structs.md`](structs.md), runtime-verified in #278). Byte 1 is the side that laid the trap; each trap springs on the opposite side. Writers [blue-verified, static]: `02142068` stores its third parameter at record byte 1, and `021983F8` does the same on reuse. Callers: `02198824` (floor placement) writes 0, or 2 for id 0x11 (seen flag 1); `0215FEEC` (from `UseMoveAgainstTargets 02156824` at `02158C08`, places id 0x13) writes 1 if the user's `info+6 == 0`, else 2; `02198330` copies it from `gDungeon+0x11311` (its caller was not traced); `02152FAC` (fixed rooms) writes 0. The "side that laid it" wording is [hypothesis] from the arithmetic; the table below is [blue-verified, runtime] on floor 1 with ids, byte 1 and seen flag poked into the placed records (placement forced by setting the tile bit before `02198824`; first floor has no natural traps except id 0x11).
+
+| byte 1 | meaning | leader (`02165B00`) | team partner (`02187420`) | wild monster (`02187420`) |
+|---|---|---|---|---|
+| 0 | natural | fires, no seen gate | fires once seen | never |
+| 1 | laid by a team member | never | never | fires, seen or not |
+| 2 | laid by a wild monster, and the wonder tile | fires, no seen gate | fires, no seen gate | never |
+
+Gap: a partner stepping on an unseen byte-1-0 trap did not occur at runtime (the leader reveals it first); that cell rests on the static code. Wild monsters reached no byte-2 trap other than the wonder tile (no dispatch, as expected). `0217BB20(target, flag)` runs for byte 1 equal to 2 (flag 1) or 1 (flag 0); it acts only when `info+8 != 0` and sets `info+8` to 2 or 3. What `info+8` means is [hypothesis, not traced].
+
+Avoid roll, refined [blue-verified, static]: for a monster target with `a4 != 0` and id not 0x11, one `DungeonRandInt(100)` is drawn; a result under 15 avoids, but only if the trap was not already seen (`+0x20 != 1`) and `gDungeon+0x15FA7 == 0`; otherwise the draw is unused. Holding item 0x1C (Trap Scarf) always avoids. Runtime saw the first leader dispatch leave HP at baseline, consistent with an avoid or message path; not pinned down.
+
+**P5c. Handler map** (switch in `02197D88`; case-to-address blue-verified, names red-hypothesis from Red's `TrapID` order). Ids 0 and 0xB to 0x13 were re-read from the handler bodies and checked at runtime on floor 1 with poked ids (#461); the random id source `02138C68` can return any id 0 to 0x13 and falls back to 0x10 only when no cumulative weight reaches the draw. The first floor's weights give only 0x11. Corrections to the earlier rows: id 0 is not a push, id 0x12 is not a monster-house spawn list, and ids 0x10 and 0x13 are damage-class effects, not statuses.
 
 | id | handler | effect (from callees) |
 |----|---------|-----------------------|
-| 0 | `02196F84` | launch: push towards a direction (`0217AED0`, `0217ADF8`, `0214332C`); role unverified |
+| 0 | `02196F84` | held-item launcher (Red "Trip" order): with a target, `0217AED0(t,6,8)`, `0213AC4C`, `0217ADF8(t,8)`; if the held slot (`info+0x5A`) bit 0 is set, copies the item, clears the slot, throws it one tile along `info+0x44 & 7` via `0214332C`. Not a push. [blue-verified static; runtime only showed the dispatch, the probe leader held nothing]; meaning of the 6 and 8 arguments [hypothesis] |
 | 1 | `02197CB8` | mud trap, stat drop ([`rng.md`](rng.md)) |
 | 2 | `02197AF8` | sticky: `021432E8(m, 0xE)` guard, one random bag pick `DungeonRandInt(n)` among items with bit 1, not sticky |
 | 3 | `02197828` | grimy: item category, a `DungeonRandInt(100)` rate roll, `021448A0(item, 0x54, 2)` changes the item id |
@@ -221,15 +233,17 @@ Dispatcher shape: reads the object, checks it is a trap, `02198220(id)` (name lo
 | 8 | `02197AD8` -> `0218E27C` | spin/confuse family |
 | 9 | `02197A70` -> `0218B2D0` | sleep family |
 | 0xA | `02197A4C` -> `021882D0` | slow family |
-| 0xB | `021972E8` | random status pick (`0200B598`, guard `02180870`) |
-| 0xC | `02197A2C` -> `0218A410` | status |
-| 0xD, 0xE | `021979FC`, `021979CC` -> `02194BFC` | explosion-style damage |
-| 0xF | `02197414` | random pick from a local list (`02175C34`): PP or move effect |
+| 0xB | `021972E8` | seal: guard `02180870(user,t,1)` must be 0; `DungeonRandInt(n)` picks one of the target's 4 move slots (`info+0xF4`, stride 6) with byte 0 bit 0 set and byte 1 bit 0 clear, sets byte 1 bit 0; none: message only. [blue-verified runtime: one more slot sealed per firing] |
+| 0xC | `02197A2C` -> `0218A410(user,t,1)` | poison: immunity check, sets status byte `info+0x9B` to 2, writes `+0x9C` (duration from `0219CF28` plus 1), clears `+0x9D/+0x9E`; already poisoned gives a message. [blue-verified static; runtime showed only HP falling over time] |
+| 0xD, 0xE | `021979FC`, `021979CC` -> `02194BFC(user,t,t+4,kind 1 or 2,0,msg)` | self-destruct and explosion (Red order): ring-offset blast that turns wall tiles around the target into floor (bounds 0<x<0x37, 0<y<0x1F, not flag 0x10) and hurts. [blue-verified runtime: same HP loss for both ids on leader and partner; what kind 1 vs 2 changes is [hypothesis], radius table not read] |
+| 0xF | `02197414` | PP trap: one `DungeonRandInt(n)` over valid moves with PP byte (`+4`) non-zero, sets that PP to 0, then `02175C34`; none: message only. [blue-verified runtime: slot 0 PP to 0, next firing slot 1] |
 | 0x10 | inline | status for 15 turns via `0217BCA4` |
 | 0x11 | `02197404` | tail call through a function pointer slot (wonder tile, indirect) |
 | 0x12 | `0219706C` | monster-house style spawn list; consumes the trap |
 | 0x13 | inline | status for 10 turns via `0217BCA4` |
 | 0x14 to 0x1A | none | empty case bodies |
+
+Confidence: high for 0xB, 0xF, 0x11, 0x13; medium for 0, 0xC, 0xD, 0xE, 0x10, 0x12. Red names are [hypothesis]. Not done: a save in a deeper dungeon with naturally placed varied ids, the item throw of id 0, the effect of 0x12. Callee bodies `0217E890` (exact 0x10 and 0x13 formulas) and `0219CF28` (poison duration) belong to the combat and status RE.
 
 Placement: `02198824` writes tile `+0x10` and entity `+0x20` (1 only for id 0x11); `02142068` claims the entity; `021983F8` places a given id at runtime (callers `02198330`, `0215FEEC`); `02152FAC` is for fixed rooms.
 
