@@ -67,23 +67,20 @@ const LEVEL_CAP: u8 = 100;
 const MAX_HP_CAP: i16 = 999;
 /// The belly a team member starts with as its maximum, in thousandths.
 pub(crate) const START_MAX_BELLY: i32 = 100_000;
-/// The cap of a maximum-belly rise, in thousandths.
-// hypothesis: 999, as the Huge Apple's amount suggests; the cap of `0218C284` is not read.
-const MAX_BELLY_CAP: i32 = 999_000;
+/// The cap of a maximum-belly rise, in thousandths: `0218C284` clamps with `0200BA3C(.., 0200BA18(200))`.
+const MAX_BELLY_CAP: i32 = 200_000;
+/// The amount `0218C284` compares with `*DAT_ov_0001__0218c894`: it fills the belly and takes
+/// the rise branch.
+// hypothesis: the word is 999, the Huge Apple's amount; it is not read on a Ghidra copy.
+const FILL_AMOUNT: i32 = 999;
+/// The side of the gummi tables: 18 types by 18 gummi types (row stride `0x24` bytes).
+const GUMMI_SIDE: usize = 18;
 
 /// A heal and the maximum-HP rise that goes with it (`0218DF38(u, t, heal, maxHpRise, 1)`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealAmount {
     pub heal: i16,
     pub max_rise: i16,
-}
-
-/// One gummi of the 17 types (`02145EC8`): the belly it gives, and its IQ gain (the sum of the
-/// two table words the game adds).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GummiRow {
-    pub belly: i32,
-    pub iq: i16,
 }
 
 /// The numbers the item handlers read from overlay literals and tables, which
@@ -107,8 +104,11 @@ pub struct UseParams {
     pub ginseng_percent: i32,
     /// Ginseng: the cap of a move's upgrade level (`0200B384`).
     pub ginseng_cap: u8,
-    /// The 17 gummi rows, by type 1 to 17 (index 0 is type 1).
-    pub gummis: Vec<GummiRow>,
+    /// The gummi belly table (`DAT_02146074`): s16 words indexed `[eater type][gummi type]`, 18
+    /// by 18; a missing entry is 0.
+    pub gummi_belly: Vec<i16>,
+    /// The gummi IQ table (`DAT_02146078`), the same shape.
+    pub gummi_iq: Vec<i16>,
     /// The IQ cap a gummi clamps to.
     pub iq_cap: i16,
     /// The move of each orb, by item id (`02007670`, item table `+0x18`); 0 or past the end is
@@ -137,7 +137,8 @@ impl UseParams {
             quick_turns: (0, 0),
             ginseng_percent: 0,
             ginseng_cap: 0,
-            gummis: Vec::new(),
+            gummi_belly: Vec::new(),
+            gummi_iq: Vec::new(),
             iq_cap: 0,
             orb_moves: Vec::new(),
         }
@@ -357,11 +358,15 @@ impl Dungeon {
         }
     }
 
-    /// `0218C284(user, target, amount, maxRise, 1)`: `amount` whole belly points. A sum past the
-    /// maximum fills it and raises the maximum by `max_rise`.
-    // hypothesis: the rise applies on overflow only, as the HP rise applies at full HP; the
-    // belly maximum (`+0x114` in Red) is kept per member in the item state, starting at 100.
-    // shortcut: the belly maximum resets to 100 on a restore, and the message cases are not read.
+    /// `0218C284(user, target, amount, maxRise, 1)`: `amount` whole belly points. With a rise and
+    /// a belly already at the maximum, or the fill amount, the maximum rises by `max_rise` (cap
+    /// 200) and the belly is set to it; else the belly is the sum clamped to the maximum, and the
+    /// fill amount sets it to the maximum.
+    // hypothesis: the belly maximum (`+0x114` in Red) is kept per member in the item state,
+    // starting at 100; `FILL_AMOUNT` is not read.
+    // shortcut: the belly maximum resets to 100 on a restore, the message cases are not read, and
+    // the refusal at the top of `0218C284` (`info+7 == 0` with `021432E8(t, 0x1B)`) is not
+    // ported.
     fn add_belly(&mut self, member: usize, amount: i32, max_rise: i32) {
         let Some(max) = self.items.max_belly.get_mut(member) else {
             return;
@@ -369,15 +374,13 @@ impl Dungeon {
         let Some(m) = self.team.get_mut(member) else {
             return;
         };
-        let sum = m.info.belly.saturating_add(amount.saturating_mul(1000));
-        if sum > *max {
-            *max = max
-                .saturating_add(max_rise * 1000)
-                .min(MAX_BELLY_CAP)
-                .max(*max);
+        let fill = amount == FILL_AMOUNT;
+        if max_rise != 0 && (m.info.belly >= *max || fill) {
+            *max = max.saturating_add(max_rise * 1000).min(MAX_BELLY_CAP);
             m.info.belly = *max;
         } else {
-            m.info.belly = sum;
+            let sum = m.info.belly.saturating_add(amount.saturating_mul(1000));
+            m.info.belly = if fill { *max } else { sum.min(*max) };
         }
     }
 
@@ -387,8 +390,10 @@ impl Dungeon {
     }
 
     /// `0218DF38`: heals `heal`; at full HP, or with a heal of 0, the maximum rises instead.
-    // hypothesis: the HP rises with the maximum; only "applies at full HP or when heal is 0" is
-    // read.
+    // `0218DF38` adds `maxRise` to both `+0x0E` and `+0x10` in the branch
+    // `(hp == maxHp && maxRise > 0) || heal == 0`, clamps the maximum to `DAT_ov_0001__0218e17c`
+    // and the HP to the maximum.
+    // hypothesis: the cap value `DAT_0218e17c` is 999 (`MAX_HP_CAP`); it is not read.
     fn heal(&mut self, member: usize, a: HealAmount) -> UseResult {
         self.info_mut_of(member, |i| {
             if a.heal == 0 || i.hp >= i.max_hp {
@@ -419,25 +424,29 @@ impl Dungeon {
         }
     }
 
-    /// `021466D4` -> `0218844C(.., 0, 1)`: no draw at speed stage 4; else one duration roll
-    /// (`0219CF28`, flag 0), `+1`, in the first free of the five speed-up counters.
+    /// `021466D4` -> `0218844C(.., 0, 1)`: one duration roll (`0219CF28`, flag 0) after the
+    /// validity test, then, below speed stage 4, `+1` in the first free of the five speed-up
+    /// counters.
+    // The P2 note "no draw when the speed stage is already 4" is contradicted by the export: the
+    // draw comes before the `02181E58(..) == 4` test, which only skips the counter write.
     fn quick_seed(&mut self, member: usize) -> UseResult {
         let pair = self.items.tables.use_params.quick_turns;
         let base = self.leader_speed;
         let Some(m) = self.team.get_mut(member) else {
             return UseResult::Unported;
         };
+        let turns = status::status_turns(&mut self.rng, &m.info, pair, false);
         if status::speed_stage(&m.info, base) >= 4 {
             return UseResult::MessageOnly;
         }
-        let turns = status::status_turns(&mut self.rng, &m.info, pair, false);
         if let Some(c) = m.info.speed_up.iter_mut().find(|c| **c == 0) {
             *c = turns.saturating_add(1);
         }
         UseResult::Applied
     }
 
-    /// `02146254`: `DungeonRandInt(100)` first, for every user; a non-team user stops there.
+    /// `02146254`: `DungeonRandInt(100)` first, for every user; a non-leader (`info+7 == 0` tests
+    /// `isTeamLeader`) stops there.
     /// Below the percent the gain is 3, else 1, on each held move up to the cap.
     // shortcut: the move test is the slot holding a move; the game's two flag bits and
     // `0200B3E8` are not decoded.
@@ -448,7 +457,7 @@ impl Dungeon {
         let Some(m) = self.team.get_mut(member) else {
             return UseResult::Unported;
         };
-        if m.info.not_team_member {
+        if !m.info.is_team_leader {
             return UseResult::MessageOnly;
         }
         let gain: u8 = if roll < percent { 3 } else { 1 };
@@ -492,21 +501,30 @@ impl Dungeon {
     }
 
     /// `02145EC8`: belly first (no maximum rise), then the IQ for a team member, clamped to 1
-    /// and the cap.
+    /// and the cap. Both gains sum the table entries of the eater's two types at the gummi type.
     fn gummi(&mut self, member: usize, index: usize) -> UseResult {
-        let row = self
-            .items
-            .tables
-            .use_params
-            .gummis
-            .get(index)
-            .copied()
-            .unwrap_or_default();
-        let cap = self.items.tables.use_params.iq_cap;
-        self.add_belly(member, row.belly, 0);
+        let p = &self.items.tables.use_params;
+        let Some(m) = self.team.get(member) else {
+            return UseResult::Unported;
+        };
+        let types = m.info.types;
+        let col = index + 1;
+        let sum = |table: &[i16]| -> i32 {
+            types
+                .iter()
+                .map(|&t| {
+                    let at = usize::from(t) * GUMMI_SIDE + col;
+                    i32::from(table.get(at).copied().unwrap_or(0))
+                })
+                .sum()
+        };
+        let (belly, iq) = (sum(&p.gummi_belly), sum(&p.gummi_iq));
+        let cap = p.iq_cap;
+        self.add_belly(member, belly, 0);
         self.info_mut_of(member, |i| {
             if !i.not_team_member && cap > 0 {
-                i.iq = i.iq.saturating_add(row.iq).clamp(1, cap);
+                let v = i32::from(i.iq).saturating_add(iq).clamp(1, i32::from(cap));
+                i.iq = v as i16;
             }
         });
         UseResult::Applied
@@ -537,7 +555,7 @@ mod tests {
             defensive_stages: [10, 10],
             accuracy_stage: 10,
             evasion_stage: 10,
-            types: [0, 0],
+            types: [1, 2],
             abilities: [0, 0],
             moves: [MoveSlot::default(); 4],
             speed_up: [0; 5],
@@ -561,6 +579,13 @@ mod tests {
             }
         }
         f
+    }
+
+    /// An 18 by 18 gummi table whose row `t` holds `per_type[t]` (0 past the slice).
+    fn gummi_table(per_type: &[i16]) -> Vec<i16> {
+        (0..GUMMI_SIDE * GUMMI_SIDE)
+            .map(|k| per_type.get(k / GUMMI_SIDE).copied().unwrap_or(0))
+            .collect()
     }
 
     /// A run with the leader and an ally, and tables that class the seeds, berries, vitamins,
@@ -606,7 +631,8 @@ mod tests {
             quick_turns: (4, 6),
             ginseng_percent: 50,
             ginseng_cap: 99,
-            gummis: vec![GummiRow { belly: 10, iq: 3 }; 17],
+            gummi_belly: gummi_table(&[0, 4, 6, 1]),
+            gummi_iq: gummi_table(&[0, 1, 2, 1]),
             iq_cap: 20,
             orb_moves: Vec::new(),
         };
@@ -754,19 +780,37 @@ mod tests {
     #[test]
     fn foods_add_belly_and_a_full_belly_raises_the_maximum() {
         let mut g = run();
-        // The silent +5 first, then 50: 50 + 5 + 50 = 105 over the maximum of 100.
+        // 50 + 5 + 50 overflows a belly that was not full: it clamps, the maximum stays.
+        eat(&mut g, APPLE);
+        assert_eq!(d(&mut g).max_belly(0), 100_000);
+        assert_eq!(leader(&mut g).belly, 100_000);
+        // Now full: the Chestnut has no rise and changes nothing.
+        eat(&mut g, CHESTNUT);
+        assert_eq!(d(&mut g).max_belly(0), 100_000);
+        assert_eq!(leader(&mut g).belly, 100_000);
+        // Full again: the Apple raises the maximum by 5 and fills to it.
+        leader(&mut g).belly = 100_000;
         eat(&mut g, APPLE);
         assert_eq!(d(&mut g).max_belly(0), 105_000);
-        assert_eq!(leader(&mut g).belly, 105_000);
-        // The Chestnut adds 5 + 10 and has no rise: the full belly stays at the maximum.
-        eat(&mut g, CHESTNUT);
-        assert_eq!(d(&mut g).max_belly(0), 105_000);
-        assert_eq!(leader(&mut g).belly, 105_000);
+        // (the turn that follows the meal burns 100 of belly)
+        assert!((104_900..=105_000).contains(&leader(&mut g).belly));
+        // The Big Apple on a belly that is not full does not raise the maximum.
         let mut g = run();
         leader(&mut g).belly = 10_000;
         eat(&mut g, BIG_APPLE);
-        assert_eq!(leader(&mut g).belly, 110_000);
+        assert_eq!(leader(&mut g).belly, 100_000);
+        assert_eq!(d(&mut g).max_belly(0), 100_000);
+        // The fill amount takes the rise branch whatever the belly.
+        let mut g = run();
+        d(&mut g).use_item_arm(0, HUGE_APPLE, None);
         assert_eq!(d(&mut g).max_belly(0), 110_000);
+        assert_eq!(leader(&mut g).belly, 110_000);
+        // The rise stops at 200.
+        let mut g = run();
+        for _ in 0..12 {
+            d(&mut g).use_item_arm(0, HUGE_APPLE, None);
+        }
+        assert_eq!(d(&mut g).max_belly(0), 200_000);
     }
 
     #[test]
@@ -778,6 +822,12 @@ mod tests {
         leader(&mut g).iq = 19;
         eat(&mut g, 0x56);
         assert_eq!(leader(&mut g).iq, 20);
+        // Another pair of types gets another gain: types [3, 3] give 1 + 1 for each.
+        let mut g = run();
+        leader(&mut g).types = [3, 3];
+        eat(&mut g, 0x60);
+        assert_eq!(leader(&mut g).belly, 50_000 + 5_000 + 2_000);
+        assert_eq!(leader(&mut g).iq, 12);
     }
 
     #[test]
@@ -822,6 +872,26 @@ mod tests {
     }
 
     #[test]
+    fn a_non_leader_member_gets_one_draw_and_no_ginseng() {
+        let mut g = run();
+        d(&mut g).team[1].info.moves[0] = MoveSlot {
+            flags: MoveSlot::HOLDS_MOVE,
+            flags2: 0,
+            id: 1,
+            pp: 5,
+            ginseng: 0,
+        };
+        let mut probe = *d(&mut g).rng();
+        probe.int(100);
+        assert_eq!(
+            d(&mut g).use_item_arm(1, GINSENG, None),
+            UseResult::MessageOnly
+        );
+        assert_eq!(d(&mut g).team[1].info.moves[0].ginseng, 0);
+        assert_eq!(d(&mut g).rng(), &probe);
+    }
+
+    #[test]
     fn grimy_food_draws_five_then_burns_or_paralyses() {
         let mut seen = [false; 5];
         for seed in 0..40u32 {
@@ -832,6 +902,7 @@ mod tests {
                 info: info(true),
             }];
             g.enter_dungeon(open_floor(), team, 0, &[]).unwrap();
+            leader(&mut g).types = [0, 0];
             d(&mut g).items.tables.categories = vec![0; 256];
             d(&mut g).rng = DungeonRng::new(seed);
             // The arm is the first draw after the leader's turn start: run it directly.
@@ -921,23 +992,22 @@ mod tests {
         let c = leader(&mut g).speed_up[0];
         assert!((5..=7).contains(&c), "{c}");
         assert_eq!(leader(&mut g).speed_up[1], 0);
-        // At stage 4 nothing is drawn or written.
+        // At stage 4 the draw happens (before the stage test) and nothing is written.
         let mut g = run();
         d(&mut g).leader_speed = 4;
-        let mut twin = run();
-        d(&mut twin).leader_speed = 4;
-        eat(&mut g, QUICK_SEED);
-        eat(&mut twin, PLAIN_SEED);
+        let mut probe = *d(&mut g).rng();
+        probe.range(4, 6);
+        d(&mut g).use_item_arm(0, QUICK_SEED, None);
         assert_eq!(leader(&mut g).speed_up, [0; 5]);
-        assert_eq!(d(&mut g).rng(), d(&mut twin).rng());
+        assert_eq!(d(&mut g).rng(), &probe);
     }
 
     #[test]
     fn the_arms_draw_in_the_documented_order() {
-        // Ginseng: one DungeonRandInt(100) and nothing else, even for a non-team user.
-        for non_team in [false, true] {
+        // Ginseng: one DungeonRandInt(100) and nothing else, even for a non-leader.
+        for non_leader in [false, true] {
             let mut g = run();
-            leader(&mut g).not_team_member = non_team;
+            leader(&mut g).is_team_leader = !non_leader;
             let mut probe = *d(&mut g).rng();
             probe.int(100);
             d(&mut g).use_item_arm(0, GINSENG, None);
