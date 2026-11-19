@@ -58,10 +58,64 @@ Not verified: the money table at `DAT_02007360`, the meaning of `+0x64C`, `02180
 
 - **No handler table: one `switch` on the item id**, `ov_0001::02146880(isThrown, flagB, p3, user, target, item*)` [blue-verified]. The Red equivalent is `ApplyItemEffect` [red-hypothesis]. Callers: `0217371C` (eat/use, `isThrown = 0`), `02144A54` and `02144F3C` (thrown item hits a target, `isThrown = 1`).
 - Eat/use flow, `0217371C`: `02141720(entity, 0)`, can-use check `021457B0` (refuses sticky bit 8, or `info+0xCB == 1` with a food-type item `020073CC`), message, `02143C8C`, `02141680` consumes, `02146880(0,0,0,entity,entity,&item)`, then `0219037C`.
-- Dispatcher body: a held-item auto-equip branch first (non-leader user, category not 2; `0218163C` gate, `02143BF8`) that can write `info+0x5A` instead of using the item. Then sticky messages and `switch(item.id)`: ids `1..6` go to `021467F4`, `7` and `8` to `021467BC`; categories 5 (TM) and 10 (link box) are handled before the switch; ids `0x35..0x7B` are individual calls (for example `0x36 021455B0`, `0x37 02146774`, `0x38 02146740`, `0x3C 02146570`, `0x3F 0214650C`, `0x40 021463E0`, `0x48 021460A8`, `0x49 02146254`, `0x4E..0x51 02145E88..02145EB8`, `0x52 0x53 0x55 0x67 0x68 0214608C`, `0x56..0x66 02145EC8` with a type index 1 to 17, `0x77..0x7B` five calls, thunks into the `0218xxxx` status code for `0x39 0x3B 0x3D 0x4B 0x4C`, `0xE9 02145E84`). Any other id prints "nothing happens". The case count is 124 labels over about 60 distinct handlers. The id groups match Red's `ApplyItemEffect` [red-hypothesis]; the effect of each handler is not decoded.
+- Dispatcher body: a held-item auto-equip branch first (non-leader user, category not 2; `0218163C` gate, `02143BF8`) that can write `info+0x5A` instead of using the item. Then sticky messages and `switch(item.id)`: ids `1..6` go to `021467F4`, `7` and `8` to `021467BC`; categories 5 (TM) and 10 (link box) are handled before the switch; ids `0x35..0x7B` are individual calls (for example `0x36 021455B0`, `0x37 02146774`, `0x38 02146740`, `0x3C 02146570`, `0x3F 0214650C`, `0x40 021463E0`, `0x48 021460A8`, `0x49 02146254`, `0x4E..0x51 02145E88..02145EB8`, `0x52 0x53 0x55 0x67 0x68 0214608C`, `0x56..0x66 02145EC8` with a type index 1 to 17, `0x77..0x7B` five calls, thunks into the `0218xxxx` status code for `0x39 0x3B 0x3D 0x4B 0x4C`, `0xE9 02145E84`). Any other id prints "nothing happens". The case count is 124 labels over about 60 distinct handlers. The id groups match Red's `ApplyItemEffect` [red-hypothesis]; the effect of each handler is in the #459 section below.
 - **Orbs** (category 9) skip `02146880`: action 0x31 goes to `ov_0001::02191A7C`, which maps item id to move id (`02007670`, table `+0x18`), builds a move with `InitPokemonMove 0200B568`, and calls `0215B384(entity, 0, itemId, ..)`, which calls `UseMoveAgainstTargets 02156824` with the item id. Orb effects are the move handlers ([`move-effects.md`](move-effects.md)). Ids `0xB6` and `0xBF` take another path (`02141680(.., 0x7A)`, then `0215B384` with flags `|0xC`). Argument order of `0215B384` not read.
 - TMs: action 0x12 reaches `0217371C`; `02146880` takes the category-5 branch (teach-move screen, not read).
 - Confidence: high on structure, medium on id-to-handler association (by position only).
+
+### P2 (#459). Item-use handlers by group, RNG order, first-dungeon items
+
+Findings for [#459](https://github.com/TorratDev/rust-mm/issues/459), investigator a, two passes (the second with a read-only Ghidra copy and one py-desmume run on the supported dump). Table values, strings and ROM bytes are not recorded: constants are "read at address X". Item names are Red's `ITEM_*` ids, matched by value and by effect shape [red-hypothesis]; every id-to-address pairing and callee shape is [blue-verified] by reading. No runtime trace of a use path exists, so RNG orders are static.
+
+**Dispatcher** `ov_0001::02146880(isThrown, flagB, p3, user, target, item*)` [blue-verified]:
+- Use (not thrown): `0213F11C` (use message); category 2 (`020082FC(id) == 2`: berry, seed, vitamin): `0218C284(user, target, 5, 0, 0)` = belly +5, **silent, before the switch**; categories 5 and 10: "nothing happens", then the end; else `switch(item.id)`; end `02183BB4(user)`.
+- Thrown: `0213F204`, `0217BB48` first. Sticky bit 8 prints a message and, when thrown, calls the damage routine `0217BB94` and **returns before the switch and before `02183BB4`**. The held-item auto-equip branch (thrown, not flagB, non-leader user) returns before all of this.
+- Ids with no handler print "nothing happens" (use) or call the same damage routine (thrown): `0`, `9..0x34`, `0x3A` (Reviver Seed has no use effect), `0x69..0x76`, and every id above `0x7B` except `0xE9`. The 124 labels are about 60 handlers plus about 64 labels that go to "nothing".
+- `02183BB4` is **not only evolution** (corrects the earlier name `EnemyEvolution`): it applies pending experience (`+0x1C8`) for the party, prints level-up messages, then the evolution pick. Gated by `gDungeon+0xD`; it draws (`0219D058`) only on its evolution branch (`+0x11B`).
+
+**Arms by group** (id hex; handler address; effect):
+
+| Group | Ids and handlers | Effect |
+|---|---|---|
+| Thrown line | 1..6: `021467F4(user, target, ppIdx, id)` | `InitPokemonMove` of a projectile move, then `0215675C` with modifier `0x100` and the item id |
+| Thrown rock | 7, 8: `021467BC(user, target, dmg)` | `0217BB94(.., dmg, 1, .., exit reason 0x210)` |
+| Cure-all | 0x35 Heal Seed: `021467A8` -> `02190100(u, t, 1, p3)` | clears the status bytes through `0218FE64`, `0218FD80`, `0218FC18`, `0218FA80`, `0218F6C8`, `0218F610`, `0218F510`, `0218F304`, `0218F27C` |
+| Berries, heal | 0x37 Oran `02146774`, 0x38 Sitrus `02146740`, 0x3E Life Seed `02146700` | all `0218DF38(u, t, heal, maxHpRise, 1)`; amounts read at `021AA248/240` (Oran), `021AA238/230` (Sitrus), `021AA22C` (Life). The max-HP rise applies only at full HP or when heal is 0 |
+| Berries, cure | 0x3F Rawst `0214650C` (`+0x9B == 1`), 0x42 Pecha `02146618` (`+0x9B` 2 or 3), 0x43 Cheri `02146674` (`+0x9B == 4`) | `0218FD80` ends the class status, else a "nothing" message |
+| Chesto | 0x4B (thunk `0218AC74`) | **sets** sleepless: `+0x99 = 2`, `+0x9A = roll + 1`; extra message when it replaces sleep (`+0x99` was 1, 3 or 5), `0217ADF8(target, 8)` |
+| Status seeds | 0x39 Eyedrop `0218B9F4`, 0x3B Blinker `0218BBB4`, 0x3D Allure `0218BAC8`, 0x44 Totter `021465E8` -> `0218E27C(.., 1)`, 0x45 Sleep `02146840` -> `0218B2D0`, 0x4C Stun `02189768`, 0x41 Quick `021466D4` -> `0218844C(.., 0, 1)`, 0x47 Warp `02146604` -> `021938C8(u, t, 0, 0)`, 0x48 Blast `021460A8`, 0x40 Hunger `021463E0`, 0x46 Plain `02146580` (message only) | see RNG below |
+| Level, move | 0x4A Joy `021465C8` -> `02183994(u, t, 1, 1, 1)` (level +1, cap 100); 0x3C Doom `02146570` -> `02183644(.., 1)` (level down, floor 1); 0x49 Ginseng `02146254` | Ginseng: +3 or +1 to move power-ups, below |
+| Vitamins | 0x4E Protein `02145EB8`, 0x4F Calcium `02145EA8`, 0x50 Iron `02145E98`, 0x51 Zinc `02145E88` | each loads 3 and jumps to `0218B810` (`+0x14`), `0218B758` (`+0x15`), `0218B6A0` (`+0x16`), `0218B5E8` (`+0x17`): add, clamp 255, "rose" or "did not rise" message |
+| Max Elixir | 0x4D `0214672C` -> `0218B8C8` | each move below base PP is restored |
+| Food | 0x52 Apple, 0x67 Banana `0214608C(.., 50, 5)`; 0x53 Big Apple `(100, 10)`; 0x55 Huge Apple `(999, 10)`; 0x68 Chestnut `(10, 0)` | `0214608C` tail-calls `0218C284(u, t, belly, maxBellyRise, 1)` |
+| Grimy Food | 0x54 `02145660` | `0218C284(u, t, 30, 0, 1)`, then `DungeonRandInt(5)`: 0 `0218A410(.., 1)`, 1 `02189CBC`, 2 `0218A710(.., 1, 1)`, 3 `021885A0(.., 1)`, 4 two `02189534(.., 3, 1, 1)` |
+| Gummis | 0x56..0x66 (17): `02145EC8(u, t, type 1..17)` | `0218C284(u, t, tableSum, 0, 1)`, then (`+6 == 0`, species `+0x40` not 'J' or 'G') IQ + sum of two table words, clamp 1..cap, message by gain bucket 0..3 |
+| Link and other | 0x36 Wish Stone `021455B0`, 0x77 Ice Part `02145634`, 0x78 Steel Part `021455DC`, 0x79 Rock Part `02145608`, 0x7A Music Box `02145570` (sound and message), 0x7B Key `02145754` (use: `0215277C`; thrown: damage), 0xE9 `02145E84` (`bx lr`) | message-only |
+
+**RNG order** [blue-verified by reading; no runtime check]. `0219D058` = `DungeonRandInt`; `0219D014` = `DungeonRandRange` (no draw when min = max); `0219CF28(entity, {min, max}, applyMods)` calls it once, then for a team member with `applyMods` halves under IQ skill `0x12` (`0208625C`), caps at 5 under `0x14`, floor 1.
+- **No draw:** Heal, Oran, Sitrus, Life, Rawst, Pecha, Cheri, Plain, Hunger (non-team: belly 0 unless IQ skill `0x12`; team `0218C8B0(u, t, 0, 5)`), Doom, Joy, vitamins, Max Elixir, apples, banana, chestnut, gummis, Wish Stone, parts, Music Box.
+- **One `0219CF28` draw** (duration roll, `+1` stored): Eyedrop (`+0xC9 = 3`, `+0xCA`; guard `02142AE4`; no `02180870` gate), Blinker (`02180870` gate first; `+0xC9 = 1`, `+0xCA`), Allure (gate; `+0xC9 = 2`), Chesto (above), Stun (gate; `+0xA0 = 6`, `+0xA8`; **two ranges**, leader side `+7 == 0` and others), Totter (gates `02180870`, status `0x12`, ability `0x40`; then `+0xAC = 2`, `+0xAD`), Sleep, Quick.
+- **Sleep:** `0219CF28(target, range, 1)` is drawn in `02146840` **before** `0218B2D0` runs its gates (`0218B140`: `02180870`, status `0x11`, abilities `0x36`, `0x49`, `021432E8(.., 0x15)`), so the draw happens even when a gate refuses. `0218B420` writes `+0x99 = 1`, `+0x9A = turns` (halved under ability `0x2F`, floor 1).
+- **Quick:** with turns = 0, draws `0219CF28(target, range, 0)` then `+1`; writes the first free of `+0xE4..+0xE8`; no draw when the speed stage is already 4.
+- **Ginseng:** `DungeonRandInt(100)` is the **first** statement, before the team check, for every user. Below the percent read at `021AA200` gives +3, else +1; applied to each of the four moves with flag bits 1 and 8 and `0200B3E8` true, cap `0200B384`. Non-team user: message only.
+- **Grimy Food:** belly, `Int(5)`, then the setter's draws: each of the first four calls `0219CF28` once; `02189534` none.
+- **Warp** (`021938C8`, mode 0): blocked messages first (`0218067C(.., 0xE)`, `0206D474`), then `0219BFE0`: per attempt (up to 3) `Int(0x38)`, `Int(0x20)`, a scan of the 56 x 32 grid, and, if candidates exist, `Int(count)`. The count per case is data dependent.
+- **Blast** `021460A8`: no draw; target search `021775F0` (no RNG) and damage `0217BB94`. Damage word by `gDungeon+0x665`: `021AA098` or `021AA274` (use), `021AA0F0` or `021AA27C` (thrown). With `+0xA0 == 1` it also calls `0218FC18`.
+- Plain use of a seed or berry: `0213F11C` message, `0218C284(.., 5, 0, 0)`, handler draws, `02183BB4`.
+- Range pairs (s16) are read at `021AA2A8` (Eyedrop), `021AA2A0`, `021AA2A4`, `021AA32C`, `021AA370/021AA36C`, `021AA300`, `021AA324`, `021AA2F8` (and the `DAT` literals named per arm in the symbols); values not recorded.
+
+**Messages.** Each handler prints through `02154B8C(user, target, *table[GetLanguage()])` (also `02154BF0`). Only the string-table literal addresses were noted; the texts, string ids and the message cases of `0218C284` beyond the belly arithmetic are **not read**.
+
+**First-dungeon items** [blue-verified at runtime for the table read; hypothesis for the meaning of each row]. py-desmume on the supported dump, boot to the first dungeon frame. The weighted floor-item table read by the picker `02138B74(row)` is at `gDungeon+0x1A312 + row*0x1F8`: 12 category weights, then 240 item weights, **cumulative** within a category; roll `DungeonRandInt(0x2710)`; fallback with no hit is `0x69` (Poké). It is empty at the first frame and loaded within 1500 frames; four rows read identically at three later frames. Floor 1 only; **floors 2 and 3 not read**; floor 1 placed 3 floor items, all Poké.
+- Row 0 (ordinary tiles in `02144714`; monster held items in `02179990`): only `0x69` Poké.
+- Row 1 (tile bit `0x20`, probably shop): Oran 55, Reviver 58, Rawst 63, Pecha 66, Cheri 67, Blast 72, Max Elixir 77, Apple 82, Big Apple 83, orbs 183, 184, 188, 189, 201, 202, 218.
+- Row 2 (tile flag `0x40`): Poké 105, 125..170 (TM-like ids), orbs 180..205, 218.
+- Row 3 (wall-bit case `(tile & 3) == 0`): 3, 7, 25, Sitrus 56, Life 62, Ginseng 73, Joy 74, vitamins 78..81, 85..103 (Huge Apple, 17 gummis, Banana), mixed 131..223.
+- The row selector in `02144714` is 3 for wall-bit tiles, 1 for flag `0x20`, 2 for flag `0x40`, else 0; that row 1 is the shop row is [hypothesis]. No Heal, Plain, Sleep or Warp Seed was in any row of floor 1. The earlier guess (Plain, Sleep, Heal, Warp) is retired.
+
+**Corrections to earlier notes.** (1) `02183BB4` is the experience, level-up and evolution pass, not only evolution. (2) Ginseng's `Int(100)` is first and unconditional. (3) Sleep's duration is drawn before the gates; Stun has two ranges; Chesto sets sleepless and does not cure sleep. (4) Warp's draws are known (`Int(0x38)`, `Int(0x20)` per attempt, then `Int(count)`). (5) Gummi order: belly first, then IQ; the species test is on `+0x40` being 'J' or 'G'. The "Thrown line" handler `021467F4` is no longer a hypothesis (see table).
+
+**Not read:** `0215277C`, the bodies of `02189CBC`, `0218A710`, `021885A0`, `02189534`, the gummi tables (base pointers at `02092590`, `02092308`), the floor-item pool for floors 2 and 3, all message strings. To settle RNG order at runtime: hook `0219D058` while using Oran, Sleep, Ginseng and Warp.
 
 ## P3. Throwing
 
@@ -194,7 +248,7 @@ Largely in [`structs.md`](structs.md) ("Team inventory"). Added here:
 ## Open questions
 
 - Hit-chance value at `021AA268` (s16, reached from `ov_0001::02144A50`), the `info+0xC6` range table, `021803B8`, `02180B68`, `+0x64C`, the money table `DAT_02007360`.
-- Per-id effect of the item handlers (`02146880` arms) and of trap handlers 0xB to 0x13; meaning of trap record byte 1 and of `info+6` on the monster-step path.
+- Message texts of the item handlers (the effects are decoded, see P2 (#459)) and trap handlers 0xB to 0x13; meaning of trap record byte 1 and of `info+6` on the monster-step path.
 - The roughly 20 direct readers of `info+0x5C`.
 - Runtime: no py-desmume check was recorded for the throw RNG draw count, for `02198824`'s caller, or for the bag layout. Investigator b announced a runtime-check section that was not posted, so nothing here is trace-confirmed.
 - Shop prompts and AI (`02153E80`, shopkeeper behaviour).
