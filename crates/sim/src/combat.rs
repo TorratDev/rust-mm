@@ -20,7 +20,7 @@ use rescue_data::moves::Move;
 use rescue_data::species::LevelData;
 
 use crate::command::{Blocked, Direction, Outcome};
-use crate::items::Item;
+use crate::items::{self, Item};
 use crate::move_effects::{self, Effect, SPORT_TURNS, Sport};
 use crate::state::{DIRECTIONS, Dungeon, EntityInfo, MoveSlot};
 use crate::status::{self, FOCUS_ENERGY, Inflict, WHIFFER};
@@ -261,6 +261,14 @@ pub struct Rolls {
     pub variance: i32,
 }
 
+/// The held items the damage reads: the attacker's and the target's (`Item::default()` for none).
+/// Only the team has held items; a wild monster's slot is empty.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Held {
+    pub(crate) attacker: Item,
+    pub(crate) target: Item,
+}
+
 /// The damage of one hit and whether it was critical.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Damage {
@@ -268,6 +276,48 @@ pub struct Damage {
     pub value: i32,
     /// Whether the hit is critical. A critical hit that does no damage is not critical.
     pub crit: bool,
+}
+
+/// The held-item attack boost of step 7 (`docs/re/combat.md`, the held-item table): Power Band
+/// (+12) on a physical move, Special Band (+12) on a special one, Munch Belt (+8) on either.
+fn held_attack_boost(physical: bool, held: Item) -> i64 {
+    let mut boost = 0;
+    if physical && held.holds(items::POWER_BAND) {
+        boost += 12;
+    }
+    if !physical && held.holds(items::SPECIAL_BAND) {
+        boost += 12;
+    }
+    if held.holds(items::MUNCH_BELT) {
+        boost += 8;
+    }
+    boost
+}
+
+/// The held-item defence boost of step 7: Def Scarf (+8) on a physical move, Zinc Band (+8) on a
+/// special one.
+fn held_defence_boost(physical: bool, held: Item) -> i64 {
+    match physical {
+        true if held.holds(items::DEF_SCARF) => 8,
+        false if held.holds(items::ZINC_BAND) => 8,
+        _ => 0,
+    }
+}
+
+/// The critical odds the held items add: Scope Lens (attacker, +40) and Patsy Band (target,
+/// +40).
+fn held_crit_boost(held: Held) -> i64 {
+    let scope = if held.attacker.holds(items::SCOPE_LENS) {
+        40
+    } else {
+        0
+    };
+    let patsy = if held.target.holds(items::PATSY_BAND) {
+        40
+    } else {
+        0
+    };
+    scope + patsy
 }
 
 /// The attack after `CalcStatBoosts` (step 9): one numerator and one denominator, then a single
@@ -303,8 +353,9 @@ fn boosted_attack(
 /// The damage of `mv` from a team member `attacker` against `target` (`CalcDamage`). Steps as
 /// `docs/re/combat.md` lists them. A team attacker's level term is `level * 2 / 3`, a wild
 /// attacker's is `attack / 3`.
-// shortcut: the held-item boosts, the Deoxys adjustment, the target's `+0xAE` defence stage and
-// the Wonder Guard branch are not modelled.
+// shortcut: the held-item boosts (step 7) apply on every damage path: the table's `arg_10` gate
+// (off for the callers `02161ab4` and `02161cc0`) is not mapped to the sim's effects. The Deoxys
+// adjustment, the target's `+0xAE` defence stage and the Wonder Guard branch are not modelled.
 // shortcut: Guts, Marvel Scale and Plus/Minus are not modelled: they need a negative status or a
 // dungeon flag, and the sim keeps neither.
 // shortcut: the IQ type-advantage critical term (`FUN_021805b0(attacker, 1)` on a super-effective
@@ -317,7 +368,7 @@ pub fn damage(
     target: &EntityInfo,
     rolls: Rolls,
 ) -> Damage {
-    damage_scaled(t, mv, ARG8, attacker, target, rolls)
+    damage_scaled(t, mv, ARG8, attacker, target, Held::default(), rolls)
 }
 
 /// [`damage`] with the move's `arg8` (24.8) given: a Regular Attack's is 0.5.
@@ -327,6 +378,7 @@ fn damage_scaled(
     arg8: i64,
     attacker: &EntityInfo,
     target: &EntityInfo,
+    held: Held,
     rolls: Rolls,
 ) -> Damage {
     let physical = is_physical(t, mv.kind);
@@ -343,7 +395,7 @@ fn damage_scaled(
         UNIT_248,
     );
     let attack = boosted_attack(
-        (stat / 256).clamp(0, DAMAGE_CAP),
+        (stat / 256 + held_attack_boost(physical, held.attacker)).clamp(0, DAMAGE_CAP),
         physical,
         rolls.boost,
         attacker,
@@ -358,7 +410,8 @@ fn damage_scaled(
             i64::from(t.defence_stage[defence_stage]),
         ),
         UNIT_248,
-    ) / 256;
+    ) / 256
+        + held_defence_boost(physical, held.target);
 
     // Base damage x (steps 10 and 11): (attack - defence) / 8 plus the level term, in 48.16.
     // A wild attacker (`isNotTeamMember != 0`) uses `attack / 3` instead: the raw attack stat
@@ -383,7 +436,7 @@ fn damage_scaled(
         FOCUS_ENERGY_ODDS
     } else {
         i64::from(mv.crit_chance)
-    };
+    } + held_crit_boost(held);
     let crit = crit_drawn(target) && i64::from(rolls.crit) < crit_odds;
     let multiplier = if crit {
         mul48(typing, i64::from(t.stab))
@@ -832,6 +885,7 @@ impl Dungeon {
         let Some(defender) = self.info_of(target).cloned() else {
             return false;
         };
+        let held_target = self.held_of(target);
         let physical = is_physical(data.tables, mv.kind);
         let t = data.tables;
 
@@ -848,7 +902,7 @@ impl Dungeon {
             // The dispatch's slot-0 check is the only one a stage change makes.
             Effect::Stages(changes) | Effect::SelfStages(changes) => {
                 if let Some(info) = self.info_mut(target) {
-                    move_effects::change_stages(info, changes);
+                    move_effects::change_stages(info, changes, held_target);
                 }
                 return false;
             }
@@ -879,7 +933,11 @@ impl Dungeon {
             },
             variance: self.rng.int(0x4000),
         };
-        let dealt = damage_scaled(t, mv, arg8, &attacker, &defender, rolls);
+        let held = Held {
+            attacker: self.held_of(user),
+            target: self.held_of(target),
+        };
+        let dealt = damage_scaled(t, mv, arg8, &attacker, &defender, held, rolls);
         let second = self.rng.int(100);
         if !hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
             return false;
@@ -948,8 +1006,9 @@ impl Dungeon {
             Slot::Wild(_) => status::WILD_BASE_STAGE,
         };
         let mut rng = self.rng;
+        let held = self.held_of(target);
         if let Some(info) = self.info_mut(target) {
-            status::inflict(kind, &mut rng, info, same, base);
+            status::inflict(kind, &mut rng, info, same, base, held);
         }
         self.rng = rng;
     }
@@ -1794,7 +1853,16 @@ pub(crate) mod tests {
             crit: draws[2],
             variance: draws[3],
         };
-        let expected = damage_scaled(&t, &mv, REGULAR_ATTACK_ARG8, &attacker, &target, rolls).value;
+        let expected = damage_scaled(
+            &t,
+            &mv,
+            REGULAR_ATTACK_ARG8,
+            &attacker,
+            &target,
+            Held::default(),
+            rolls,
+        )
+        .value;
         regular_hit(&mut g, &mv, &t);
         let mut rest = before;
         for cap in [100, 100, 100, 0x4000, 100] {
@@ -1835,7 +1903,16 @@ pub(crate) mod tests {
         };
         let mv = regular_attack_move([125, 125, 0]);
         let full = damage(&t, &mv, &attacker, &target, rolls).value;
-        let half = damage_scaled(&t, &mv, REGULAR_ATTACK_ARG8, &attacker, &target, rolls).value;
+        let half = damage_scaled(
+            &t,
+            &mv,
+            REGULAR_ATTACK_ARG8,
+            &attacker,
+            &target,
+            Held::default(),
+            rolls,
+        )
+        .value;
         assert!(half > 0 && half < full, "half {half}, full {full}");
         // Each scaled value is rounded once, so the two may differ by a point.
         assert!((full - 2 * half).abs() <= 2, "half {half}, full {full}");
@@ -2461,5 +2538,151 @@ pub(crate) mod tests {
         g.dungeon_mut().unwrap().items.tables.use_params.orb_moves[0xB7] = 0;
         assert_eq!(g.step_with(use_it, &data), Outcome::NotModelled);
         assert_eq!(g.dungeon().unwrap().bag().slots[0].id, 0xB7);
+    }
+
+    /// A held item of `id` that is not sticky (what `HasHeldItem` counts).
+    fn held_by(id: u8) -> Item {
+        Item::new(id, 1)
+    }
+
+    /// The same item, sticky: `HasHeldItem` does not count it.
+    fn sticky_by(id: u8) -> Item {
+        Item {
+            flags: items::FLAG_EXISTS | items::FLAG_STICKY,
+            qty: 1,
+            id,
+        }
+    }
+
+    /// The damage of Tackle (physical) or a special move of kind 2, with `held` on each side.
+    fn dealt_with(attacker_held: Item, target_held: Item, physical: bool) -> i32 {
+        let t = tables();
+        let attacker = info([0, 0], [0, 0]);
+        let target = info([9, 0], [0, 0]);
+        let mv = if physical {
+            tackle([100; 3], 0)
+        } else {
+            move_of(0x104, 40, 2, [100; 3], 0)
+        };
+        let rolls = Rolls {
+            boost: 100,
+            crit: 99,
+            variance: 0x2000,
+        };
+        let held = Held {
+            attacker: attacker_held,
+            target: target_held,
+        };
+        damage_scaled(&t, &mv, ARG8, &attacker, &target, held, rolls).value
+    }
+
+    #[test]
+    fn power_band_boosts_a_physical_attack_and_not_a_special_one() {
+        let none = Item::default();
+        assert!(dealt_with(held_by(items::POWER_BAND), none, true) > dealt_with(none, none, true));
+        assert_eq!(
+            dealt_with(held_by(items::POWER_BAND), none, false),
+            dealt_with(none, none, false)
+        );
+    }
+
+    #[test]
+    fn special_band_boosts_a_special_attack_and_not_a_physical_one() {
+        let none = Item::default();
+        assert!(
+            dealt_with(held_by(items::SPECIAL_BAND), none, false) > dealt_with(none, none, false)
+        );
+        assert_eq!(
+            dealt_with(held_by(items::SPECIAL_BAND), none, true),
+            dealt_with(none, none, true)
+        );
+    }
+
+    #[test]
+    fn munch_belt_boosts_both_kinds_of_attack() {
+        let none = Item::default();
+        for physical in [true, false] {
+            assert!(
+                dealt_with(held_by(items::MUNCH_BELT), none, physical)
+                    > dealt_with(none, none, physical),
+                "physical {physical}"
+            );
+        }
+    }
+
+    #[test]
+    fn def_scarf_lowers_a_physical_hit_on_its_holder_and_not_a_special_one() {
+        let none = Item::default();
+        assert!(dealt_with(none, held_by(items::DEF_SCARF), true) < dealt_with(none, none, true));
+        assert_eq!(
+            dealt_with(none, held_by(items::DEF_SCARF), false),
+            dealt_with(none, none, false)
+        );
+    }
+
+    #[test]
+    fn zinc_band_lowers_a_special_hit_on_its_holder_and_not_a_physical_one() {
+        let none = Item::default();
+        assert!(dealt_with(none, held_by(items::ZINC_BAND), false) < dealt_with(none, none, false));
+        assert_eq!(
+            dealt_with(none, held_by(items::ZINC_BAND), true),
+            dealt_with(none, none, true)
+        );
+    }
+
+    #[test]
+    fn a_sticky_held_item_gives_no_boost() {
+        let none = Item::default();
+        assert_eq!(
+            dealt_with(sticky_by(items::POWER_BAND), none, true),
+            dealt_with(none, none, true)
+        );
+        assert_eq!(
+            dealt_with(none, sticky_by(items::DEF_SCARF), true),
+            dealt_with(none, none, true)
+        );
+    }
+
+    /// Whether a Tackle with crit odds 0 and a roll of 20 is critical, with `attacker_held` and
+    /// `target_held`: the odds are 40 from Scope Lens or Patsy Band, so 20 passes only then.
+    fn crit_with(attacker_held: Item, target_held: Item) -> bool {
+        let t = tables();
+        let attacker = info([0, 0], [0, 0]);
+        let target = info([9, 0], [0, 0]);
+        let held = Held {
+            attacker: attacker_held,
+            target: target_held,
+        };
+        let rolls = Rolls {
+            boost: 100,
+            crit: 20,
+            variance: 0x2000,
+        };
+        damage_scaled(
+            &t,
+            &tackle([100; 3], 0),
+            ARG8,
+            &attacker,
+            &target,
+            held,
+            rolls,
+        )
+        .crit
+    }
+
+    #[test]
+    fn scope_lens_on_the_attacker_adds_40_to_the_crit_odds() {
+        let none = Item::default();
+        assert!(!crit_with(none, none));
+        assert!(crit_with(held_by(items::SCOPE_LENS), none));
+        assert!(!crit_with(sticky_by(items::SCOPE_LENS), none));
+    }
+
+    #[test]
+    fn patsy_band_on_the_target_adds_40_to_the_crit_odds() {
+        let none = Item::default();
+        assert!(!crit_with(none, none));
+        assert!(crit_with(none, held_by(items::PATSY_BAND)));
+        assert!(!crit_with(none, sticky_by(items::PATSY_BAND)));
     }
 }

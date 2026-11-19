@@ -1184,10 +1184,11 @@ impl Dungeon {
     /// lacks; the mobility class (plain: regular, class 0) reads the current tile's walkable
     /// byte `+6` ANDed with the direction's bit; last, a monster on the tile fails the move and
     /// sets the flag.
-    // shortcut: every monster is class 0 and has no IQ skill, status `+0xC7` or held item that
-    // changes it; the species mobility (`0218267C`) is not kept. The floor generator does not
-    // fill `walkable_neighbors`, so the regular byte is derived from the terrain by the mask
-    // writer's rule (`02148F50`, `docs/re/turns.md`, "Movement") instead of being read.
+    // shortcut: every monster is class 0. The Mobile Scarf test (item 0x09, `has_held_item`) waits
+    // with the class-3 wall byte: `02148F50`'s rule that gives the class 3 mask is not in the docs.
+    // The IQ skills, status `+0xC7` and the species mobility (`0218267C`) are not kept. The floor
+    // generator does not fill `walkable_neighbors`, so the regular byte is derived from the terrain
+    // by the mask writer's rule (`02148F50`, `docs/re/turns.md`, "Movement") instead of being read.
     fn can_move(&self, me: (i16, i16), dir: usize) -> (bool, bool) {
         let (dx, dy) = DIRECTIONS[dir].delta();
         let (x, y) = (i32::from(me.0) + dx, i32::from(me.1) + dy);

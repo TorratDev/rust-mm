@@ -300,8 +300,9 @@ impl Dungeon {
 
     /// The HP regeneration block of [`Self::regenerate_gated`].
     fn regenerate(info: &mut EntityInfo) {
-        // shortcut: the Heal Ribbon, Wish and Rain Dish terms are not modelled (no held item,
-        // status or weather yet); each would add to the speed before the clamp.
+        // shortcut: the Heal Ribbon term (item 0x0A, `has_held_item`), Wish and Rain Dish are not
+        // modelled: `turns.md` does not record the amount Heal Ribbon adds to the speed, and Wish
+        // and weather are not modelled. Each would add to the speed before the clamp.
         let speed = i32::from(info.regen_speed).clamp(REGEN_SPEED_MIN, REGEN_SPEED_MAX);
         let mut acc = i32::from(info.regen_acc) + i32::from(info.max_hp);
         let mut hp = i32::from(info.hp);
@@ -321,10 +322,13 @@ impl Dungeon {
     /// generator stays in step with the game. Its result is unused until a status or ability
     /// reads it. The Warp Scarf roll and the weather damage (between the two) are not modelled.
     pub(crate) fn leader_end_of_turn(&mut self) {
-        // shortcut: the held-item decrement terms (Tight Belt, Stamina Band, Energy Saver, Diet
-        // Ribbon, Heal Ribbon, Munch Belt) and the linked-move term are not modelled; every turn
-        // costs the base 0.1. The empty-belly alert counter (`dungeon+0x669`) is not kept: it
-        // changes no state the sim holds.
+        // shortcut: the held-item decrement terms (Tight Belt 0x17, Stamina Band 0x1F, Diet Ribbon
+        // 0x1B, Heal Ribbon 0x0A, Munch Belt 0x2B; Energy Saver's id is not mapped) and the
+        // linked-move term are not modelled: the index offsets and the table at `0x021AA824` are
+        // not recorded in the docs, so every turn costs the base 0.1. The Warp Scarf (0x16) roll
+        // between the belly block and the Shed Skin roll is not modelled either, its roll and warp
+        // are not ported. The empty-belly alert counter (`dungeon+0x669`) is not kept: it changes
+        // no state the sim holds.
         // shortcut: the 1 HP of hunger is taken without a faint check; HP stops at 0 and the
         // faint exit (`HandleFaint_Async`) is not ported. The game's early exits after the
         // weather damage (export lines 206 to 213) would skip the roll; the sim has no weather,
