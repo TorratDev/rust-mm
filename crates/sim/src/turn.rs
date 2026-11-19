@@ -585,9 +585,12 @@ mod tests {
         let (floor, team, spawns) = (b.floor.clone(), b.team.clone(), b.spawns.clone());
         // Species 7 is the spawn list's; a chance of 100 always passes `Int(100) < chance`.
         let sleeps = |table: Vec<u8>| {
-            let mut g = GameState::new(1).with_species_sleep_chances(table);
-            g.enter_dungeon(floor.clone(), team.clone(), 2, &spawns)
-                .unwrap();
+            let mut g =
+                GameState::in_dungeon_with_spawns(1, floor.clone(), team.clone(), 2, &spawns)
+                    .unwrap();
+            if !table.is_empty() {
+                g = g.with_species_sleep_chances(table);
+            }
             let d = g.dungeon_mut().unwrap();
             d.enemy_density = 4;
             d.spawn_counter = 35;
@@ -598,6 +601,13 @@ mod tests {
         assert!(sleeps(vec![0, 0, 0, 0, 0, 0, 0, 100]));
         assert!(!sleeps(vec![0, 0, 0, 0, 0, 0, 0, 0]));
         assert!(!sleeps(Vec::new()), "no table: nothing sleeps");
+        // A floor entered later keeps the table.
+        let table = vec![0, 0, 0, 0, 0, 0, 0, 100];
+        let mut g = GameState::in_dungeon_with_spawns(1, floor.clone(), team.clone(), 2, &spawns)
+            .unwrap()
+            .with_species_sleep_chances(table.clone());
+        g.enter_dungeon(floor, team, 2, &spawns).unwrap();
+        assert_eq!(g.dungeon_mut().unwrap().ai.chance_asleep, table);
     }
 
     #[test]

@@ -740,10 +740,14 @@ impl GameState {
     }
 
     /// The run with the species' sleep chances (`Species::chance_asleep`, indexed by species
-    /// ID), given before any command. A natural spawn is asleep with that chance; without the
-    /// table no spawn sleeps.
+    /// ID), given before any command. It may follow [`GameState::in_dungeon_with_spawns`] or
+    /// [`GameState::restore`]: the current floor takes the table too, and later floors inherit
+    /// it. A natural spawn is asleep with that chance; without the table no spawn sleeps.
     #[must_use]
     pub fn with_species_sleep_chances(mut self, chances: Vec<u8>) -> Self {
+        if let Some(d) = self.dungeon.as_mut() {
+            d.ai.chance_asleep.clone_from(&chances);
+        }
         self.chance_asleep = chances;
         self
     }
@@ -1160,8 +1164,8 @@ impl GameState {
             dungeon,
             floors: snapshot.floors.clone(),
             // shortcut: the snapshot holds no species table, so a restored run has no sleep
-            // chances until `with_species_sleep_chances` is called again (its floor's dungeon
-            // keeps none either).
+            // chances until `with_species_sleep_chances` is called on it (that covers the
+            // restored floor too).
             chance_asleep: Vec::new(),
         })
     }
