@@ -171,6 +171,8 @@ The scenario file holds `{"dungeonId":0,"floorId":0}`. With `--nocapture`, a run
 
 **Result.** The replay stops at row 16 (frame 667, `fractionalTurn` 15): `dungeonRng` differs, expected 3272943824, actual 3036396926, and `team[1].hp` differs, expected 26, actual 30. Rows 8 to 15 match since #504 (one team pick per pass; the partner's second pick is the phase-2 rerun). Row 16 is the wild attack on the partner (#505, the known P-D1b gap), which the sim does not make yet. This is not fixed here.
 
+**Partner move pick (#507).** The partner now picks by weight (Growl 10, Scratch 25, regular entry 30, `Int(65)`), draws the target pick only on a move entry, and its Growl goes through the effect path. The replay still stops at row 16: `dungeonRng` differs (expected 3272943824, actual 4146663971) and `team[1].hp` differs (expected 26, actual 29). `wild[0].hp` now matches (the partner's roll 8 is Growl). What is left is the wild Tackle's damage to the partner after Growl and its draws.
+
 ## Combat replay (#424)
 
 `rescue_trace_harness::combat::replay_combat` replays the leader's Regular Attacks with the sim's combat (`step_with`), and compares the leader and the target on each row. The tables are read from the dump, as `apps/game/src/combat.rs` reads them, and the start state gets each monster's species types, abilities and regeneration speed (`EntityInfo::apply_species`).

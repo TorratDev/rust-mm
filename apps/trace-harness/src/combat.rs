@@ -210,7 +210,12 @@ pub fn replay_enemies(
 // shortcut: pinned from one emulator read, as `LEADER_STATS`.
 const PARTNER_STATS: ([u8; 2], [u8; 2]) = ([11, 11], [8, 8]);
 
-/// Gives the partner its stats and each wild monster of [`WILD_PINS`] its stats and its move.
+/// The partner's moves, Growl (pp 20) and Scratch (pp 22), flags `05`, read from the emulator
+/// with the wild pins (#507). The trace does not carry them.
+// shortcut: pinned from one emulator read, as `PARTNER_STATS`.
+const PARTNER_MOVES: [(u16, u8); 2] = [(0x0D9, 20), (0x104, 22)];
+
+/// Gives the partner its stats and moves and each wild monster of [`WILD_PINS`] its stats and its move.
 fn pin_wild(state: &mut GameState) -> Result<(), HarnessError> {
     let mut snapshot = state.snapshot();
     let Some(dungeon) = snapshot.dungeon.as_mut() else {
@@ -218,6 +223,15 @@ fn pin_wild(state: &mut GameState) -> Result<(), HarnessError> {
     };
     for monster in dungeon.team.iter_mut().filter(|m| !m.info.is_team_leader) {
         (monster.info.attack, monster.info.defence) = PARTNER_STATS;
+        for (slot, (id, pp)) in monster.info.moves.iter_mut().zip(PARTNER_MOVES) {
+            *slot = MoveSlot {
+                flags: MoveSlot::HOLDS_MOVE | 0x04,
+                flags2: 0,
+                id,
+                pp,
+                ginseng: 0,
+            };
+        }
     }
     for monster in dungeon.wild.iter_mut() {
         let info = &mut monster.info;

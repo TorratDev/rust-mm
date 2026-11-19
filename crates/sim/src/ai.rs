@@ -42,8 +42,10 @@ const REGULAR_ENTRY: usize = 4;
 /// Bit 2 of a move slot's flag byte: the slot is enabled for the AI (`+0xF4 + 6 * slot`).
 const SLOT_AI_ENABLED: u8 = 0x04;
 /// The area nibble classes of a move's AI targeting field the sim reads as the adjacent foes
-/// (`02192728`: `0x00`, `0x10` and `0x20`).
-const ADJACENT_AREAS: [u16; 3] = [0x00, 0x10, 0x20];
+/// (`02192728`: `0x00`, `0x10` and `0x20`, and `0x40`, Growl's: the foe one or two tiles ahead).
+// shortcut: area `0x40` is read for the adjacent foes only; a foe two tiles ahead is not a target
+// (#507: the partner's Growl at a foe next to it).
+const ADJACENT_AREAS: [u16; 4] = [0x00, 0x10, 0x20, 0x40];
 
 /// `gFaceDirectionIncrements`, the order `DecideMovement` tries directions in: ahead, then 45
 /// degrees one way and the other (the loop stops at index 2 without a run-away or turn-around
@@ -322,9 +324,9 @@ impl Dungeon {
 
     /// One partner's turn: `RunMonsterAI` and Execute. `recalc` is phase 2's `+0x117`. Returns
     /// whether the partner is flagged `aiAllySkip`, which defers its end of turn.
-    // shortcut: the partner's own moves are not used: the pick draws the team total 65 seen in
-    // the P7 trace (the sum of its five weights is not computed) and only the regular attack
-    // is used. IQ skills are not read (`ai.md`, P4-b): the tactic table gates the enemy scan
+    // shortcut: without combat data the pick draws the team total 65 seen in the P7 trace and
+    // only the regular attack is used; with it the partner picks by weight (`choose_ai_move`).
+    // IQ skills are not read (`ai.md`, P4-b): the tactic table gates the enemy scan
     // (`TACTIC_SKIPS_SCAN`); a partner that scans attacks a foe it sees, else follows the
     // leader. A phase-2 turn may re-flag
     // through the trailing branch of `DecideMovement` (branch 2a is phase 1 only).
@@ -359,16 +361,23 @@ impl Dungeon {
         } else {
             leader_seen
         };
-        // `ChooseAIMove`: the weighted pick is drawn whatever the target.
-        let _pick = self.rng.int(TEAM_PICK_TOTAL);
-        if let Some(f) = foe.filter(|&f| self.adjacent_attackable(me, f)) {
-            // The regular attack's target pick among one candidate (`02192CC0`).
-            let _candidate = self.rng.int(1);
-            let dir = usize::from(direction_towards(me, f));
-            self.team[i].info.direction = dir as u8;
-            if let Some(data) = data {
-                self.regular_attack_hits(Slot::Team(i), dir, data);
+        // `ChooseAIMove` (`02192D24`), the wild monsters' own: the weighted pick is drawn
+        // whatever the target (#507).
+        let attacked = match data {
+            Some(data) => self.choose_ai_move(Slot::Team(i), data),
+            None => {
+                let _pick = self.rng.int(TEAM_PICK_TOTAL);
+                if let Some(f) = foe.filter(|&f| self.adjacent_attackable(me, f)) {
+                    // The regular attack's target pick among one candidate (`02192CC0`).
+                    let _candidate = self.rng.int(1);
+                    self.team[i].info.direction = direction_towards(me, f);
+                    true
+                } else {
+                    false
+                }
             }
+        };
+        if attacked {
             self.ally_end_of_turn(i);
             return false;
         }
@@ -546,7 +555,7 @@ impl Dungeon {
         let attacked = match choice {
             _ if gated => false,
             _ if confusion_skip => true,
-            Some(data) => self.choose_ai_move(i, data),
+            Some(data) => self.choose_ai_move(Slot::Wild(i), data),
             None => {
                 // `ChooseAIMove`: the weighted pick is drawn whatever the target.
                 let _pick = self.rng.int(MOVE_PICK_TOTAL);
@@ -605,9 +614,10 @@ impl Dungeon {
     // nibble (`02192274`, which can draw) or no modelled effect finds no target, so the monster
     // falls back to the regular attack. The game's eligibility filters beyond adjacency
     // (`02192508`) are read as passing.
-    fn choose_ai_move(&mut self, i: usize, data: &CombatData<'_>) -> bool {
-        let me = Slot::Wild(i);
-        let slots = self.wild[i].info.moves;
+    fn choose_ai_move(&mut self, me: Slot, data: &CombatData<'_>) -> bool {
+        let Some(slots) = self.ai_info(me).map(|info| info.moves) else {
+            return false;
+        };
         let enabled = slots
             .iter()
             .filter(|m| m.flags & MoveSlot::HOLDS_MOVE != 0 && m.flags & SLOT_AI_ENABLED != 0)
@@ -620,9 +630,9 @@ impl Dungeon {
         if pp_sum == 0 {
             // `InitPokemonMove(0x160)` then `02192728`, action 0x17: Struggle, no weighted pick.
             // The target search is `02192728`'s, so it draws the candidate pick.
-            let dirs = self.adjacent_foe_directions(i);
+            let dirs = self.adjacent_foe_directions(me);
             return match self.pick_direction(&dirs) {
-                Some(dir) => self.use_struggle(i, dir, data),
+                Some(dir) => self.use_struggle(me, dir, data),
                 None => false,
             };
         }
@@ -651,7 +661,7 @@ impl Dungeon {
         let roll = self.rng.int(total);
         // `02191F84`: the regular attack's target, searched whatever the roll picks. A wild
         // monster's IQ set has no multi-target mode, so it takes the first adjacent foe, no draw.
-        let regular = self.regular_attack_direction(i);
+        let regular = self.regular_attack_direction(me);
         let mut cumulative = 0;
         for (entry, &w) in weights.iter().enumerate() {
             if w == 0 {
@@ -662,30 +672,49 @@ impl Dungeon {
                 continue;
             }
             if entry == REGULAR_ENTRY {
-                return regular.is_some_and(|dir| self.use_regular_attack(i, dir, data));
+                return regular.is_some_and(|dir| self.use_regular_attack(me, dir, data));
             }
-            if let Some(dir) = self.move_target_direction(i, entry, data) {
+            if let Some(dir) = self.move_target_direction(me, entry, data) {
                 return self.use_move_slot(me, entry, dir, data);
             }
             break;
         }
-        regular.is_some_and(|dir| self.use_regular_attack(i, dir, data))
+        regular.is_some_and(|dir| self.use_regular_attack(me, dir, data))
+    }
+
+    /// The info of the monster at `me` (`Dungeon::info_of` is private to `combat`).
+    fn ai_info(&self, me: Slot) -> Option<&crate::state::EntityInfo> {
+        match me {
+            Slot::Team(i) => self.team.get(i).map(|m| &m.info),
+            Slot::Wild(i) => self.wild.get(i).map(|m| &m.info),
+        }
+    }
+
+    /// [`ai_info`](Self::ai_info), mutably.
+    fn ai_info_mut(&mut self, me: Slot) -> Option<&mut crate::state::EntityInfo> {
+        match me {
+            Slot::Team(i) => self.team.get_mut(i).map(|m| &mut m.info),
+            Slot::Wild(i) => self.wild.get_mut(i).map(|m| &mut m.info),
+        }
     }
 
     /// The directions (indices into [`DIRECTIONS`]) of the adjacent foes monster `i` can hit with
     /// a regular attack: the team members one tile away with no wall corner between (the
     /// `02180FFC` test), scanned from the facing byte `+0x44` round the 8 neighbours
     /// (`02191F84`; `02192728` uses the same set).
-    fn adjacent_foe_directions(&self, i: usize) -> Vec<usize> {
-        let me = self.wild[i].pos;
-        let facing = usize::from(self.wild[i].info.direction);
+    fn adjacent_foe_directions(&self, me: Slot) -> Vec<usize> {
+        let (pos, facing, foes) = match me {
+            Slot::Wild(i) => (self.wild[i].pos, self.wild[i].info.direction, &self.team),
+            Slot::Team(i) => (self.team[i].pos, self.team[i].info.direction, &self.wild),
+        };
+        let facing = usize::from(facing);
         (0..DIRECTIONS.len())
             .map(|k| (facing + k) % DIRECTIONS.len())
             .filter(|&d| {
                 let (dx, dy) = DIRECTIONS[d].delta();
-                let at = (me.0 + dx as i16, me.1 + dy as i16);
-                self.team.iter().any(|t| t.pos == at && t.info.hp > 0)
-                    && self.corner_open(i32::from(me.0), i32::from(me.1), dx, dy)
+                let at = (pos.0 + dx as i16, pos.1 + dy as i16);
+                foes.iter().any(|t| t.pos == at && t.info.hp > 0)
+                    && self.corner_open(i32::from(pos.0), i32::from(pos.1), dx, dy)
             })
             .collect()
     }
@@ -703,34 +732,36 @@ impl Dungeon {
     /// `02191F84`: the regular attack's direction. A wild monster's IQ set (`021804CC`: skills 8,
     /// 6, 2, 18, 22) has no multi-target mode (9, 10), so the scan takes the first adjacent foe
     /// and draws nothing (#73 P2.4).
-    fn regular_attack_direction(&self, i: usize) -> Option<usize> {
-        self.adjacent_foe_directions(i).first().copied()
+    fn regular_attack_direction(&self, me: Slot) -> Option<usize> {
+        self.adjacent_foe_directions(me).first().copied()
     }
 
     /// `02192728` for the move in slot `slot` of monster `i`: the direction of the foe it would
     /// use the move on, with the target pick drawn, or `None` when the move has no target.
     fn move_target_direction(
         &mut self,
-        i: usize,
+        me: Slot,
         slot: usize,
         data: &CombatData<'_>,
     ) -> Option<usize> {
-        let id = self.wild[i].info.moves[slot].id;
+        let id = self.ai_info(me)?.moves[slot].id;
         let mv = data.moves.get(usize::from(id))?;
         let ai = mv.targeting[1];
         if ai & 0x0F00 != 0 || !ADJACENT_AREAS.contains(&(ai & 0xF0)) {
             return None;
         }
         move_effects::effect_of(id)?;
-        let dirs = self.adjacent_foe_directions(i);
+        let dirs = self.adjacent_foe_directions(me);
         self.pick_direction(&dirs)
     }
 
     /// The regular attack by wild monster `i` towards direction index `dir`: the monster turns to
     /// face it and the regular attack's damage resolves on the foes its range picks.
-    fn use_regular_attack(&mut self, i: usize, dir: usize, data: &CombatData<'_>) -> bool {
-        self.wild[i].info.direction = dir as u8;
-        self.regular_attack_hits(Slot::Wild(i), dir, data)
+    fn use_regular_attack(&mut self, me: Slot, dir: usize, data: &CombatData<'_>) -> bool {
+        if let Some(info) = self.ai_info_mut(me) {
+            info.direction = dir as u8;
+        }
+        self.regular_attack_hits(me, dir, data)
     }
 
     /// The damage of a regular attack by `me` towards direction index `dir` (either side).
@@ -752,9 +783,10 @@ impl Dungeon {
 
     /// Struggle (`0x160`) by wild monster `i` towards direction index `dir`: the normal damage
     /// path with the recoil on the user, and no PP taken.
-    fn use_struggle(&mut self, i: usize, dir: usize, data: &CombatData<'_>) -> bool {
-        self.wild[i].info.direction = dir as u8;
-        let me = Slot::Wild(i);
+    fn use_struggle(&mut self, me: Slot, dir: usize, data: &CombatData<'_>) -> bool {
+        if let Some(info) = self.ai_info_mut(me) {
+            info.direction = dir as u8;
+        }
         let Some(mv) = data.moves.get(usize::from(move_effects::STRUGGLE)) else {
             return true;
         };
@@ -775,11 +807,11 @@ impl Dungeon {
         dir: usize,
         data: &CombatData<'_>,
     ) -> bool {
-        let Slot::Wild(i) = user else {
+        let Some(info) = self.ai_info_mut(user) else {
             return false;
         };
-        self.wild[i].info.direction = dir as u8;
-        let id = self.wild[i].info.moves[slot].id;
+        info.direction = dir as u8;
+        let id = info.moves[slot].id;
         let (Some(mv), Some(effect)) =
             (data.moves.get(usize::from(id)), move_effects::effect_of(id))
         else {
@@ -2091,7 +2123,7 @@ mod tests {
         for (facing, first) in [(0, 2), (2, 2), (3, 6), (4, 6), (6, 6), (7, 2)] {
             d.wild[0].info.direction = facing;
             assert_eq!(
-                d.regular_attack_direction(0),
+                d.regular_attack_direction(Slot::Wild(0)),
                 Some(first),
                 "facing {facing}"
             );
@@ -2100,7 +2132,7 @@ mod tests {
         d.team[1].pos = (12, 11);
         d.floor.tile_mut(11, 11).unwrap().terrain = 0;
         d.wild[0].info.direction = 0;
-        assert_eq!(d.regular_attack_direction(0), Some(6));
+        assert_eq!(d.regular_attack_direction(Slot::Wild(0)), Some(6));
     }
 
     #[test]
@@ -2203,11 +2235,47 @@ mod tests {
         assert_eq!(d.team[1].info.direction, 0);
     }
 
-    #[test]
-    fn a_partner_next_to_a_foe_it_sees_attacks_it_instead_of_following() {
+    /// A partner (Growl pp 20, Scratch pp 22, flags `05`: the game's) next to a foe, the move
+    /// table with the weights Growl 10 and Scratch 25, and the game's regular-attack table, so
+    /// the pick total is 10 + 25 + 30 = 65 (#507, P-R7a).
+    fn partner_duel() -> (GameState, Vec<rescue_data::moves::Move>) {
         let mut g = with_partner((12, 5), (5, 5), &[(6, 5)]);
-        let moves = duel(&[], &[]).1;
-        let tables = crate::combat::tests::tables();
+        let d = g.dungeon_mut().unwrap();
+        for (slot, id, pp) in d.team[1]
+            .info
+            .moves
+            .iter_mut()
+            .zip([(move_effects::GROWL, 20), (0x104, 22)])
+            .map(|(slot, (id, pp))| (slot, id, pp))
+        {
+            *slot = MoveSlot {
+                flags: MoveSlot::HOLDS_MOVE | SLOT_AI_ENABLED,
+                flags2: 0,
+                id,
+                pp,
+                ginseng: 0,
+            };
+        }
+        let mut list = vec![crate::combat::tests::move_of(
+            REGULAR_ATTACK,
+            1,
+            0,
+            [100; 3],
+            0,
+        )];
+        for (id, weight) in [(move_effects::GROWL, 10), (0x104, 25)] {
+            let mut mv = crate::combat::tests::move_of(id, 40, 1, [100; 3], 0);
+            mv.ai_weight = weight;
+            list.push(mv);
+        }
+        (g, crate::combat::tests::table(&list))
+    }
+
+    #[test]
+    fn a_partner_picks_growl_scratch_or_the_regular_attack_by_weight() {
+        let (g, moves) = partner_duel();
+        let mut tables = crate::combat::tests::tables();
+        tables.regular_attack_weight = [100, 20, 30, 40, 50];
         let data = CombatData {
             tables: &tables,
             moves: &moves,
@@ -2215,12 +2283,114 @@ mod tests {
             weights: &[],
             levels: &[],
         };
-        let d = g.dungeon_mut().unwrap();
+        let mut seen = [false; 3];
+        for seed in 0..200 {
+            let mut actual = g.dungeon().unwrap().clone();
+            actual.rng = crate::rng::DungeonRng::new(seed);
+            let mut model = actual.clone();
+            actual.run_team_members(Some(&data));
+            // `Int(65)@02193260`, 0-based: Growl 1..=10, Scratch 11..=35, the regular attack after.
+            let roll = model.rng.int(65);
+            let entry = match roll {
+                ..=10 => Some(0),
+                11..=35 => Some(1),
+                _ => None,
+            };
+            match entry {
+                Some(slot) => {
+                    // The move's target pick (`02192CC0`), then its use.
+                    model.rng.int(1);
+                    let id = model.team[1].info.moves[slot].id;
+                    let mv = &moves[usize::from(id)];
+                    let effect = move_effects::effect_of(id).unwrap();
+                    model.strike(Slot::Team(1), slot, &[Slot::Wild(0)], mv, &effect, &data);
+                }
+                None => {
+                    // The regular entry draws no target pick.
+                    let mv = &moves[usize::from(REGULAR_ATTACK)];
+                    let attack = Effect::Damage {
+                        arg8: REGULAR_ATTACK_ARG8,
+                    };
+                    model.resolve_all(Slot::Team(1), &[Slot::Wild(0)], mv, &attack, &data);
+                }
+            }
+            model.rng.int(100);
+            assert_eq!(actual.rng, model.rng, "seed {seed}, roll {roll}");
+            assert_eq!(actual.team[1].info.moves, model.team[1].info.moves);
+            assert_eq!(
+                actual
+                    .wild
+                    .first()
+                    .map(|w| (w.info.hp, w.info.offensive_stages)),
+                model
+                    .wild
+                    .first()
+                    .map(|w| (w.info.hp, w.info.offensive_stages)),
+                "seed {seed}"
+            );
+            assert_eq!(actual.team[1].pos, (5, 5), "an attack does not move");
+            assert_eq!(actual.team[1].info.direction, 2, "it faces the foe");
+            let pps = (
+                actual.team[1].info.moves[0].pp,
+                actual.team[1].info.moves[1].pp,
+            );
+            let used = match pps {
+                (19, 22) => 0,
+                (20, 21) => 1,
+                _ => 2,
+            };
+            assert_eq!(Some(used), entry.or(Some(2)), "roll {roll}");
+            seen[used] = true;
+        }
+        assert_eq!(seen, [true; 3]);
+    }
+
+    #[test]
+    fn a_partner_rolls_8_to_growl_and_32_to_scratch() {
+        let (g, moves) = partner_duel();
+        let mut tables = crate::combat::tests::tables();
+        tables.regular_attack_weight = [100, 20, 30, 40, 50];
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        for (want, slot) in [(8, 0), (32, 1)] {
+            let seed = (0..100_000)
+                .find(|&s| crate::rng::DungeonRng::new(s).int(65) == want)
+                .unwrap();
+            let mut d = g.dungeon().unwrap().clone();
+            d.rng = crate::rng::DungeonRng::new(seed);
+            d.run_team_members(Some(&data));
+            let pp = [20, 22];
+            for (i, m) in d.team[1].info.moves.iter().take(2).enumerate() {
+                assert_eq!(m.pp, pp[i] - u8::from(i == slot), "roll {want} slot {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_partner_regular_entry_roll_draws_no_candidate_pick() {
+        let (g, moves) = partner_duel();
+        let mut tables = crate::combat::tests::tables();
+        tables.regular_attack_weight = [100, 20, 30, 40, 50];
+        let data = CombatData {
+            tables: &tables,
+            moves: &moves,
+            exp_yields: &[],
+            weights: &[],
+            levels: &[],
+        };
+        let seed = (0..100_000)
+            .find(|&s| crate::rng::DungeonRng::new(s).int(65) == 61)
+            .unwrap();
+        let mut d = g.dungeon().unwrap().clone();
+        d.rng = crate::rng::DungeonRng::new(seed);
         let mut model = d.clone();
         d.run_team_members(Some(&data));
-        // The pick, the target draw, the damage, then the end of turn.
         model.rng.int(65);
-        model.rng.int(1);
         let mv = &moves[usize::from(REGULAR_ATTACK)];
         let attack = Effect::Damage {
             arg8: REGULAR_ATTACK_ARG8,
@@ -2228,13 +2398,6 @@ mod tests {
         model.resolve_all(Slot::Team(1), &[Slot::Wild(0)], mv, &attack, &data);
         model.rng.int(100);
         assert_eq!(d.rng, model.rng);
-        assert_eq!(d.team[1].pos, (5, 5), "an attack does not move");
-        assert_eq!(d.team[1].info.direction, 2, "it faces the foe");
-        assert_eq!(d.wild.len(), model.wild.len());
-        assert_eq!(
-            d.wild.first().map(|w| w.info.hp),
-            model.wild.first().map(|w| w.info.hp)
-        );
     }
 
     #[test]
