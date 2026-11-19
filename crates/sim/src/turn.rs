@@ -281,13 +281,19 @@ impl Dungeon {
             return;
         };
         let info = &mut leader.info;
-        if !info.belly_empty && !matches!(info.status.burn_class, 2 | 3) {
-            Self::regenerate(info);
-        }
+        Self::regenerate_gated(info);
         info.tick_status();
     }
 
-    /// The HP regeneration block of [`Self::regenerate_leader`].
+    /// The gate of the regeneration, shared by the leader and the partners: skipped while the
+    /// belly is empty or the member is poisoned (`+0x9B` of 2 or 3).
+    pub(crate) fn regenerate_gated(info: &mut EntityInfo) {
+        if !info.belly_empty && !matches!(info.status.burn_class, 2 | 3) {
+            Self::regenerate(info);
+        }
+    }
+
+    /// The HP regeneration block of [`Self::regenerate_gated`].
     fn regenerate(info: &mut EntityInfo) {
         // shortcut: the Heal Ribbon, Wish and Rain Dish terms are not modelled (no held item,
         // status or weather yet); each would add to the speed before the clamp.
