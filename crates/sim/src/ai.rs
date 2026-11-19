@@ -172,6 +172,11 @@ pub struct AiSnapshot {
 }
 
 impl AiState {
+    /// The tactic (`info+0x8A`) of team slot `i`; 0 (the default) when it has no record.
+    pub(crate) fn tactic(&self, i: usize) -> u8 {
+        self.team.get(i).map_or(0, |t| t.tactic)
+    }
+
     /// `wild_len` is the wild list's length: slots not yet synced to it (a list set from
     /// outside, before any step) are saved as the 0, 1, ... the next step would make.
     pub(crate) fn capture(&self, wild_len: usize) -> AiSnapshot {

@@ -23,14 +23,15 @@
 //! the property test `save_and_load_continues_the_run`, which fails when a field is missed.
 //!
 //! Version 1: the snapshot alone. Version 2: the snapshot and [`Resume`] (spawn state, sport
-//! timers, AI records, species sleep chances).
+//! timers, AI records, species sleep chances). Version 3: the items ([`Resume`] holds the team
+//! bag and money, the item tables, the held items and the floor item slots).
 
 #![forbid(unsafe_code)]
 
 use rescue_sim::state::{GameState, Resume, Snapshot, StateError};
 
 pub const MAGIC: [u8; 4] = *b"RSAV";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 const HEADER_LEN: usize = 16;
 /// Largest payload the reader accepts.
 pub const MAX_PAYLOAD: usize = 64 << 20;
@@ -400,6 +401,27 @@ mod tests {
         let dr = resume.dungeon.as_mut().unwrap();
         dr.spawns = vec![(3, 5, [10, 10])];
         dr.enemy_density = 12;
+        // Items: a bag with money, a held item, and floor items on the tiles the run walks over
+        // (a Poké item, a thrown stack that merges, a plain item), so a pickup can follow the save.
+        use rescue_sim::items::{FLOOR_ITEM_SLOTS, FloorItem, Item, POKE};
+        dr.held[1] = Item::new(0x20, 1);
+        dr.floor_items = vec![None; FLOOR_ITEM_SLOTS];
+        for (i, (pos, item)) in [
+            ((6, 5), Item::new(POKE, 12)),
+            ((5, 6), Item::new(3, 4)),
+            ((7, 5), Item::new(0x41, 1)),
+            ((5, 4), Item::new(0x42, 1)),
+            ((4, 4), Item::new(3, 9)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            dr.floor_items[i * 2] = Some(FloorItem { pos, item });
+        }
+        dr.num_items = 9;
+        resume.items.bag.slots[0] = Item::new(3, 20);
+        resume.items.bag.money = 99_000;
+        resume.items.tables.money_values = (0..100).map(|q| q * 100).collect();
         GameState::restore_with(&snapshot, &resume).unwrap()
     }
 
@@ -448,6 +470,20 @@ mod tests {
             }
             prop_assert_eq!(straight.snapshot(), resumed.snapshot());
         }
+    }
+
+    #[test]
+    fn busy_run_picks_items_up_after_a_save() {
+        use rescue_sim::command::{Command, Direction};
+        let mut g = load(&write_run(&busy_run(3))).unwrap();
+        assert_eq!(
+            g.step(Command::Move(Direction::Right)),
+            rescue_sim::command::Outcome::Applied
+        );
+        let d = g.dungeon().unwrap();
+        // The Poké item took 1200 and the clamp holds.
+        assert_eq!(d.bag().money, 99_999);
+        assert_eq!(d.floor_items().iter().flatten().count(), 4);
     }
 
     #[test]
