@@ -430,3 +430,17 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::021657A8 | SwitchLeader | void SwitchLeader(...) | blue-verified | Leader switch; refused while debt or credit (`02196320`) or after the shop went hostile; ends in `UpdateShopState(0)`. Our name (#462) |
 | ov_0001::02160A7C | PushAndLand | void PushAndLand(void * user, void * target, ...) | tentative | Forced displacement to a random neighbour, then a damage move at the landing tile; leader runs `UpdateShopState(0)`. Our name (#462) |
 | ov_0001::02196320 | ShopHasOutstanding | bool ShopHasOutstanding(void) | blue-verified | True when debt (`+0x684 - +0x67C > 0`) or credit (`+0x680 != 0`). Our name (#462) |
+| ov_0001::02176EB8 | BuildEntitySnapshotA | void BuildEntitySnapshotA(...) | tentative | Held-id tests (6 ids) plus snapshot copy of `+5A..5C`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::0219C898 | BuildEntitySnapshotB | void BuildEntitySnapshotB(...) | tentative | Second copy of the snapshot logic. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02175F54 | UpdateHeldItemTimer | void UpdateHeldItemTimer(...) | tentative | Compares held id with the `info+0x5D` shadow, updates the timer. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02162F28 | ConvertHeldAndBagItems | void ConvertHeldAndBagItems(...) | tentative | Id `0x7C` in bag and held becomes `qty + 0x7D`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::0219E7B8 | PartyHasItem | bool PartyHasItem(int id) | tentative | bool PartyHasItem(int id): bag or any team member's held item. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02197AF8 | BuildShopCandidateList | void BuildShopCandidateList(...) | tentative | Bag + held candidates for shop sell/steal. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::0200747C | IsValidShopItemA | void IsValidShopItemA(...) | tentative | Rejects ids 0, 0x69, 0x77..0x7A; used by `02195E18`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02007400 | IsValidShopItemB | void IsValidShopItemB(...) | tentative | Same rejects as `0200747C`; used by `02197AF8`. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02142DD0 | ClearHeldByMask | void ClearHeldByMask(...) | tentative | Clears the held Item of members matching a mask. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02161838 | SwapHeldItems | void SwapHeldItems(...) | tentative | Swap of held Items between two entities. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::021629D0 | MoveHeldItem | void MoveHeldItem(...) | tentative | Moves the held Item, zeroes the source. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02160ED8 | TakeHeldItem | void TakeHeldItem(...) | tentative | Takes the held Item and clears it. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::02179990 | RestoreHeldFromSnapshot | void RestoreHeldFromSnapshot(...) | tentative | Restores `+5A/+5C` from the snapshot. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |
+| ov_0001::021558CC | CopyHeldForMessage | void CopyHeldForMessage(...) | tentative | Reads `+5B/+5C` for an action message; no test. Our name (#463). [`re/items.md`](re/items.md#p4-held-items) |

@@ -191,7 +191,25 @@ Findings for [#459](https://github.com/TorratDev/rust-mm/issues/459), investigat
 | 0x2D | Weather Band | 02195C48 |
 | 0x2E | Friend Bow | 0217F9B8 |
 
-- **Direct readers of `info+0x5C`** that bypass `HasHeldItem` [lead, unread]: `0216E99C`, `0216D614`, `02169A68`, `021558CC`, `02176D68`, `02160ED8`, `0218579C` (AIDecideUseItem), `02173800`, `021629D0`, `0219E7B8`, `02142DD0`, `02179990`, `02161838`, `02196F84`, `0219ADFC` and others (about 20). A sweep by `HasHeldItem` callers misses these.
+- **Direct readers of `info+0x5C`** that bypass `HasHeldItem` (#463) [blue-verified: what each function reads or tests, static decompile, two independent sweeps agree; no emulator run]. 23 functions: 9 test the id, 1 copies it for display, 13 move, clear or snapshot the Item. The "why" column is [hypothesis]; item names of the ids are not mapped. All in `ov_0001`. Names are in [`symbols.md`](../symbols.md).
+
+  | Function | Id tested | Why [hypothesis] |
+  |---|---|---|
+  | `02176EB8` | `0x13`, `0x2B` (twice), `0x21`, `0x1E`, `0x22`; exists and not sticky | per-entity snapshot builder: adds table values into snapshot bytes `+0x39..+0x3C`, and copies `+5A/5B/5C` into the snapshot |
+  | `0219C898` | same six ids | second copy of the same snapshot logic |
+  | `0217D5FC` (inside `HandleDealingDamage_Async`) | `0xD2` (exists, not sticky, bit1 clear); `0xD8` (exists, not sticky, `info+7 != 0`; loops the 4 team slots); `0x3A` (exists, not sticky) | `0x3A` picks the held item as the item of the next action; the absent branch zeroes `+5A..5C` (item consumed). Meanings of the ids not decoded |
+  | `02175F54` | `0x0A`, `0x2B`, `0x1B` (`info+7 == 0`); `0x11` (`info+7 != 0`) | runs after a held item changes; compares `+5C` with the shadow at `+5D`, updates the timer at `+0x10E/+0x110`, then copies `+5C` to `+5D` |
+  | `02162F28` | `0x7C` in the bag (exists, bit1 clear) and held (exists only) | converts each such item to id `qty + 0x7D`; the message differs if none was found |
+  | `0219E7B8(id)` | variable id | party-wide `HasHeldItem`: true if any of 20 bag slots (exists only) or any of the 4 team members' held item (exists only, sticky ignored) has the id. Probably the one variable-id call counted above |
+  | `02195E18` | via `0200747C(id)`, which rejects 0, `0x69`, `0x77..0x7A` | shop debt payment: clears bit1 on the monsters' held items |
+  | `02197AF8` | via `02007400(id)` (same rejects), not sticky | candidate list (20 bag + held) for the shop sell or steal choice |
+  | `0218579C` (AIDecideUseItem) | item category from `020082FC(id)`: 0 line, 1 arc | AI throws the held item as an attack |
+
+  - **Display copy (1)**: `021558CC` (`DisplayActions_Async` and 10 other callers) reads `+5B/+5C` into locals for an action message; no test.
+  - **Move, swap, clear, snapshot (13), no id test**: `02142DD0` (clears the held Item of members matching a mask), `021441D8`, `02146880` (equip branch), `02184E50` (write the Item from a bag or floor Item), `02160ED8` (take and clear), `02161838` (swap between two entities), `021629D0` (move, zero the source), `02173800` (write from a local item), `02173A48` (swap bag item with held), `02196F84` (pop held and throw via `0214332C`), `02179128` and `02176D68` (snapshot out), `02179990` (restore from snapshot).
+  - **`info+0x5D`** is a previous-held-id shadow, written only by `02175F54` [blue-verified, static].
+  - **Not info readers**: `0216E99C`, `0216D614`, `02169A68`, `0216CD34` (`param+0x5C` is a field of an attack/action struct); `0219ADFC` (`ushort* + 0x5c` is byte offset `0xB8`).
+  - **Not covered**: readers that get an `Item*` (`info+0x5A`) and read the id in a callee (`02008458`, `02007E20`, `02185690`, `02185568`, `02144978`, `0214332C`) are not enumerated; other spellings of the offset would be missed by the grep. Confidence: high for the list, medium for the "why" column.
 - **Auto-equip and use**: the `02146880` equip branch and `02173A48` write `info+0x5A..5C`; `02173EF4` (action 0x38) sets `+0xD9 = 1` on the entity from `021416F4`, which the AI held-item step reads ([`ai.md`](ai.md)). The stat effects of held items are in [`combat.md`](combat.md).
 - Confidence: high for constant-id sites, medium for id-to-name mapping (no Blue string table read).
 
@@ -289,7 +307,7 @@ Largely in [`structs.md`](structs.md) ("Team inventory"). Added here:
 
 - Hit-chance value at `021AA268` (s16, reached from `ov_0001::02144A50`), the `info+0xC6` range table, `021803B8`, `02180B68`, `+0x64C`, the money table `DAT_02007360`.
 - Message texts of the item handlers (the effects are decoded, see P2 (#459)) and trap handlers 0xB to 0x13; meaning of trap record byte 1 and of `info+6` on the monster-step path.
-- The roughly 20 direct readers of `info+0x5C`.
+- Callees that read the held id through an `Item*` (see P4, #463), and the meaning of the ids tested by the direct readers.
 - Runtime: no py-desmume check was recorded for the throw RNG draw count, for `02198824`'s caller, or for the bag layout. Investigator b announced a runtime-check section that was not posted, so nothing here is trace-confirmed.
 - Shop messages and sound ids (P6); runtime check of the leave-with-debt order.
 
