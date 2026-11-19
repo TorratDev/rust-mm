@@ -24,7 +24,8 @@ use crate::command::{Blocked, Command, Direction, Outcome};
 use crate::floor::{self, Floor, HEIGHT, Room, Tile, WIDTH};
 use crate::floor_gen::{GenState, PortedSteps, UNSET, generate_floor, properties_from_record};
 use crate::items::{
-    Bag, FLOOR_ITEM_SLOTS, FloorItem, Item, ItemState, ItemTables, SwapSource, spawn_floor_items,
+    Bag, FLOOR_ITEM_SLOTS, FloorItem, Item, ItemState, ItemTables, ItemsSnapshot, SwapSource,
+    spawn_floor_items,
 };
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::status::{self, Status};
@@ -1023,8 +1024,9 @@ impl GameState {
     /// leader's speed stage gives it one, then the command takes effect (see [`crate::turn`]).
     /// A refused move changes nothing and takes no time. While the leader's stairs flag is set,
     /// the command is the answer to the stairs menu: the floor changes ([`Outcome::NextFloor`],
-    /// or [`Outcome::DungeonCleared`] on the last floor). Otherwise items and menus are valid
-    /// input and return [`Outcome::NotModelled`]. A move command (`UseMove`) and an attack
+    /// or [`Outcome::DungeonCleared`] on the last floor). A drop or a swap is
+    /// [`GameState::drop_item`] or [`GameState::swap_floor_item`]. Other items and menus are
+    /// valid input and return [`Outcome::NotModelled`]. A move command (`UseMove`) and an attack
     /// (`Attack`) run only through [`GameState::step_with`], with the combat tables.
     pub fn step(&mut self, command: Command) -> Outcome {
         self.apply(command, None)
@@ -1079,6 +1081,8 @@ impl GameState {
             }
         };
         let outcome = match command {
+            Command::Drop { slot } => return self.apply_input(Input::Drop(slot), data),
+            Command::Swap(source) => return self.apply_input(Input::Swap(source), data),
             _ if asleep => {
                 dungeon.take_leader_turn(data, |_| {});
                 Outcome::Applied
@@ -1246,6 +1250,12 @@ impl GameState {
                 stairs_spawn: d.stairs_spawn,
                 stairs_pending: d.stairs_pending,
                 darkness: d.darkness,
+                items: ItemsSnapshot {
+                    bag: d.items.bag,
+                    held: d.items.held,
+                    floor: d.items.floor.clone(),
+                    num_items: d.items.num_items,
+                },
             }),
         }
     }
@@ -1380,7 +1390,7 @@ impl GameState {
                     spawn_counter: 0,
                     enemy_density: 0,
                     ai: AiState::default(),
-                    items: ItemState::new(Bag::default(), ItemTables::new()),
+                    items: ItemState::from_snapshot(&d.items)?,
                 };
                 // shortcut: plain `restore` has no AI records, so every restored wild monster gets
                 // the floor-generation record without the draws (see `seed_wild_ai`; the game's
@@ -1558,6 +1568,11 @@ pub struct DungeonSnapshot {
     /// The darkness setting, 0 to 3 (see [`crate::visibility`]). Absent in older snapshots: 0.
     #[serde(default)]
     pub darkness: u8,
+    /// The bag and money, the held items and the floor items (see [`ItemsSnapshot`]). Absent in
+    /// older snapshots: empty. [`GameState::restore_with`] still takes the run's items from its
+    /// [`Resume`], which holds the same values.
+    #[serde(default)]
+    pub items: ItemsSnapshot,
 }
 
 /// A whole run as a snapshot: the generator states and the dungeon, if any.

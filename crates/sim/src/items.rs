@@ -11,7 +11,7 @@ use crate::command::Blocked;
 use crate::floor::{self, Floor};
 use crate::item_use::{START_MAX_BELLY, UseParams, UseResult};
 use crate::rng::DungeonRng;
-use crate::state::{Dungeon, TEAM_SLOTS};
+use crate::state::{Dungeon, StateError, TEAM_SLOTS};
 
 /// Bag slots (`0x14`, the loop bound in `021441D8`, `02142B70`, `02007884`, `02007B68`).
 pub const BAG_SLOTS: usize = 20;
@@ -314,7 +314,39 @@ pub struct ItemState {
     pub(crate) last_use: Option<(u8, UseResult)>,
 }
 
+/// The item state of a dungeon as a snapshot (see [`crate::state::DungeonSnapshot`]). The item
+/// tables are not part of it: they are the run's (see [`crate::state::Resume`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemsSnapshot {
+    /// The bag, with the team's money.
+    pub bag: Bag,
+    /// The held item of each team slot.
+    pub held: [Item; TEAM_SLOTS],
+    /// The floor item slots, 64 at most; a shorter list leaves the rest empty.
+    pub floor: Vec<Option<FloorItem>>,
+    /// `numItems` (see [`ItemState::num_items`]).
+    pub num_items: u16,
+}
+
 impl ItemState {
+    /// Rebuilds the item state from its snapshot. The money is clamped to [`MONEY_CAP`].
+    pub(crate) fn from_snapshot(s: &ItemsSnapshot) -> Result<Self, StateError> {
+        if s.floor.len() > FLOOR_ITEM_SLOTS {
+            return Err(StateError::BadItemCount(s.floor.len()));
+        }
+        let mut bag = s.bag;
+        bag.money = bag.money.clamp(0, MONEY_CAP);
+        let mut state = Self::new(bag, ItemTables::new());
+        state.held = s.held;
+        state.floor.clone_from(&s.floor);
+        state.floor.resize(FLOOR_ITEM_SLOTS, None);
+        state.refresh_count();
+        state.num_items = state
+            .num_items
+            .max(s.num_items.min(FLOOR_ITEM_SLOTS as u16));
+        Ok(state)
+    }
+
     pub(crate) fn new(bag: Bag, tables: ItemTables) -> Self {
         Self {
             bag,
@@ -671,7 +703,7 @@ impl Dungeon {
 }
 
 /// The item that [`GameState::swap_floor_item`] puts down for the one underfoot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SwapSource {
     /// Bag slot `n` (0-based; the game's selector is `n + 1`).
     Bag(u8),
@@ -1641,5 +1673,49 @@ mod tests {
         let mut resume = g.resume();
         resume.dungeon.as_mut().unwrap().floor_items = vec![None; FLOOR_ITEM_SLOTS + 1];
         assert!(GameState::restore_with(&g.snapshot(), &resume).is_err());
+    }
+
+    #[test]
+    fn step_takes_drop_and_swap_like_the_item_methods() {
+        use crate::command::{Command, Outcome};
+        let mut a = run();
+        dungeon(&mut a).items.bag.slots[0] = Item::new(0x40, 1);
+        dungeon(&mut a).items.bag.slots[1] = Item::new(0x41, 1);
+        let mut b = a.clone();
+        assert_eq!(
+            a.step(Command::Drop { slot: 0 }),
+            b.drop_item(0),
+            "drop outcome"
+        );
+        assert_eq!(a, b, "drop state");
+        assert_eq!(a.step(Command::Swap(SwapSource::Bag(0))), Outcome::Applied);
+        assert_eq!(b.swap_floor_item(SwapSource::Bag(0)), Outcome::Applied);
+        assert_eq!(a, b, "swap state");
+        // The swap happened: the dropped item is back in the bag, the bag item is on the floor.
+        assert_eq!(a.bag().slots[0], Item::new(0x40, 1));
+        assert_eq!(
+            a.dungeon().unwrap().floor_item_at((5, 5)),
+            Some(Item::new(0x41, 1))
+        );
+    }
+
+    #[test]
+    fn item_state_survives_a_json_snapshot_round_trip() {
+        let mut g = run();
+        dungeon(&mut g).items.bag.slots[0] = Item::new(0x40, 1);
+        dungeon(&mut g).items.bag.money = 250;
+        dungeon(&mut g).items.held[0] = Item::new(0x12, 1);
+        lay(&mut g, (6, 5), Item::new(0x30, 1));
+        let snap = g.snapshot();
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let back: crate::state::Snapshot = serde_json::from_str(&json).expect("parse");
+        let restored = GameState::restore(&back).expect("restore");
+        assert_eq!(restored.snapshot(), snap);
+        assert_eq!(restored.bag().money, 250);
+        assert_eq!(restored.bag().slots[0], Item::new(0x40, 1));
+        let d = restored.dungeon().unwrap();
+        assert_eq!(d.held_item(0), Some(Item::new(0x12, 1)));
+        assert_eq!(d.floor_item_at((6, 5)), Some(Item::new(0x30, 1)));
+        assert_eq!(d.num_items(), 1);
     }
 }

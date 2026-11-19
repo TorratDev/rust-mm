@@ -42,6 +42,7 @@ Traces are language-neutral fixtures: the capture side may be Lua or Python, the
 | `wild` | array of entities | Set wild slots only (up to 16). Empty slots are left out. | dungeon `+0x11324` (16 entity pointers), [`re/structs.md`](re/structs.md#dungeon-struct) |
 | `tilesSha256` | string | First 16 lowercase hex digits of SHA-256 over the tile grid (35,840 bytes). Stands in for floor state (see Not dumped). See the note below. | dungeon `+0x34B8`, `tiles[32][56]`, 0x14 bytes each, [`re/structs.md`](re/structs.md#dungeon-struct) and [`re/structs.md`](re/structs.md#tile) |
 | `actions` | array of action records | The leader's actions chosen during this turn, in order. Empty when the leader does not act. Required in every row. | leader info, see [Action record](#action-record) |
+| `items` | object or absent | The item state: `money`, `bag` (20 slots), `held` (one per team slot), `floor` (64 slots, each with `x`, `y` and `item`) and `numItems`. An empty slot is `null`. Absent means not captured, and the row is not compared on items. See [Item state](#item-state-559). | bag `+0x000` and money `+0x234` of the team inventory, held `info+0x5A`, floor `gDungeon+0x113B4`, `numItems` `gDungeon+0x3424` ([`re/items.md`](re/items.md)) |
 
 `gDungeon` (`020E0788`, [`re/structs.md`](re/structs.md#dungeon-struct)) is the dungeon pointer that every dungeon offset above is relative to. The trigger that writes a row is `RunFractionalTurn_Async`, at `ov_0001::021411BC` (`TRIGGER` in [`verification/v7-trace/retail_trace.py`](../verification/v7-trace/retail_trace.py); V7 in [`verification.md`](verification.md#v7--scriptable-ds-emulator-for-ram-and-rng-dumps)).
 
@@ -67,6 +68,19 @@ Each item of `actions` is one leader action. The game chooses it in `ov_0001::02
 | `direction` | u8, 0 to 7 | The direction the game stored: 0 Down, 1 DownRight, 2 Right, 3 UpRight, 4 Up, 5 UpLeft, 6 Left, 7 DownLeft. It is the game's value, not the held keys. The game can overwrite it during the turn (for example in auto-move), so the raw D-pad does not give it. | info `+0x44`, [`re/io.md`](re/io.md) (Dungeon directions) |
 | `param` | u8 | Parameter byte of the action. Its meaning depends on `id` and is not decoded here. | info `+0x46` |
 | `slot` | u8 | Move slot the action uses. | info `+0x4C` |
+
+Item actions reuse these fields with item selectors (see [Item actions](#item-actions-559)).
+
+### Item actions (#559)
+
+[`re/items.md`](re/items.md) has the decode. The sim maps the two item actions in `apps/trace-harness/src/actions.rs`:
+
+| Id | Command | `param` | `slot` |
+|----|---------|---------|--------|
+| `0x08` | `Drop { slot }` (`02173CCC`) | bag selector `1` to `20` (slot `param - 1`) | unused |
+| `0x0A` | `Swap(SwapSource)` (`02173A48`) | must be `0x80`, the item underfoot | source: bag selector `1` to `20`, or `0x81` for the held item |
+
+A `param` or source outside those is an `ActionError` with its position, not a skip.
 
 **Matching records to rows.** A row is written when `RunFractionalTurn_Async` starts. The leader's action records of that call come after the row and before the next row, so each record belongs to the last row written. No frame or counter key is needed to match them. A record does not copy `fractionalTurn`, because the game can reset that value during the turn.
 
@@ -202,6 +216,14 @@ cargo test -p rescue-trace-harness --test combat_trace -- --nocapture
 ```
 
 The test skips (prints `SKIPPED`, passes) unless `RESCUE_TRACE_COMBAT` names the trace. With it set it needs `RESCUE_ROM` (or `rom_path` in `rescue.toml`) for the trace's own dump, and it fails on a divergence or a sim gap. Keep the trace out of the repository.
+
+## Item state (#559)
+
+The item fields are the optional `items` key of each row (`crates/trace`, `ItemsRow`). `compare_row` reports each differing item field as a diff, with paths such as `items.money`, `items.bag[3].qty`, `items.held[0]` and `items.floor[5].x`. The sim's side is `DungeonSnapshot::items` (`ItemsSnapshot`), which a snapshot and restore carry.
+
+**Golden trace for items (#559).** `replay_tests::item_trace_replays_pickup_drop_swap_and_money` (`apps/trace-harness/src/replay_tests.rs`) runs one script: a step onto a Poké (money 7), a step onto an item (pickup into the bag), a drop, a swap with a bag slot and a swap with the held item. The rows are recorded from the sim at each command. The test checks the final item state and replays the rows to a `Match`. The trace is **not a retail capture**: no ROM or emulator is available to the test, so it checks the sim against itself, and the item values are the sim's. A capture from the retail dump (with the item fields in `scripts/capture_golden.py`, not yet written) is what would check the game.
+
+**Schema version.** The `items` key is optional and read by the current reader only. A reader that denies unknown keys (the v2 reader does) rejects a row that has it, so a capture that writes `items` needs the reader it was written for.
 
 ## Links
 

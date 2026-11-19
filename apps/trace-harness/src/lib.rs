@@ -25,8 +25,9 @@ use rescue_nds::rom::KnownDump;
 use rescue_sim::combat::CombatData;
 use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::floor_gen::FloorProperties;
-use rescue_sim::state::{GameState, Monster, Snapshot};
-use rescue_trace::{Entity, Header, TurnRow};
+use rescue_sim::items::{BAG_SLOTS, FLOOR_ITEM_SLOTS, FloorItem, Item, ItemsSnapshot};
+use rescue_sim::state::{GameState, Monster, Snapshot, TEAM_SLOTS};
+use rescue_trace::{Entity, FloorItemRow, Header, ItemRow, ItemsRow, TurnRow};
 
 use crate::actions::{ActionError, command_for, command_name};
 use crate::start::{RowError, state_from_row, team_index};
@@ -185,7 +186,103 @@ pub fn compare_row(row: &TurnRow, state: &Snapshot) -> Vec<FieldDiff> {
             dungeon.wild.get(index),
         );
     }
+    if let Some(items) = &row.items {
+        compare_items(&mut diffs, items, &dungeon.items);
+    }
     diffs
+}
+
+/// Compares the money, the bag, the held items, the floor item slots and `numItems`. A list in
+/// the row that is longer than the sim's slots is compared past them, against empty.
+fn compare_items(diffs: &mut Vec<FieldDiff>, expected: &ItemsRow, actual: &ItemsSnapshot) {
+    check(
+        diffs,
+        "items.money",
+        i64::from(expected.money),
+        i64::from(actual.bag.money),
+    );
+    check(
+        diffs,
+        "items.numItems",
+        i64::from(expected.num_items),
+        i64::from(actual.num_items),
+    );
+    for index in 0..expected.bag.len().max(BAG_SLOTS) {
+        let slot = actual.bag.slots.get(index).filter(|i| i.exists()).copied();
+        let row = expected.bag.get(index).copied().flatten();
+        compare_item(diffs, &format!("items.bag[{index}]"), row, slot);
+    }
+    for index in 0..expected.held.len().max(TEAM_SLOTS) {
+        let held = actual.held.get(index).filter(|i| i.exists()).copied();
+        let row = expected.held.get(index).copied().flatten();
+        compare_item(diffs, &format!("items.held[{index}]"), row, held);
+    }
+    for index in 0..expected.floor.len().max(FLOOR_ITEM_SLOTS) {
+        let floor = actual.floor.get(index).copied().flatten();
+        let row = expected.floor.get(index).copied().flatten();
+        compare_floor_item(diffs, &format!("items.floor[{index}]"), row, floor);
+    }
+}
+
+fn compare_item(
+    diffs: &mut Vec<FieldDiff>,
+    path: &str,
+    expected: Option<ItemRow>,
+    actual: Option<Item>,
+) {
+    match (expected, actual) {
+        (None, None) => {}
+        (Some(_), None) => push(diffs, path, "present", "absent"),
+        (None, Some(_)) => push(diffs, path, "absent", "present"),
+        (Some(e), Some(a)) => {
+            check(
+                diffs,
+                &format!("{path}.flags"),
+                i64::from(e.flags),
+                i64::from(a.flags),
+            );
+            check(
+                diffs,
+                &format!("{path}.qty"),
+                i64::from(e.qty),
+                i64::from(a.qty),
+            );
+            check(
+                diffs,
+                &format!("{path}.id"),
+                i64::from(e.id),
+                i64::from(a.id),
+            );
+        }
+    }
+}
+
+fn compare_floor_item(
+    diffs: &mut Vec<FieldDiff>,
+    path: &str,
+    expected: Option<FloorItemRow>,
+    actual: Option<FloorItem>,
+) {
+    match (expected, actual) {
+        (None, None) => {}
+        (Some(_), None) => push(diffs, path, "present", "absent"),
+        (None, Some(_)) => push(diffs, path, "absent", "present"),
+        (Some(e), Some(a)) => {
+            check(
+                diffs,
+                &format!("{path}.x"),
+                i64::from(e.x),
+                i64::from(a.pos.0),
+            );
+            check(
+                diffs,
+                &format!("{path}.y"),
+                i64::from(e.y),
+                i64::from(a.pos.1),
+            );
+            compare_item(diffs, &format!("{path}.item"), Some(e.item), Some(a.item));
+        }
+    }
 }
 
 /// Compares the leader (`team[0]`) only: position, species, level, HP and max HP. The belly is
@@ -633,6 +730,7 @@ mod tests {
             tiles_sha256: "0123456789abcdef".to_owned(),
             frame,
             actions: Vec::new(),
+            items: None,
         }
     }
 
@@ -699,6 +797,7 @@ mod tests {
                 stairs_spawn: None,
                 stairs_pending: false,
                 darkness: 0,
+                items: ItemsSnapshot::default(),
             }),
         }
     }
