@@ -25,7 +25,7 @@ use crate::dungeon::{self, Dungeon, Figure, FloorData, IDLE_GROUP, MonsterArt, W
 use crate::input::{self, MenuInput};
 use crate::save;
 use crate::scene::{MenuItem, Scene};
-use crate::title::{self, MenuClock, MenuView, TitleArt};
+use crate::title::{self, MenuClock, MenuView, PanelView, TitleArt};
 use crate::walk::Walk;
 
 /// The leader's attack pose: group 2, the close-range strike (docs/formats/sprites.md).
@@ -119,6 +119,8 @@ pub struct App {
     title: Option<TitleArt>,
     /// The menu screen's fade and blink, while the menu is up.
     clock: Option<MenuClock>,
+    /// The adventure log's lines while that screen is up, read from the save.
+    adventure_log: Option<Vec<String>>,
     /// Where the menu goes once it has faded out.
     leave: Option<Leave>,
     /// The menu backdrop of this visit, `FUN_02011968(3)` from the global generator.
@@ -164,6 +166,7 @@ impl App {
             log: Vec::new(),
             save_path: None,
             has_save: false,
+            adventure_log: None,
             notice: None,
             title: None,
             clock: None,
@@ -237,7 +240,16 @@ impl App {
         if self.continue_pressed(pressed) {
             self.start_leave(Leave::Continue);
         } else {
-            let next = self.scene.step_with(pressed, self.has_save);
+            let mut next = self.scene.step_with(pressed, self.has_save);
+            if matches!(self.scene, Scene::ConfirmDelete { yes: true })
+                && matches!(next, Scene::Menu { .. })
+                && (pressed.is_held(rescue_platform::DsButton::A)
+                    || pressed.is_held(rescue_platform::DsButton::Start))
+                && !self.delete_save()
+            {
+                // The save could not be deleted: back to the Delete row, which still shows it.
+                next = Scene::Menu { cursor: 1 };
+            }
             if matches!(self.scene, Scene::Menu { .. }) && !matches!(next, Scene::Menu { .. }) {
                 self.start_leave(Leave::Scene(next));
             } else {
@@ -245,6 +257,7 @@ impl App {
             }
         }
         self.track_menu();
+        self.track_log();
         if self.scene == Scene::Dungeon {
             if self.game.is_none() {
                 self.enter_dungeon();
@@ -313,6 +326,53 @@ impl App {
         }
     }
 
+    /// Reads the adventure log's lines when its screen opens and drops them when it closes.
+    fn track_log(&mut self) {
+        if self.scene != Scene::AdventureLog {
+            self.adventure_log = None;
+        } else if self.adventure_log.is_none() {
+            self.adventure_log = Some(self.read_log());
+        }
+    }
+
+    /// The adventure log: what the save holds. A fresh boot has no save, so no adventure.
+    // shortcut: the port's save holds one suspended run, so the log shows that run's floors
+    // and team; Blue's career record (rank, dungeons cleared) is not kept yet.
+    fn read_log(&self) -> Vec<String> {
+        let mut lines = vec![String::from("Adventure Log")];
+        let save = self.save_path.as_deref().filter(|_| self.has_save);
+        match save.map(save::read) {
+            None => lines.push(String::from("No adventure has been saved yet.")),
+            Some(Err(_)) => lines.push(String::from("The save could not be read.")),
+            Some(Ok(game)) => {
+                lines.push(format!("Floors entered: {}", game.floors_entered()));
+                lines.push(format!(
+                    "Team members: {}",
+                    game.dungeon().map_or(0, |d| d.team().len())
+                ));
+            }
+        }
+        lines.push(String::from("Press B to go back."));
+        lines
+    }
+
+    /// Deletes the save file. `false` (and a notice) if it could not be removed.
+    fn delete_save(&mut self) -> bool {
+        self.notice = None;
+        if let Some(path) = self.save_path.as_deref() {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    self.refuse(format!("the save was not deleted: {}: {e}", path.display()));
+                    return false;
+                }
+            }
+        }
+        self.has_save = false;
+        true
+    }
+
     /// The title screens' frame for `screen`: the logo screen on the title, the menu screen on
     /// the menu. `None` when another scene is up or the art is not loaded.
     pub fn title_frame(&self, screen: Screen) -> Option<Frame> {
@@ -332,6 +392,51 @@ impl App {
                     items: MenuItem::list(self.has_save),
                     cursor,
                     blink: clock.blink,
+                }))
+            }
+            (Scene::ConfirmDelete { yes }, _) => {
+                if screen == Screen::Top {
+                    return Some(art.menu_top(title::FADE_FRAMES));
+                }
+                let lines = [
+                    String::from("Delete all of your save data?"),
+                    String::from("It cannot be restored."),
+                ];
+                Some(art.panel_bottom(&PanelView {
+                    backdrop: self.backdrop,
+                    lines: &lines,
+                    choices: &["No", "Yes"],
+                    cursor: usize::from(yes),
+                }))
+            }
+            (Scene::Unavailable { cursor }, _) => {
+                if screen == Screen::Top {
+                    return Some(art.menu_top(title::FADE_FRAMES));
+                }
+                let name = MenuItem::list(self.has_save).get(cursor)?.name();
+                let lines = [
+                    format!("{name} is not available"),
+                    String::from("in this version."),
+                    String::from("It needs the DS link or the"),
+                    String::from("rescue password system."),
+                    String::from("Press A or B."),
+                ];
+                Some(art.panel_bottom(&PanelView {
+                    backdrop: self.backdrop,
+                    lines: &lines,
+                    choices: &[],
+                    cursor: 0,
+                }))
+            }
+            (Scene::AdventureLog, _) => {
+                if screen == Screen::Top {
+                    return Some(art.menu_top(title::FADE_FRAMES));
+                }
+                Some(art.panel_bottom(&PanelView {
+                    backdrop: self.backdrop,
+                    lines: self.adventure_log.as_deref()?,
+                    choices: &[],
+                    cursor: 0,
                 }))
             }
             _ => None,
@@ -1417,7 +1522,7 @@ mod tests {
         assert_eq!(app.scene, Scene::Title);
         assert!(app.game.is_none(), "suspend drops the run");
         assert!(path.is_file());
-        assert_eq!(app.menu_items(), 3, "Continue is offered");
+        assert_eq!(app.menu_items(), 6, "the save menu is offered");
 
         continue_from_title(&mut app);
         assert_eq!(app.scene, Scene::Dungeon);
@@ -1439,8 +1544,101 @@ mod tests {
         assert_eq!(app.menu_items(), 2);
         suspend_from_menu(&mut app);
         let again = App::new(&ready(), None, RUN, false).with_save_path(Some(path.clone()));
-        assert_eq!(again.menu_items(), 3);
+        assert_eq!(again.menu_items(), 6);
         let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+    }
+
+    /// An app on the save menu: a run was suspended, then the title was passed.
+    fn save_menu(name: &str) -> (App, PathBuf) {
+        let path = scratch(name);
+        let mut app = saving_app(&path);
+        suspend_from_menu(&mut app);
+        assert_eq!(app.scene, Scene::Title);
+        tap(&mut app, DsButton::Start);
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        fade(&mut app);
+        (app, path)
+    }
+
+    #[test]
+    fn delete_save_data_confirms_then_shows_the_fresh_boot_menu() {
+        let (mut app, path) = save_menu("delete-yes");
+        tap(&mut app, DsButton::Down);
+        choose(&mut app, DsButton::A);
+        assert_eq!(app.scene, Scene::ConfirmDelete { yes: false });
+        assert!(path.is_file(), "nothing is deleted before the answer");
+        tap(&mut app, DsButton::Down);
+        assert_eq!(app.scene, Scene::ConfirmDelete { yes: true });
+        assert!(path.is_file());
+        tap(&mut app, DsButton::A);
+        assert_eq!(app.scene, Scene::Menu { cursor: 0 });
+        assert!(!path.exists(), "the save is gone");
+        assert_eq!(app.menu_items(), 2, "the fresh-boot menu");
+        fade(&mut app);
+        choose(&mut app, DsButton::A);
+        assert_eq!(app.scene, Scene::Dungeon, "row 0 is New Game again");
+        let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+    }
+
+    #[test]
+    fn declining_the_deletion_keeps_the_save_and_the_menu() {
+        for answer in [DsButton::A, DsButton::B] {
+            let (mut app, path) = save_menu("delete-no");
+            tap(&mut app, DsButton::Down);
+            choose(&mut app, DsButton::A);
+            assert_eq!(app.scene, Scene::ConfirmDelete { yes: false });
+            tap(&mut app, answer);
+            assert_eq!(app.scene, Scene::Menu { cursor: 1 });
+            assert!(path.is_file());
+            assert_eq!(app.menu_items(), 6);
+            let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+        }
+    }
+
+    #[test]
+    fn the_ds_entries_say_they_are_not_available_and_return() {
+        let (mut app, path) = save_menu("ds-entries");
+        for row in 3..6 {
+            tap(&mut app, DsButton::Down);
+            if row == 3 {
+                tap(&mut app, DsButton::Down);
+                tap(&mut app, DsButton::Down);
+            }
+            assert_eq!(app.scene, Scene::Menu { cursor: row });
+            choose(&mut app, DsButton::A);
+            assert_eq!(app.scene, Scene::Unavailable { cursor: row });
+            fade(&mut app);
+            tap(&mut app, DsButton::B);
+            assert_eq!(app.scene, Scene::Menu { cursor: row });
+            fade(&mut app);
+        }
+        assert!(path.is_file(), "nothing was changed");
+        let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+    }
+
+    #[test]
+    fn the_adventure_log_reads_the_save_or_says_there_is_none() {
+        let (mut app, path) = save_menu("log-save");
+        tap(&mut app, DsButton::Down);
+        tap(&mut app, DsButton::Down);
+        choose(&mut app, DsButton::A);
+        assert_eq!(app.scene, Scene::AdventureLog);
+        let lines = app.adventure_log.clone().expect("the log is read");
+        assert!(lines.iter().any(|l| l.starts_with("Floors entered: ")));
+        tap(&mut app, DsButton::B);
+        assert_eq!(app.scene, Scene::Menu { cursor: 2 });
+        assert!(app.adventure_log.is_none());
+        let _ = std::fs::remove_dir_all(path.parent().expect("a dir"));
+
+        let mut fresh = App::new(&ready(), None, RUN, false);
+        fresh.scene = Scene::Title;
+        tap(&mut fresh, DsButton::Start);
+        fade(&mut fresh);
+        tap(&mut fresh, DsButton::Down);
+        choose(&mut fresh, DsButton::A);
+        assert_eq!(fresh.scene, Scene::AdventureLog);
+        let lines = fresh.adventure_log.clone().expect("the log");
+        assert!(lines.iter().any(|l| l.contains("No adventure")));
     }
 
     #[test]

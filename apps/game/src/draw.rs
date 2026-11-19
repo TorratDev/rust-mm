@@ -111,7 +111,10 @@ fn top(
                 )?;
             }
         }
-        Scene::AdventureLog | Scene::Dungeon => p.fill_rect(48, 80, 160, 32, ROW)?,
+        Scene::AdventureLog
+        | Scene::ConfirmDelete { .. }
+        | Scene::Unavailable { .. }
+        | Scene::Dungeon => p.fill_rect(48, 80, 160, 32, ROW)?,
     }
     Ok(())
 }

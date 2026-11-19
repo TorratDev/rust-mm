@@ -29,3 +29,15 @@ Only whole-ROM hashes belong here. Hashes, sizes or other data of extracted file
 sha1sum my-dump.nds        # Linux
 certutil -hashfile my-dump.nds SHA1   # Windows
 ```
+
+## Limitations
+
+Features of Blue Rescue Team that the port does not have yet. Each one is shown, not hidden: the title menu lists it as Blue does, and choosing it opens a message that it is not available in this version (decision on [#537](https://github.com/TorratDev/rust-mm/issues/537); input for the support matrix of #88).
+
+| Feature | Title menu entry (with a save) | Why it is not available | Later |
+|---------|--------------------------------|-------------------------|-------|
+| Friend Rescue | Friend Rescue | Needs the DS wireless link, which is not ported | not planned |
+| Trade Items | Trade Items | Needs the DS wireless link, which is not ported | not planned |
+| Wonder Mail | Wonder Mail | Needs the rescue password system, which is not ported | porting the passwords can be an issue under #78 |
+
+The Adventure Log screen shows what the port's save holds (the suspended run's floors and team), not Blue's career record. The text of these three entries' descriptions is not shown on the menu: their message ids are not known.
