@@ -862,3 +862,13 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** confirmed in the findings' runs: drop 3 -> 4, top-slot pickup 4 -> 3, removal below the top keeps the count, floor bytes stay stale, use clears the slot, floor 1 has the bag gate off. Open: qty > 1 use, bag-full pickup, what sets `+0x64C`.
 - **Fallback adopted:** none.
 - **Notes:** the boot to floor 1 takes about 4.5 minutes; use `--save-state` once and `--state` after.
+
+## #439 — Leader defeat, EXP base and level-up at runtime
+
+- **Assumption:** a leader defeat ends the run with result -1, awards no EXP and restarts dungeon 0 at floor 1; `CalculateEXPGain` reads the defeated monster's species and level; the level-up is `02183BB4` -> `021833BC`, one level at a time on the monster's own species table ([`re/combat.md`](re/combat.md), "Defeat and experience").
+- **Date:** 2026-11-14 (investigator B's runs on #439).
+- **Environment:** py-desmume, the supported dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, not committed); `boot_to_dungeon.txt`, then `combat_inputs.txt` from the first dungeon frame (dungeon 0 floor 1, team species 158 and 4, level 5, EXP 60).
+- **Evidence:** exec hooks on `0217D5FC`, `020020F8` (return `0217E628`), `02183F78`, `02183BB4`, `021833BC` (return `02183D94`), `02001C48` (return `0218345C`), `021778F4`, `0206DC20`, `02178E48`, `0219C898`. Pokes through `mem.write_*`: the leader's HP to 1 at turn-frame 1550 (P1); a wild target's `info+9` (level) at `0217D5FC` entry for the `191:10` and `290:100` runs (P2); the team's EXP total to 2000 (P3). The investigator's probe script (`/tmp/b439/probe.py`) is not in the repository; the hooks above reproduce it on `verification/v7-trace/drive.py` with `boot_to_dungeon.txt` and `combat_inputs.txt`. No output hash was recorded in the findings.
+- **Outcome:** confirmed: leader faint gives `+0x648` = 1, result -1, no `AddExpPoints`, then a fresh dungeon 0 floor 1; EXP results 290@1 15, 191@1 16, 16@1 12, 191@10 30, 290@100 163; level-ups read `02001C48(species, level + 1)` with `<=`. Open: a defeat outside dungeon 0, the -2 path, levels past 9, stat gains against `LevelData`.
+- **Fallback adopted:** none.
+- **Notes:** `crates/sim/tests/defeat_exp.rs` checks the five EXP values on the sim with its own tables (no ROM needed).

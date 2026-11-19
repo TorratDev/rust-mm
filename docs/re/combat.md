@@ -624,12 +624,27 @@ effects. So a use that defeats one target and then hits another may differ from 
 
 **Leader defeat.** A hit that takes the leader to 0 HP makes the use return
 `Outcome::LeaderDefeated`, and `GameState` drops the dungeon, as the cleared run is dropped.
-[hypothesis] The run ends with this outcome: the game's leader faint (`HandleFaint_Async`, the
-leader branch) is not run, and its effects (the exit reason, the screen) are not modelled. The sim
+The game's run-end is [blue-verified] at runtime (#439 P1, dump SHA-1
+`6f01887356268de39085df01490347bbcc3aa330`; leader HP set to 1, a wild monster hit it):
+- The kill path is the usual one: `0217D5FC` (target `info+7` = 1), then `HandleFaint_Async`
+  (`021778F4`) with reason `0x163`. gDungeon `+0x648` goes 0 -> 1.
+- **No EXP.** `CalculateEXPGain` (`020020F8`) is called, but `AddExpPoints` does not run and no
+  `+0x1C8` changes: the award block of `0217D5FC` runs only when the attacker's `info+6` is 0 (a
+  team member) and the target's is not. A wild attacker killing the leader gives nothing.
+- `RunDungeon` (`0206DC20`) leaves its floor loop on `+0x648 == 1` and writes the result halfword
+  `param_1+0x60`: **-1** (`0xFFFF`) when gDungeon `+6` is 0, -2 (abandon) when `+6` is nonzero.
+  Hook `02178E48` read -1. So a leader defeated by a wild monster ends the run with result -1
+  (defeat), not the cleared code 1. gDungeon is freed shortly after.
+- Then `RunDungeon` is entered again for **dungeon 0, floor 1 with the starting team** (both
+  members level 5, EXP 60, full HP, wild list regenerated). Medium confidence: the retry was
+  observed with unchanged input, its cause was not traced; the scene between the two runs is not
+  identified.
+
+So the sim's `LeaderDefeated` (the run ends, no EXP) matches. The restart is not modelled: the sim
+drops the dungeon and does not restart floor 1. Not verified: a leader defeat in a dungeon other
+than 0, the `+6 != 0` (-2) path, the `+0x66b` branch (revive or rescue), a non-wild cause. The sim
 never targets the leader (`targets_of` refuses it, and no wild AI attacks in the sim), so the path
-is reached only by `resolve_all` directly, in the unit test. The runtime check the issue asks for
-(force the leader to 0 HP on floor 1, record the state after) was not run. Upgrade path: run that
-check, then let the wild AI target the leader.
+is reached only by `resolve_all` directly, in the unit test.
 
 **Experience.** A wild defeat awards its amount to each team member, through the award function
 (`AddExpPoints`).
@@ -641,23 +656,40 @@ check, then let the wild AI target the leader.
 - The multiplier at `+0xD8`: `0` halves the amount, `1` leaves it, `2` multiplies by 3/2:
   [blue-verified] for `0` and `1` (runtime, species 290 at level 1 gave 7 and 15). The writer of
   `2` is not located. The sim reads the multiplier as 1 ([shortcut](#defeat-in-the-sim-422)).
-- The formula, `yield + yield * (level - 1) / 10`: the amount at level 1 is [blue-verified] (15 for
-  species 290, runtime). The level term is static and matches Red, but the level it reads (the
-  defeated monster's or the leader's) is [hypothesis]. The sim uses the defeated monster's level.
+- The formula, `yield + yield * (level - 1) / 10` (`020020F8`): [blue-verified] (#439 P2). The
+  caller `0217D5FC` passes the **defeated target's** species (`info+2`) and level (`info+9`).
+  Runtime, with a level-5 team (a leader-level read would differ: 21 instead of 15 for species 290):
+  species 290 at level 1 gave 15, 191 at 1 gave 16, 16 at 1 gave 12, 191 at level 10 gave 30
+  (level poked), 290 at level 100 gave 163 (poked); every call's arguments were (target species,
+  target level). The yield is implied by the level-1 result, not read as a table cell. The sim uses
+  the defeated monster's level; the test `crates/sim/tests/defeat_exp.rs` checks these five values.
   The sim takes the amount at least 1, as the game does after the multiplier.
 - The join-location lock (`'J'`, `'G'` at `+0x40`): not modelled. The sim has no such byte.
-- Writes: the delta goes to `+0x1C8` (EXP gained). The total at `+0x18` is written outside
-  `AddExpPoints`, and its writer is not located. The sim adds each award to the total
-  [shortcut]. Whether `+0x1C8` is reset each turn is not located; the sim keeps the sum.
+- Writes: the delta goes to `+0x1C8` (EXP gained). The total at `+0x18` is written by
+  `ov_0001::02183BB4` (#439 P3, [blue-verified], static plus runtime): once per turn, from
+  `RunDungeon`, it loops over the 20 entity slots, and for each valid one with `+0x1C8` nonzero and
+  level not 100 does `+0x18 += +0x1C8`, calls the level-up (below), then clears `+0x1C8` (and
+  gDungeon `+0xD`, the flag `AddExpPoints` sets). The sim adds each award to the total at the
+  award [shortcut]: the same sum per defeat, but the game applies it at the end of the action and
+  shows a message per level.
 
-**Level-up.** [hypothesis] A monster rises one level at a time while its total reaches the table
-threshold (`levels[level]`, from `rescue_data::species::parse_level_data`, where record `i` is
-the total for level `i + 1`). The table is the monster's own species': the `lvmpNNN` file with
-`NNN` equal to the species ID ([data tables](data-tables.md)), so a team member levels from its
-species' table, not the leader's. A species with no table gains EXP and does not level up. The
-trigger, the table index and the order of the checks are not checked at runtime (owner's P3 on
-the issue). The stat gains of a level (`hp`, `attack`,
-`defense`) are not applied: they are not verified [shortcut].
+**Level-up.** [blue-verified] (#439 P3, static plus runtime). `02183BB4` calls the level-up
+`ov_0001::021833BC` for each member that gained EXP. It runs `L = level; while (++L < 101 &&
+Table(species, L).exp <= total) { level = L; add the level's gains }`: **one level at a time, `<=`**
+(a level is reached when its threshold is not above the total), with `Table` = `02001C48(&rec,
+species, L)`, which reads the `lvmpNNN` file (NNN = `info+2`, the monster's **own** species) and
+returns record `max(L-1, 0)`. So to rise from level `l` to `l + 1` the game reads record `l`:
+`levels[level]` in the sim, where record `i` is the total for level `i + 1`
+([`rescue_data::species::parse_level_data`](../../crates/data/src/species.rs)). A team member
+levels from its species' table, not the leader's. Runtime: a species-4 member at level 5 with 141
+EXP read record 6 (`120`, level 6); a species-158 member read 160 > 141 and did not level; with 2007
+EXP species 158 read thresholds 160, 410, 660, 1510, 2360 and stopped at level 9 (2360 > 2007).
+The sim's loop matches and stops at level 100 (the game's `< 101` bound). Differences: the game
+does not level a member whose `info+0x40` is `'J'` or `'G'` (the `AddExpPoints` lock; not modelled);
+a species with no `lvmp` table was not tested (the sim gains EXP and does not level). The stat
+gains of a level (`hp`, `attack`, `defense`) are added per level in the game (leader max HP 30 -> 42
+at level 9, species 4 30 -> 35 at level 8) but were not matched to `LevelData`, so the sim does not
+apply them [shortcut]. Not verified: levels past 9, the cap, a recruited monster.
 
 Tests: `a_move_that_takes_a_wild_monster_to_0_hp_removes_it`,
 `a_regular_attack_that_takes_a_wild_monster_to_0_hp_removes_it`,
@@ -672,6 +704,5 @@ Tests: `a_move_that_takes_a_wild_monster_to_0_hp_removes_it`,
 Not in the sim yet, each for a reason the notes give:
 
 - **Item drop, Reviver Seed, recruit and join.** The sim has no items, revive or join path.
-- **Runtime checks P1 to P3 of the issue** (leader defeat, EXP base at two species and levels,
-  level-up trigger): not run in this PR. The rows above that depend on them are marked
-  [hypothesis].
+- **The restart after a leader defeat** (dungeon 0 floor 1 with the starting team), and the
+  -2 abandon path.
