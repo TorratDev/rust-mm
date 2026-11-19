@@ -155,8 +155,6 @@ pub(crate) struct AiState {
     pub(crate) slots: Vec<u8>,
     /// `Species::chance_asleep` (species `+0x1D`) by species ID, read by the spawn's sleep roll
     /// (`02179CFC`). A species past the end reads 0 (never spawns asleep).
-    // shortcut: nothing fills it outside tests yet; the species table has to reach the dungeon
-    // (state.rs) before natural spawns can sleep (follow-up #496).
     pub(crate) chance_asleep: Vec<u8>,
 }
 

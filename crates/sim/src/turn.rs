@@ -579,6 +579,28 @@ mod tests {
     }
 
     #[test]
+    fn a_natural_spawn_sleeps_at_the_species_chance_the_run_was_given() {
+        let mut base = spawn_run(4, [10_000, 0]);
+        let b = base.dungeon_mut().unwrap();
+        let (floor, team, spawns) = (b.floor.clone(), b.team.clone(), b.spawns.clone());
+        // Species 7 is the spawn list's; a chance of 100 always passes `Int(100) < chance`.
+        let sleeps = |table: Vec<u8>| {
+            let mut g = GameState::new(1).with_species_sleep_chances(table);
+            g.enter_dungeon(floor.clone(), team.clone(), 2, &spawns)
+                .unwrap();
+            let d = g.dungeon_mut().unwrap();
+            d.enemy_density = 4;
+            d.spawn_counter = 35;
+            d.try_spawn_wild();
+            assert_eq!(d.wild.len(), 1);
+            d.wild[0].info.is_asleep()
+        };
+        assert!(sleeps(vec![0, 0, 0, 0, 0, 0, 0, 100]));
+        assert!(!sleeps(vec![0, 0, 0, 0, 0, 0, 0, 0]));
+        assert!(!sleeps(Vec::new()), "no table: nothing sleeps");
+    }
+
+    #[test]
     fn a_spawn_after_a_kill_takes_the_lowest_free_slot_and_acts_first() {
         use crate::targeting::Slot;
         let mut g = spawn_run(4, [10_000, 0]);

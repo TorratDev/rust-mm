@@ -716,6 +716,9 @@ pub struct GameState {
     // `FUN_020061D8` (`docs/re/turns.md`, hypothesis). The two are compared on the byte table at
     // `DAT_02006200` before the count is trusted.
     floors: Vec<FloorRecord>,
+    /// `Species::chance_asleep` by species ID, for the spawn's sleep roll (see
+    /// [`GameState::with_species_sleep_chances`]); a species past the end reads 0.
+    chance_asleep: Vec<u8>,
 }
 
 impl GameState {
@@ -732,7 +735,17 @@ impl GameState {
             preseed: DungeonPreseed::new(seed),
             dungeon: None,
             floors: Vec::new(),
+            chance_asleep: Vec::new(),
         }
+    }
+
+    /// The run with the species' sleep chances (`Species::chance_asleep`, indexed by species
+    /// ID), given before any command. A natural spawn is asleep with that chance; without the
+    /// table no spawn sleeps.
+    #[must_use]
+    pub fn with_species_sleep_chances(mut self, chances: Vec<u8>) -> Self {
+        self.chance_asleep = chances;
+        self
     }
 
     /// The run with its dungeon's floor records (see [`floor_records`]), given before any
@@ -806,6 +819,13 @@ impl GameState {
         self.dungeon.as_mut()
     }
 
+    /// The AI state of a floor just entered, holding the run's species sleep chances.
+    fn new_ai(&self) -> AiState {
+        let mut ai = AiState::default();
+        ai.chance_asleep.clone_from(&self.chance_asleep);
+        ai
+    }
+
     /// Enters a floor (see [`GameState::in_dungeon`]). Crate-private: a floor is entered only by
     /// the constructor or through the state's own rules. The floor's darkness comes from its
     /// record (floor number `floors_entered`, see [`floor_records`]); with no record it is lit.
@@ -847,7 +867,7 @@ impl GameState {
             spawns: spawns.to_vec(),
             spawn_counter: 0,
             enemy_density: self.density_of_floor(self.floors_entered),
-            ai: AiState::default(),
+            ai: self.new_ai(),
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.seed_wild_ai(true);
@@ -1036,7 +1056,7 @@ impl GameState {
             spawns: Vec::new(),
             spawn_counter: 0,
             enemy_density: self.density_of_floor(self.floors_entered),
-            ai: AiState::default(),
+            ai: self.new_ai(),
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1139,6 +1159,10 @@ impl GameState {
             preseed,
             dungeon,
             floors: snapshot.floors.clone(),
+            // shortcut: the snapshot holds no species table, so a restored run has no sleep
+            // chances until `with_species_sleep_chances` is called again (its floor's dungeon
+            // keeps none either).
+            chance_asleep: Vec::new(),
         })
     }
 }
