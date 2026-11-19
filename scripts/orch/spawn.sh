@@ -3,7 +3,9 @@
 # name, the Ghidra copy, the model and the role's tab, writes the dispatch text, starts Claude
 # or pi under hc with the environment the role scripts read, and checks it came up.
 #
-# Usage: scripts/orch/spawn.sh ROLE --issue N [fields] [--engine claude|pi] [--model M] [--dry-run]
+# Usage: scripts/orch/spawn.sh ROLE --issue N [fields] [--engine pi|go|claude] [--model M] [--dry-run]
+#   --engine pi (default): pi with Claude models. go: pi with OpenCode Go models (on a Claude
+#   limit). claude: Claude Code.
 #   investigator  --points "P1, P2" [--findings FILE]
 #   executor      --slug S --objective O --files "F ..." --verify CMD --evidence E
 #                 --link closes|refs [--revise PR | --fix-checks "NAME: OUTPUT" | --resume]
@@ -14,7 +16,7 @@ set -euo pipefail
 . "$(dirname "$0")/../harness-lib.sh"
 
 role=${1:?usage: spawn.sh ROLE --issue N ...}; shift
-declare -A a=([engine]=claude)
+declare -A a=([engine]=pi)
 dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -27,16 +29,18 @@ done
 need() { local k; for k in "$@"; do [ -n "${a[$k]:-}" ] || die "$role needs --$k"; done; }
 need issue
 n=${a[issue]} engine=${a[engine]}
-case "$engine" in claude|pi) ;; *) die "--engine must be claude or pi" ;; esac
+case "$engine" in pi|go|claude) ;; *) die "--engine must be pi, go or claude" ;; esac
 
 # Model per role and engine; this table is the one source (orchestrator.md points here).
 declare -A models=(
-  [claude.investigator]=claude-sonnet-5-5 [pi.investigator]=opencode-go/beam-free:high
-  [claude.executor]=claude-sonnet-5-5     [pi.executor]=opencode-go/glm-5.3-flash:high
-  [claude.reviewer]=claude-opus-5-5       [pi.reviewer]=opencode-go/beam-free:max
+  [pi.investigator]=anthropic/claude-sonnet-5-5 [go.investigator]=opencode-go/beam-free
+  [pi.executor]=anthropic/claude-sonnet-5-5     [go.executor]=opencode-go/glm-5.3-flash
+  [pi.reviewer]=anthropic/claude-opus-5-5       [go.reviewer]=opencode-go/beam-free
+  [claude.investigator]=claude-sonnet-5-5 [claude.executor]=claude-sonnet-5-5 [claude.reviewer]=claude-opus-5-5
 )
 model=${a[model]:-${models[$engine.$role]:-}}
 [ -n "$model" ] || die "unknown role: $role (investigator, executor or reviewer)"
+[ "$engine" = go ] && engine=pi  # go is pi with other models from here on
 
 orch=${HC_TERMINAL_ID:-}
 [ -n "$orch" ] || [ "$dry" = 1 ] || die "HC_TERMINAL_ID is empty: run the orchestrator under hc"
