@@ -8,10 +8,12 @@
 
 use std::collections::BTreeMap;
 
+use rescue_data::dungeon::MonsterSpawn;
 use rescue_platform::{ButtonState, Flow};
 use rescue_render::anim::AnimPlayer;
 use rescue_render::minimap::{MonsterInfo, MonsterMark, classify};
 use rescue_sim::command::{Command, Direction, Outcome};
+use rescue_sim::floor::Floor;
 use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster, MoveSlot};
 
 use crate::boot::RomCheck;
@@ -206,14 +208,15 @@ impl App {
         let Some((map, leader)) = dungeon::first_floor(self.config.seed, self.data.as_ref()) else {
             return self.back_to_menu();
         };
-        let (species, speed, records, wild) = match self.data.as_ref() {
+        let (species, speed, records, wild, sleep) = match self.data.as_ref() {
             Some(d) => (
                 self.config.species,
                 d.leader_speed(),
                 d.records(),
                 d.wild_spawns(),
+                d.sleep_chances(),
             ),
-            None => (0, 0, &[][..], &[][..]),
+            None => (0, 0, &[][..], &[][..], &[][..]),
         };
         let floors = sim_floors(records, floor);
         if self.tables.is_none() {
@@ -228,11 +231,11 @@ impl App {
             leader.info.moves[0] = MoveSlot::new(mv);
         }
         let team = vec![leader];
-        let Ok(game) = GameState::in_dungeon_with_spawns(self.config.seed, map, team, speed, wild)
-        else {
+        let seed = self.config.seed;
+        let Some(game) = start_run(seed, (map, team, speed), (wild, sleep), floors) else {
             return self.back_to_menu();
         };
-        self.game = Some(game.with_floors(floors));
+        self.game = Some(game);
         if !self.show_floor() {
             self.back_to_menu();
         }
@@ -640,6 +643,18 @@ fn attacked_in(command: Command, facing: Direction) -> Option<Direction> {
     }
 }
 
+/// The run on its first floor: the spawn list `wild`, the species sleep chances `sleep` (so a
+/// natural spawn can start asleep) and the floor records `floors`. `None` if the team does not fit.
+fn start_run(
+    seed: u32,
+    (map, team, speed): (Floor, Vec<Monster>, i32),
+    (wild, sleep): (&[MonsterSpawn], &[u8]),
+    floors: Vec<FloorRecord>,
+) -> Option<GameState> {
+    let game = GameState::in_dungeon_with_floors(seed, floors, map, team, speed, wild).ok()?;
+    Some(game.with_species_sleep_chances(sleep.to_vec()))
+}
+
 /// The floors the sim counts for a run that starts on floor `start`. The sim numbers its floors
 /// from 1 (`GameState::floors_entered`) and takes the next floor from index `floors_entered + 1`,
 /// so its list is the placeholder (index 0), then the records from the start floor on: the start
@@ -935,6 +950,49 @@ mod tests {
         walk_onto_the_stairs(&mut app);
         assert_eq!(app.scene, Scene::Menu { cursor: 0 });
         assert!(app.dungeon().is_none(), "the dungeon is dropped");
+    }
+
+    #[test]
+    fn a_natural_spawn_can_start_asleep_in_the_game_path() {
+        let (mut map, tile) = dungeon::first_floor(dungeon::SEED, None).expect("the floor builds");
+        // No spawn marks: the floor starts with no wild monsters, so the 10-monster cap leaves
+        // room for the natural spawns.
+        for (x, y) in rescue_sim::floor::enemy_spawn_spots(&map) {
+            if let Some(t) = map.tile_mut(i32::from(x), i32::from(y)) {
+                t.spawn_or_visibility = 0;
+            }
+        }
+        let wild = [MonsterSpawn {
+            species: 7,
+            level: 4,
+            weights: [10_000, 0],
+        }];
+        // Species 7 has a sleep chance of 100: every roll passes.
+        let sleep = [0, 0, 0, 0, 0, 0, 0, 100];
+        // Floor records for numbers 0 and 1 (index 0 is the placeholder), enemy density 4.
+        let floors: Vec<FloorRecord> = (0..2u8)
+            .map(|_| {
+                let mut r = [0; FLOOR_PROPERTIES];
+                r[0x06] = 4;
+                r
+            })
+            .collect();
+        let asleep_after_waiting = |sleep: &[u8]| {
+            let team = vec![leader_monster(tile, 0)];
+            let mut game = start_run(1, (map.clone(), team, 2), (&wild, sleep), floors.clone())
+                .expect("the team fits");
+            assert_eq!(game.floors_entered(), 1);
+            let initial = game.dungeon().map_or(0, |d| d.wild().len());
+            for _ in 0..200 {
+                game.step(Command::Wait);
+                if let Some(m) = game.dungeon().and_then(|d| d.wild().get(initial)) {
+                    return Some(m.info.is_asleep());
+                }
+            }
+            None
+        };
+        assert_eq!(asleep_after_waiting(&sleep), Some(true));
+        assert_eq!(asleep_after_waiting(&[]), Some(false));
     }
 
     #[test]

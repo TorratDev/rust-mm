@@ -793,6 +793,23 @@ impl GameState {
         Ok(state)
     }
 
+    /// [`GameState::in_dungeon_with_spawns`] with the dungeon's floor records (see
+    /// [`floor_records`]) in place before the first floor is entered, so that floor takes its
+    /// darkness and monster density from its record.
+    pub fn in_dungeon_with_floors(
+        seed: u32,
+        floors: Vec<FloorRecord>,
+        floor: Floor,
+        team: Vec<Monster>,
+        leader_speed: i32,
+        spawns: &[MonsterSpawn],
+    ) -> Result<Self, StateError> {
+        let mut state = Self::new(seed);
+        state.floors = floors;
+        state.enter_dungeon(floor, team, leader_speed, spawns)?;
+        Ok(state)
+    }
+
     /// The global generator.
     #[must_use]
     pub const fn global(&self) -> &GlobalRng {
@@ -1892,6 +1909,19 @@ mod tests {
         st.enter_dungeon(floor, vec![leader], 0, &[]).unwrap();
         st.set_speed_stage(MAX_SPEED_STAGE);
         st
+    }
+
+    #[test]
+    fn floor_records_given_at_construction_apply_to_the_first_floor() {
+        let mut recs: Vec<FloorRecord> = vec![[0; FLOOR_PROPERTIES]; 3];
+        recs[1][0x06] = 5;
+        let (floor, _, g) = chained_floor(7, &recs, 1);
+        let mut leader = monster(g.stairs_a.0, g.stairs_a.1, 8);
+        leader.info.is_team_leader = true;
+        let st = GameState::in_dungeon_with_floors(7, recs.clone(), floor, vec![leader], 0, &[])
+            .unwrap();
+        assert_eq!(st.floors(), recs.as_slice());
+        assert_eq!(st.dungeon().unwrap().enemy_density, 5);
     }
 
     /// Makes the leader's next input take the stairs it is standing on. The walk test below
