@@ -56,3 +56,11 @@ Opens a PR with `Closes #N` (`--closes N`) or `Refs #N` (`--refs N`) as the firs
 ```
 scripts/gh-pr.sh --draft --title "sim: wild monster spawn" --body-file body.md --closes 451
 ```
+
+## Session cut by a usage limit (`session-limit-pr.sh`)
+
+Runs as the `StopFailure` hook in `.claude/settings.json`. When a session stops on a usage or rate limit, it writes the user's prompts and Claude's text replies to `docs/handoff/<session>.md`, commits that file with any uncommitted work (on a new `claude/session-limit-<id>` branch when on `main`), pushes, and opens a draft PR, or comments on the branch's open PR. Other API errors are ignored. Try it with `--dry-run`, which only writes the notes file:
+
+```
+echo '{"transcript_path":"<path>.jsonl","cwd":".","session_id":"test","error":"rate_limit"}' | scripts/session-limit-pr.sh --dry-run
+```
