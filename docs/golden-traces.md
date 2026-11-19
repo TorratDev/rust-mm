@@ -175,7 +175,7 @@ The scenario file holds `{"dungeonId":0,"floorId":0}`. With `--nocapture`, a run
 
 **Wild attacker level term (#512).** A wild attacker's term in `CalcDamage` is `attack / 3` (raw attack stat after a second `CalcStatBoosts` pass, 48.16 divide, not truncated; `0217bd94`), not `level * 2 / 3`. [export-verified] With it row 16 matches (`team[1].hp` 26). The replay now stops at row 32 (frame 1294, `fractionalTurn` 7): `team[1].hp` expected 21, actual 20. Cause: the sim did not regenerate the partner.
 
-**Partner regeneration (#514).** A team partner runs the same `TickStatusAndHealthRegen` HP block as the leader, once per team pass (`02140BA0`, not the recalc cycle), through one shared gate. [runtime-verified] Partner species 4 (max HP 30, speed 200) gains 1 HP at its 7th tick (frame 1270). With it row 32 matches, and the replay shows no difference over all 67 trace rows of the local capture (every field, gate rows compared); nothing is left to diverge on this capture. The swap pass still runs the status tick only.
+**Partner regeneration (#514).** A team partner runs the same `TickStatusAndHealthRegen` HP block as the leader, once per team pass (`02140BA0`, not the recalc cycle), through one shared gate. [runtime-verified] Partner species 4 (max HP 30, speed 200) gains 1 HP at its 7th tick (frame 1270). With it row 32 matches, and the replay shows no difference over all 67 trace rows of the local capture (every field, gate rows compared); nothing is left to diverge on this capture. The swap pass still runs the status tick only, and the recalc pass still repeats the status tick (P-R32e, open).
 
 ## Combat replay (#424)
 

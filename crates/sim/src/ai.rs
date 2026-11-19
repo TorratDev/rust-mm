@@ -342,10 +342,14 @@ impl Dungeon {
         if self.team[i].info.hp == 0 {
             return false;
         }
-        // `TickStatusAndHealthRegen` ticks once per team pass (`02140BA0`), not in the recalc one.
+        // The `TickStatusAndHealthRegen` HP block runs once per team pass (`02140BA0`), not in the
+        // recalc one.
         if !recalc {
             Self::regenerate_gated(&mut self.team[i].info);
         }
+        // shortcut: the status countdowns still tick again on the recalc pass (recalc == true); the
+        // game ticks once per pass (#514 P-R32e, hypothesis: no status was active in the floor-1
+        // capture).
         self.team[i].info.tick_status();
         if self.team[i].info.is_asleep() {
             self.ally_end_of_turn(i);
