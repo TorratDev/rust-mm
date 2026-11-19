@@ -1514,6 +1514,10 @@ mod tests {
                 ginseng: 0,
             };
         }
+        // The leader gets 100 HP: a wild hit is 30 with the `attack / 3` term (#512), which would
+        // kill a 30 HP leader and change the draws.
+        d.team[0].info.hp = 100;
+        d.team[0].info.max_hp = 100;
         // The first monster dies of its recoil; the second must still act.
         d.wild[0].info.hp = 1;
         let tables = crate::combat::tests::tables();
