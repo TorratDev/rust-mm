@@ -8,16 +8,29 @@
 //! | 4 | 4 | format version |
 //! | 8 | 4 | payload length |
 //! | 12 | 4 | CRC-32 (IEEE) of the payload |
-//! | 16 | n | payload: the [`Snapshot`] as JSON |
+//! | 16 | n | payload: JSON `{"snapshot": Snapshot, "resume": Resume}` |
 //!
 //! [`read`] never panics: every failure is a [`SaveError`].
+//!
+//! # Versioning rule
+//!
+//! [`VERSION`] names the payload's shape and meaning. Change it in the same commit as any
+//! change to the payload: a field added to or removed from [`Snapshot`], [`Resume`] or what
+//! they hold, a field read differently, or a new piece of sim state that a run needs to
+//! continue. The reader accepts only the current version and returns
+//! [`SaveError::UnsupportedVersion`] for any other; there is no migration, so an old save is
+//! refused, never half-read. New sim state must go into [`Resume`] (or the snapshot) and into
+//! the property test `save_and_load_continues_the_run`, which fails when a field is missed.
+//!
+//! Version 1: the snapshot alone. Version 2: the snapshot and [`Resume`] (spawn state, sport
+//! timers, AI records, species sleep chances).
 
 #![forbid(unsafe_code)]
 
-use rescue_sim::state::{GameState, Snapshot, StateError};
+use rescue_sim::state::{GameState, Resume, Snapshot, StateError};
 
 pub const MAGIC: [u8; 4] = *b"RSAV";
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 const HEADER_LEN: usize = 16;
 /// Largest payload the reader accepts.
 pub const MAX_PAYLOAD: usize = 64 << 20;
@@ -81,11 +94,26 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-/// Serializes a snapshot into a save file.
+/// Serializes a snapshot into a save file, with no [`Resume`]: a load rebuilds the floor's
+/// spawn state and AI records as [`GameState::restore`] does. [`write_run`] keeps a run whole.
 #[must_use]
 pub fn write(snapshot: &Snapshot) -> Vec<u8> {
-    // A snapshot is plain integers, vectors and options, which JSON always accepts.
-    let payload = serde_json::to_vec(snapshot).unwrap_or_default();
+    encode(snapshot, &Resume::default())
+}
+
+/// Serializes a whole run: its snapshot and everything the snapshot leaves out.
+#[must_use]
+pub fn write_run(state: &GameState) -> Vec<u8> {
+    encode(&state.snapshot(), &state.resume())
+}
+
+fn encode(snapshot: &Snapshot, resume: &Resume) -> Vec<u8> {
+    // Plain integers, vectors and options, which JSON always accepts.
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "snapshot": snapshot,
+        "resume": resume,
+    }))
+    .unwrap_or_default();
     let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
     out.extend_from_slice(&MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
@@ -102,6 +130,11 @@ fn word(bytes: &[u8], at: usize) -> Option<u32> {
 
 /// Parses a save file. The snapshot still has to pass `GameState::restore`; see [`load`].
 pub fn read(bytes: &[u8]) -> Result<Snapshot, SaveError> {
+    read_run(bytes).map(|(snapshot, _)| snapshot)
+}
+
+/// Parses a save file into its snapshot and [`Resume`].
+pub fn read_run(bytes: &[u8]) -> Result<(Snapshot, Resume), SaveError> {
     if bytes.len() < HEADER_LEN {
         return Err(SaveError::TooShort);
     }
@@ -132,12 +165,25 @@ pub fn read(bytes: &[u8]) -> Result<Snapshot, SaveError> {
             actual: got,
         });
     }
-    serde_json::from_slice(payload).map_err(|e| SaveError::Payload(e.to_string()))
+    let mut value: serde_json::Value =
+        serde_json::from_slice(payload).map_err(|e| SaveError::Payload(e.to_string()))?;
+    let part = |value: &mut serde_json::Value, key: &str| {
+        value
+            .get_mut(key)
+            .map(serde_json::Value::take)
+            .ok_or_else(|| SaveError::Payload(format!("missing `{key}`")))
+    };
+    let snapshot = serde_json::from_value(part(&mut value, "snapshot")?)
+        .map_err(|e| SaveError::Payload(e.to_string()))?;
+    let resume = serde_json::from_value(part(&mut value, "resume")?)
+        .map_err(|e| SaveError::Payload(e.to_string()))?;
+    Ok((snapshot, resume))
 }
 
-/// Parses a save file and rebuilds the state: [`read`], then [`GameState::restore`].
+/// Parses a save file and rebuilds the state: [`read_run`], then [`GameState::restore_with`].
 pub fn load(bytes: &[u8]) -> Result<GameState, SaveError> {
-    GameState::restore(&read(bytes)?).map_err(SaveError::Restore)
+    let (snapshot, resume) = read_run(bytes)?;
+    GameState::restore_with(&snapshot, &resume).map_err(SaveError::Restore)
 }
 
 #[cfg(test)]
@@ -275,7 +321,7 @@ mod tests {
             let g = real_run(seed, steps);
             let snapshot = g.snapshot();
             prop_assert!(!snapshot.floors.is_empty() && snapshot.dungeon.is_some());
-            let file = write(&snapshot);
+            let file = write_run(&g);
             prop_assert_eq!(&read(&file)?, &snapshot);
             let back = load(&file).unwrap();
             prop_assert_eq!(back.snapshot(), snapshot);
@@ -295,6 +341,153 @@ mod tests {
             file[i] ^= 1 << bit;
             prop_assert!(read(&file).is_err());
         }
+    }
+
+    /// A run with a leader and a partner, wild monsters, a spawn list, a monster density,
+    /// species sleep chances and statuses on the monsters. The sim's constructors for these
+    /// take types this crate does not link, so the run is built through a snapshot and a
+    /// [`Resume`], the two things a save holds.
+    fn busy_run(seed: u32) -> GameState {
+        use rescue_sim::floor::{Floor, HEIGHT, TERRAIN_FLOOR, WIDTH};
+        use rescue_sim::status::{BURN, FOCUS_ENERGY, LEECH_SEED, PARALYSIS, SLEEP};
+        let mut floor = Floor::new();
+        for y in 0..HEIGHT as i32 {
+            for x in 0..WIDTH as i32 {
+                floor.tile_mut(x, y).unwrap().terrain = TERRAIN_FLOOR;
+            }
+        }
+        let leader = real_run(seed, 0).snapshot().dungeon.unwrap().team[0].clone();
+        let mut partner = leader.clone();
+        partner.pos = (4, 5);
+        partner.info.is_team_leader = false;
+        partner.info.species = 2;
+        let mut leader = leader;
+        leader.info.status.burn_class = BURN;
+        leader.info.status.burn_turns = 6;
+        leader.info.status.sure_shot = FOCUS_ENERGY;
+        leader.info.status.sure_shot_turns = 9;
+        let g = GameState::in_dungeon(seed, floor, vec![leader, partner], 4)
+            .unwrap()
+            .with_floors(vec![[0u8; 0x1C]; 3]);
+        let mut snapshot = g.snapshot();
+        let d = snapshot.dungeon.as_mut().unwrap();
+        for (i, pos) in [(9, 5), (14, 12), (20, 8), (6, 15)].into_iter().enumerate() {
+            let mut m = d.team[0].clone();
+            m.pos = pos;
+            m.info.is_team_leader = false;
+            m.info.not_team_member = true;
+            m.info.species = 3;
+            m.info.belly = 0;
+            match i % 3 {
+                0 => {
+                    m.info.status.sleep = SLEEP;
+                    m.info.status.sleep_turns = 20;
+                }
+                1 => {
+                    m.info.status.burn_class = PARALYSIS;
+                    m.info.status.burn_turns = 12;
+                }
+                _ => {
+                    m.info.status.leech_seed = LEECH_SEED;
+                    m.info.status.leech_turns = 10;
+                }
+            }
+            d.wild.push(m);
+        }
+        let g = GameState::restore(&snapshot).unwrap();
+        let mut resume = g.resume();
+        resume.chance_asleep = vec![0, 0, 0, 50, 50];
+        let dr = resume.dungeon.as_mut().unwrap();
+        dr.spawns = vec![(3, 5, [10, 10])];
+        dr.enemy_density = 12;
+        GameState::restore_with(&snapshot, &resume).unwrap()
+    }
+
+    fn command(code: u8) -> rescue_sim::command::Command {
+        use rescue_sim::command::{Command, Direction};
+        let dir = [
+            Direction::Up,
+            Direction::Down,
+            Direction::Left,
+            Direction::Right,
+        ][usize::from(code >> 4) % 4];
+        match code % 4 {
+            0 => Command::Move(dir),
+            1 => Command::Run(dir),
+            2 => Command::Attack(dir),
+            _ => Command::Wait,
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+        /// Saving and loading after N steps, then M more, equals N + M steps without the save.
+        /// The run has wild monsters, a partner, statuses and per-turn spawns; the check is
+        /// the whole state and every step's outcome.
+        #[test]
+        fn save_and_load_continues_the_run(
+            seed: u32,
+            codes in proptest::collection::vec(any::<u8>(), 2..48),
+            cut in any::<usize>(),
+        ) {
+            let n = cut % codes.len();
+            let mut straight = busy_run(seed);
+            let mut saved = busy_run(seed);
+            for &c in &codes[..n] {
+                let a = straight.step(command(c));
+                let b = saved.step(command(c));
+                prop_assert_eq!(a, b);
+            }
+            let mut resumed = load(&write_run(&saved)).unwrap();
+            prop_assert_eq!(&resumed, &saved);
+            for &c in &codes[n..] {
+                let a = straight.step(command(c));
+                let b = resumed.step(command(c));
+                prop_assert_eq!(a, b);
+                prop_assert_eq!(&straight, &resumed);
+            }
+            prop_assert_eq!(straight.snapshot(), resumed.snapshot());
+        }
+    }
+
+    #[test]
+    fn busy_run_has_wild_monsters_and_a_partner() {
+        let d = busy_run(7).snapshot().dungeon.unwrap();
+        assert_eq!(d.team.len(), 2);
+        assert!(d.wild.len() >= 3);
+    }
+
+    #[test]
+    fn a_crafted_ai_state_is_refused_not_run() {
+        let g = busy_run(7);
+        let (snapshot, resume) = (g.snapshot(), g.resume());
+        let edit = |field: &str, value: serde_json::Value| {
+            let mut json = serde_json::to_value(&resume).unwrap();
+            json["dungeon"]["ai"][field] = value;
+            let r: Resume = serde_json::from_value(json).unwrap();
+            // A valid CRC: the file is built by `encode`.
+            load(&encode(&snapshot, &r)).map(|_| ())
+        };
+        for (field, value) in [
+            ("swapping", serde_json::json!([9])),
+            ("swapping", serde_json::json!([0])),
+            ("held", serde_json::json!([2])),
+            ("slots", serde_json::json!([])),
+            ("slots", serde_json::json!([0, 0, 1, 2])),
+            ("slots", serde_json::json!([0, 1, 99, 100])),
+        ] {
+            assert!(
+                matches!(edit(field, value.clone()), Err(SaveError::Restore(_))),
+                "{field} {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_v1_file_is_refused() {
+        let mut file = write(&snap(1, 2, 3));
+        file[4..8].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(read(&file), Err(SaveError::UnsupportedVersion(1)));
     }
 
     #[test]
