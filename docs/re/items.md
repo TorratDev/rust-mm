@@ -161,10 +161,10 @@ Findings for [#459](https://github.com/TorratDev/rust-mm/issues/459), investigat
 | 0x0D | Patsy Band | 0217BD94 |
 | 0x0E | Nostick Cap | 02197AF8 |
 | 0x0F | Pierce Band | 021732C4 |
-| 0x10 | inline | damage trap (Red chestnut): `0217BCA4(t, s16 *PTR_021AA084, 0xF, msg)` is `DealDamageToEntity_Async` ([`symbols.md`](../symbols.md)): damage read through the pointer slot, residual type argument 0xF, which calls `HandleDealingDamage_Async 0217E890`. [blue-verified runtime: HP loss; the damage values behind the pointer slots are in the pool and not recorded here] The earlier "status for 15 turns" reading is wrong |
-| 0x11 | `02197404` | tail call through the slot `PTR_FUN_0218E5CC` with `(user, target, 0)`: wonder tile. Placement gives byte 1 = 2 and seen 1; the dispatcher skips the avoid roll. [blue-verified runtime: first-floor traps were all 0x11, wild monsters stepping on them never reached the dispatcher] |
-| 0x12 | `0219706C(user,pos)` | items to monsters; consumes the trap (`021982C0`). Skips if `0206D49C()` is non-zero. Area: the trap tile's room (tile `+5 != 0xFF`, bounds +/-1) or a square of radius `gDungeon+0x15FA1` (2 if 0). Each tile holding an item entity (type 3) whose item byte 0 bit 1 is clear: up to 100 tries of `021388D4(0)` (species 0x17C if `gDungeon+0x65E != 0`) until `02175BA0` accepts, spawn `02179CFC`, on success `02143F98`; `0213CD5C` refresh. [blue-verified static; effect unverified at runtime, no item on the probe tiles] |
-| 0x13 | inline | spike trap (Red order): `0217BCA4(t, s16 *PTR_021AA0A8, 10, msg)`, the same damage call with residual type argument 10. [blue-verified runtime: leader HP 25 to 1] |
+| 0x10 | Joy Ribbon | 0217D5FC |
+| 0x11 | X Ray Specs | 0213C0F8 |
+| 0x12 | Persim Band | 0218E27C |
+| 0x13 | Power Band | 0217BD94 |
 | 0x14 | Pecha Scarf | 0218A140, 0218A410 |
 | 0x15 | Insomniscope | 0218B140 |
 | 0x16 | Warp Scarf | 021861E8 |
@@ -237,10 +237,10 @@ Avoid roll, refined [blue-verified, static]: for a monster target with `a4 != 0`
 | 0xC | `02197A2C` -> `0218A410(user,t,1)` | poison: immunity check, sets status byte `info+0x9B` to 2, writes `+0x9C` (duration from `0219CF28` plus 1), clears `+0x9D/+0x9E`; already poisoned gives a message. [blue-verified static; runtime showed only HP falling over time] |
 | 0xD, 0xE | `021979FC`, `021979CC` -> `02194BFC(user,t,t+4,kind 1 or 2,0,msg)` | self-destruct and explosion (Red order): ring-offset blast that turns wall tiles around the target into floor (bounds 0<x<0x37, 0<y<0x1F, not flag 0x10) and hurts. [blue-verified runtime: same HP loss for both ids on leader and partner; what kind 1 vs 2 changes is [hypothesis], radius table not read] |
 | 0xF | `02197414` | PP trap: one `DungeonRandInt(n)` over valid moves with PP byte (`+4`) non-zero, sets that PP to 0, then `02175C34`; none: message only. [blue-verified runtime: slot 0 PP to 0, next firing slot 1] |
-| 0x10 | inline | status for 15 turns via `0217BCA4` |
-| 0x11 | `02197404` | tail call through a function pointer slot (wonder tile, indirect) |
-| 0x12 | `0219706C` | monster-house style spawn list; consumes the trap |
-| 0x13 | inline | status for 10 turns via `0217BCA4` |
+| 0x10 | inline | damage trap (Red chestnut): `0217BCA4(t, s16 *PTR_021AA084, 0xF, msg)` (slot `DAT_ov_0001__02198210` in `02197D88`) is `DealDamageToEntity_Async` ([`symbols.md`](../symbols.md)): damage read through the pointer slot, residual type argument 0xF, which calls `HandleDealingDamage_Async 0217E890`. [blue-verified runtime: HP loss; the damage values behind the pointer slots are in the pool and not recorded here] The earlier "status for 15 turns" reading is wrong |
+| 0x11 | `02197404` | tail call through the slot `PTR_FUN_0218E5CC` with `(user, target, 0)`: wonder tile. Placement gives byte 1 = 2 and seen 1; the dispatcher skips the avoid roll. [blue-verified runtime: first-floor traps were all 0x11, wild monsters stepping on them never reached the dispatcher] |
+| 0x12 | `0219706C(user,pos)` | items to monsters; consumes the trap (`021982C0`). Skips if `0206D49C()` is non-zero. Area: the trap tile's room (tile `+5 != 0xFF`, bounds +/-1) or a square of radius `gDungeon+0x15FA1` (2 if 0). Each tile holding an item entity (type 3) whose item byte 0 bit 1 is clear: up to 100 tries of `021388D4(0)` (species 0x17C if `gDungeon+0x65E != 0`) until `02175BA0` accepts, spawn `02179CFC`, on success `02143F98`; `0213CD5C` refresh. [blue-verified static; effect unverified at runtime, no item on the probe tiles] |
+| 0x13 | inline | spike trap (Red order): `0217BCA4(t, s16 *PTR_021AA0A8, 10, msg)` (slot `DAT_ov_0001__02198218` in `02197D88`), the same damage call with residual type argument 10. [blue-verified runtime: leader HP 25 to 1] |
 | 0x14 to 0x1A | none | empty case bodies |
 
 Confidence: high for 0xB, 0xF, 0x11, 0x13; medium for 0, 0xC, 0xD, 0xE, 0x10, 0x12. Red names are [hypothesis]. Not done: a save in a deeper dungeon with naturally placed varied ids, the item throw of id 0, the effect of 0x12. Callee bodies `0217E890` (exact 0x10 and 0x13 formulas) and `0219CF28` (poison duration) belong to the combat and status RE.
