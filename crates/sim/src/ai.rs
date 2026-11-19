@@ -336,12 +336,15 @@ impl Dungeon {
     // (`TACTIC_SKIPS_SCAN`); a partner that scans attacks a foe it sees, else follows the
     // leader. A phase-2 turn may re-flag
     // through the trailing branch of `DecideMovement` (branch 2a is phase 1 only).
-    // shortcut: HP regeneration (`TickStatusAndHealthRegen`) and the partner's belly are not
-    // modelled; only the status countdowns run.
+    // shortcut: the partner's belly is not modelled (`bellyEmpty` stays false).
     fn ally_turn(&mut self, i: usize, data: Option<&CombatData<'_>>, recalc: bool) -> bool {
         let me = self.team[i].pos;
         if self.team[i].info.hp == 0 {
             return false;
+        }
+        // `TickStatusAndHealthRegen` ticks once per team pass (`02140BA0`), not in the recalc one.
+        if !recalc {
+            Self::regenerate_gated(&mut self.team[i].info);
         }
         self.team[i].info.tick_status();
         if self.team[i].info.is_asleep() {
@@ -2277,6 +2280,28 @@ mod tests {
         ally.info.is_team_leader = false;
         d.team.push(ally);
         g
+    }
+
+    #[test]
+    fn a_partner_regenerates_one_hp_at_its_seventh_tick_and_draws_nothing() {
+        // Speed 200, max HP 30: 7 x 30 = 210 >= 200 (#514, the trace's partner at row 32).
+        let mut g = with_partner((12, 5), (5, 5), &[]);
+        let d = g.dungeon_mut().unwrap();
+        d.team[1].info.hp = 20;
+        for tick in 1..=7 {
+            d.ally_turn(1, None, false);
+            d.flush_moves();
+            let want = if tick < 7 { 20 } else { 21 };
+            assert_eq!(d.team[1].info.hp, want, "tick {tick}");
+        }
+        assert_eq!(d.team[1].info.regen_acc, 10);
+        // The recalc pass does not tick again.
+        d.ally_turn(1, None, true);
+        assert_eq!(d.team[1].info.regen_acc, 10);
+        // The regeneration itself draws nothing.
+        let rng = d.rng;
+        Dungeon::regenerate_gated(&mut d.team[1].info);
+        assert_eq!(d.rng, rng);
     }
 
     #[test]
