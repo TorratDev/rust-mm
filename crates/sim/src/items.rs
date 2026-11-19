@@ -423,7 +423,7 @@ impl Dungeon {
     /// (`02180BA0`). The leader is exempt. An ally runs with Run Away (ability `0x2B`) below
     /// half HP, with tactic `0x0A`, or with tactic 6 at or below half HP.
     // shortcut: the terrified status (`info+0xD7`) is not modelled, so it never refuses.
-    fn runs_away(&self, member: usize) -> bool {
+    pub(crate) fn runs_away(&self, member: usize) -> bool {
         let Some(m) = self.team.get(member) else {
             return false;
         };

@@ -28,6 +28,7 @@ use crate::items::{
 };
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::status::{self, Status};
+use crate::throw::{ThrowParams, ThrowResult, ThrowSource};
 use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
 
 /// Team slots: `teamPokemon[4]` (`+0x11314`).
@@ -816,6 +817,27 @@ impl GameState {
     /// `02173A48`). It takes the leader's turn. Refusals change nothing (see [`Blocked`]).
     pub fn swap_floor_item(&mut self, source: SwapSource) -> Outcome {
         self.apply_input(Input::Swap(source), None)
+    }
+
+    /// Throws the leader's bag slot `slot`, or a team member's held item (actions `0x0B`, `0x27`,
+    /// `0x41` and the AI's `0x24`, `021732C4`). It takes the leader's turn when the leader
+    /// throws. See [`crate::throw`].
+    // shortcut: the pending stairs menu is not answered (the command is a throw, not the confirm).
+    pub fn throw_item(
+        &mut self,
+        source: ThrowSource,
+        direction: Direction,
+        arc_target: Option<(i16, i16)>,
+        params: &ThrowParams,
+        data: &CombatData<'_>,
+    ) -> ThrowResult {
+        let Some(dungeon) = self.dungeon.as_mut() else {
+            return ThrowResult::Blocked(Blocked::NoDungeon);
+        };
+        let result = dungeon.throw_item(source, direction, arc_target, params, data);
+        // A thrown item that defeats the leader ends the run, as a defeat in any other turn.
+        self.after_turn(Outcome::Applied);
+        result
     }
 
     /// The run with the species' sleep chances (`Species::chance_asleep`, indexed by species
