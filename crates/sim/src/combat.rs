@@ -133,7 +133,7 @@ fn to_int(v: i64) -> i64 {
 }
 
 /// Whether a move of type `kind` is physical (`FUN_02008C64` is nonzero).
-fn is_physical(t: &CombatTables, kind: u8) -> bool {
+pub(crate) fn is_physical(t: &CombatTables, kind: u8) -> bool {
     t.physical.get(usize::from(kind)).copied().unwrap_or(0) != 0
 }
 
@@ -244,7 +244,7 @@ pub fn hits(
 
 /// Whether `CalcDamage` draws the critical roll for `target`: not for Battle Armor or Shell Armor
 /// (`docs/re/combat.md`, P5).
-fn crit_drawn(target: &EntityInfo) -> bool {
+pub(crate) fn crit_drawn(target: &EntityInfo) -> bool {
     !target.has_ability(BATTLE_ARMOR) && !target.has_ability(SHELL_ARMOR)
 }
 
@@ -321,7 +321,7 @@ pub fn damage(
 }
 
 /// [`damage`] with the move's `arg8` (24.8) given: a Regular Attack's is 0.5.
-fn damage_scaled(
+pub(crate) fn damage_scaled(
     t: &CombatTables,
     mv: &Move,
     arg8: i64,
@@ -703,7 +703,7 @@ impl Dungeon {
     }
 
     /// The info of the monster at `slot`, if there is one.
-    fn info_of(&self, slot: Slot) -> Option<&EntityInfo> {
+    pub(crate) fn info_of(&self, slot: Slot) -> Option<&EntityInfo> {
         match slot {
             Slot::Team(i) => self.team.get(i).map(|m| &m.info),
             Slot::Wild(i) => self.wild.get(i).map(|m| &m.info),
@@ -711,7 +711,7 @@ impl Dungeon {
     }
 
     /// The info of the monster at `slot`, mutably, if there is one.
-    fn info_mut(&mut self, slot: Slot) -> Option<&mut EntityInfo> {
+    pub(crate) fn info_mut(&mut self, slot: Slot) -> Option<&mut EntityInfo> {
         match slot {
             Slot::Team(i) => self.team.get_mut(i).map(|m| &mut m.info),
             Slot::Wild(i) => self.wild.get_mut(i).map(|m| &mut m.info),
@@ -765,7 +765,7 @@ impl Dungeon {
     // Absorb's write of `+0xD8` (0 to 1) is not stored: no entity field holds it, and the award
     // reads 1 either way (#421).
     // shortcut: a team member's join-location lock (`'J'`, `'G'` at `+0x40`) is not modelled.
-    fn award_exp(&mut self, defeated: &[Slot], data: &CombatData<'_>) {
+    pub(crate) fn award_exp(&mut self, defeated: &[Slot], data: &CombatData<'_>) {
         let amounts: Vec<i32> = defeated
             .iter()
             .filter(|slot| matches!(slot, Slot::Wild(_)))
