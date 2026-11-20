@@ -265,6 +265,30 @@ Findings for [#459](https://github.com/TorratDev/rust-mm/issues/459), investigat
 - **Auto-equip and use**: the `02146880` equip branch and `02173A48` write `info+0x5A..5C`; `02173EF4` (action 0x38) sets `+0xD9 = 1` on the entity from `021416F4`, which the AI held-item step reads ([`ai.md`](ai.md)). The stat effects of held items are in [`combat.md`](combat.md).
 - Confidence: high for constant-id sites, medium for id-to-name mapping (no Blue string table read).
 
+**Ported in the sim (#552).** Code: `crates/sim/src/items.rs`, `combat.rs`, `status.rs`, `move_effects.rs`; each ported item has a test.
+
+- `HasHeldItem` is `Item::holds(id)` (exists, not sticky, id equal) and `Dungeon::has_held_item(member, id)`. Wild monsters have no held slot in the sim (`held` is team-only), so a wild `Slot` reads as no item.
+- **Give `0x36` (`02174280`)**: `Dungeon::give(slot, target)`. Refuses a bag item that is sticky and marked, a target that is not another team member, and a sticky held item of the target. An empty held slot takes the item with the marker cleared; else the old held item goes to the bag. Tests: `give_*`.
+- **Take `0x37` (`021740EC`)**: `Dungeon::take(member)`. Refuses an empty held slot, a full bag, a sticky held item. Tests: `take_*`.
+- **Set marker `0x3C` (`02174680`)**: `Dungeon::set_marker(slot)`; **unset marker `0x3D` (`02174594`)**: `Dungeon::unset_marker()`. Both abort on a sticky marked bag item; set clears the other markers first and then marks the selected item. Tests: `set_marker_*`, `unset_marker_*`, `a_sticky_marked_bag_item_blocks_both_marker_changes`.
+- The refusals return `HeldBlocked` (`items.rs`), not `command::Blocked`; wiring them to commands is not done (`command.rs` is outside #552).
+- **Status immunity gate `0x15` (`0218B140`, Insomniscope)**: `status::sleep_with` and `status::inflict` take the target's held item; a non-sticky Insomniscope refuses after the draw, as Insomnia does. Also used by the Sleep Seed. Test: `insomniscope_refuses_sleep_only_while_it_is_not_sticky`.
+- **Damage boosts (`CalcDamage` step 7)**: Power Band `0x13` (attack +12, physical), Special Band `0x21` (+12, special), Munch Belt `0x2B` (+8, either), Def Scarf `0x1E` (defence +8, physical), Zinc Band `0x22` (+8, special), Scope Lens `0x0C` (crit odds +40, attacker), Patsy Band `0x0D` (crit odds +40, target). The attack boost is added before the clamp to 0 to 999, the defence after its truncation. Tests: one per item plus `a_sticky_held_item_gives_no_boost`.
+  - [medium] The table says "attack +12" without the split for Power Band and Munch Belt; the split (physical for Power Band, special for Special Band) follows the item names. Munch Belt is applied to both splits as the table reads.
+  - The `arg_10` gate is not applied: the two callers with `arg_10` false (`02161ab4`, `02161cc0`) are not mapped to sim effects.
+- **Growl's Twist Band block `0x0B` (`02189534`)**: `StageChange::blocked_by_held`; only Growl carries it. Test: `a_twist_band_on_the_target_blocks_growl_only_while_it_is_not_sticky`.
+- **Diet Ribbon refusal `0x1B` (`0218C284`, `item_use.rs` `add_belly`)**: `info+7 == 0` (a non-leader) with `021432E8(t, 0x1B)` returns before any belly or maximum change; only the message (not read) is skipped. Every food and gummi goes through `add_belly`, so all are refused. Test: `a_non_leader_with_a_diet_ribbon_takes_no_belly` (the sticky ribbon adds belly; the leader is not refused).
+
+**Waiting, with the reason.**
+
+- **Snapshot bytes `02176EB8` `+0x39..+0x3C`**: no ported path reads them, so they are not ported. **`02175F54`** (the `+0x5D` shadow and the `+0x10E/+0x110` timer) runs after a held item changes; the sim does not run it, because the give and take ported here leave the tail (bad-tile fix, `0x4000` flag) out.
+- **Heal Ribbon regen term (`02185C70`, item `0x0A`)** (`turn.rs`): the amount it adds to the regen speed is not recorded in the docs, so no value is invented. Wish and Rain Dish stay out as before.
+- **Belly terms (`DoEndOfTurnEffects`, `turn.rs`)**: Tight Belt `0x17`, Stamina Band `0x1F`, Diet Ribbon `0x1B`, Heal Ribbon `0x0A`, Munch Belt `0x2B` adjust the belly index. The index offsets and the table `0x021AA824` are not recorded; Energy Saver's id is not mapped. (The Diet Ribbon refusal in `0218C284` is ported, above; this is the per-turn decrement.)
+- **Warp Scarf `0x16` roll (`021861E8`, `turn.rs` `leader_end_of_turn`)**: the roll between the belly block and the Shed Skin roll, and the warp it triggers (`021938C8`, see P2), are not ported; the turn draws no roll for the scarf.
+- **Mobile Scarf `0x09` class 3** (`ai.rs` `can_move`, `targeting.rs` `blocked_for_cut`): the test is `has_held_item(member, 0x09)`, but class 3's wall mask needs the rule of `02148F50`, which the docs do not give. Class 0 stays for every monster.
+- **Other ids in the table above** (for example Pecha Scarf `0x14`, Trap Scarf `0x1C`) have no sim path that reads them yet.
+
+
 ## P5. Traps
 
 **P5a. Who calls the trap writer** [blue-verified, static]. `ov_0001::02198824` (random trap placement) is called from the ARM9 function `RunDungeon_Async 0206DC20` at `0206E440`, an ARM9-to-overlay call, which is why it has no overlay-local xref (`xrefs.tsv`: `0206e440 FUN_0206dc20 UNCONDITIONAL_CALL 02198824`). `0206DC20` is called from `LoadAndRunDungeon_Async 0201DB70` at `0201DC60`. It sits in the non-resume branch: `02179E2C`, then `02198824`, `02144714`, then `+0x684 = +0x67C` and `+0x680 = 0` (P6), then `02152ABC`, `0214809C`. `GenerateFloor 02151E7C` runs earlier in the same loop body. No runtime hook result exists (see Open questions).

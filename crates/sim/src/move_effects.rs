@@ -8,6 +8,7 @@
 use rescue_data::combat::STAGES;
 
 use crate::combat::{ARG8, DAMAGING};
+use crate::items::{self, Item};
 use crate::state::EntityInfo;
 use crate::status::Inflict;
 
@@ -101,6 +102,8 @@ pub(crate) struct StageChange {
     pub(crate) stat: Stat,
     pub(crate) stages: i16,
     pub(crate) blocked_by: &'static [u8],
+    /// Held items of the target that block the change (`HasHeldItem`, see [`crate::items::Item::holds`]).
+    pub(crate) blocked_by_held: &'static [u8],
 }
 
 /// What a move does after its slot-0 hit check (see the module comment).
@@ -137,39 +140,45 @@ pub(crate) enum Effect {
 // The block lists are the abilities the handler's own routine tests (`docs/re/move-effects.md`,
 // "Stage-change blocks"). The lowering routine `02180798` stops a change on abilities 0x0F and 0x18,
 // and each handler adds its own: 0x09 for the attack change (`02189534`), 0x1E for the accuracy
-// change (`02188910`). The status check and the held-item check are not modelled (see
-// `change_stages`).
+// change (`02188910`). The status check is not modelled (see `change_stages`); the held-item block
+// of Growl is `blocked_by_held`.
 const GROWL_CHANGE: &[StageChange] = &[StageChange {
     stat: Stat::Attack(0),
     stages: -1,
     blocked_by: &[0x0F, 0x18, 0x09],
+    blocked_by_held: &[items::TWIST_BAND],
 }];
 const DEFENCE_DOWN: &[StageChange] = &[StageChange {
     stat: Stat::Defence(0),
     stages: -1,
     blocked_by: &[0x0F, 0x18],
+    blocked_by_held: &[],
 }];
 const ACCURACY_DOWN: &[StageChange] = &[StageChange {
     stat: Stat::Accuracy,
     stages: -1,
     blocked_by: &[0x0F, 0x18, 0x1E],
+    blocked_by_held: &[],
 }];
 // Withdraw's raise has no block check (`021890C4`, P3 of #421).
 const WITHDRAW_CHANGE: &[StageChange] = &[StageChange {
     stat: Stat::Defence(0),
     stages: 1,
     blocked_by: &[],
+    blocked_by_held: &[],
 }];
 const HELPING_HAND_CHANGE: &[StageChange] = &[
     StageChange {
         stat: Stat::Attack(0),
         stages: 1,
         blocked_by: &[],
+        blocked_by_held: &[],
     },
     StageChange {
         stat: Stat::Attack(1),
         stages: 1,
         blocked_by: &[],
+        blocked_by_held: &[],
     },
 ];
 
@@ -234,12 +243,13 @@ pub(crate) fn effect_of(id: u16) -> Option<Effect> {
 // shortcut: at a limit the game may print a message and take another path; the message is not
 // modelled, and the notes record no draw there (#421 lead).
 // shortcut: the game also stops a lowering change when the target's status byte `+0xB1` is `0x0E`
-// (`02180798`, which Growl, Leer and Sand-Attack call), and Growl also stops when the target holds
-// item `0x0B` (`021432E8`, in `02189534`). The sim has no statuses (#73) or held items (#359), so
-// those two blocks are not modelled.
-pub(crate) fn change_stages(info: &mut EntityInfo, changes: &[StageChange]) {
+// (`02180798`, which Growl, Leer and Sand-Attack call). The sim has no statuses (#73), so that
+// block is not modelled. Growl's held-item block (Twist Band, `0x0B`) is `blocked_by_held`.
+pub(crate) fn change_stages(info: &mut EntityInfo, changes: &[StageChange], held: Item) {
     for change in changes {
-        if change.blocked_by.iter().any(|&id| info.has_ability(id)) {
+        if change.blocked_by.iter().any(|&id| info.has_ability(id))
+            || change.blocked_by_held.iter().any(|&id| held.holds(id))
+        {
             continue;
         }
         let stage = match change.stat {
@@ -429,7 +439,7 @@ mod tests {
         let g = battle_with(&stat_move(GROWL, [100; 3]));
         let mut info = g.dungeon().unwrap().wild()[0].info.clone();
         info.offensive_stages = [0, 10];
-        change_stages(&mut info, GROWL_CHANGE);
+        change_stages(&mut info, GROWL_CHANGE, Item::default());
         assert_eq!(info.offensive_stages, [0, 10]);
     }
 
@@ -492,9 +502,39 @@ mod tests {
                 stat: Stat::Accuracy,
                 stages: 3,
                 blocked_by: &[],
+                blocked_by_held: &[],
             }],
+            Item::default(),
         );
         assert_eq!(info.accuracy_stage, 20);
+    }
+
+    #[test]
+    fn a_twist_band_on_the_target_blocks_growl_only_while_it_is_not_sticky() {
+        let g = battle_with(&stat_move(GROWL, [100; 3]));
+        let base = g.dungeon().unwrap().wild()[0].info.clone();
+        let band = |flags| Item {
+            flags,
+            qty: 1,
+            id: items::TWIST_BAND,
+        };
+        let mut info = base.clone();
+        change_stages(&mut info, GROWL_CHANGE, band(items::FLAG_EXISTS));
+        assert_eq!(info.offensive_stages, base.offensive_stages, "blocked");
+        let mut info = base.clone();
+        change_stages(
+            &mut info,
+            GROWL_CHANGE,
+            band(items::FLAG_EXISTS | items::FLAG_STICKY),
+        );
+        assert_ne!(
+            info.offensive_stages, base.offensive_stages,
+            "a sticky band does not block"
+        );
+        // Leer's change has no held-item block.
+        let mut info = base.clone();
+        change_stages(&mut info, DEFENCE_DOWN, band(items::FLAG_EXISTS));
+        assert_ne!(info.defensive_stages, base.defensive_stages);
     }
 
     #[test]
