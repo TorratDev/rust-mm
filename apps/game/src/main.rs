@@ -15,6 +15,8 @@ mod combat;
 mod draw;
 mod dungeon;
 mod input;
+mod item_menu;
+mod items;
 mod save;
 mod scene;
 mod title;
