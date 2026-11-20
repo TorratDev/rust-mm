@@ -4,9 +4,10 @@
 //! The order of one throw: the item is picked and the refusals run, one is consumed, the held
 //! items set the aim and the range (No-Aim Scope draws `DungeonRandInt(8)`), the path
 //! (`02144F3C` line, `02144A54` arc) finds the targets, each target gets the hit test
-//! (`0214498C`: one `DungeonRandInt(100)`, drawn even when a held item decides) and then the
-//! damage (`021467F4` through `CalcDamage`, or the fixed `021467BC`), and an item that hit
-//! nothing lands (`02143918`, no draw). Integer math only.
+//! (`0214498C`: one `DungeonRandInt(100)`, drawn even when a held item decides) for every
+//! monster on the path first, then the damage of each hit target in path order (`021467F4`
+//! through `CalcDamage`, or the fixed `021467BC`), and an item lands (`02143918`, no draw) when
+//! it hit nothing, or at the end of a pierce line that stayed on the map. Integer math only.
 //!
 //! The numbers the notes do not embed (the hit chance, the arc damage, the species gate, the
 //! landing ring) are [`ThrowParams`], given by the caller as the item tables are.
@@ -14,8 +15,12 @@
 //! Shortcut list (what the sim does not model):
 //! - The path walks the line one tile at a time up to the range. The game's legs of 6 tiles and
 //!   the wall-edge fixup of `02144F3C` are not read, so a diagonal passes a wall corner.
-//! - Curve Band (`0x27`) sets the game's arc flag, whose effect on a line throw is not read; the
-//!   sim reads it and does nothing.
+//! - Curve Band (`0x27`): `02144F3C` reads its flag (`param_5[1]`, lines ~69-87): without pierce,
+//!   when the next tile is a wall it picks another direction from the table at `021A98D4`. The
+//!   sim does not model it: the item stops at the wall.
+//! - `0215A054(target, move)` runs after `InitPokemonMove` on both paths (`DAT_02145550` and
+//!   `DAT_02144F24`); a non-zero result skips the target (no roll, no record, the line flies
+//!   on). Not modelled: every monster on the path is a target.
 //! - The arc's target tile comes from the caller (`0219BD04` is not read); without one it is the
 //!   end of the line. An arc hits only the monster on that tile, and a target beyond the range
 //!   is `Unmodelled`. The arc's sub-steps and height (`02017A60`) are cosmetic.
@@ -25,7 +30,9 @@
 //!   are not modelled.
 //! - A thrown item that is not an ids 1 to 8 projectile (a seed, an orb) hits with no effect: the
 //!   use-on-target path of `02146880` is not ported.
-//! - A Bounce Band target (`0x26`) skips the roll and counts as a miss that stops the item.
+//! - A Bounce Band target (`0x26`): in `02144F3C` (a line, no pierce) it reverses the direction
+//!   (`param_4 + 4 & 7`) and the item flies on; only in `02144A54` (the arc) does it skip the
+//!   roll and land. The sim stops the item at the target on both paths: a miss with no roll.
 //! - The monster-house wake-up (`0219037C`), the messages and the face step (`0217ADF8`) beyond
 //!   the direction byte are not modelled.
 
@@ -73,6 +80,8 @@ pub struct ThrowParams {
     /// The s16 at `021AA268` (90 on floor 1): the roll `DungeonRandInt(100)` hits below it.
     pub hit_chance: i32,
     /// The damage of `021467BC` for ids 7 and 8 (the third argument of `02146880`, not traced).
+    // hypothesis: that third argument is `0218F21C(thrower, target)` on both paths (export);
+    // not read yet, so the sim takes one fixed value from the caller.
     pub arc_damage: i32,
     /// The thrower's `info+0xC6`: 0 gives range 10, 1 range 99, 2 range 99 and pierce. The sim
     /// keeps no such byte; a value of 3 or more is read as 0 (the game leaves the locals unset).
@@ -178,6 +187,12 @@ fn range_of(status: u8, pierce_band: bool) -> (bool, i32) {
     (pierce, range)
 }
 
+/// Whether the item lands (`02144F3C`, `iVar17`/`iVar18`): never after leaving the map; after a
+/// pierce line always (hit or not); else only when nothing was hit.
+fn lands(gone: bool, hits: u8, pierce_line: bool) -> bool {
+    !gone && (hits == 0 || pierce_line)
+}
+
 impl Dungeon {
     /// Whether team member `member` holds `id` (`021432E8`: exists, not sticky, same id).
     fn has_held_item(&self, member: usize, id: u8) -> bool {
@@ -224,7 +239,9 @@ impl Dungeon {
         let Some(item) = picked else {
             return ThrowResult::Blocked(Blocked::NoItem);
         };
-        if item.sticky() {
+        // Sticky: refused for the held selector (0x81) or an item of category 0 or 1.
+        let category = self.items.tables.category(item.id);
+        if item.sticky() && (matches!(source, ThrowSource::Held(_)) || category <= CATEGORY_ARC) {
             return ThrowResult::Blocked(Blocked::ItemSticky);
         }
         if matches!(source, ThrowSource::Bag(_)) && !params.species_can_throw(species) {
@@ -233,7 +250,7 @@ impl Dungeon {
         if self.runs_away(thrower) {
             return ThrowResult::RunsAway;
         }
-        let arc = self.items.tables.category(item.id) == CATEGORY_ARC;
+        let arc = category == CATEGORY_ARC;
         if (LINE_FIRST..=LINE_LAST).contains(&item.id)
             && data.moves.get(usize::from(THROW_MOVE)).is_none()
         {
@@ -292,8 +309,14 @@ impl Dungeon {
         match source {
             ThrowSource::Bag(slot) => self.consume_bag_slot(slot),
             ThrowSource::Held(member) => {
+                // A held stack of category 0 or 1 loses one (`pbVar2[1] - 1`).
+                let stack = self.items.tables.category(item.id) <= CATEGORY_ARC && item.qty > 1;
                 if let Some(h) = self.items.held.get_mut(member) {
-                    *h = Item::default();
+                    if stack {
+                        h.qty -= 1;
+                    } else {
+                        *h = Item::default();
+                    }
                 }
             }
         }
@@ -323,19 +346,24 @@ impl Dungeon {
         // Step 5: the path and the monsters on it.
         let from = self.team[thrower].pos;
         let arc = self.items.tables.category(item.id) == CATEGORY_ARC;
-        let (targets, end) = if arc {
+        let (targets, end, gone) = if arc {
             self.arc_path(thrower, from, DIRECTIONS[facing], arc_target, range)
         } else {
             self.line_path(thrower, from, DIRECTIONS[facing], pierce, range)
         };
 
-        let mut defeated = Vec::new();
+        // `02144F3C` draws every hit roll during the walk, then runs the damage of each hit
+        // target in path order.
+        let mut hit = Vec::new();
         for target in targets {
-            if !self.throw_hit(thrower, target, params) {
+            if self.throw_hit(thrower, target, params) {
+                hit.push(target);
+            } else {
                 report.misses += 1;
-                // A miss stops the item at the first monster; with pierce it flies on.
-                continue;
             }
+        }
+        let mut defeated = Vec::new();
+        for target in hit {
             report.hits += 1;
             let (dealt, down) = self.throw_damage(thrower, target, item.id, params, data);
             report.damage += dealt;
@@ -349,8 +377,9 @@ impl Dungeon {
         }
         self.remove_defeated(&defeated);
 
-        // Step 6: an item that hit nothing lands.
-        if report.hits == 0 {
+        // Step 6: the item lands when it hit nothing; a pierce line always ends with a landing,
+        // unless it left the map (the item is gone).
+        if lands(gone, report.hits, pierce && !arc) {
             report.landed = self.land(end, thrown, params);
         }
         if let Some(m) = self.team.get_mut(thrower) {
@@ -383,8 +412,10 @@ impl Dungeon {
         })
     }
 
-    /// `02144F3C`: the monsters on the line in path order, and the tile the projectile ends on.
-    /// It stops before a wall, at the first monster unless `pierce`, and after `range` tiles.
+    /// `02144F3C`: the monsters on the line in path order, the tile the projectile ends on, and
+    /// whether it left the map (x < 0, y < 0, x > 0x37 or y > 0x1F: the item is gone). Without
+    /// `pierce` it stops before a wall and at the first monster; a piercing item flies through
+    /// walls. Both stop after `range` tiles.
     fn line_path(
         &self,
         thrower: usize,
@@ -392,14 +423,17 @@ impl Dungeon {
         direction: Direction,
         pierce: bool,
         range: i32,
-    ) -> (Vec<Slot>, (i16, i16)) {
+    ) -> (Vec<Slot>, (i16, i16), bool) {
         let (dx, dy) = direction.delta();
         let mut targets = Vec::new();
         let mut end = from;
         for n in 1..=range {
             let x = i32::from(from.0) + dx * n;
             let y = i32::from(from.1) + dy * n;
-            if self.blocks_projectile(x, y) {
+            if !(0..=0x37).contains(&x) || !(0..=0x1F).contains(&y) {
+                return (targets, end, pierce);
+            }
+            if !pierce && self.blocks_projectile(x, y) {
                 break;
             }
             let pos = (x as i16, y as i16);
@@ -411,7 +445,7 @@ impl Dungeon {
                 }
             }
         }
-        (targets, end)
+        (targets, end, false)
     }
 
     /// `02144A54`: the arc lands on `target` (the end of the line when the caller gives none) and
@@ -423,12 +457,16 @@ impl Dungeon {
         direction: Direction,
         target: Option<(i16, i16)>,
         range: i32,
-    ) -> (Vec<Slot>, (i16, i16)) {
+    ) -> (Vec<Slot>, (i16, i16), bool) {
         let tile = match target {
             Some(t) => t,
             None => return self.line_path(thrower, from, direction, false, range),
         };
-        (self.monster_at(thrower, tile).into_iter().collect(), tile)
+        (
+            self.monster_at(thrower, tile).into_iter().collect(),
+            tile,
+            false,
+        )
     }
 
     /// `0214498C`: whether the throw hits `target`. A Bounce Band target skips the roll. Else one
@@ -574,6 +612,11 @@ mod tests {
         m.info.is_team_leader = false;
         m.info.not_team_member = true;
         d.wild.push(m);
+    }
+
+    fn foe_at(g: &mut GameState, pos: (i16, i16)) {
+        foe(g, 0);
+        g.dungeon_mut().unwrap().wild.last_mut().unwrap().pos = pos;
     }
 
     fn params(hit_chance: i32) -> ThrowParams {
@@ -839,7 +882,7 @@ mod tests {
                 rng_of(&g),
                 after(
                     start,
-                    &[100, 100, 100, 0x4000, 100, 100, 100, 100, 0x4000, 100]
+                    &[100, 100, 100, 100, 0x4000, 100, 100, 100, 0x4000, 100]
                 )
             );
         }
@@ -849,6 +892,143 @@ mod tests {
         foe(&mut g, 9);
         assert_eq!(run(&mut g, &params(100)).hits, 1);
         assert_eq!(g.dungeon().unwrap().wild[1].info.hp, 100);
+    }
+
+    #[test]
+    fn a_pierce_throw_that_hits_still_lands_at_the_path_end() {
+        let mut g = setup();
+        foe(&mut g, 7);
+        let p = params(100);
+        g.dungeon_mut().unwrap().items.held[0] = Item::new(PIERCE_BAND, 1);
+        let report = run(&mut g, &p);
+        assert_eq!(report.hits, 1);
+        assert_eq!(report.landed, None, "left the map at x = 0x38");
+
+        // A pierce throw down a column that stays on the map lands at the range end after a hit.
+        let mut g = setup();
+        {
+            let d = g.dungeon_mut().unwrap();
+            for y in 5..=30 {
+                d.floor.tile_mut(5, y).unwrap().terrain = TERRAIN_FLOOR;
+            }
+            d.items.held[0] = Item::new(PIERCE_BAND, 1);
+        }
+        foe_at(&mut g, (5, 8));
+        let d = g.dungeon_mut().unwrap();
+        let item = d.items.bag.slots[0];
+        let p = params(100);
+        let report = with_data(|data| {
+            d.run_throw(
+                ThrowSource::Bag(0),
+                0,
+                item,
+                Direction::Down,
+                None,
+                &p,
+                data,
+            )
+        });
+        assert_eq!(report.hits, 1);
+        assert_eq!(report.landed, None, "left the map at y = 0x20");
+    }
+
+    #[test]
+    fn a_pierce_line_lands_after_a_hit_unless_it_left_the_map() {
+        assert!(lands(false, 1, true), "pierce hit, stayed on the map");
+        assert!(!lands(true, 1, true), "left the map");
+        assert!(!lands(true, 0, true));
+        assert!(lands(false, 0, false), "nothing hit");
+        assert!(!lands(false, 1, false), "a single target hit");
+    }
+
+    #[test]
+    fn a_pierce_throw_flies_through_a_wall() {
+        let mut g = setup();
+        g.dungeon_mut()
+            .unwrap()
+            .floor
+            .tile_mut(8, 5)
+            .unwrap()
+            .terrain = 0;
+        foe(&mut g, 12);
+        let mut p = params(100);
+        p.range_status = 2;
+        assert_eq!(run(&mut g, &p).hits, 1, "the wall at 8 does not stop it");
+        // Without pierce the wall stops it and the item lands before the wall.
+        let mut g = setup();
+        g.dungeon_mut()
+            .unwrap()
+            .floor
+            .tile_mut(8, 5)
+            .unwrap()
+            .terrain = 0;
+        foe(&mut g, 12);
+        let report = run(&mut g, &params(100));
+        assert_eq!((report.hits, report.landed), (0, Some((7, 5))));
+    }
+
+    #[test]
+    fn a_held_stack_loses_one_and_a_single_item_clears_the_slot() {
+        let mut g = setup();
+        let p = params(100);
+        g.dungeon_mut().unwrap().items.held[0] = Item::new(1, 3);
+        let thrown = with_data(|data| {
+            g.dungeon_mut().unwrap().throw_item(
+                ThrowSource::Held(0),
+                Direction::Right,
+                None,
+                &p,
+                data,
+            )
+        });
+        assert!(matches!(thrown, ThrowResult::Thrown(_)));
+        assert_eq!(g.dungeon().unwrap().items.held[0], Item::new(1, 2));
+        g.dungeon_mut().unwrap().items.held[0] = Item::new(1, 1);
+        with_data(|data| {
+            g.dungeon_mut().unwrap().throw_item(
+                ThrowSource::Held(0),
+                Direction::Right,
+                None,
+                &p,
+                data,
+            )
+        });
+        assert_eq!(g.dungeon().unwrap().items.held[0], Item::default());
+    }
+
+    #[test]
+    fn a_sticky_item_is_refused_by_selector_or_category_only() {
+        let p = params(100);
+        let go = |g: &mut GameState, source| {
+            with_data(|data| {
+                g.dungeon_mut()
+                    .unwrap()
+                    .throw_item(source, Direction::Right, None, &p, data)
+            })
+        };
+        // A sticky bag item of category 5 is thrown.
+        let mut g = setup();
+        {
+            let d = g.dungeon_mut().unwrap();
+            d.items.tables.categories[1] = 5;
+            d.items.bag.slots[0].flags |= crate::items::FLAG_STICKY;
+        }
+        assert!(matches!(
+            go(&mut g, ThrowSource::Bag(0)),
+            ThrowResult::Thrown(_)
+        ));
+        // The same item held (selector 0x81) is refused.
+        let mut g = setup();
+        {
+            let d = g.dungeon_mut().unwrap();
+            d.items.tables.categories[1] = 5;
+            d.items.held[0] = Item::new(1, 1);
+            d.items.held[0].flags |= crate::items::FLAG_STICKY;
+        }
+        assert_eq!(
+            go(&mut g, ThrowSource::Held(0)),
+            ThrowResult::Blocked(Blocked::ItemSticky)
+        );
     }
 
     #[test]
