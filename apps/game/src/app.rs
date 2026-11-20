@@ -813,15 +813,25 @@ impl App {
         println!("rescue: {}", menu.describe(run, &|id| art.name(id)));
     }
 
+    /// `021803B8`: whether the leader's species may throw (the menu gate of `021693DC`). With no
+    /// ROM the placeholder table lets species 0 throw.
+    fn leader_can_throw(&self) -> bool {
+        self.data.as_ref().map_or_else(
+            || items::placeholder_throw_params().species_can_throw(0),
+            |d| d.throw_params().species_can_throw(self.config.species),
+        )
+    }
+
     /// The open item menu reads this tick's presses; a choice is carried out.
     fn item_menu_tick(&mut self, pressed: ButtonState) {
         let Some(menu) = self.item_menu.take() else {
             return;
         };
+        let can_throw = self.leader_can_throw();
         let Some(run) = self.game.as_ref().and_then(|g| g.dungeon()) else {
             return;
         };
-        let (menu, action) = menu.input(pressed, run, self.facing);
+        let (menu, action) = menu.input(pressed, run, self.facing, can_throw);
         self.item_menu = menu;
         if pressed.held().next().is_some() {
             self.print_item_menu();
@@ -1328,6 +1338,7 @@ mod tests {
     use rescue_platform::DsButton;
     use rescue_sim::floor::{HEIGHT, TERRAIN_STAIRS, WIDTH};
 
+    use crate::item_menu::Entry;
     use crate::walk::TILE_FRAMES;
 
     const RUN: RunConfig = RunConfig {
@@ -1497,12 +1508,28 @@ mod tests {
     /// A run with the leader on `tile`, no wild monsters, `bag` in the first bag slots, the floor
     /// items `floor`, and item categories for the ids the tests use.
     fn with_items(tile: (i16, i16), bag: &[Item], floor: &[((i16, i16), Item)]) -> App {
+        with_team(tile, bag, floor, false)
+    }
+
+    /// As [`with_items`], with a partner beside the leader when `partner` is set.
+    fn with_team(
+        tile: (i16, i16),
+        bag: &[Item],
+        floor: &[((i16, i16), Item)],
+        partner: bool,
+    ) -> App {
         let mut app = App::new(&ready(), None, RUN, true);
         let game = app.game.take().expect("a run is up");
         let mut snap = game.snapshot();
         let mut resume = game.resume();
         let dungeon = snap.dungeon.as_mut().expect("a floor");
         dungeon.team[0].pos = tile;
+        dungeon.team.truncate(1);
+        if partner {
+            let mut mate = dungeon.team[0].clone();
+            mate.pos = (tile.0 + 1, tile.1);
+            dungeon.team.push(mate);
+        }
         dungeon.wild.clear();
         let mut slots = [Item::default(); rescue_sim::items::BAG_SLOTS];
         slots[..bag.len()].copy_from_slice(bag);
@@ -1582,10 +1609,17 @@ mod tests {
 
     #[test]
     fn eating_an_item_uses_it_up_and_closes_the_menu() {
-        let mut app = with_items(corridor(3), &[Item::new(APPLE, 0), Item::new(ROCK, 4)], &[]);
+        let bag = [Item::new(APPLE, 0), Item::new(ROCK, 4)];
+        // A food item (category 3) offers Eat, then Place, Throw, Info: a lone leader has no Give.
+        let mut app = with_items(corridor(3), &bag, &[]);
         open_actions(&mut app);
-        // A food item (category 3) offers Eat, then Give, Place, Throw, Info.
+        assert_eq!(labels(&app), ["Eat", "Place", "Throw", "Info"]);
+        // With a partner Give comes after Eat (021693DC).
+        let mut app = with_team(corridor(3), &bag, &[], true);
+        open_actions(&mut app);
         assert_eq!(labels(&app), ["Eat", "Give", "Place", "Throw", "Info"]);
+        let mut app = with_items(corridor(3), &bag, &[]);
+        open_actions(&mut app);
         tap(&mut app, DsButton::A);
         assert!(app.item_menu().is_none(), "using closes the menu");
         assert_eq!(
@@ -1598,7 +1632,7 @@ mod tests {
 
     #[test]
     fn a_thrown_item_has_no_use_entry_and_info_and_give_keep_the_menu_open() {
-        let mut app = with_items(corridor(3), &[Item::new(ROCK, 4)], &[]);
+        let mut app = with_team(corridor(3), &[Item::new(ROCK, 4)], &[], true);
         open_actions(&mut app);
         assert_eq!(labels(&app), ["Give", "Place", "Throw", "Info"]);
         tap(&mut app, DsButton::A); // Give
@@ -1622,24 +1656,36 @@ mod tests {
     }
 
     #[test]
+    fn a_species_that_cannot_throw_gets_no_throw_entry() {
+        let app = with_items(corridor(3), &[Item::new(ROCK, 4)], &[]);
+        let run = run_of(&app);
+        let item = Item::new(ROCK, 4);
+        assert_eq!(
+            crate::item_menu::entries_for(run, item, true),
+            [Entry::Place, Entry::Throw, Entry::Info]
+        );
+        assert_eq!(
+            crate::item_menu::entries_for(run, item, false),
+            [Entry::Place, Entry::Info]
+        );
+    }
+
+    #[test]
     fn place_puts_the_item_on_the_floor_underfoot() {
         let at = corridor(3);
         let mut app = with_items(at, &[Item::new(APPLE, 0)], &[]);
         open_actions(&mut app);
-        tap(&mut app, DsButton::Down); // Give, then Place
-        tap(&mut app, DsButton::Down);
+        assert_eq!(labels(&app), ["Eat", "Place", "Throw", "Info"]);
+        tap(&mut app, DsButton::Down); // Eat, then Place
         tap(&mut app, DsButton::A);
         assert!(app.item_menu().is_none());
         assert!(bag_ids(&app).is_empty());
         assert_eq!(floor_ids(&app), [(at.0, APPLE)]);
         assert_eq!(last_log(&app), "Placed the Item 82.");
-        // A tile that already holds an item refuses the drop and keeps the item.
+        // A tile that already holds an item has no Place entry (021693DC).
         let mut app = with_items(at, &[Item::new(ROCK, 2)], &[(at, Item::new(APPLE, 0))]);
         open_actions(&mut app);
-        tap(&mut app, DsButton::Down);
-        tap(&mut app, DsButton::A);
-        assert_eq!(bag_ids(&app), [ROCK]);
-        assert_eq!(last_log(&app), "It can't be placed here.");
+        assert_eq!(labels(&app), ["Throw", "Info"]);
     }
 
     #[test]
@@ -1647,7 +1693,7 @@ mod tests {
         let mut app = with_items(corridor(6), &[Item::new(ROCK, 3)], &[]);
         app.tables = Some(Tables::for_tests());
         open_actions(&mut app);
-        for _ in 0..2 {
+        for _ in 0..1 {
             tap(&mut app, DsButton::Down);
         }
         tap(&mut app, DsButton::A); // Throw
@@ -1656,7 +1702,7 @@ mod tests {
         tap(&mut app, DsButton::B);
         assert!(matches!(app.item_menu(), Some(ItemMenu::Actions { .. })));
         assert_eq!(bag_ids(&app), [ROCK]);
-        for _ in 0..2 {
+        for _ in 0..1 {
             tap(&mut app, DsButton::Down);
         }
         tap(&mut app, DsButton::A);
@@ -1676,7 +1722,7 @@ mod tests {
     fn a_throw_without_the_combat_tables_is_refused_and_keeps_the_item() {
         let mut app = with_items(corridor(6), &[Item::new(ROCK, 3)], &[]);
         open_actions(&mut app);
-        for _ in 0..2 {
+        for _ in 0..1 {
             tap(&mut app, DsButton::Down);
         }
         tap(&mut app, DsButton::A);

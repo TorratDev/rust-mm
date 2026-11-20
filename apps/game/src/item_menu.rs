@@ -3,7 +3,8 @@
 //! carries the action out through the sim's item API (`app::item_action`).
 //!
 //! Entries follow `docs/re/items.md` (#465 runtime check: an item's submenu is Give, Place,
-//! Throw, Info; Use or Eat comes first for an item that has a use) and the ground menu of
+//! Throw, Info; Use or Eat comes first for an item that has a use), filtered as Blue's entry
+//! builder `ov_0001::021693DC` does (see [`entries_for`]), and the ground menu of
 //! `gDungeon+0x5B8 == 4` (`docs/re/items.md`, P6: the item sub-menu of the leader's tile).
 // shortcut: no text is drawn on screen yet (as for the move menu), so the labels are for the log
 // and the tests. The labels are English placeholders: the ROM's strings are not read.
@@ -125,14 +126,33 @@ pub fn rows(run: &Dungeon) -> Vec<u8> {
 /// The submenu of `item`: Use or Eat first for an item with a use, then Give, Place, Throw, Info.
 /// Categories (`docs/re/items.md`, P1): 2 and 3 are eaten (berry, seed, vitamin; food, gummi);
 /// 0, 1 (thrown) and 4 (held) have no use; the rest (TM, orb, link box, other) are used.
-pub fn entries_for(run: &Dungeon, item: Item) -> Vec<Entry> {
+///
+/// The builder `ov_0001::021693DC` drops entries: Give (0x36) when no team member other than the
+/// leader can take it, Place (action 8) when the leader's tile already holds an object, and the
+/// throw actions when `021803B8` says the leader's species cannot throw (`can_throw`).
+// hypothesis: where the tile holds an item the builder adds 0x3A, probably a swap; it is not
+// offered here (the ground menu's Swap covers it).
+pub fn entries_for(run: &Dungeon, item: Item, can_throw: bool) -> Vec<Entry> {
     let mut entries = Vec::new();
     match run.item_tables().category(item.id) {
         2 | 3 => entries.push(Entry::Eat),
         0 | 1 | 4 => {}
         _ => entries.push(Entry::Use),
     }
-    entries.extend([Entry::Give, Entry::Place, Entry::Throw, Entry::Info]);
+    if run.team().len() > 1 {
+        entries.push(Entry::Give);
+    }
+    let occupied = run
+        .team()
+        .first()
+        .is_some_and(|l| run.floor_item_at(l.pos).is_some());
+    if !occupied {
+        entries.push(Entry::Place);
+    }
+    if can_throw {
+        entries.push(Entry::Throw);
+    }
+    entries.push(Entry::Info);
     entries
 }
 
@@ -243,6 +263,7 @@ impl ItemMenu {
         pressed: ButtonState,
         run: &Dungeon,
         facing: Direction,
+        can_throw: bool,
     ) -> (Option<ItemMenu>, Option<Action>) {
         let a = pressed.is_held(DsButton::A);
         let b = pressed.is_held(DsButton::B);
@@ -261,7 +282,7 @@ impl ItemMenu {
                     ListFor::Swap => (Some(ItemMenu::Confirm { slot, yes: false }), None),
                     ListFor::Browse => {
                         let item = run.bag().slots[usize::from(slot)];
-                        let entries = entries_for(run, item);
+                        let entries = entries_for(run, item, can_throw);
                         (
                             Some(ItemMenu::Actions {
                                 slot,
@@ -326,7 +347,7 @@ impl ItemMenu {
                                 .bag()
                                 .slots
                                 .get(usize::from(slot))
-                                .map(|&i| entries_for(run, i))
+                                .map(|&i| entries_for(run, i, can_throw))
                                 .unwrap_or_default(),
                         }),
                         None,
