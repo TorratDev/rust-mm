@@ -13,22 +13,24 @@
 //!
 //! # Shortcuts
 //!
-//! - Placement: the scan order of `02198824` is not recorded, so tiles go row by row (y, then x).
-//!   The id roll is `DungeonRandInt(0x2710)` against cumulative weights (`roll <= weight`,
-//!   zero weights skipped, fallback `0x10`), the item picker's form: the bound is assumed, the
-//!   note records only "cumulative weights" and the fallback. With no weights given
-//!   ([`TrapTables::weights`] empty) no trap is placed and nothing is drawn, so floors that were
-//!   built without trap tables keep their draws. The weight table (`mapparam` trap list) is
-//!   taken from the caller; the cap on trap entities is not modelled.
+//! - Placement: `02198824` scans x from 0 to 0x37 (inner loop) and y from 0 to 0x1F (outer
+//!   loop), which is the row-by-row order used here. The id roll is
+//!   `DungeonRandInt(0x2710)` against cumulative weights (`roll <= weight`, zero weights
+//!   skipped, fallback `0x10`), the item picker's form: the bound is assumed
+//!   (`DAT_ov_0001__02138cc0` was not read). With no weights given ([`TrapTables::weights`]
+//!   empty) no trap is placed and nothing is drawn, so floors that were built without trap
+//!   tables keep their draws. The weight table (`mapparam` trap list) is taken from the caller;
+//!   the cap on trap entities is not modelled.
 //! - Not placed: fixed-room traps (`02152FAC`), traps laid by a move (`0215FEEC`) and
 //!   `021983F8` reuse. Floor entry is the only writer.
 //! - The see-traps effect (`021805B0(e, 0x13)`, which reveals a trap instead of firing) is not
 //!   modelled: nobody has it. A trap is seen only when it fires or is wonder tile.
-//! - The avoid roll: `DungeonRandInt(100) < 15` avoids an unseen trap for a wild monster
-//!   (`gDungeon+0x15FA7` is taken as 0, id `0x11` skips it). The note says "monster target"
-//!   and "not the leader's team"; this reads it as wild monsters. A team member avoids with the
-//!   Trap Scarf (held item `0x1C`) and draws nothing. The order of the scarf test against the
-//!   roll is not recorded; they never both apply.
+//! - The avoid roll (`02197D88`): for any monster target (leader, partner, wild) and id other
+//!   than `0x11`, one `DungeonRandInt(100)` is drawn (the caller flag `a4` is 1 on every path).
+//!   It comes before the Trap Scarf test (held item `0x1C`), and the scarf avoids for any
+//!   monster. A roll under 15 avoids only when the old seen flag was clear
+//!   (`gDungeon+0x15FA7` is taken as 0). The seen flag is set before the test, so an avoided
+//!   trap is seen.
 //! - `0217BB20` (`info+8`) and the post-effect `02183BB4` are not read, so not run. The sprung
 //!   message is not modelled.
 //! - A team member that a leader swap moves onto a tile does not spring a trap there.
@@ -75,10 +77,10 @@ pub mod id {
     pub const WARP: u8 = 6;
     pub const SEAL: u8 = 0xB;
     pub const PP: u8 = 0xF;
-    /// Damage trap (Red's chestnut).
+    /// Damage trap (Red's chestnut) [red-hypothesis].
     pub const DAMAGE: u8 = 0x10;
     pub const WONDER: u8 = 0x11;
-    /// Spike trap.
+    /// Spike trap [red-hypothesis].
     pub const SPIKE: u8 = 0x13;
 }
 
@@ -89,7 +91,7 @@ pub mod by {
     pub const WILD: u8 = 2;
 }
 
-/// The held item that always avoids a trap (Trap Scarf).
+/// The held item that always avoids a trap (Trap Scarf [red-hypothesis]).
 pub const TRAP_SCARF: u8 = 0x1C;
 /// The avoid roll's bound and threshold (`02197D88`).
 const AVOID_BOUND: i32 = 100;
@@ -213,27 +215,27 @@ impl Dungeon {
         if !springs_on(slot, trap.by, trap.seen) {
             return None;
         }
-        // The avoid test comes before the seen flag is set, as the roll only counts while it is
-        // clear.
+        // `02197D88` saves the old seen flag, sets it, then tests the avoid: an avoided trap is
+        // seen afterwards. The roll is drawn for every monster, before the scarf test.
+        self.traps.list[index].seen = true;
         if trap.id != id::WONDER {
-            let avoided = match slot {
-                Slot::Wild(_) => {
-                    let roll = self.rng.int(AVOID_BOUND);
-                    roll < AVOID_UNDER && !trap.seen
-                }
-                Slot::Team(i) => self
-                    .items
-                    .held
-                    .get(i)
-                    .is_some_and(|h| h.exists() && h.id == TRAP_SCARF),
-            };
-            if avoided {
+            let roll = self.rng.int(AVOID_BOUND);
+            let scarf = self.held_item_id(slot).is_some_and(|h| h == TRAP_SCARF);
+            if scarf || (roll < AVOID_UNDER && !trap.seen) {
                 return None;
             }
         }
-        self.traps.list[index].seen = true;
         self.trap_effect(trap.id, slot);
         Some(trap.id)
+    }
+
+    /// The id of the item a monster holds, if any: the team's held slots; wild monsters hold
+    /// none here.
+    fn held_item_id(&self, slot: Slot) -> Option<u8> {
+        match slot {
+            Slot::Team(i) => self.items.held.get(i).filter(|h| h.exists()).map(|h| h.id),
+            Slot::Wild(_) => None,
+        }
     }
 
     /// The switch of `02197D88`.
@@ -354,7 +356,23 @@ mod tests {
         d.team.push(ally);
         d.team[0].pos = (5, 5);
         d.wild[0].pos = (9, 9);
+        // The first avoid roll is 50 or more, so a trap fires unless a test says otherwise.
+        d.rng = DungeonRng::new(quiet_seed());
         g
+    }
+
+    /// A seed whose first `DungeonRandInt(100)` is not under the avoid threshold.
+    fn quiet_seed() -> u32 {
+        (0..10_000)
+            .find(|&s| DungeonRng::new(s).int(100) >= AVOID_UNDER)
+            .unwrap()
+    }
+
+    /// `rng` after the avoid roll, as a model of the draws that follow it.
+    fn after_roll(rng: DungeonRng) -> DungeonRng {
+        let mut m = rng;
+        m.int(AVOID_BOUND);
+        m
     }
 
     fn lay(g: &mut GameState, id: u8, pos: (i16, i16), by: u8, seen: bool) {
@@ -519,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn the_leader_springs_an_unseen_natural_trap_and_sets_it_seen_with_no_draw() {
+    fn the_leader_springs_an_unseen_natural_trap_and_sets_it_seen_with_one_draw() {
         let mut g = setup();
         lay(&mut g, id::DAMAGE, (5, 5), by::NATURAL, false);
         d(&mut g).traps.tables.damage = 7;
@@ -527,7 +545,7 @@ mod tests {
         let n = counted(&mut g, |dd| {
             assert_eq!(dd.step_on_trap(Slot::Team(0)), Some(id::DAMAGE));
         });
-        assert_eq!(n, 0);
+        assert_eq!(n, 1, "the avoid roll");
         assert_eq!(d(&mut g).team[0].info.hp, hp - 7);
         assert!(d(&mut g).trap_at((5, 5)).unwrap().seen);
     }
@@ -559,6 +577,7 @@ mod tests {
     #[test]
     fn a_wild_monster_springs_a_team_trap_after_one_avoid_roll() {
         let mut g = setup();
+        d(&mut g).rng = DungeonRng::new(7);
         lay(&mut g, id::SPIKE, (9, 9), by::TEAM, false);
         d(&mut g).traps.tables.spike_damage = 10;
         let mut model = d(&mut g).rng;
@@ -571,8 +590,8 @@ mod tests {
         if roll < AVOID_UNDER {
             assert_eq!(d(&mut g).wild[0].info.hp, hp);
             assert!(
-                !d(&mut g).trap_at((9, 9)).unwrap().seen,
-                "an avoided trap stays unseen"
+                d(&mut g).trap_at((9, 9)).unwrap().seen,
+                "an avoided trap is seen too"
             );
         } else {
             assert_eq!(d(&mut g).wild[0].info.hp, hp - 10);
@@ -580,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn the_avoid_roll_only_counts_for_an_unseen_trap() {
+    fn the_avoid_roll_is_drawn_for_a_seen_trap_but_only_counts_for_an_unseen_one() {
         // Find a seed whose first roll is under 15, then check seen and unseen traps.
         let seed = (0..10_000)
             .find(|&s| DungeonRng::new(s).int(100) < AVOID_UNDER)
@@ -593,6 +612,10 @@ mod tests {
             let hp = d(&mut g).wild[0].info.hp;
             let fired = d(&mut g).step_on_trap(Slot::Wild(0));
             assert_eq!(fired.is_some(), hurt);
+            assert_eq!(
+                d(&mut g).rng.state(),
+                after_roll(DungeonRng::new(seed)).state()
+            );
             assert_eq!(d(&mut g).wild[0].info.hp < hp, hurt);
         }
     }
@@ -612,15 +635,15 @@ mod tests {
     }
 
     #[test]
-    fn a_trap_scarf_avoids_for_a_team_member_with_no_draw() {
+    fn a_trap_scarf_avoids_after_the_avoid_roll_is_drawn() {
         let mut g = setup();
         d(&mut g).items.held[0] = Item::new(TRAP_SCARF, 1);
         lay(&mut g, id::DAMAGE, (5, 5), by::NATURAL, false);
         d(&mut g).traps.tables.damage = 7;
-        let state = d(&mut g).rng.state();
+        let model = after_roll(d(&mut g).rng);
         assert_eq!(d(&mut g).step_on_trap(Slot::Team(0)), None);
-        assert_eq!(d(&mut g).rng.state(), state);
-        assert!(!d(&mut g).trap_at((5, 5)).unwrap().seen);
+        assert_eq!(d(&mut g).rng.state(), model.state(), "the roll comes first");
+        assert!(d(&mut g).trap_at((5, 5)).unwrap().seen);
         let l = &d(&mut g).team[0].info;
         assert_eq!(l.hp, l.max_hp);
     }
@@ -643,12 +666,12 @@ mod tests {
         d(&mut g).items.bag.slots[2] = Item::new(3, 1);
         lay(&mut g, id::STICKY, (5, 5), by::NATURAL, false);
         // Two candidates (slots 0 and 2).
-        let mut model = d(&mut g).rng;
+        let mut model = after_roll(d(&mut g).rng);
         let pick = model.int(2);
         let n = counted(&mut g, |dd| {
             dd.step_on_trap(Slot::Team(0));
         });
-        assert_eq!(n, 1);
+        assert_eq!(n, 2, "avoid roll and the pick");
         let slots = d(&mut g).items.bag.slots;
         let target = if pick == 0 { 0 } else { 2 };
         assert!(slots[target].sticky());
@@ -664,7 +687,7 @@ mod tests {
         let n = counted(&mut g, |dd| {
             dd.step_on_trap(Slot::Team(0));
         });
-        assert_eq!(n, 0);
+        assert_eq!(n, 1, "the avoid roll only");
     }
 
     fn moves_of(d: &mut Dungeon, n: usize, pp: u8) {
@@ -692,7 +715,8 @@ mod tests {
             let n = counted(&mut g, |dd| {
                 dd.step_on_trap(Slot::Team(0));
             });
-            assert_eq!(n, 1);
+            // The first firing draws the roll, the later ones too (seen traps still roll).
+            assert_eq!(n, 2);
             let sealed = d(&mut g).team[0]
                 .info
                 .moves
@@ -701,11 +725,11 @@ mod tests {
                 .count();
             assert_eq!(sealed, expected);
         }
-        // All sealed: no candidate, no draw.
+        // All sealed: no candidate, only the avoid roll.
         let n = counted(&mut g, |dd| {
             dd.step_on_trap(Slot::Team(0));
         });
-        assert_eq!(n, 0);
+        assert_eq!(n, 1);
     }
 
     #[test]
@@ -714,7 +738,7 @@ mod tests {
         moves_of(d(&mut g), 4, 5);
         d(&mut g).team[0].info.moves[0].flags2 = MOVE_SEALED;
         lay(&mut g, id::SEAL, (5, 5), by::NATURAL, false);
-        let mut model = d(&mut g).rng;
+        let mut model = after_roll(d(&mut g).rng);
         let pick = usize::try_from(model.int(3)).unwrap();
         d(&mut g).step_on_trap(Slot::Team(0));
         let sealed: Vec<usize> = (0..4)
@@ -729,26 +753,26 @@ mod tests {
         moves_of(d(&mut g), 3, 5);
         d(&mut g).team[0].info.moves[0].pp = 0;
         lay(&mut g, id::PP, (5, 5), by::NATURAL, false);
-        let mut model = d(&mut g).rng;
+        let mut model = after_roll(d(&mut g).rng);
         let pick = usize::try_from(model.int(2)).unwrap();
         let n = counted(&mut g, |dd| {
             dd.step_on_trap(Slot::Team(0));
         });
-        assert_eq!(n, 1);
+        assert_eq!(n, 2, "avoid roll and the pick");
         let pp: Vec<u8> = d(&mut g).team[0].info.moves.iter().map(|m| m.pp).collect();
         let mut want = [0, 5, 5, 0];
         want[1 + pick] = 0;
         assert_eq!(pp, want);
-        // The other trap cases: no move with PP left draws nothing.
+        // No move with PP left: only the avoid roll.
         d(&mut g).step_on_trap(Slot::Team(0));
         let n = counted(&mut g, |dd| {
             dd.step_on_trap(Slot::Team(0));
         });
-        assert_eq!(n, 0);
+        assert_eq!(n, 1);
     }
 
     #[test]
-    fn the_damage_and_spike_traps_use_their_own_numbers_and_draw_nothing() {
+    fn the_damage_and_spike_traps_use_their_own_numbers_and_draw_only_the_roll() {
         for (trap, damage, spike) in [(id::DAMAGE, 9, 2), (id::SPIKE, 2, 9)] {
             let mut g = setup();
             d(&mut g).traps.tables.damage = damage;
@@ -758,7 +782,7 @@ mod tests {
             let n = counted(&mut g, |dd| {
                 dd.step_on_trap(Slot::Team(0));
             });
-            assert_eq!(n, 0);
+            assert_eq!(n, 1);
             assert_eq!(d(&mut g).team[0].info.hp, hp - 9);
         }
     }
@@ -785,7 +809,7 @@ mod tests {
             let n = counted(&mut g, |dd| {
                 assert_eq!(dd.step_on_trap(Slot::Team(0)), Some(trap));
             });
-            assert_eq!(n, 0, "id {trap:#x}");
+            assert_eq!(n, u32::from(trap != id::WONDER), "id {trap:#x}");
             assert_eq!(d(&mut g).team[0], before, "id {trap:#x}");
             assert_eq!(d(&mut g).items.bag, bag);
             assert!(d(&mut g).trap_at((5, 5)).unwrap().seen);
