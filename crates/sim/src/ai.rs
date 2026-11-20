@@ -494,6 +494,7 @@ impl Dungeon {
             let m = &mut self.team[i];
             m.pos = step(m.pos, dir);
             m.info.direction = dir as u8;
+            self.step_on_trap(Slot::Team(i));
         }
         if !skip && let Some(t) = self.ai.team.get_mut(i) {
             t.pending_move = true;
@@ -695,6 +696,7 @@ impl Dungeon {
             // The map is at most 56 by 32, so the step stays in `i16`.
             m.pos = (m.pos.0 + dx as i16, m.pos.1 + dy as i16);
             m.info.direction = dir as u8;
+            self.step_on_trap(Slot::Wild(i));
         }
         if !skip {
             let at = self.wild[i].pos;

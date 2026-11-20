@@ -561,9 +561,17 @@ impl Dungeon {
     /// `02143918`: the item goes to the end tile when it takes one, else to the first ring tile
     /// that does. A tile takes it when its terrain type is not 0, it is not the stairs, and it
     /// holds no item. No draw. With no tile, or no free floor slot, the item is gone.
-    // shortcut: the trap branch (`02142ADC == 2` consumes the item) is not modelled: the sim has
-    // no traps.
+    ///
+    /// A trap on the end tile is marked seen (`02198254(pos, 1)`), and the item is gone when its
+    /// byte 0 bit 0 ([`FLAG_EXISTS`]) is clear; otherwise the search goes on. A tile that holds
+    /// a trap is no candidate (tile `+0x10` is not 0).
     fn land(&mut self, end: (i16, i16), item: Item, params: &ThrowParams) -> Option<(i16, i16)> {
+        if let Some(trap) = self.traps.list.iter_mut().find(|t| t.pos == end) {
+            trap.seen = true;
+            if item.flags & crate::items::FLAG_EXISTS == 0 {
+                return None;
+            }
+        }
         let ring = params
             .landing_ring
             .iter()
@@ -575,6 +583,7 @@ impl Dungeon {
                     t.terrain & TERRAIN_TYPE_MASK != 0 && t.terrain & TERRAIN_STAIRS == 0
                 })
                 && self.items.slot_at(pos).is_none()
+                && self.trap_at(pos).is_none()
         })?;
         self.items.spawn(tile, item).map(|_| tile)
     }
@@ -727,6 +736,68 @@ mod tests {
         assert_eq!(report.landed, Some((7, 5)));
         let d = g.dungeon().unwrap();
         assert_eq!(d.floor_item_at((7, 5)), Some(Item::new(1, 1)));
+    }
+
+    #[test]
+    fn an_item_whose_end_tile_has_a_trap_marks_it_seen_and_lands_on_the_ring() {
+        let mut g = setup();
+        foe(&mut g, 7);
+        let d = g.dungeon_mut().unwrap();
+        d.traps.list.push(crate::traps::Trap {
+            id: 0x13,
+            pos: (7, 5),
+            by: 0,
+            seen: false,
+        });
+        let start = rng_of(&g);
+        let roll = { start }.int(100);
+        let report = run(&mut g, &params(roll));
+        assert_eq!((report.hits, report.misses), (0, 1));
+        let d = g.dungeon().unwrap();
+        let landed = report
+            .landed
+            .expect("the item has bit 0 set and goes on to the ring");
+        assert_ne!(landed, (7, 5));
+        assert_eq!(d.floor_item_at(landed), Some(Item::new(1, 1)));
+        assert_eq!(d.floor_item_at((7, 5)), None);
+        // One draw (the hit test); the trap did not spring, and it is seen now.
+        assert_eq!(rng_of(&g), after(start, &[100]));
+        assert!(d.traps()[0].seen);
+    }
+
+    #[test]
+    fn a_trap_on_a_ring_tile_is_skipped_not_consumed() {
+        let mut g = setup();
+        foe(&mut g, 7);
+        let d = g.dungeon_mut().unwrap();
+        // The end tile and every ring tile but one are blocked by traps or walls: make the
+        // ring's first floor tile a trap and check the item lands elsewhere, trap unseen.
+        for (x, y) in [(7, 5)].into_iter().chain(
+            ThrowParams::neighbour_ring()
+                .iter()
+                .map(|&(dx, dy)| (7 + i16::from(dx), 5 + i16::from(dy))),
+        ) {
+            if let Some(t) = d.floor.tile_mut(i32::from(x), i32::from(y)) {
+                t.terrain = TERRAIN_FLOOR;
+            }
+        }
+        let ring = ThrowParams::neighbour_ring();
+        let first = (7 + i16::from(ring[0].0), 5 + i16::from(ring[0].1));
+        for pos in [(7, 5), first] {
+            d.traps.list.push(crate::traps::Trap {
+                id: 0x13,
+                pos,
+                by: 0,
+                seen: false,
+            });
+        }
+        let roll = { rng_of(&g) }.int(100);
+        let report = run(&mut g, &params(roll));
+        let landed = report.landed.expect("a later ring tile takes it");
+        assert!(landed != (7, 5) && landed != first);
+        let d = g.dungeon().unwrap();
+        assert!(d.traps()[0].seen, "end tile trap seen");
+        assert!(!d.traps()[1].seen, "ring tile trap untouched");
     }
 
     #[test]
