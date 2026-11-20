@@ -561,8 +561,8 @@ impl Dungeon {
     /// `02143918`: the item goes to the end tile when it takes one, else to the first ring tile
     /// that does. A tile takes it when its terrain type is not 0, it is not the stairs, and it
     /// holds no item. No draw. With no tile, or no free floor slot, the item is gone.
-    // shortcut: the trap branch (`02142ADC == 2` consumes the item) is not modelled: the sim has
-    // no traps.
+    ///
+    /// A trap on the chosen tile consumes the item (`02142ADC == 2`): it lands nowhere.
     fn land(&mut self, end: (i16, i16), item: Item, params: &ThrowParams) -> Option<(i16, i16)> {
         let ring = params
             .landing_ring
@@ -576,6 +576,9 @@ impl Dungeon {
                 })
                 && self.items.slot_at(pos).is_none()
         })?;
+        if self.trap_at(tile).is_some() {
+            return None;
+        }
         self.items.spawn(tile, item).map(|_| tile)
     }
 }
@@ -727,6 +730,30 @@ mod tests {
         assert_eq!(report.landed, Some((7, 5)));
         let d = g.dungeon().unwrap();
         assert_eq!(d.floor_item_at((7, 5)), Some(Item::new(1, 1)));
+    }
+
+    #[test]
+    fn an_item_landing_on_a_trap_is_consumed_and_the_trap_stays_unsprung() {
+        let mut g = setup();
+        foe(&mut g, 7);
+        let d = g.dungeon_mut().unwrap();
+        d.traps.list.push(crate::traps::Trap {
+            id: 0x13,
+            pos: (7, 5),
+            by: 0,
+            seen: false,
+        });
+        let start = rng_of(&g);
+        let roll = { start }.int(100);
+        let report = run(&mut g, &params(roll));
+        assert_eq!((report.hits, report.misses), (0, 1));
+        assert_eq!(report.landed, None, "02142ADC == 2 consumes the item");
+        let d = g.dungeon().unwrap();
+        assert_eq!(d.floor_item_at((7, 5)), None);
+        assert_eq!(d.items.floor.iter().flatten().count(), 0);
+        // One draw (the hit test); the trap did not spring and the monster was not hurt.
+        assert_eq!(rng_of(&g), after(start, &[100]));
+        assert!(!d.traps()[0].seen);
     }
 
     #[test]
