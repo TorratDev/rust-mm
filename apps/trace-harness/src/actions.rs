@@ -8,6 +8,7 @@
 use std::fmt;
 
 use rescue_sim::command::{Command, Direction};
+use rescue_sim::items::SwapSource;
 use rescue_trace::Action;
 
 /// Id 1: pass a turn in place.
@@ -16,10 +17,19 @@ const ID_WAIT: u16 = 0x01;
 const ID_WALK: u16 = 0x02;
 /// Id 0xB: use the inventory item at slot `param - 1`.
 const ID_USE_ITEM: u16 = 0x0B;
+/// Id 8: drop the inventory item at slot `param - 1` (selector `1..=20`, `02173CCC`).
+const ID_DROP: u16 = 0x08;
 /// Id 0x14: use move slot `slot` in `direction`.
 const ID_USE_MOVE: u16 = 0x14;
 /// Id 0x32: attack in `direction`.
 const ID_ATTACK: u16 = 0x32;
+/// Id 0x0A: swap the floor item underfoot (`param`, which must be [`SWAP_FLOOR`]) with the
+/// source in `slot`: a bag selector `1..=20`, or [`SWAP_HELD`] (`02173A48`).
+const ID_SWAP: u16 = 0x0A;
+/// The selector of the floor item underfoot, the swap's record 0 (`param`).
+const SWAP_FLOOR: u8 = 0x80;
+/// The selector of the held item, a swap's source (`slot`).
+const SWAP_HELD: u8 = 0x81;
 
 /// Ids the game writes that have no command here, with the reason. Each one is from the
 /// findings in #333 (`ov_0001` decompiles).
@@ -78,6 +88,10 @@ pub enum ActionError {
     ItemSlot(u8),
     /// Id 0x14 with a slot above [`MOVE_SLOTS`] - 1.
     MoveSlot(u8),
+    /// Id 0x0A with a `param` other than [`SWAP_FLOOR`] (the floor item underfoot).
+    SwapFloor(u8),
+    /// Id 0x0A with a source `slot` that is neither a bag selector (`1..=20`) nor [`SWAP_HELD`].
+    SwapSource(u8),
 }
 
 impl fmt::Display for ActionError {
@@ -94,6 +108,14 @@ impl fmt::Display for ActionError {
                 "use-item action param {p} is not a slot of 1 to {INVENTORY_SLOTS}"
             ),
             Self::MoveSlot(s) => write!(f, "use-move action slot {s} is above {}", MOVE_SLOTS - 1),
+            Self::SwapFloor(p) => write!(
+                f,
+                "swap action param {p:#x} is not the floor item {SWAP_FLOOR:#x}"
+            ),
+            Self::SwapSource(s) => write!(
+                f,
+                "swap action source {s:#x} is not a bag slot of 1 to {INVENTORY_SLOTS} or the held item {SWAP_HELD:#x}"
+            ),
         }
     }
 }
@@ -125,6 +147,22 @@ pub fn command_for(action: &Action) -> Result<Command, ActionError> {
             })
         }
         ID_ATTACK => Ok(Command::Attack(direction(action.direction)?)),
+        ID_DROP => match action.param {
+            1..=INVENTORY_SLOTS => Ok(Command::Drop {
+                slot: action.param - 1,
+            }),
+            other => Err(ActionError::ItemSlot(other)),
+        },
+        ID_SWAP => {
+            if action.param != SWAP_FLOOR {
+                return Err(ActionError::SwapFloor(action.param));
+            }
+            match action.slot {
+                1..=INVENTORY_SLOTS => Ok(Command::Swap(SwapSource::Bag(action.slot - 1))),
+                SWAP_HELD => Ok(Command::Swap(SwapSource::Held)),
+                other => Err(ActionError::SwapSource(other)),
+            }
+        }
         id => match NO_COMMAND.iter().find(|(known, _)| *known == id) {
             Some((_, reason)) => Err(ActionError::NoCommand { id, reason }),
             None => Err(ActionError::UnknownId(id)),
@@ -141,6 +179,8 @@ pub const fn command_name(command: &Command) -> &'static str {
         Command::Attack(_) => "Attack",
         Command::UseMove { .. } => "UseMove",
         Command::UseItem { .. } => "UseItem",
+        Command::Drop { .. } => "Drop",
+        Command::Swap(_) => "Swap",
         Command::Wait => "Wait",
         Command::Menu(_) => "Menu",
     }
@@ -247,8 +287,52 @@ mod tests {
     }
 
     #[test]
+    fn drop_and_swap_map_to_their_commands() {
+        assert_eq!(
+            command_for(&action(0x08, 0, 3, 0)),
+            Ok(Command::Drop { slot: 2 })
+        );
+        // The floor selector 0x80 as the param, the source in the slot: a bag slot, or the held
+        // item.
+        assert_eq!(
+            command_for(&action(0x0A, 0, 0x80, 1)),
+            Ok(Command::Swap(SwapSource::Bag(0)))
+        );
+        assert_eq!(
+            command_for(&action(0x0A, 0, 0x80, 0x81)),
+            Ok(Command::Swap(SwapSource::Held))
+        );
+    }
+
+    #[test]
+    fn bad_drop_and_swap_fields_are_errors() {
+        assert_eq!(
+            command_for(&action(0x08, 0, 0, 0)),
+            Err(ActionError::ItemSlot(0))
+        );
+        assert_eq!(
+            command_for(&action(0x08, 0, 0x80, 0)),
+            Err(ActionError::ItemSlot(0x80))
+        );
+        assert_eq!(
+            command_for(&action(0x0A, 0, 1, 1)),
+            Err(ActionError::SwapFloor(1))
+        );
+        assert_eq!(
+            command_for(&action(0x0A, 0, 0x80, 0)),
+            Err(ActionError::SwapSource(0))
+        );
+        assert_eq!(
+            command_for(&action(0x0A, 0, 0x80, 21)),
+            Err(ActionError::SwapSource(21))
+        );
+    }
+
+    #[test]
     fn command_names_match_the_variants() {
         assert_eq!(command_name(&Command::Wait), "Wait");
         assert_eq!(command_name(&Command::Attack(Direction::Up)), "Attack");
+        assert_eq!(command_name(&Command::Drop { slot: 0 }), "Drop");
+        assert_eq!(command_name(&Command::Swap(SwapSource::Held)), "Swap");
     }
 }

@@ -62,6 +62,8 @@ Reconciled with investigator b, who did not find a `numItems` reader: investigat
 
 Not verified: other limits in other modes. The gate `02180B68`, `+0x64C` and the money table are settled in the next section.
 
+**Command mapping (#559).** The sim's `Command::Drop { slot }` is `02173CCC` and `Command::Swap(SwapSource)` is `02173A48`, both through `GameState::step`. The trace actions are in [`golden-traces.md`](../golden-traces.md#item-actions-559): id 8 takes the bag selector in `param`, id 0x0A takes `0x80` in `param` and the source (bag selector or `0x81`) in `slot`. The selectors are the ones read above; the mapping is not yet checked against a retail capture.
+
 ### Bag and floor-slot runtime check (#465)
 
 Runtime on the retail dump (py-desmume, new game, floor 1 = Tiny Woods B1F; two investigator runs; probe [`items_bag_probe.py`](../../verification/v7-trace/items_bag_probe.py), see [`verification.md`](../verification.md)). All [blue-verified].

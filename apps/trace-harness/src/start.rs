@@ -9,6 +9,7 @@ use std::fmt;
 
 use rescue_sim::floor::{Floor, HEIGHT, Tile, WIDTH};
 use rescue_sim::floor_gen::FloorProperties;
+use rescue_sim::items::ItemsSnapshot;
 use rescue_sim::rng::DungeonPreseed;
 use rescue_sim::state::{
     DungeonSnapshot, EntityInfo, FloorSnapshot, GameState, MAX_RESTORED_FLOORS, Monster, MoveSlot,
@@ -176,6 +177,7 @@ pub fn state_from_row(
             stairs_spawn: None,
             stairs_pending: false,
             darkness: 0,
+            items: ItemsSnapshot::default(),
         }),
     };
     GameState::restore(&snapshot).map_err(RowError::State)
@@ -290,6 +292,7 @@ mod tests {
             tiles_sha256: "0123456789abcdef".to_owned(),
             frame: 99,
             actions: Vec::new(),
+            items: None,
         }
     }
 

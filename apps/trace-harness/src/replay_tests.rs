@@ -2,7 +2,12 @@
 //! step is refused; the tests use that to check what a refused step does to the replay.
 
 use super::*;
+use rescue_sim::command::Command;
+use rescue_sim::command::Direction;
+use rescue_sim::floor::TERRAIN_FLOOR;
+use rescue_sim::items::{FloorItem, ItemsSnapshot, POKE, SwapSource};
 use rescue_sim::rng::{DungeonPreseed, DungeonRng};
+use rescue_sim::state::Snapshot;
 use rescue_trace::Action;
 
 const RUN_SEED: u32 = 0x00FF_80BA;
@@ -70,6 +75,7 @@ fn row(x: i16, frame: u64, actions: Vec<Action>) -> TurnRow {
         tiles_sha256: "0123456789abcdef".to_owned(),
         frame,
         actions,
+        items: None,
     }
 }
 
@@ -235,5 +241,179 @@ fn an_unmapped_action_is_a_typed_error_with_its_position() {
             assert!(matches!(source, ActionError::NoCommand { id: 0x13, .. }));
         }
         other => panic!("expected an action error, got {other:?}"),
+    }
+}
+
+/// The leader's action record of one command (ids as the game writes them, see
+/// `docs/golden-traces.md`): a step right, a drop of bag slot `param - 1`, a swap of the floor
+/// item underfoot (`param` 0x80) with the source in `slot`.
+fn step_right() -> Action {
+    action(2, 2, 1, 0)
+}
+
+fn drop_slot(slot: u8) -> Action {
+    action(0x08, 0, slot + 1, 0)
+}
+
+fn swap_with(source: u8) -> Action {
+    action(0x0A, 0, 0x80, source)
+}
+
+fn item_row(item: Item) -> Option<ItemRow> {
+    item.exists().then_some(ItemRow {
+        flags: item.flags,
+        qty: item.qty,
+        id: item.id,
+    })
+}
+
+/// The item state of a snapshot, as a trace row carries it.
+fn items_row(items: &ItemsSnapshot) -> ItemsRow {
+    ItemsRow {
+        money: items.bag.money,
+        bag: items.bag.slots.iter().map(|&i| item_row(i)).collect(),
+        held: items.held.iter().map(|&i| item_row(i)).collect(),
+        floor: items
+            .floor
+            .iter()
+            .map(|f| {
+                f.map(|f| FloorItemRow {
+                    x: f.pos.0,
+                    y: f.pos.1,
+                    item: item_row(f.item).expect("a floor item exists"),
+                })
+            })
+            .collect(),
+        num_items: items.num_items,
+    }
+}
+
+/// The row the game would write before `action`, taken from the sim's state at that moment.
+fn row_of(snapshot: &Snapshot, actions: Vec<Action>, frame: u64) -> TurnRow {
+    let d = snapshot.dungeon.as_ref().expect("a dungeon");
+    let leader = &d.team[0];
+    TurnRow {
+        fractional_turn: i16::from(d.fractional_turn),
+        run_seed: snapshot.run_seed,
+        floor_seed: 0,
+        s_prng_state: snapshot.global,
+        dungeon_rng: d.rng,
+        dungeon_preseed: 0,
+        team: [
+            Some(Entity {
+                kind: 1,
+                x: leader.pos.0,
+                y: leader.pos.1,
+                species: leader.info.species as i16,
+                level: leader.info.level,
+                hp: leader.info.hp,
+                max_hp: leader.info.max_hp,
+                speed_stage: 6,
+            }),
+            None,
+            None,
+            None,
+        ],
+        wild: Vec::new(),
+        tiles_sha256: "0123456789abcdef".to_owned(),
+        frame,
+        actions,
+        items: Some(items_row(&d.items)),
+    }
+}
+
+/// A floor of open ground with the leader at (5, 4), a bag item, a held item, a Poké of 7 at
+/// (6, 4) and an item at (7, 4), all set through the snapshot (the sim has no other way in).
+fn item_start() -> GameState {
+    let mut snapshot = state_from_row(&row(5, 0, Vec::new()), None)
+        .expect("start")
+        .snapshot();
+    let d = snapshot.dungeon.as_mut().expect("a dungeon");
+    for tile in &mut d.floor.tiles {
+        tile.terrain = TERRAIN_FLOOR;
+    }
+    d.team[0].info.hp = 30;
+    d.team[0].info.max_hp = 30;
+    d.items.bag.slots[0] = Item::new(0x20, 1);
+    d.items.held[0] = Item::new(0x22, 1);
+    d.items.floor[0] = Some(FloorItem {
+        pos: (6, 4),
+        item: Item::new(POKE, 7),
+    });
+    d.items.floor[1] = Some(FloorItem {
+        pos: (7, 4),
+        item: Item::new(0x21, 1),
+    });
+    GameState::restore(&snapshot).expect("restore")
+}
+
+/// Runs the script on `state` and records a row before each command, then one row after the
+/// last. Returns the rows and the final state.
+fn record(mut state: GameState, script: &[(Command, Action)]) -> (Vec<TurnRow>, GameState) {
+    let mut rows = Vec::new();
+    for (frame, (command, action)) in script.iter().enumerate() {
+        rows.push(row_of(&state.snapshot(), vec![*action], frame as u64));
+        assert_eq!(state.step(*command), Outcome::Applied, "{command:?}");
+    }
+    rows.push(row_of(&state.snapshot(), Vec::new(), script.len() as u64));
+    (rows, state)
+}
+
+#[test]
+fn item_trace_replays_pickup_drop_swap_and_money() {
+    // Pickup: the Poké is money (7), the item at (7, 4) goes to the bag's second slot.
+    // Drop: the leader stands on (7, 4), so the bag item goes onto that tile.
+    // Swap: the item underfoot goes to the bag, then to the held slot.
+    let script = [
+        (Command::Move(Direction::Right), step_right()),
+        (Command::Move(Direction::Right), step_right()),
+        (Command::Drop { slot: 1 }, drop_slot(1)),
+        (Command::Swap(SwapSource::Bag(0)), swap_with(1)),
+        (Command::Swap(SwapSource::Held), swap_with(0x81)),
+    ];
+    let (rows, state) = record(item_start(), &script);
+
+    let d = state.dungeon().expect("a dungeon");
+    assert_eq!(d.bag().money, 7, "the Poké is money");
+    assert_eq!(
+        d.bag().slots[0],
+        Item::new(0x21, 1),
+        "the swapped-in bag item"
+    );
+    assert_eq!(
+        d.held_item(0),
+        Some(Item::new(0x20, 1)),
+        "the floor item went to the held slot"
+    );
+    assert_eq!(
+        d.floor_item_at((7, 4)),
+        Some(Item::new(0x22, 1)),
+        "the held item went down"
+    );
+
+    // The replay starts from the prepared state (the rows' seed chain is not checked here).
+    match replay_from(item_start(), &rows, Scope::All, None).expect("replay") {
+        Replay::Match { rows } => assert_eq!(rows, script.len() + 1),
+        other => panic!("expected a match, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_item_difference_is_a_divergence_in_the_items() {
+    let script = [(Command::Move(Direction::Right), step_right())];
+    let (mut rows, _) = record(item_start(), &script);
+    rows[1].items.as_mut().expect("items").money = 99;
+    match replay_from(item_start(), &rows, Scope::All, None).expect("replay") {
+        Replay::Divergence(d) => {
+            assert_eq!(d.row, 2);
+            assert!(
+                d.diffs
+                    .iter()
+                    .any(|diff| diff.path == "items.money" && diff.expected == "99"),
+                "{:?}",
+                d.diffs
+            );
+        }
+        other => panic!("expected a divergence, got {other:?}"),
     }
 }

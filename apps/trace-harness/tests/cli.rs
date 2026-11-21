@@ -50,6 +50,7 @@ fn row(actions: Vec<Action>) -> TurnRow {
         tiles_sha256: "0123456789abcdef".to_owned(),
         frame: 1,
         actions,
+        items: None,
     }
 }
 

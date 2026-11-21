@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::items::SwapSource;
+
 /// One of the eight directions of movement and attack.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
@@ -71,10 +73,14 @@ pub enum Command {
         direction: Option<Direction>,
     },
     /// Use inventory item `slot` (actions `0x0C`/`0x0D`; an orb is action `0x31`, which needs
-    /// [`crate::state::GameState::step_with`]). See [`crate::item_use`]. Dropping and swapping
-    /// are [`crate::state::GameState::drop_item`] and
-    /// [`crate::state::GameState::swap_floor_item`].
+    /// [`crate::state::GameState::step_with`]). See [`crate::item_use`].
     UseItem { slot: u8 },
+    /// Drop bag slot `slot` on the leader's tile (action 8). The same as
+    /// [`crate::state::GameState::drop_item`].
+    Drop { slot: u8 },
+    /// Swap the floor item underfoot with a bag slot or the held item (action `0x0A`). The same
+    /// as [`crate::state::GameState::swap_floor_item`].
+    Swap(SwapSource),
     /// Pass a turn in place.
     Wait,
     /// A menu gesture. Menus are not modelled yet.

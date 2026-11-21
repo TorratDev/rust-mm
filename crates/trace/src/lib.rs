@@ -86,6 +86,10 @@ pub struct TurnRow {
     /// The leader's action records for this turn, in the order the game chose them.
     /// Empty when the leader does not act. Each record is written after its row.
     pub actions: Vec<Action>,
+    /// The item state of this turn. Absent (not captured) rows are not compared. Optional so
+    /// that rows without it still read.
+    #[serde(default)]
+    pub items: Option<ItemsRow>,
 }
 
 /// One leader action, from the leader's entity info when the game chooses it.
@@ -116,6 +120,37 @@ pub struct Entity {
     pub hp: i16,
     pub max_hp: i16,
     pub speed_stage: u32,
+}
+
+/// One item: the game's three bytes (flags, quantity, id), as the sim's `Item` holds them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ItemRow {
+    pub flags: u8,
+    pub qty: u8,
+    pub id: u8,
+}
+
+/// One floor item: its tile and the item on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FloorItemRow {
+    pub x: i16,
+    pub y: i16,
+    pub item: ItemRow,
+}
+
+/// The team's items: the money, the bag, the held item of each team slot, the floor item slots
+/// and `numItems`. An empty slot is `null`. The bag has 20 slots and the floor 64; a list
+/// shorter than that leaves the rest empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ItemsRow {
+    pub money: i32,
+    pub bag: Vec<Option<ItemRow>>,
+    pub held: Vec<Option<ItemRow>>,
+    pub floor: Vec<Option<FloorItemRow>>,
+    pub num_items: u16,
 }
 
 /// A whole trace: the header and its rows in capture order.
@@ -362,6 +397,7 @@ mod tests {
             tiles_sha256: "0123456789abcdef".to_owned(),
             frame,
             actions: Vec::new(),
+            items: None,
         }
     }
 
