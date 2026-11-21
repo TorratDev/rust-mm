@@ -268,6 +268,7 @@ impl Dungeon {
     pub(crate) fn run_wild_monsters(&mut self, k: u8, data: Option<&CombatData<'_>>) {
         self.sync_team_ai();
         let live: Vec<_> = self.wild.iter().map(|m| m.pos).collect();
+        self.shop.keepers.retain(|p| live.contains(p));
         self.ai.wild.retain(|p, _| live.contains(p));
         self.ai.pending_wild.retain(|p| live.contains(p));
         let mut deferred = Vec::new();
@@ -635,6 +636,11 @@ impl Dungeon {
         // is refused (`02172ADC`), but the sim does not keep those statuses on a wild monster's
         // attack path, so nothing is refused here.
         if self.wild[i].info.is_asleep() {
+            self.monster_end_of_turn(i);
+            return false;
+        }
+        // A shopkeeper passes its turn while the leader has not stolen (`02180048`, `info+8 == 1`).
+        if self.keepers_at(me) {
             self.monster_end_of_turn(i);
             return false;
         }

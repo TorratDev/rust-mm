@@ -16,6 +16,7 @@ pub mod item_use;
 pub mod items;
 mod move_effects;
 pub mod rng;
+pub mod shop;
 pub mod state;
 pub mod status;
 mod targeting;
