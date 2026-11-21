@@ -120,6 +120,10 @@ pub enum Blocked {
     DropTile,
     /// All 64 floor item slots are used.
     FloorItemsFull,
+    /// The buy needs the ground menu of a shop stock tile, and the leader's tile holds stock.
+    NoStock,
+    /// The bag has no room for the bought item (`docs/re/items.md`, P6).
+    BagFull,
 }
 
 /// What a command did.

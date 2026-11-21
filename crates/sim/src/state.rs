@@ -28,6 +28,7 @@ use crate::items::{
     spawn_floor_items,
 };
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
+use crate::shop::ShopState;
 use crate::status::{self, Status};
 use crate::targeting::Slot;
 use crate::throw::{ThrowParams, ThrowResult, ThrowSource};
@@ -348,6 +349,8 @@ pub struct Dungeon {
     pub(crate) ai: AiState,
     /// The bag, the held items and the floor items (see [`crate::items`]).
     pub(crate) items: ItemState,
+    /// The Kecleon shop's state (see [`crate::shop`]).
+    pub(crate) shop: ShopState,
     /// The floor's traps and their tables (see [`crate::traps`]).
     pub(crate) traps: TrapState,
 }
@@ -547,11 +550,14 @@ impl Dungeon {
                 // The swap sets `0x8000` on the ally; the swap pass in `take_leader_turn` clears it.
                 d.ai.swapping.push(i);
             }
-            // The step-on pickup (`02165B00`, from the move helper `0218766C`). `021441D8` picks
-            // up nothing while `info+0x46 == 0`, which a run sets (a walk sets 1).
-            if !running {
+            // The step-on pickup (`02165B00`, from the move helper `0218766C`). Shop stock opens
+            // the ground menu instead. `021441D8` picks up nothing while `info+0x46 == 0`, which
+            // a run sets (a walk sets 1).
+            if !d.shop_stepped_on(target) && !running {
                 d.pickup(0);
             }
+            // `0219635C`: the leave-with-debt check after the leader's step.
+            d.shop_leader_moved();
             // The trap trigger of the same helper (`02165B00`).
             d.step_on_trap(Slot::Team(0));
         });
@@ -730,12 +736,14 @@ fn place_team(team: &mut [Monster], floor: &Floor, start: (i16, i16)) {
 
 /// What one call of the state's apply path does: a command, or an item action that has no
 /// [`Command`] yet.
-enum Input {
+pub(crate) enum Input {
     Command(Command),
     /// Drop bag slot (`02173CCC`).
     Drop(u8),
     /// Swap the floor item underfoot with a bag slot or the held item (`02173A48`).
     Swap(SwapSource),
+    /// Buy the shop stock under the leader from the ground menu (`docs/re/items.md`, P6).
+    Buy,
 }
 
 /// Everything the sim owns for one run.
@@ -961,8 +969,8 @@ impl GameState {
         self.dungeon.as_ref()
     }
 
-    /// The current dungeon, mutably. Crate-internal: the tests place wild monsters with it.
-    #[cfg(test)]
+    /// The current dungeon, mutably. Crate-internal: the tests place wild monsters with it, and
+    /// the shop answers its prompts with it.
     pub(crate) fn dungeon_mut(&mut self) -> Option<&mut Dungeon> {
         self.dungeon.as_mut()
     }
@@ -1028,6 +1036,7 @@ impl GameState {
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: self.new_ai(),
             items,
+            shop: ShopState::default(),
             traps: TrapState {
                 list: traps,
                 tables: self.trap_tables.clone(),
@@ -1096,7 +1105,7 @@ impl GameState {
         self.apply_input(Input::Command(command), data)
     }
 
-    fn apply_input(&mut self, input: Input, data: Option<&CombatData<'_>>) -> Outcome {
+    pub(crate) fn apply_input(&mut self, input: Input, data: Option<&CombatData<'_>>) -> Outcome {
         // The stairs menu answers the leader's next input: confirm is given, so any command
         // takes the stairs (menus are not modelled).
         if self.dungeon.as_ref().is_some_and(|d| d.stairs_pending) {
@@ -1105,6 +1114,8 @@ impl GameState {
         let Some(dungeon) = self.dungeon.as_mut() else {
             return Outcome::Blocked(Blocked::NoDungeon);
         };
+        // The ground menu is answered by the next input only (`02168774` writes -1 back).
+        let menu = dungeon.shop.pending_menu.take();
         // A sleeper does not act (`0217FD78`): whatever the command, the turn passes.
         // The sleep countdown runs in the turn's leader tick, so the sleeper wakes in time.
         let asleep = dungeon.team.first().is_some_and(|l| l.info.is_asleep());
@@ -1127,6 +1138,19 @@ impl GameState {
                 return match dungeon.swap_check(source) {
                     Ok(()) => {
                         dungeon.take_leader_turn(data, |d| d.swap_apply(source));
+                        self.after_turn(Outcome::Applied)
+                    }
+                    Err(blocked) => Outcome::Blocked(blocked),
+                };
+            }
+            Input::Buy if asleep => {
+                dungeon.take_leader_turn(data, |_| {});
+                return Outcome::Applied;
+            }
+            Input::Buy => {
+                return match dungeon.shop_buy_check(menu) {
+                    Ok(()) => {
+                        dungeon.take_leader_turn(data, Dungeon::shop_buy);
                         self.after_turn(Outcome::Applied)
                     }
                     Err(blocked) => Outcome::Blocked(blocked),
@@ -1273,6 +1297,7 @@ impl GameState {
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: self.new_ai(),
             items,
+            shop: ShopState::default(),
             traps: TrapState {
                 list: traps,
                 tables: self.trap_tables.clone(),
@@ -1463,6 +1488,7 @@ impl GameState {
                     enemy_density: 0,
                     ai: AiState::default(),
                     items: ItemState::from_snapshot(&d.items)?,
+                    shop: ShopState::default(),
                     // As the items: `restore_with` brings the traps back.
                     traps: TrapState::default(),
                 };
