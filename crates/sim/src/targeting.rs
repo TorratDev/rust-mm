@@ -145,8 +145,9 @@ fn all_slots(d: &Dungeon) -> Vec<Slot> {
 /// step onto it. The tile is off the map, a wall (flag `0x10`), or of type 0. Only the
 /// destination counts: the user's own tile and the two sides of a diagonal are not read.
 // shortcut: the test uses class 2 for every user. Class 3 (movement type 3 species, `info +0xC7 ==
-// 3`, held item 9, IQ bit 0xD) never blocks on type 0, so a class-3 user may be blocked here
-// when the game is not. The gate `FUN_0206d474` is not modelled either.
+// 3`, held item 9 (`has_held_item`), IQ bit 0xD) never blocks on type 0, so a class-3 user may be
+// blocked here when the game is not. It waits with the class-3 mask of `ai.rs` (`02148F50`'s rule
+// is not in the docs). The gate `FUN_0206d474` is not modelled either.
 // shortcut: step 3 of `021820B0` (a non-monster entity on the tile blocks) is not modelled. The
 // sim keeps monsters only on the tile's entity link, so it cannot arise here.
 fn blocked_for_cut(d: &Dungeon, x: i32, y: i32) -> bool {

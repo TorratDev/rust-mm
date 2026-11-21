@@ -19,5 +19,7 @@ pub mod rng;
 pub mod state;
 pub mod status;
 mod targeting;
+pub mod throw;
+pub mod traps;
 pub mod turn;
 pub mod visibility;

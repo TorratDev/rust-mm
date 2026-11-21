@@ -29,6 +29,9 @@ use crate::items::{
 };
 use crate::rng::{DungeonPreseed, DungeonRng, GlobalRng};
 use crate::status::{self, Status};
+use crate::targeting::Slot;
+use crate::throw::{ThrowParams, ThrowResult, ThrowSource};
+use crate::traps::{Trap, TrapState, TrapTables, place_traps};
 use crate::turn::{FRACTIONAL_TURNS, MAX_SPEED_STAGE};
 
 /// Team slots: `teamPokemon[4]` (`+0x11314`).
@@ -345,6 +348,8 @@ pub struct Dungeon {
     pub(crate) ai: AiState,
     /// The bag, the held items and the floor items (see [`crate::items`]).
     pub(crate) items: ItemState,
+    /// The floor's traps and their tables (see [`crate::traps`]).
+    pub(crate) traps: TrapState,
 }
 
 impl Dungeon {
@@ -547,6 +552,8 @@ impl Dungeon {
             if !running {
                 d.pickup(0);
             }
+            // The trap trigger of the same helper (`02165B00`).
+            d.step_on_trap(Slot::Team(0));
         });
     }
 
@@ -760,6 +767,8 @@ pub struct GameState {
     bag: Bag,
     /// The item tables and setup of the run (see [`GameState::with_item_tables`]).
     item_tables: ItemTables,
+    /// The trap weights and damages of the run (see [`GameState::with_trap_tables`]).
+    trap_tables: TrapTables,
 }
 
 impl GameState {
@@ -786,7 +795,24 @@ impl GameState {
                 money: 0,
             },
             item_tables: ItemTables::new(),
+            trap_tables: TrapTables {
+                weights: Vec::new(),
+                damage: 0,
+                spike_damage: 0,
+            },
         }
+    }
+
+    /// The run with its trap tables (the floor's id weights and the two damage numbers), given
+    /// before the first floor is entered. With no weights no trap is placed (see
+    /// [`crate::traps`]).
+    #[must_use]
+    pub fn with_trap_tables(mut self, tables: TrapTables) -> Self {
+        if let Some(d) = self.dungeon.as_mut() {
+            d.traps.tables = tables.clone();
+        }
+        self.trap_tables = tables;
+        self
     }
 
     /// The run with its item tables (picker rows, categories, money values, sticky chance, the
@@ -817,6 +843,27 @@ impl GameState {
     /// `02173A48`). It takes the leader's turn. Refusals change nothing (see [`Blocked`]).
     pub fn swap_floor_item(&mut self, source: SwapSource) -> Outcome {
         self.apply_input(Input::Swap(source), None)
+    }
+
+    /// Throws the leader's bag slot `slot`, or a team member's held item (actions `0x0B`, `0x27`,
+    /// `0x41` and the AI's `0x24`, `021732C4`). It takes the leader's turn when the leader
+    /// throws. See [`crate::throw`].
+    // shortcut: the pending stairs menu is not answered (the command is a throw, not the confirm).
+    pub fn throw_item(
+        &mut self,
+        source: ThrowSource,
+        direction: Direction,
+        arc_target: Option<(i16, i16)>,
+        params: &ThrowParams,
+        data: &CombatData<'_>,
+    ) -> ThrowResult {
+        let Some(dungeon) = self.dungeon.as_mut() else {
+            return ThrowResult::Blocked(Blocked::NoDungeon);
+        };
+        let result = dungeon.throw_item(source, direction, arc_target, params, data);
+        // A thrown item that defeats the leader ends the run, as a defeat in any other turn.
+        self.after_turn(Outcome::Applied);
+        result
     }
 
     /// The run with the species' sleep chances (`Species::chance_asleep`, indexed by species
@@ -945,6 +992,8 @@ impl GameState {
         let wild = wild_monsters(&floor, spawns);
         let floor_seed = self.preseed.next_floor_seed();
         let mut rng = DungeonRng::new(floor_seed);
+        // The traps come from the trap marks (`02198824`) and draw before the items do.
+        let traps = place_traps(&floor, &self.trap_tables, &mut rng);
         // The floor items come from the item marks, which `enter_floor` clears, and draw from the
         // floor's generator (`02144714`).
         // shortcut: the generator is not at the game's position here (the floor is given, not
@@ -979,6 +1028,10 @@ impl GameState {
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: self.new_ai(),
             items,
+            traps: TrapState {
+                list: traps,
+                tables: self.trap_tables.clone(),
+            },
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.seed_wild_ai(true);
@@ -1184,8 +1237,9 @@ impl GameState {
             return Outcome::NotModelled;
         }
         // The floor items follow the generation on the same generator (`02144714`).
-        // shortcut: the wild monsters (`02179E2C`) and traps (`02198824`), which the game draws
-        // for before the items, are not placed on a later floor, so their draws are missing.
+        // shortcut: the wild monsters (`02179E2C`), which the game draws for before the traps
+        // and items, are not placed on a later floor, so their draws are missing.
+        let traps = place_traps(&floor, &self.trap_tables, &mut rng);
         let mut items = spawn_floor_items(&floor, &self.item_tables, &mut rng);
         items.bag = leaving.items.bag;
         items.held = leaving.items.held;
@@ -1219,6 +1273,10 @@ impl GameState {
             enemy_density: self.density_of_floor(self.floors_entered),
             ai: self.new_ai(),
             items,
+            traps: TrapState {
+                list: traps,
+                tables: self.trap_tables.clone(),
+            },
         });
         if let Some(dungeon) = self.dungeon.as_mut() {
             dungeon.reveal_from_leader();
@@ -1279,10 +1337,12 @@ impl GameState {
                 held: d.items.held,
                 floor_items: d.items.floor.clone(),
                 num_items: d.items.num_items,
+                traps: d.traps.list.clone(),
             }),
             items: ItemsResume {
                 bag: *self.bag(),
                 tables: self.item_tables.clone(),
+                traps: self.trap_tables.clone(),
             },
         }
     }
@@ -1301,10 +1361,12 @@ impl GameState {
         let mut bag = resume.items.bag;
         bag.money = bag.money.clamp(0, crate::items::MONEY_CAP);
         state.item_tables = resume.items.tables.clone();
+        state.trap_tables = resume.items.traps.clone();
         match state.dungeon.as_mut() {
             Some(d) => {
                 d.items.bag = bag;
                 d.items.tables = resume.items.tables.clone();
+                d.traps.tables = resume.items.traps.clone();
             }
             None => state.bag = bag,
         }
@@ -1336,6 +1398,16 @@ impl GameState {
                 .map_or(0, |i| i + 1);
             let high = u16::try_from(high).unwrap_or(0);
             d.items.num_items = r.num_items.max(high).min(FLOOR_ITEM_SLOTS as u16);
+            d.traps.list = r
+                .traps
+                .iter()
+                .copied()
+                .filter(|t| {
+                    d.floor
+                        .tile(i32::from(t.pos.0), i32::from(t.pos.1))
+                        .is_some()
+                })
+                .collect();
         }
         Ok(state)
     }
@@ -1391,6 +1463,8 @@ impl GameState {
                     enemy_density: 0,
                     ai: AiState::default(),
                     items: ItemState::from_snapshot(&d.items)?,
+                    // As the items: `restore_with` brings the traps back.
+                    traps: TrapState::default(),
                 };
                 // shortcut: plain `restore` has no AI records, so every restored wild monster gets
                 // the floor-generation record without the draws (see `seed_wild_ai`; the game's
@@ -1413,6 +1487,7 @@ impl GameState {
             chance_asleep: Vec::new(),
             bag: Bag::default(),
             item_tables: ItemTables::new(),
+            trap_tables: TrapTables::default(),
         })
     }
 }
@@ -1436,6 +1511,9 @@ pub struct Resume {
 pub struct ItemsResume {
     pub bag: Bag,
     pub tables: ItemTables,
+    /// The run's trap tables. Absent in older resumes: no traps are placed.
+    #[serde(default)]
+    pub traps: TrapTables,
 }
 
 /// The floor part of [`Resume`].
@@ -1457,6 +1535,9 @@ pub struct DungeonResume {
     /// `numItems`, the floor item high-water mark.
     #[serde(default)]
     pub num_items: u16,
+    /// The floor's traps.
+    #[serde(default)]
+    pub traps: Vec<Trap>,
 }
 
 /// One tile, as a snapshot: the fields of [`Tile`].

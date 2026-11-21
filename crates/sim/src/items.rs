@@ -72,6 +72,41 @@ impl Item {
     pub const fn sticky(self) -> bool {
         self.flags & FLAG_STICKY != 0
     }
+
+    /// `HasHeldItem` (`021432E8`): the slot exists, is not sticky, and has item `id`. Applies to
+    /// a held slot; the sticky bit makes a held item count as absent here.
+    #[must_use]
+    pub const fn holds(self, id: u8) -> bool {
+        self.exists() && !self.sticky() && self.id == id
+    }
+}
+
+/// Held item ids the sim tests (`docs/re/items.md`, P4; the ids are blue-verified, the names are
+/// Red's by numeric match).
+pub const MOBILE_SCARF: u8 = 0x09;
+pub const TWIST_BAND: u8 = 0x0B;
+pub const SCOPE_LENS: u8 = 0x0C;
+pub const PATSY_BAND: u8 = 0x0D;
+pub const INSOMNISCOPE: u8 = 0x15;
+pub const POWER_BAND: u8 = 0x13;
+pub const DEF_SCARF: u8 = 0x1E;
+pub const SPECIAL_BAND: u8 = 0x21;
+pub const ZINC_BAND: u8 = 0x22;
+pub const MUNCH_BELT: u8 = 0x2B;
+pub const DIET_RIBBON: u8 = 0x1B;
+
+/// Why a held-item action did nothing: `give`, `take`, `set_marker` and `unset_marker`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeldBlocked {
+    /// The bag slot or the held slot is empty, or the bag slot is not one of the 20.
+    NoItem,
+    /// The item is sticky. A bag item refused by [`Dungeon::give`] or a marker change must be
+    /// sticky and marked; a held item must only be sticky.
+    ItemSticky,
+    /// The bag has no free slot.
+    BagFull,
+    /// The target is not another team member (the leader gives to an ally).
+    NoAlly,
 }
 
 /// The team bag and money (`+0x000` and `+0x234` of the team inventory).
@@ -455,7 +490,7 @@ impl Dungeon {
     /// (`02180BA0`). The leader is exempt. An ally runs with Run Away (ability `0x2B`) below
     /// half HP, with tactic `0x0A`, or with tactic 6 at or below half HP.
     // shortcut: the terrified status (`info+0xD7`) is not modelled, so it never refuses.
-    fn runs_away(&self, member: usize) -> bool {
+    pub(crate) fn runs_away(&self, member: usize) -> bool {
         let Some(m) = self.team.get(member) else {
             return false;
         };
@@ -699,6 +734,139 @@ impl Dungeon {
         st.bag.compact();
         // shortcut: `0219037C` (the monster house wake-up: tile bit 0x40, flag `gDungeon+0x661`,
         // room `+0x34AC`) ends `02173A48` and is not modelled.
+    }
+}
+
+impl Dungeon {
+    /// `HasHeldItem` for team member `member` (`021432E8`, see [`Item::holds`]). False for a
+    /// member with no held slot.
+    #[must_use]
+    pub fn has_held_item(&self, member: usize, id: u8) -> bool {
+        self.held_item(member).is_some_and(|h| h.holds(id))
+    }
+
+    /// The held item of a battle slot: a team member's held slot, or nothing for a wild monster
+    /// (the sim keeps held items for the team only). Used by the damage and status tests.
+    pub(crate) fn held_of(&self, slot: crate::targeting::Slot) -> Item {
+        match slot {
+            crate::targeting::Slot::Team(i) => self.held_item(i).unwrap_or_default(),
+            crate::targeting::Slot::Wild(_) => Item::default(),
+        }
+    }
+
+    /// `02174280` (action `0x36`, Give): the leader gives bag slot `slot` to the ally `target`.
+    /// Refusals: no item in the slot; the item is sticky and marked (a bag item, not from the
+    /// floor); `target` is not another team member; the target's held item is sticky (a message
+    /// in the game). An empty held slot takes the item; else the held item goes to the bag and
+    /// the given item to the held slot. Both lose the marker.
+    // shortcut: the give from the floor (the item underfoot, `02141720` with the floor selector)
+    // is not modelled; the messages and the ally's `0x4000` flag and the `02175F54` bad-tile fix
+    // are not modelled.
+    pub fn give(&mut self, slot: u8, target: usize) -> Result<(), HeldBlocked> {
+        let item = self
+            .items
+            .bag
+            .slots
+            .get(usize::from(slot))
+            .copied()
+            .filter(|i| i.exists())
+            .ok_or(HeldBlocked::NoItem)?;
+        if item.sticky() && item.flags & FLAG_MARK != 0 {
+            return Err(HeldBlocked::ItemSticky);
+        }
+        if target == 0 || target >= self.team.len() {
+            return Err(HeldBlocked::NoAlly);
+        }
+        let old = self.items.held[target];
+        if old.sticky() {
+            return Err(HeldBlocked::ItemSticky);
+        }
+        let st = &mut self.items;
+        st.bag.slots[usize::from(slot)] = Item::default();
+        st.held[target] = Item {
+            flags: item.flags & !FLAG_MARK,
+            ..item
+        };
+        if old.exists() {
+            // The slot just freed takes the old held item, so the bag cannot be full here.
+            st.bag.add(old);
+        }
+        st.bag.compact();
+        Ok(())
+    }
+
+    /// `021740EC` (action `0x37`, Take): the held item of `member` goes to the bag, marker
+    /// cleared, and the held slot is zeroed. Refusals: no held item, a full bag, a sticky held
+    /// item.
+    // shortcut: the messages and the `02175F54` bad-tile fix after the move are not modelled.
+    pub fn take(&mut self, member: usize) -> Result<(), HeldBlocked> {
+        let held = self
+            .held_item(member)
+            .filter(|h| h.exists())
+            .ok_or(HeldBlocked::NoItem)?;
+        if self.items.bag.slots.iter().all(|s| s.exists()) {
+            return Err(HeldBlocked::BagFull);
+        }
+        if held.sticky() {
+            return Err(HeldBlocked::ItemSticky);
+        }
+        let st = &mut self.items;
+        st.bag.add(Item {
+            flags: held.flags & !FLAG_MARK,
+            ..held
+        });
+        st.held[member] = Item::default();
+        Ok(())
+    }
+
+    /// Refuses a marker change when a sticky bag item carries the marker (`02174680` and
+    /// `02174594`, which both abort on it before clearing anything).
+    fn marker_free(&self) -> Result<(), HeldBlocked> {
+        let blocked = self
+            .items
+            .bag
+            .slots
+            .iter()
+            .any(|s| s.sticky() && s.flags & FLAG_MARK != 0);
+        if blocked {
+            Err(HeldBlocked::ItemSticky)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Clears the marker from every bag slot.
+    fn clear_markers(&mut self) {
+        for s in &mut self.items.bag.slots {
+            s.flags &= !FLAG_MARK;
+        }
+    }
+
+    /// `02174680` (action `0x3C`, Set marker): marks bag slot `slot` and clears every other
+    /// marker, so at most one item carries it. Refusals: no item in the slot; a sticky marked item
+    /// anywhere in the bag.
+    // shortcut: the three messages (`msg != 0`) are not modelled.
+    pub fn set_marker(&mut self, slot: u8) -> Result<(), HeldBlocked> {
+        let i = usize::from(slot);
+        self.items
+            .bag
+            .slots
+            .get(i)
+            .filter(|s| s.exists())
+            .ok_or(HeldBlocked::NoItem)?;
+        self.marker_free()?;
+        self.clear_markers();
+        self.items.bag.slots[i].flags |= FLAG_MARK;
+        Ok(())
+    }
+
+    /// `02174594` (action `0x3D`, Unset marker): clears the marker from the bag. Refused when a
+    /// sticky marked item is in the bag.
+    // shortcut: the sound and the message (`msg != 0`) are not modelled.
+    pub fn unset_marker(&mut self) -> Result<(), HeldBlocked> {
+        self.marker_free()?;
+        self.clear_markers();
+        Ok(())
     }
 }
 
@@ -1717,5 +1885,150 @@ mod tests {
         assert_eq!(d.held_item(0), Some(Item::new(0x12, 1)));
         assert_eq!(d.floor_item_at((6, 5)), Some(Item::new(0x30, 1)));
         assert_eq!(d.num_items(), 1);
+    }
+
+    #[test]
+    fn has_held_item_counts_only_an_existing_non_sticky_item_of_the_id() {
+        use crate::items::{FLAG_EXISTS, FLAG_STICKY};
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.held[1] = Item::new(0x15, 1);
+        assert!(d.has_held_item(1, 0x15));
+        assert!(!d.has_held_item(1, 0x16), "another id");
+        assert!(!d.has_held_item(0, 0x15), "an empty slot");
+        assert!(!d.has_held_item(9, 0x15), "no such member");
+        d.items.held[1].flags = FLAG_EXISTS | FLAG_STICKY;
+        assert!(!d.has_held_item(1, 0x15), "a sticky item does not count");
+        d.items.held[1] = Item {
+            flags: 0,
+            qty: 1,
+            id: 0x15,
+        };
+        assert!(!d.has_held_item(1, 0x15), "a slot without the exists bit");
+    }
+
+    #[test]
+    fn give_into_an_empty_held_slot_clears_the_marker() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_MARK,
+            qty: 1,
+            id: 0x30,
+        };
+        d.items.bag.slots[1] = Item::new(0x31, 1);
+        assert_eq!(d.give(0, 1), Ok(()));
+        assert_eq!(d.held_item(1), Some(Item::new(0x30, 1)));
+        assert_eq!(d.bag().slots[0], Item::new(0x31, 1), "the bag closes up");
+        assert_eq!(d.bag().slots[1], Item::default());
+    }
+
+    #[test]
+    fn give_swaps_with_a_held_item_and_the_old_one_goes_to_the_bag() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.held[1] = Item::new(0x40, 2);
+        d.items.bag.slots[0] = Item::new(0x41, 1);
+        assert_eq!(d.give(0, 1), Ok(()));
+        assert_eq!(d.held_item(1), Some(Item::new(0x41, 1)));
+        assert_eq!(d.bag().slots[0], Item::new(0x40, 2));
+    }
+
+    #[test]
+    fn give_refusals_change_nothing() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        // A sticky marked bag item.
+        d.items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_STICKY | FLAG_MARK,
+            qty: 1,
+            id: 0x30,
+        };
+        assert_eq!(d.give(0, 1), Err(HeldBlocked::ItemSticky));
+        assert_eq!(d.give(3, 1), Err(HeldBlocked::NoItem), "an empty slot");
+        d.items.bag.slots[0] = Item::new(0x30, 1);
+        assert_eq!(
+            d.give(0, 0),
+            Err(HeldBlocked::NoAlly),
+            "the leader is not an ally"
+        );
+        assert_eq!(d.give(0, 9), Err(HeldBlocked::NoAlly), "no such member");
+        // A sticky held item of the target: a message in the game, nothing moves.
+        d.items.held[1] = sticky(0x50, 1);
+        assert_eq!(d.give(0, 1), Err(HeldBlocked::ItemSticky));
+        assert_eq!(d.held_item(1), Some(sticky(0x50, 1)));
+        assert_eq!(d.bag().slots[0], Item::new(0x30, 1));
+    }
+
+    #[test]
+    fn take_moves_the_held_item_to_the_bag_without_its_marker() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.held[0] = Item::new(0x60, 1);
+        assert_eq!(d.take(0), Ok(()));
+        assert!(!d.held_item(0).unwrap().exists());
+        assert_eq!(d.bag().slots[0], Item::new(0x60, 1));
+    }
+
+    #[test]
+    fn take_refusals_change_nothing() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        assert_eq!(d.take(0), Err(HeldBlocked::NoItem), "no held item");
+        d.items.held[0] = sticky(0x61, 1);
+        assert_eq!(d.take(0), Err(HeldBlocked::ItemSticky));
+        assert_eq!(d.held_item(0), Some(sticky(0x61, 1)));
+        d.items.held[0] = Item::new(0x62, 1);
+        for slot in &mut d.items.bag.slots {
+            *slot = Item::new(0x63, 1);
+        }
+        assert_eq!(d.take(0), Err(HeldBlocked::BagFull));
+        assert_eq!(d.held_item(0), Some(Item::new(0x62, 1)));
+    }
+
+    #[test]
+    fn set_marker_marks_one_item_and_clears_the_others() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_MARK,
+            qty: 1,
+            id: 0x70,
+        };
+        d.items.bag.slots[2] = Item::new(0x71, 1);
+        assert_eq!(d.set_marker(2), Ok(()));
+        assert_eq!(d.bag().slots[0].flags & FLAG_MARK, 0);
+        assert_eq!(d.bag().slots[2].flags & FLAG_MARK, FLAG_MARK);
+        assert_eq!(d.set_marker(5), Err(HeldBlocked::NoItem), "an empty slot");
+    }
+
+    #[test]
+    fn a_sticky_marked_bag_item_blocks_both_marker_changes() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_STICKY | FLAG_MARK,
+            qty: 1,
+            id: 0x72,
+        };
+        d.items.bag.slots[1] = Item::new(0x73, 1);
+        assert_eq!(d.set_marker(1), Err(HeldBlocked::ItemSticky));
+        assert_eq!(d.unset_marker(), Err(HeldBlocked::ItemSticky));
+        // Nothing was cleared or set.
+        assert_eq!(d.bag().slots[0].flags & FLAG_MARK, FLAG_MARK);
+        assert_eq!(d.bag().slots[1].flags & FLAG_MARK, 0);
+    }
+
+    #[test]
+    fn unset_marker_clears_every_marker() {
+        let mut g = run();
+        let d = dungeon(&mut g);
+        d.items.bag.slots[0] = Item {
+            flags: FLAG_EXISTS | FLAG_MARK,
+            qty: 1,
+            id: 0x74,
+        };
+        assert_eq!(d.unset_marker(), Ok(()));
+        assert_eq!(d.bag().slots[0], Item::new(0x74, 1));
     }
 }
