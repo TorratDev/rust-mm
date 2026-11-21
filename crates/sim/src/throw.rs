@@ -526,15 +526,12 @@ impl Dungeon {
             },
             variance: self.rng.int(0x4000),
         };
-        let dealt = combat::damage_scaled(
-            t,
-            &mv,
-            ARG8,
-            &attacker,
-            &defender,
-            combat::Held::default(),
-            rolls,
-        );
+        // `0215675C` passes `param_9 = 1` to `CalcDamage`, so both sides' held items count (items.md).
+        let held = combat::Held {
+            attacker: self.held_of(Slot::Team(thrower)),
+            target: self.held_of(target),
+        };
+        let dealt = combat::damage_scaled(t, &mv, ARG8, &attacker, &defender, held, rolls);
         let second = self.rng.int(100);
         let physical = combat::is_physical(t, mv.kind);
         if !combat::hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
@@ -704,13 +701,20 @@ mod tests {
             crit: r.int(100),
             variance: r.int(0x4000),
         };
-        let (attacker, defender) = {
+        // Munch Belt adds to the attack whether the move is physical or special.
+        g.dungeon_mut().unwrap().items.held[0] = Item::new(crate::items::MUNCH_BELT, 1);
+        let (attacker, defender, held) = {
             let d = g.dungeon().unwrap();
-            (d.team[0].info.clone(), d.wild[0].info.clone())
+            let held = combat::Held {
+                attacker: d.held_of(Slot::Team(0)),
+                target: d.held_of(Slot::Wild(0)),
+            };
+            (d.team[0].info.clone(), d.wild[0].info.clone(), held)
         };
         let t = tables();
         let mv = moves()[usize::from(THROW_MOVE)].clone();
-        let want = combat::damage_scaled(
+        let want = combat::damage_scaled(&t, &mv, ARG8, &attacker, &defender, held, rolls).value;
+        let plain = combat::damage_scaled(
             &t,
             &mv,
             ARG8,
@@ -720,6 +724,7 @@ mod tests {
             rolls,
         )
         .value;
+        assert_ne!(want, plain, "the held item must change the thrown damage");
         let report = run(&mut g, &params(roll + 1));
         assert_eq!((report.hits, report.misses), (1, 0));
         assert!(want > 0);
