@@ -194,14 +194,6 @@ fn lands(gone: bool, hits: u8, pierce_line: bool) -> bool {
 }
 
 impl Dungeon {
-    /// Whether team member `member` holds `id` (`021432E8`: exists, not sticky, same id).
-    fn has_held_item(&self, member: usize, id: u8) -> bool {
-        self.items
-            .held
-            .get(member)
-            .is_some_and(|h| h.exists() && !h.sticky() && h.id == id)
-    }
-
     /// The held item of the monster at `slot`; only team members hold items in the sim.
     fn holds(&self, slot: Slot, id: u8) -> bool {
         match slot {
@@ -534,7 +526,15 @@ impl Dungeon {
             },
             variance: self.rng.int(0x4000),
         };
-        let dealt = combat::damage_scaled(t, &mv, ARG8, &attacker, &defender, rolls);
+        let dealt = combat::damage_scaled(
+            t,
+            &mv,
+            ARG8,
+            &attacker,
+            &defender,
+            combat::Held::default(),
+            rolls,
+        );
         let second = self.rng.int(100);
         let physical = combat::is_physical(t, mv.kind);
         if !combat::hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
@@ -710,7 +710,16 @@ mod tests {
         };
         let t = tables();
         let mv = moves()[usize::from(THROW_MOVE)].clone();
-        let want = combat::damage_scaled(&t, &mv, ARG8, &attacker, &defender, rolls).value;
+        let want = combat::damage_scaled(
+            &t,
+            &mv,
+            ARG8,
+            &attacker,
+            &defender,
+            combat::Held::default(),
+            rolls,
+        )
+        .value;
         let report = run(&mut g, &params(roll + 1));
         assert_eq!((report.hits, report.misses), (1, 0));
         assert!(want > 0);
