@@ -37,8 +37,12 @@ use rescue_sim::floor::{Floor, HEIGHT, WIDTH};
 use rescue_sim::floor_gen::{
     FloorProperties, GenState, PortedSteps, generate_floor, properties_for,
 };
+use rescue_sim::items::ItemTables;
 use rescue_sim::rng::{DungeonRng, GlobalRng};
 use rescue_sim::state::{FloorRecord, floor_records};
+use rescue_sim::throw::ThrowParams;
+
+use crate::items::{self, ItemArt};
 
 /// The floor's RNG state at `GenerateFloor`'s entry for a new game: the natural seed of the
 /// sim's first-floor oracle rows (`ORACLE_FLOORS`, layout 1).
@@ -105,6 +109,12 @@ pub struct FloorData {
     sprite: Sprite,
     species_palette: u8,
     palettes: Vec<Palette>,
+    /// The item names, descriptions and floor icons.
+    item_art: ItemArt,
+    /// The sim's item tables for the floor.
+    item_tables: ItemTables,
+    /// The sim's throw numbers.
+    throw_params: ThrowParams,
 }
 
 impl FloorData {
@@ -147,6 +157,13 @@ impl FloorData {
             .and_then(|entry| map.monster_spawns.get(usize::from(entry.monsters)))
             .cloned()
             .ok_or("the floor has no monster spawn list")?;
+        let floor_entry = map
+            .dungeons
+            .get(usize::from(dungeon))
+            .and_then(|floors| floors.get(usize::from(floor)))
+            .ok_or("the floor has no entry")?;
+        let item_tables = items::item_tables(&items, &map, floor_entry);
+        let throw_params = items::throw_params(&species_table);
         let record = map
             .dungeons
             .get(usize::from(dungeon))
@@ -178,6 +195,9 @@ impl FloorData {
             return Err(String::from("the leader sprite has no idle pose"));
         }
 
+        let itempat = arc.get(dun, "itempat").map_err(|e| e.to_string())?.to_vec();
+        let item_art = ItemArt::new(items, itempat);
+
         Ok(FloorData {
             props,
             records,
@@ -191,6 +211,9 @@ impl FloorData {
             sprite,
             species_palette: entry.palette,
             palettes,
+            item_art,
+            item_tables,
+            throw_params,
         })
     }
 
@@ -207,6 +230,26 @@ impl FloorData {
     /// The species' sleep chances by species ID (`Species::chance_asleep`).
     pub fn sleep_chances(&self) -> &[u8] {
         &self.sleep_chances
+    }
+
+    /// The item names, descriptions and icons.
+    pub fn item_art(&self) -> &ItemArt {
+        &self.item_art
+    }
+
+    /// The sim's item tables for the floor.
+    pub fn item_tables(&self) -> &ItemTables {
+        &self.item_tables
+    }
+
+    /// The sim's throw numbers.
+    pub fn throw_params(&self) -> &ThrowParams {
+        &self.throw_params
+    }
+
+    /// The floor sprite of item `id` (money included, item `0x69`).
+    pub fn item_image(&self, id: u8) -> Option<SpriteImage> {
+        self.item_art.image(id, &self.palettes)
     }
 
     /// The leader species' movement speed.

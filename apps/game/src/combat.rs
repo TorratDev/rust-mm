@@ -82,6 +82,57 @@ impl Tables {
     }
 }
 
+#[cfg(test)]
+impl Tables {
+    /// Hand-made tables for the headless tests: neutral stages, a move table that holds the
+    /// throw's move. The numbers are the tests' own, not the game's.
+    pub fn for_tests() -> Self {
+        use rescue_data::combat::STAGES;
+        use rescue_data::types::TYPES;
+        let neutral = [0x100i32; STAGES];
+        let tables = CombatTables {
+            type_chart: [[2i16; TYPES]; TYPES],
+            effectiveness: [[2i32; 4]; 4],
+            cell_multiplier: [0x4000, 0xC000, 0x10000, 0x20000],
+            stab: 0x14000,
+            physical: [0u8; TYPES],
+            attack_stage: neutral,
+            defence_stage: neutral,
+            accuracy_stage: neutral,
+            evasion_stage: neutral,
+            regular_attack_weight: [9, 7, 5, 3, 1],
+        };
+        let mv = |id: u16| Move {
+            id,
+            name: String::new(),
+            base_power: 2,
+            kind: 0,
+            targeting: [0, 0],
+            base_pp: 10,
+            ai_weight: 0,
+            accuracy: [100; 3],
+            chained_hits: 0,
+            max_upgrade: 0,
+            crit_chance: 0,
+            magic_coat: false,
+            snatchable: false,
+            uses_mouth: false,
+            cannot_hit_frozen: false,
+            ignores_taunted: false,
+            range: 0,
+            description: String::new(),
+            use_text: String::new(),
+        };
+        Tables {
+            tables,
+            moves: (0..=rescue_sim::throw::THROW_MOVE).map(mv).collect(),
+            exp_yields: Vec::new(),
+            weights: Vec::new(),
+            levels: Vec::new(),
+        }
+    }
+}
+
 /// The log lines of an attack, from the wild monsters before and after it: each one that lost
 /// HP is hit, each one gone is defeated. Monsters stand still during an attack, so a monster is
 /// matched by its tile and species. Empty when nothing changed.

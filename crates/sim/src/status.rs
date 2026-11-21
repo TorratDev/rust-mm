@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::items::Item;
 use crate::rng::DungeonRng;
 use crate::state::EntityInfo;
 
@@ -160,11 +161,12 @@ pub(crate) fn inflict(
     target: &mut EntityInfo,
     same: bool,
     base_stage: i32,
+    held: Item,
 ) {
     match kind {
         Inflict::Paralysis => paralyse(rng, target),
         Inflict::Burn => burn(rng, target),
-        Inflict::Sleep => sleep(rng, target),
+        Inflict::Sleep => sleep(rng, target, held),
         Inflict::Flinch => flinch(rng, target),
         Inflict::Whiffer => whiffer(rng, target),
         Inflict::FocusEnergy => focus_energy(rng, target),
@@ -201,17 +203,22 @@ pub(crate) fn burn(rng: &mut DungeonRng, t: &mut EntityInfo) {
 /// `0215E07C` then `0218B2D0` and `0218B420`: the roll is drawn first, even for a target that is
 /// immune. Insomnia and Vital Spirit block; a sleeper keeps its turns; Early Bird halves a
 /// finite roll to at least 1. The turns are stored as rolled, with no +1.
-// shortcut: the immunity gate's Safeguard, IQ skill `0x11` and held item `0x15` are not modelled
-// (no reflect-class state, IQ skills or held items); the sleepless (2) and napping (5) blocks are
-// not reachable, as no first-dungeon move sets them.
-fn sleep(rng: &mut DungeonRng, t: &mut EntityInfo) {
-    sleep_with(rng, t, SLEEP_TURNS);
+// shortcut: the immunity gate's Safeguard and IQ skill `0x11` are not modelled (no reflect-class
+// state, no IQ skills); the held item `0x15` (Insomniscope) is tested through `held`. The sleepless
+// (2) and napping (5) blocks are not reachable, as no first-dungeon move sets them.
+fn sleep(rng: &mut DungeonRng, t: &mut EntityInfo, held: Item) {
+    sleep_with(rng, t, SLEEP_TURNS, held);
 }
 
-/// [`sleep`] with the duration range of the caller (the Sleep Seed's, `02146840`).
-pub(crate) fn sleep_with(rng: &mut DungeonRng, t: &mut EntityInfo, pair: (i32, i32)) {
+/// [`sleep`] with the duration range of the caller (the Sleep Seed's, `02146840`). `held` is the
+/// target's held item: Insomniscope (`0x15`) refuses like Insomnia (`CannotSleep`, `HasHeldItem`).
+pub(crate) fn sleep_with(rng: &mut DungeonRng, t: &mut EntityInfo, pair: (i32, i32), held: Item) {
     let mut turns = status_turns(rng, t, pair, true);
-    if t.has_ability(INSOMNIA) || t.has_ability(VITAL_SPIRIT) || t.status.sleep == SLEEP {
+    if t.has_ability(INSOMNIA)
+        || t.has_ability(VITAL_SPIRIT)
+        || held.holds(crate::items::INSOMNISCOPE)
+        || t.status.sleep == SLEEP
+    {
         return;
     }
     if turns != NO_END && t.has_ability(EARLY_BIRD) {
@@ -502,7 +509,7 @@ mod tests {
     fn run(kind: Inflict, info: &mut EntityInfo) -> (DungeonRng, DungeonRng) {
         let start = DungeonRng::from_state(0x1234_5678);
         let mut rng = start;
-        inflict(kind, &mut rng, info, false, 1);
+        inflict(kind, &mut rng, info, false, 1, Item::default());
         (start, rng)
     }
 
@@ -617,6 +624,40 @@ mod tests {
         t.status.sleep_turns = 9;
         run(Inflict::Sleep, &mut t);
         assert_eq!(t.status.sleep_turns, 9);
+    }
+
+    #[test]
+    fn insomniscope_refuses_sleep_only_while_it_is_not_sticky() {
+        use crate::items::{FLAG_EXISTS, FLAG_STICKY, INSOMNISCOPE};
+        let held = |flags| Item {
+            flags,
+            qty: 1,
+            id: INSOMNISCOPE,
+        };
+        let mut t = info();
+        let mut rng = DungeonRng::from_state(0x1234_5678);
+        inflict(
+            Inflict::Sleep,
+            &mut rng,
+            &mut t,
+            false,
+            1,
+            held(FLAG_EXISTS),
+        );
+        assert_eq!(t.status.sleep, 0, "a held Insomniscope refuses");
+        let mut t = info();
+        inflict(
+            Inflict::Sleep,
+            &mut rng,
+            &mut t,
+            false,
+            1,
+            held(FLAG_EXISTS | FLAG_STICKY),
+        );
+        assert_eq!(t.status.sleep, SLEEP, "a sticky one does not count");
+        let mut t = info();
+        inflict(Inflict::Sleep, &mut rng, &mut t, false, 1, Item::default());
+        assert_eq!(t.status.sleep, SLEEP, "no held item sleeps");
     }
 
     #[test]
@@ -740,7 +781,14 @@ mod tests {
         }
         let mut t = info();
         let mut rng = DungeonRng::from_state(1);
-        inflict(Inflict::LeechSeed, &mut rng, &mut t, true, 1);
+        inflict(
+            Inflict::LeechSeed,
+            &mut rng,
+            &mut t,
+            true,
+            1,
+            Item::default(),
+        );
         assert_eq!(t.status.leech_seed, 0);
         assert_eq!(rng, DungeonRng::from_state(1));
     }
@@ -844,7 +892,14 @@ mod tests {
     fn speed_down_at_stage_0_changes_nothing_and_draws_nothing() {
         let mut t = info();
         let mut rng = DungeonRng::from_state(7);
-        inflict(Inflict::SpeedDown, &mut rng, &mut t, false, 0);
+        inflict(
+            Inflict::SpeedDown,
+            &mut rng,
+            &mut t,
+            false,
+            0,
+            Item::default(),
+        );
         assert_eq!(t.speed_down, [0; 5]);
         assert_eq!(rng, DungeonRng::from_state(7));
     }

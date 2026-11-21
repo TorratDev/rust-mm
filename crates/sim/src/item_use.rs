@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::combat::CombatData;
 use crate::command::{Blocked, Outcome};
-use crate::items::{Item, STACKABLE_BELOW};
+use crate::items::{DIET_RIBBON, Item, STACKABLE_BELOW};
 use crate::state::{Dungeon, MoveSlot};
 use crate::status::{self, BURN, PARALYSIS};
 
@@ -307,8 +307,9 @@ impl Dungeon {
             CHERI => self.cure(member, &[PARALYSIS]),
             SLEEP_SEED => {
                 let pair = self.items.tables.use_params.sleep_turns;
+                let held = self.held_item(member).unwrap_or_default();
                 if let Some(m) = self.team.get_mut(member) {
-                    status::sleep_with(&mut self.rng, &mut m.info, pair);
+                    status::sleep_with(&mut self.rng, &mut m.info, pair, held);
                 }
                 UseResult::Applied
             }
@@ -364,10 +365,18 @@ impl Dungeon {
     /// fill amount sets it to the maximum.
     // hypothesis: the belly maximum (`+0x114` in Red) is kept per member in the item state,
     // starting at 100; `FILL_AMOUNT` is not read.
-    // shortcut: the belly maximum resets to 100 on a restore, the message cases are not read, and
-    // the refusal at the top of `0218C284` (`info+7 == 0` with `021432E8(t, 0x1B)`) is not
-    // ported.
+    // shortcut: the belly maximum resets to 100 on a restore, and the message cases are not read.
     fn add_belly(&mut self, member: usize, amount: i32, max_rise: i32) {
+        // Diet Ribbon refusal (`0218C284`): a non-leader holding it takes no belly and prints
+        // only the message, which is not read.
+        if self
+            .team
+            .get(member)
+            .is_some_and(|m| !m.info.is_team_leader)
+            && self.has_held_item(member, DIET_RIBBON)
+        {
+            return;
+        }
         let Some(max) = self.items.max_belly.get_mut(member) else {
             return;
         };
@@ -775,6 +784,30 @@ mod tests {
         leader(&mut g).attack[0] = 254;
         eat(&mut g, 0x4E);
         assert_eq!(leader(&mut g).attack[0], 255);
+    }
+
+    #[test]
+    fn a_non_leader_with_a_diet_ribbon_takes_no_belly() {
+        let mut g = run();
+        d(&mut g).team[1].info.belly = 50_000;
+        d(&mut g).items.held[1] = Item::new(DIET_RIBBON, 1);
+        d(&mut g).use_item_arm(1, APPLE, None);
+        assert_eq!(d(&mut g).team[1].info.belly, 50_000, "refused");
+        assert_eq!(
+            d(&mut g).max_belly(1),
+            100_000,
+            "the maximum does not rise either"
+        );
+        // A sticky ribbon does not count (021432E8), so the belly is added.
+        d(&mut g).items.held[1].flags |= crate::items::FLAG_STICKY;
+        d(&mut g).use_item_arm(1, APPLE, None);
+        assert_eq!(d(&mut g).team[1].info.belly, 100_000);
+        // The leader is not refused by the ribbon (info+7 != 0).
+        let mut g = run();
+        d(&mut g).items.held[0] = Item::new(DIET_RIBBON, 1);
+        leader(&mut g).belly = 50_000;
+        d(&mut g).use_item_arm(0, APPLE, None);
+        assert_eq!(leader(&mut g).belly, 100_000);
     }
 
     #[test]

@@ -71,6 +71,19 @@ pub fn opens_menu(pressed: ButtonState) -> bool {
     pressed.is_held(DsButton::X)
 }
 
+/// Y opens the Items menu.
+// shortcut: Y is a stand-in for the game's Items entry (a touch button or a menu row, not
+// measured).
+pub fn opens_items(pressed: ButtonState) -> bool {
+    pressed.is_held(DsButton::Y)
+}
+
+/// Select opens the ground menu of the leader's tile.
+// shortcut: Select is a stand-in for the game's Ground entry of the main menu.
+pub fn opens_ground(pressed: ButtonState) -> bool {
+    pressed.is_held(DsButton::Select)
+}
+
 /// The menu's reply to the buttons that went down this frame, with the cursor on `cursor`.
 /// Up and Down move it (wrapping), A uses the slot (or suspends, on the last row), B closes.
 pub fn menu_input(pressed: ButtonState, cursor: usize) -> MenuInput {
@@ -92,7 +105,7 @@ pub fn menu_input(pressed: ButtonState, cursor: usize) -> MenuInput {
 }
 
 /// The direction of the D-pad bits held, if they name one.
-fn direction(held: ButtonState) -> Option<Direction> {
+pub fn direction(held: ButtonState) -> Option<Direction> {
     let bits = (
         held.is_held(DsButton::Up),
         held.is_held(DsButton::Down),

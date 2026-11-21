@@ -14,15 +14,20 @@ use rescue_platform::{ButtonState, Flow, Screen};
 use rescue_render::anim::AnimPlayer;
 use rescue_render::bg::Frame;
 use rescue_render::minimap::{MonsterInfo, MonsterMark, classify};
+use rescue_sim::combat::CombatData;
 use rescue_sim::command::{Command, Direction, Outcome};
 use rescue_sim::floor::Floor;
+use rescue_sim::items::SwapSource;
 use rescue_sim::rng::GlobalRng;
 use rescue_sim::state::{EntityInfo, FloorRecord, GameState, Monster, MoveSlot};
+use rescue_sim::throw::{ThrowResult, ThrowSource};
 
 use crate::boot::RomCheck;
 use crate::combat::{self, Act, ActKind, LOG_LINES, Tables};
 use crate::dungeon::{self, Dungeon, Figure, FloorData, IDLE_GROUP, MonsterArt, WALK_GROUP};
 use crate::input::{self, MenuInput};
+use crate::item_menu::{Action, ItemMenu};
+use crate::items::{self, ItemArt};
 use crate::save;
 use crate::scene::{MenuItem, Scene};
 use crate::title::{self, MenuClock, MenuView, PanelView, TitleArt};
@@ -107,6 +112,8 @@ pub struct App {
     ticks: u32,
     /// The move menu's cursor while it is open.
     menu: Option<usize>,
+    /// The Items or ground menu while it is open (#555).
+    item_menu: Option<ItemMenu>,
     /// The last lines of the message log.
     log: Vec<String>,
     /// The suspend save's file. `None`: no suspend, no Continue.
@@ -163,6 +170,7 @@ impl App {
             art: BTreeMap::new(),
             ticks: 0,
             menu: None,
+            item_menu: None,
             log: Vec::new(),
             save_path: None,
             has_save: false,
@@ -218,6 +226,12 @@ impl App {
     /// The move menu's cursor, while it is open.
     pub fn menu(&self) -> Option<usize> {
         self.menu
+    }
+
+    /// The Items or ground menu, while it is open.
+    #[cfg(test)]
+    fn item_menu(&self) -> Option<&ItemMenu> {
+        self.item_menu.as_ref()
     }
 
     /// One logic tick with the buttons held now.
@@ -564,9 +578,15 @@ impl App {
         }
         let team = vec![leader];
         let seed = self.config.seed;
-        let Some(game) = start_run(seed, (map, team, speed), (wild, sleep), floors) else {
+        let Some(mut game) = start_run(seed, (map, team, speed), (wild, sleep), floors) else {
             return self.back_to_menu();
         };
+        // shortcut: the sim places the first floor's items as it is entered, before the tables
+        // can be given (`with_item_tables`), so that floor's items come from empty tables (all
+        // Poke); the tables apply to the pick-ups, uses and throws and to the later floors.
+        if let Some(d) = self.data.as_ref() {
+            game = game.with_item_tables(d.item_tables().clone());
+        }
         self.game = Some(game);
         if !self.show_floor() {
             self.back_to_menu();
@@ -637,8 +657,14 @@ impl App {
             && self.fx.is_empty();
         if let Some(cursor) = self.menu {
             self.menu_tick(cursor, pressed);
+        } else if self.item_menu.is_some() {
+            self.item_menu_tick(pressed);
         } else if idle && input::opens_menu(pressed) {
             self.menu = Some(0);
+        } else if idle && input::opens_items(pressed) {
+            self.open_items();
+        } else if idle && input::opens_ground(pressed) {
+            self.open_ground();
         } else if idle
             && let Some(command) = input::command_for_press(buttons, pressed, self.facing)
         {
@@ -683,6 +709,9 @@ impl App {
             .dungeon()
             .map(|d| d.team().to_vec())
             .unwrap_or_default();
+        let floor_before = game
+            .dungeon()
+            .map(|d| (d.floor_items().to_vec(), d.bag().money));
         let outcome = match self.tables.as_ref() {
             Some(t) => game.step_with(command, &t.data()),
             None => game.step(command),
@@ -703,6 +732,12 @@ impl App {
                     // A partner's attack on a wild monster shows in the log.
                     let lines = combat::attack_messages(&wild_before, &wild_after);
                     self.log_lines(lines);
+                    if let Some((floor, money)) = floor_before {
+                        let tile = (i16::try_from(to.0), i16::try_from(to.1));
+                        if let (Ok(x), Ok(y)) = tile {
+                            self.log_pickups(&floor, money, Some((x, y)));
+                        }
+                    }
                 } else if let Some(dir) = attacked_in(command, self.facing) {
                     self.show_attack(dir, &wild_before, &wild_after);
                 }
@@ -712,6 +747,233 @@ impl App {
             Outcome::DungeonCleared | Outcome::LeaderDefeated => self.back_to_menu(),
             Outcome::Blocked(_) | Outcome::NotModelled => {}
         }
+    }
+
+    /// The item art of the floor on screen, or an empty one (items are named by number).
+    fn item_art(&self) -> ItemArt {
+        self.data
+            .as_ref()
+            .map(|d| d.item_art().clone())
+            .unwrap_or_default()
+    }
+
+    /// The pick-up lines of a step that changed the floor items from `floor` (and the money from
+    /// `money`). `stepped` is the tile the leader moved onto.
+    fn log_pickups(
+        &mut self,
+        floor: &[Option<rescue_sim::items::FloorItem>],
+        money: i32,
+        stepped: Option<(i16, i16)>,
+    ) {
+        let Some(run) = self.game.as_ref().and_then(|g| g.dungeon()) else {
+            return;
+        };
+        let (after, now) = (run.floor_items(), run.bag().money);
+        let lines = items::pickup_lines(&self.item_art(), (floor, after), (money, now), stepped);
+        self.log_lines(lines);
+    }
+
+    /// Y opens the bag list. With nothing in it (or no bag on this floor) it says so.
+    fn open_items(&mut self) {
+        let Some(run) = self.game.as_ref().and_then(|g| g.dungeon()) else {
+            return;
+        };
+        match ItemMenu::open_list(run) {
+            Some(menu) => {
+                self.item_menu = Some(menu);
+                self.print_item_menu();
+            }
+            None => self.log_lines(vec![String::from("There are no items.")]),
+        }
+    }
+
+    /// Select opens the ground menu of the leader's tile.
+    fn open_ground(&mut self) {
+        let Some(run) = self.game.as_ref().and_then(|g| g.dungeon()) else {
+            return;
+        };
+        match ItemMenu::open_ground(run) {
+            Some(menu) => {
+                self.item_menu = Some(menu);
+                self.print_item_menu();
+            }
+            None => self.log_lines(vec![String::from("There is nothing here.")]),
+        }
+    }
+
+    /// The open menu's text, as the log prints a line (no menu is drawn yet).
+    fn print_item_menu(&self) {
+        let (Some(menu), Some(run)) = (
+            self.item_menu.as_ref(),
+            self.game.as_ref().and_then(|g| g.dungeon()),
+        ) else {
+            return;
+        };
+        let art = self.item_art();
+        println!("rescue: {}", menu.describe(run, &|id| art.name(id)));
+    }
+
+    /// `021803B8`: whether the leader's species may throw (the menu gate of `021693DC`). With no
+    /// ROM the placeholder table lets species 0 throw.
+    fn leader_can_throw(&self) -> bool {
+        self.data.as_ref().map_or_else(
+            || items::placeholder_throw_params().species_can_throw(0),
+            |d| d.throw_params().species_can_throw(self.config.species),
+        )
+    }
+
+    /// The open item menu reads this tick's presses; a choice is carried out.
+    fn item_menu_tick(&mut self, pressed: ButtonState) {
+        let Some(menu) = self.item_menu.take() else {
+            return;
+        };
+        let can_throw = self.leader_can_throw();
+        let Some(run) = self.game.as_ref().and_then(|g| g.dungeon()) else {
+            return;
+        };
+        let (menu, action) = menu.input(pressed, run, self.facing, can_throw);
+        self.item_menu = menu;
+        if pressed.held().next().is_some() {
+            self.print_item_menu();
+        }
+        if let Some(action) = action {
+            self.item_action(action);
+        }
+    }
+
+    /// Runs one leader turn `act` of the item menu through the sim, then shows what the monsters
+    /// did in it, as `take_turn` does. `None` if there is no run.
+    fn item_turn<R>(
+        &mut self,
+        act: impl FnOnce(&mut GameState, Option<&CombatData<'_>>) -> (Outcome, R),
+    ) -> Option<R> {
+        let game = self.game.as_mut()?;
+        let team = |g: &GameState| g.dungeon().map(|d| d.team().to_vec()).unwrap_or_default();
+        let wild = |g: &GameState| g.dungeon().map(|d| d.wild().to_vec()).unwrap_or_default();
+        let (team_before, wild_before) = (team(game), wild(game));
+        let data = self.tables.as_ref().map(Tables::data);
+        let (outcome, result) = act(game, data.as_ref());
+        let (team_after, wild_after) = (team(game), wild(game));
+        match outcome {
+            Outcome::Applied => {
+                self.show_monsters((&team_before, &team_after), (&wild_before, &wild_after));
+            }
+            Outcome::NextFloor => self.next_floor(),
+            Outcome::DungeonCleared | Outcome::LeaderDefeated => self.back_to_menu(),
+            Outcome::Blocked(_) | Outcome::NotModelled => {}
+        }
+        Some(result)
+    }
+
+    /// The item in bag slot `slot` of the run, or an empty one.
+    fn bag_item(&self, slot: u8) -> rescue_sim::items::Item {
+        self.game
+            .as_ref()
+            .and_then(|g| g.dungeon())
+            .and_then(|d| d.bag().slots.get(usize::from(slot)).copied())
+            .unwrap_or_default()
+    }
+
+    /// Carries out a choice of the Items or ground menu with the sim's item API and logs what
+    /// happened.
+    fn item_action(&mut self, action: Action) {
+        let art = self.item_art();
+        let lines = match action {
+            Action::Info(id) => art.description(id),
+            Action::Give(_) => vec![String::from("Giving items is not available yet.")],
+            Action::Buy => vec![String::from("Buying is not available yet.")],
+            Action::Use(slot) => {
+                let item = self.bag_item(slot);
+                let eat = matches!(
+                    self.game
+                        .as_ref()
+                        .and_then(|g| g.dungeon())
+                        .map(|d| d.item_tables().category(item.id)),
+                    Some(2 | 3)
+                );
+                let done = self.item_turn(|g, data| {
+                    let command = Command::UseItem { slot };
+                    let outcome = match data {
+                        Some(d) => g.step_with(command, d),
+                        None => g.step(command),
+                    };
+                    let used = g.dungeon().and_then(|d| d.last_item_use());
+                    (outcome, (outcome, used))
+                });
+                match done {
+                    Some((Outcome::Applied, used)) => {
+                        vec![items::use_line(&art, item.id, eat, used.map(|u| u.1))]
+                    }
+                    Some((Outcome::Blocked(why), _)) => {
+                        vec![items::blocked_line(&art, item.id, why)]
+                    }
+                    _ => vec![String::from("Nothing happens.")],
+                }
+            }
+            Action::Place(slot) => {
+                let item = self.bag_item(slot);
+                let done = self.item_turn(|g, _| {
+                    let outcome = g.drop_item(slot);
+                    (outcome, outcome)
+                });
+                match done {
+                    Some(Outcome::Applied) => vec![format!("Placed the {}.", art.name(item.id))],
+                    Some(Outcome::Blocked(why)) => vec![items::blocked_line(&art, item.id, why)],
+                    _ => vec![String::from("Nothing happens.")],
+                }
+            }
+            Action::Swap(slot) => {
+                let item = self.bag_item(slot);
+                let floor = self
+                    .game
+                    .as_ref()
+                    .and_then(|g| g.dungeon())
+                    .and_then(|d| d.team().first().and_then(|l| d.floor_item_at(l.pos)))
+                    .unwrap_or_default();
+                let done = self.item_turn(|g, _| {
+                    let outcome = g.swap_floor_item(SwapSource::Bag(slot));
+                    (outcome, outcome)
+                });
+                match done {
+                    Some(Outcome::Applied) => vec![format!(
+                        "Swapped the {} for the {}.",
+                        art.name(item.id),
+                        art.name(floor.id)
+                    )],
+                    Some(Outcome::Blocked(why)) => vec![items::blocked_line(&art, item.id, why)],
+                    _ => vec![String::from("Nothing happens.")],
+                }
+            }
+            Action::Throw(slot, dir) => {
+                let item = self.bag_item(slot);
+                self.facing = dir;
+                let params = self
+                    .data
+                    .as_ref()
+                    .map_or_else(items::placeholder_throw_params, |d| {
+                        d.throw_params().clone()
+                    });
+                let done = self.item_turn(|g, data| {
+                    let Some(data) = data else {
+                        // shortcut: a throw needs the combat tables, which only a ROM gives.
+                        return (Outcome::NotModelled, ThrowResult::Unmodelled);
+                    };
+                    let result = g.throw_item(ThrowSource::Bag(slot), dir, None, &params, data);
+                    let outcome = match &result {
+                        ThrowResult::Thrown(r) if r.leader_down => Outcome::LeaderDefeated,
+                        ThrowResult::Thrown(_) | ThrowResult::Skipped => Outcome::Applied,
+                        ThrowResult::Blocked(b) => Outcome::Blocked(*b),
+                        _ => Outcome::NotModelled,
+                    };
+                    (outcome, result)
+                });
+                match done {
+                    Some(result) => vec![items::throw_line(&art, item.id, &result)],
+                    None => Vec::new(),
+                }
+            }
+        };
+        self.log_lines(lines);
     }
 
     /// Shows an attack facing `dir`: the leader's strike, a hit reaction on each monster that
@@ -845,7 +1107,30 @@ impl App {
                 mark: combat::has_status(&m.info).then(|| mark_of(&m.info)),
             });
         }
+        out.extend(self.item_figures());
         out
+    }
+
+    /// The floor items and money in play, drawn after (behind) the monsters.
+    // shortcut: every floor item is drawn, whether or not the leader has seen its tile (the
+    // sprite rule of `docs/re/visibility.md` P3 is not applied here).
+    fn item_figures(&self) -> Vec<Figure> {
+        let (Some(run), Some(data)) = (self.game.as_ref().and_then(|g| g.dungeon()), &self.data)
+        else {
+            return Vec::new();
+        };
+        run.floor_items()
+            .iter()
+            .flatten()
+            .filter_map(|f| {
+                Some(Figure {
+                    cell: (i32::from(f.pos.0), i32::from(f.pos.1)),
+                    offset: (0, 0),
+                    image: data.item_image(f.item.id)?,
+                    mark: None,
+                })
+            })
+            .collect()
     }
 
     /// Starts the walk of the leader from `from` to `to`, one leg a tile, facing `dir`. The walk
@@ -941,6 +1226,7 @@ impl App {
         self.fx.clear();
         self.art.clear();
         self.menu = None;
+        self.item_menu = None;
         self.log.clear();
     }
 }
@@ -1052,6 +1338,7 @@ mod tests {
     use rescue_platform::DsButton;
     use rescue_sim::floor::{HEIGHT, TERRAIN_STAIRS, WIDTH};
 
+    use crate::item_menu::Entry;
     use crate::walk::TILE_FRAMES;
 
     const RUN: RunConfig = RunConfig {
@@ -1184,6 +1471,387 @@ mod tests {
             assert!(app.walk.is_some(), "the walk runs, frame {frame}");
         }
         app.tick(held(button));
+    }
+
+    // --- The Items and ground menus (#555) ---
+
+    use rescue_sim::floor::{TERRAIN_FLOOR, TERRAIN_TYPE_MASK};
+    use rescue_sim::items::{FloorItem, Item, POKE};
+
+    const APPLE: u8 = 0x52;
+    const ROCK: u8 = 1;
+
+    /// A plain floor tile with `run` more plain floor tiles to its right, no stairs.
+    fn corridor(run: i32) -> (i16, i16) {
+        let app = App::new(&ready(), None, RUN, true);
+        let map = app
+            .game
+            .as_ref()
+            .and_then(|g| g.dungeon())
+            .expect("a floor")
+            .floor();
+        let plain = |x: i32, y: i32| {
+            map.tile(x, y).is_some_and(|t| {
+                t.terrain & TERRAIN_TYPE_MASK == TERRAIN_FLOOR && t.terrain & TERRAIN_STAIRS == 0
+            })
+        };
+        for y in 0..HEIGHT as i32 {
+            for x in 0..WIDTH as i32 {
+                if (0..=run).all(|d| plain(x + d, y)) {
+                    return (x as i16, y as i16);
+                }
+            }
+        }
+        panic!("no corridor of {run} tiles");
+    }
+
+    /// A run with the leader on `tile`, no wild monsters, `bag` in the first bag slots, the floor
+    /// items `floor`, and item categories for the ids the tests use.
+    fn with_items(tile: (i16, i16), bag: &[Item], floor: &[((i16, i16), Item)]) -> App {
+        with_team(tile, bag, floor, false)
+    }
+
+    /// As [`with_items`], with a partner beside the leader when `partner` is set.
+    fn with_team(
+        tile: (i16, i16),
+        bag: &[Item],
+        floor: &[((i16, i16), Item)],
+        partner: bool,
+    ) -> App {
+        let mut app = App::new(&ready(), None, RUN, true);
+        let game = app.game.take().expect("a run is up");
+        let mut snap = game.snapshot();
+        let mut resume = game.resume();
+        let dungeon = snap.dungeon.as_mut().expect("a floor");
+        dungeon.team[0].pos = tile;
+        dungeon.team.truncate(1);
+        if partner {
+            let mut mate = dungeon.team[0].clone();
+            mate.pos = (tile.0 + 1, tile.1);
+            dungeon.team.push(mate);
+        }
+        dungeon.wild.clear();
+        let mut slots = [Item::default(); rescue_sim::items::BAG_SLOTS];
+        slots[..bag.len()].copy_from_slice(bag);
+        resume.items.bag.slots = slots;
+        let tables = &mut resume.items.tables;
+        tables.categories = vec![0; 256];
+        tables.categories[usize::from(APPLE)] = 3;
+        tables.categories[usize::from(POKE)] = 6;
+        let items = resume.dungeon.as_mut().expect("a floor");
+        items.floor_items = floor
+            .iter()
+            .map(|&(pos, item)| Some(FloorItem { pos, item }))
+            .collect();
+        items.num_items = floor.len() as u16;
+        app.game = Some(GameState::restore_with(&snap, &resume).expect("restores"));
+        app.show_floor();
+        app
+    }
+
+    fn run_of(app: &App) -> &rescue_sim::state::Dungeon {
+        app.game
+            .as_ref()
+            .and_then(|g| g.dungeon())
+            .expect("a floor")
+    }
+
+    fn bag_ids(app: &App) -> Vec<u8> {
+        let slots = run_of(app).bag().slots;
+        slots.iter().filter(|i| i.exists()).map(|i| i.id).collect()
+    }
+
+    fn floor_ids(app: &App) -> Vec<(i16, u8)> {
+        let floor = run_of(app).floor_items();
+        floor
+            .iter()
+            .flatten()
+            .map(|f| (f.pos.0, f.item.id))
+            .collect()
+    }
+
+    /// Waits out any walk or animation so the next input is read.
+    fn settle(app: &mut App) {
+        for _ in 0..200 {
+            app.tick(ButtonState::default());
+        }
+    }
+
+    fn last_log(app: &App) -> &str {
+        app.log().last().map_or("", String::as_str)
+    }
+
+    fn labels(app: &App) -> Vec<&'static str> {
+        match app.item_menu() {
+            Some(ItemMenu::Actions { entries, .. }) => entries.iter().map(|e| e.label()).collect(),
+            Some(ItemMenu::Ground { entries, .. }) => entries.iter().map(|e| e.label()).collect(),
+            other => panic!("no submenu is up: {other:?}"),
+        }
+    }
+
+    fn open_actions(app: &mut App) {
+        tap(app, DsButton::Y);
+        assert!(matches!(app.item_menu(), Some(ItemMenu::List { .. })));
+        tap(app, DsButton::A);
+        assert!(matches!(app.item_menu(), Some(ItemMenu::Actions { .. })));
+    }
+
+    #[test]
+    fn items_menu_says_so_with_an_empty_bag_and_ground_menu_with_nothing_underfoot() {
+        let mut app = with_items(corridor(3), &[], &[]);
+        tap(&mut app, DsButton::Y);
+        assert!(app.item_menu().is_none());
+        assert_eq!(last_log(&app), "There are no items.");
+        tap(&mut app, DsButton::Select);
+        assert!(app.item_menu().is_none());
+        assert_eq!(last_log(&app), "There is nothing here.");
+    }
+
+    #[test]
+    fn eating_an_item_uses_it_up_and_closes_the_menu() {
+        let bag = [Item::new(APPLE, 0), Item::new(ROCK, 4)];
+        // A food item (category 3) offers Eat, then Place, Throw, Info: a lone leader has no Give.
+        let mut app = with_items(corridor(3), &bag, &[]);
+        open_actions(&mut app);
+        assert_eq!(labels(&app), ["Eat", "Place", "Throw", "Info"]);
+        // With a partner Give comes after Eat (021693DC).
+        let mut app = with_team(corridor(3), &bag, &[], true);
+        open_actions(&mut app);
+        assert_eq!(labels(&app), ["Eat", "Give", "Place", "Throw", "Info"]);
+        let mut app = with_items(corridor(3), &bag, &[]);
+        open_actions(&mut app);
+        tap(&mut app, DsButton::A);
+        assert!(app.item_menu().is_none(), "using closes the menu");
+        assert_eq!(
+            bag_ids(&app),
+            [ROCK],
+            "the apple is gone, the bag compacted"
+        );
+        assert_eq!(last_log(&app), "Ate the Item 82.");
+    }
+
+    #[test]
+    fn a_thrown_item_has_no_use_entry_and_info_and_give_keep_the_menu_open() {
+        let mut app = with_team(corridor(3), &[Item::new(ROCK, 4)], &[], true);
+        open_actions(&mut app);
+        assert_eq!(labels(&app), ["Give", "Place", "Throw", "Info"]);
+        tap(&mut app, DsButton::A); // Give
+        assert_eq!(last_log(&app), "Giving items is not available yet.");
+        assert!(app.item_menu().is_some());
+        for _ in 0..3 {
+            tap(&mut app, DsButton::Down);
+        }
+        tap(&mut app, DsButton::A); // Info
+        assert!(
+            last_log(&app).contains("nothing to tell"),
+            "{}",
+            last_log(&app)
+        );
+        assert!(matches!(app.item_menu(), Some(ItemMenu::Actions { .. })));
+        tap(&mut app, DsButton::B);
+        assert!(matches!(app.item_menu(), Some(ItemMenu::List { .. })));
+        tap(&mut app, DsButton::B);
+        assert!(app.item_menu().is_none());
+        assert_eq!(bag_ids(&app), [ROCK], "nothing was spent");
+    }
+
+    #[test]
+    fn a_species_that_cannot_throw_gets_no_throw_entry() {
+        let app = with_items(corridor(3), &[Item::new(ROCK, 4)], &[]);
+        let run = run_of(&app);
+        let item = Item::new(ROCK, 4);
+        assert_eq!(
+            crate::item_menu::entries_for(run, item, true),
+            [Entry::Place, Entry::Throw, Entry::Info]
+        );
+        assert_eq!(
+            crate::item_menu::entries_for(run, item, false),
+            [Entry::Place, Entry::Info]
+        );
+    }
+
+    #[test]
+    fn place_puts_the_item_on_the_floor_underfoot() {
+        let at = corridor(3);
+        let mut app = with_items(at, &[Item::new(APPLE, 0)], &[]);
+        open_actions(&mut app);
+        assert_eq!(labels(&app), ["Eat", "Place", "Throw", "Info"]);
+        tap(&mut app, DsButton::Down); // Eat, then Place
+        tap(&mut app, DsButton::A);
+        assert!(app.item_menu().is_none());
+        assert!(bag_ids(&app).is_empty());
+        assert_eq!(floor_ids(&app), [(at.0, APPLE)]);
+        assert_eq!(last_log(&app), "Placed the Item 82.");
+        // A tile that already holds an item has no Place entry (021693DC).
+        let mut app = with_items(at, &[Item::new(ROCK, 2)], &[(at, Item::new(APPLE, 0))]);
+        open_actions(&mut app);
+        assert_eq!(labels(&app), ["Throw", "Info"]);
+    }
+
+    #[test]
+    fn throw_asks_for_a_direction_and_the_item_flies_and_lands() {
+        let mut app = with_items(corridor(6), &[Item::new(ROCK, 3)], &[]);
+        app.tables = Some(Tables::for_tests());
+        open_actions(&mut app);
+        for _ in 0..1 {
+            tap(&mut app, DsButton::Down);
+        }
+        tap(&mut app, DsButton::A); // Throw
+        assert!(matches!(app.item_menu(), Some(ItemMenu::Aim { .. })));
+        // B backs out to the submenu without throwing.
+        tap(&mut app, DsButton::B);
+        assert!(matches!(app.item_menu(), Some(ItemMenu::Actions { .. })));
+        assert_eq!(bag_ids(&app), [ROCK]);
+        for _ in 0..1 {
+            tap(&mut app, DsButton::Down);
+        }
+        tap(&mut app, DsButton::A);
+        assert!(matches!(app.item_menu(), Some(ItemMenu::Aim { .. })));
+        tap(&mut app, DsButton::Right);
+        assert!(app.item_menu().is_none());
+        assert_eq!(
+            run_of(&app).bag().slots[0],
+            Item::new(ROCK, 2),
+            "one left the stack"
+        );
+        assert_eq!(floor_ids(&app).iter().filter(|f| f.1 == ROCK).count(), 1);
+        assert_eq!(last_log(&app), "Threw the Item 1.");
+    }
+
+    #[test]
+    fn a_throw_without_the_combat_tables_is_refused_and_keeps_the_item() {
+        let mut app = with_items(corridor(6), &[Item::new(ROCK, 3)], &[]);
+        open_actions(&mut app);
+        for _ in 0..1 {
+            tap(&mut app, DsButton::Down);
+        }
+        tap(&mut app, DsButton::A);
+        tap(&mut app, DsButton::Right);
+        assert_eq!(run_of(&app).bag().slots[0], Item::new(ROCK, 3));
+        assert_eq!(last_log(&app), "Nothing happens.");
+    }
+
+    #[test]
+    fn stepping_on_an_item_picks_it_up_and_says_so_and_money_goes_to_the_purse() {
+        let at = corridor(3);
+        let next = (at.0 + 1, at.1);
+        let mut app = with_items(at, &[], &[(next, Item::new(APPLE, 0))]);
+        app.tick(held(DsButton::Right));
+        assert_eq!(bag_ids(&app), [APPLE]);
+        assert!(floor_ids(&app).is_empty());
+        assert_eq!(last_log(&app), "Picked up the Item 82.");
+        let mut app = with_items(at, &[], &[(next, Item::new(POKE, 7))]);
+        app.tick(held(DsButton::Right));
+        assert_eq!(run_of(&app).bag().money, 7);
+        assert!(bag_ids(&app).is_empty(), "money takes no bag slot");
+        assert_eq!(last_log(&app), "Picked up 7 Poke.");
+    }
+
+    #[test]
+    fn a_full_bag_leaves_the_item_and_the_ground_menu_swaps_it_after_a_confirm() {
+        let at = corridor(3);
+        let next = (at.0 + 1, at.1);
+        let full: Vec<Item> = (0x10..0x10 + 20).map(|id| Item::new(id, 0)).collect();
+        let mut app = with_items(at, &full, &[(next, Item::new(APPLE, 0))]);
+        app.tick(held(DsButton::Right));
+        assert_eq!(last_log(&app), "The bag is full.");
+        assert_eq!(floor_ids(&app), [(next.0, APPLE)]);
+        settle(&mut app);
+        // On the item: the ground menu offers Swap and Info.
+        tap(&mut app, DsButton::Select);
+        assert_eq!(labels(&app), ["Swap", "Info"]);
+        tap(&mut app, DsButton::A); // Swap: choose the bag item
+        assert!(matches!(
+            app.item_menu(),
+            Some(ItemMenu::List {
+                purpose: crate::item_menu::ListFor::Swap,
+                ..
+            })
+        ));
+        tap(&mut app, DsButton::A); // slot 0
+        // The Yes/No opens on No: A there leaves everything alone.
+        assert!(matches!(
+            app.item_menu(),
+            Some(ItemMenu::Confirm { yes: false, .. })
+        ));
+        tap(&mut app, DsButton::A);
+        assert!(app.item_menu().is_none());
+        assert_eq!(floor_ids(&app), [(next.0, APPLE)]);
+        // Again, and answer Yes.
+        tap(&mut app, DsButton::Select);
+        tap(&mut app, DsButton::A);
+        tap(&mut app, DsButton::A);
+        tap(&mut app, DsButton::Up);
+        assert!(matches!(
+            app.item_menu(),
+            Some(ItemMenu::Confirm { yes: true, .. })
+        ));
+        tap(&mut app, DsButton::A);
+        assert!(app.item_menu().is_none());
+        assert!(bag_ids(&app).contains(&APPLE));
+        assert_eq!(floor_ids(&app), [(next.0, 0x10)]);
+        assert_eq!(last_log(&app), "Swapped the Item 16 for the Item 82.");
+    }
+
+    #[test]
+    fn shop_stock_offers_buy_and_buying_is_a_shortcut() {
+        let at = corridor(3);
+        let mut stock = Item::new(APPLE, 0);
+        stock.flags |= rescue_sim::items::FLAG_SHOP;
+        let mut app = with_items(at, &[], &[(at, stock)]);
+        tap(&mut app, DsButton::Select);
+        assert_eq!(labels(&app), ["Buy", "Info"]);
+        tap(&mut app, DsButton::A);
+        assert_eq!(last_log(&app), "Buying is not available yet.");
+        assert_eq!(floor_ids(&app), [(at.0, APPLE)], "the stock stays");
+    }
+
+    #[test]
+    fn the_item_menu_holds_the_floor_while_open() {
+        let at = corridor(3);
+        let mut app = with_items(at, &[Item::new(ROCK, 2)], &[]);
+        tap(&mut app, DsButton::Y);
+        // Moves do nothing while the list is up.
+        app.tick(held(DsButton::Right));
+        app.tick(ButtonState::default());
+        assert_eq!(leader(&app), Some(at));
+        assert!(app.item_menu().is_some());
+    }
+
+    rescue_tests::rom_test! {
+        /// The ROM's items (#555): the tables hold the floor's picker rows and the categories, the
+        /// floor icons draw for Poké and an ordinary item, and a floor item is drawn on screen.
+        fn floor_items_and_money_are_drawn_from_the_rom(rom) {
+            let bytes = rom.read();
+            let data = FloorData::from_rom(&bytes, dungeon::DEFAULT_DUNGEON, dungeon::DEFAULT_FLOOR, dungeon::DEFAULT_SPECIES)
+                .expect("the first floor loads");
+            let tables = data.item_tables();
+            assert_eq!(tables.rows.len(), 4);
+            assert_eq!(tables.rows[0].categories.len(), 12);
+            assert!(tables.rows[0].items.len() >= 240);
+            assert_eq!(tables.category(POKE), 6);
+            assert!(!data.item_art().name(0x37).is_empty(), "items are named");
+            for id in [POKE, APPLE, 0x37] {
+                let image = data.item_image(id).expect("the icon draws");
+                assert!(image.pixels.iter().any(Option::is_some), "item {id:#x} has pixels");
+            }
+            // A floor item next to the leader shows on the frame.
+            let at = corridor(3);
+            let mut app = App::new(&ready(), Some(bytes), RUN, true);
+            let game = app.game.take().expect("a run is up");
+            let mut snap = game.snapshot();
+            let resume = game.resume();
+            snap.dungeon.as_mut().expect("a floor").team[0].pos = at;
+            app.game = Some(GameState::restore_with(&snap, &resume).expect("restores"));
+            app.show_floor();
+            let blank = app.dungeon().expect("a view").frame.clone();
+            let mut with_item = resume.clone();
+            with_item.dungeon.as_mut().expect("a floor").floor_items =
+                vec![Some(FloorItem { pos: (at.0 + 1, at.1), item: Item::new(POKE, 3) })];
+            app.game = Some(GameState::restore_with(&snap, &with_item).expect("restores"));
+            app.show_floor();
+            assert_ne!(app.dungeon().expect("a view").frame, blank, "the item changes the frame");
+        }
     }
 
     #[test]
