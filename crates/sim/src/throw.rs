@@ -526,15 +526,12 @@ impl Dungeon {
             },
             variance: self.rng.int(0x4000),
         };
-        let dealt = combat::damage_scaled(
-            t,
-            &mv,
-            ARG8,
-            &attacker,
-            &defender,
-            combat::Held::default(),
-            rolls,
-        );
+        // `CalcDamage` reads both sides' held items on this path too (`docs/re/items.md`, P3).
+        let held = combat::Held {
+            attacker: self.held_of(Slot::Team(thrower)),
+            target: self.held_of(target),
+        };
+        let dealt = combat::damage_scaled(t, &mv, ARG8, &attacker, &defender, held, rolls);
         let second = self.rng.int(100);
         let physical = combat::is_physical(t, mv.kind);
         if !combat::hits(t, second, mv.accuracy[1], &attacker, &defender, physical) {
@@ -693,6 +690,49 @@ mod tests {
     }
 
     #[test]
+    fn a_thrower_holding_scope_lens_changes_the_thrown_damage() {
+        let mut g = setup();
+        foe(&mut g, 7);
+        g.dungeon_mut().unwrap().items.held[0] = Item::new(crate::items::SCOPE_LENS, 1);
+        let start = rng_of(&g);
+        let mut r = start;
+        let roll = r.int(100);
+        let rolls = Rolls {
+            boost: r.int(100),
+            crit: r.int(100),
+            variance: r.int(0x4000),
+        };
+        let d = g.dungeon().unwrap();
+        let (attacker, defender) = (d.team[0].info.clone(), d.wild[0].info.clone());
+        let held = combat::Held {
+            attacker: d.held_of(Slot::Team(0)),
+            target: d.held_of(Slot::Wild(0)),
+        };
+        let t = tables();
+        let mv = moves()[usize::from(THROW_MOVE)].clone();
+        // The Scope Lens adds crit odds, so some crit roll must make the held damage differ.
+        let differs = (0..100).any(|crit| {
+            let rolls = Rolls { crit, ..rolls };
+            let with = combat::damage_scaled(&t, &mv, ARG8, &attacker, &defender, held, rolls);
+            let plain = combat::damage_scaled(
+                &t,
+                &mv,
+                ARG8,
+                &attacker,
+                &defender,
+                combat::Held::default(),
+                rolls,
+            );
+            with.value != plain.value
+        });
+        assert!(differs);
+        let want = combat::damage_scaled(&t, &mv, ARG8, &attacker, &defender, held, rolls).value;
+        let report = run(&mut g, &params(roll + 1));
+        assert_eq!(report.damage, want);
+        assert_eq!(wild_hp(&g), 100 - want as i16);
+    }
+
+    #[test]
     fn a_line_throw_that_hits_draws_the_roll_then_the_four_damage_draws() {
         let mut g = setup();
         foe(&mut g, 7);
@@ -704,22 +744,17 @@ mod tests {
             crit: r.int(100),
             variance: r.int(0x4000),
         };
-        let (attacker, defender) = {
+        let (attacker, defender, held) = {
             let d = g.dungeon().unwrap();
-            (d.team[0].info.clone(), d.wild[0].info.clone())
+            let held = combat::Held {
+                attacker: d.held_of(Slot::Team(0)),
+                target: d.held_of(Slot::Wild(0)),
+            };
+            (d.team[0].info.clone(), d.wild[0].info.clone(), held)
         };
         let t = tables();
         let mv = moves()[usize::from(THROW_MOVE)].clone();
-        let want = combat::damage_scaled(
-            &t,
-            &mv,
-            ARG8,
-            &attacker,
-            &defender,
-            combat::Held::default(),
-            rolls,
-        )
-        .value;
+        let want = combat::damage_scaled(&t, &mv, ARG8, &attacker, &defender, held, rolls).value;
         let report = run(&mut g, &params(roll + 1));
         assert_eq!((report.hits, report.misses), (1, 0));
         assert!(want > 0);
