@@ -392,7 +392,7 @@ The table at `0x02092818` holds one `0x10`-byte record per dungeon, Red's `Dunge
 | `+3` | `rescuesAllowed` (s8) | 0xFF, 0xFF |
 | `+4` | `maxItemsAllowed` | 0x14, 0x14 |
 | `+5` | `maxPartyMembers` | 3, 3 |
-| `+6` | `levelResetTo1` | 0, 0 |
+| `+6` | `levelResetTo1` (entry rule [blue-verified]; exit effect [red-hypothesis]) | 0, 0 |
 | `+7` | `keepMoney` | 1, 1 |
 | `+8` | `leaderCanSwitch` | 0, 0 |
 | `+9` | `hasCheckpoint` | 0, 0 |
@@ -401,7 +401,11 @@ The table at `0x02092818` holds one `0x10`-byte record per dungeon, Red's `Dunge
 | `+0xC` | `turnLimit` (s16) | 0x03E8 (1000), 0x03E8 |
 | `+0xE` | `randomMovementChance` (s16) | 0, 0 |
 
-**Byte `+6` at dungeon exit (#588) [blue-verified for the read; red-hypothesis for the name].** `FUN_02006444` (`0x02006444`) returns byte `+6` of record `id`, that is `0x0209281E + id * 0x10`. The base is the pointer at the literal `0x02006450`, not `DAT_02006450` itself. Red's name for this field is `levelResetTo1`. Within ids `0x00` to `0x61` the byte is nonzero only for `0x1A`, `0x3A` and `0x3E`. Those dungeons keep only the held item at exit (the zero case copies IQ too; see [progression.md](progression.md) P5). Records from `0x62` on have another layout, so this byte is not read as a dungeon flag there.
+**Byte `+6` (#588, #595).** The byte is record `id`'s `+6`, that is `0x0209281E + id * 0x10`; the base comes from the literal pool, not from `DAT_02006450` itself. Two readers, both code-verified [blue-verified]:
+- **Entry rule.** `FUN_02005A0C` (`0x02005A0C`) reads the byte through the literal at `0x02006114` (`0x02005F6C`) and, when it is nonzero (the branch at export line 201; the message pointer is loaded at `0x02005FA4`), adds a dungeon-entry rule line. The message id comes from the word at `0x02092E3C` (read at `0x02005FAC`), which is `0x50B` in RAM. Message `0x50B` is "The team will enter at Level 1." (static read of NitroFS `message_e.str`, file 149, entry id-1; the in-game line was not seen). So the flag is the entry rule "team enters at Level 1". **This confirms Red's name `levelResetTo1` for the entry rule.**
+- **Exit selector.** `FUN_02006444` returns the byte, and `02178068` (`021781C0`) chooses the copy from it: zero copies the whole party record, nonzero copies only the held item ([progression.md](progression.md) P5). **[red-hypothesis]:** the exit effect is that the members come back reset and only the held item is kept. The reset code (`020033A8`, `02003320`, `02001CD8`) is not read, so the level value is not shown.
+- **Ids.** Within ids `0x00` to `0x61` the byte is nonzero only for `0x1A`, `0x3A` and `0x3E` (runtime RAM read of the table on a scratch ROM copy, [#591](https://github.com/TorratDev/rust-mm/issues/591); no table dump committed). Why these three: the table has no code or rule that derives the value, so it is per-dungeon data. No dungeon name is mapped in the repo for them. Records from `0x62` on have another layout, so this byte is not read as a dungeon flag there.
+- **Not verified:** that the level is set to 1 at entry in a run, and the exit effect above. A runtime check is in [#589](https://github.com/TorratDev/rust-mm/issues/589).
 
 `FUN_02006410(index)` is `GetRescuesAllowed` (proposed; red-hypothesis name). It returns byte `+3` of record `index`, that is `0x0209281B + index * 0x10`. Both callers use this one global table: the mail builder `FUN_0200D4DC` (index from mail `+4`) and `RunDungeon_Async` (`0x0206DCEC`, index from the setup struct's `+4`). Records beyond 1 are not mapped to dungeon ids or names.
 
