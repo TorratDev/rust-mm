@@ -131,7 +131,7 @@ Source: the #170 P2 and P3 comment by investigator A (static, Ghidra copy `rescu
 | 1 | `FUN_0206C568` | `CallPromptNewQuestion` | Calls `FUN_0206C090` (`PromptNewQuestion`); state 2 |
 | 2 | `FUN_0206C4C0` | `UpdateNatureTotals` | `FUN_0202EDAC(&answer)` (Red `sub_80144A4`). Answer 99 (Red `BRAVE_2B_TRIGGER`) sets the question to 0x37 and state 1. Otherwise adds the 13 bytes of `effects[answer*13 + i]` to `+0x4C + 4*i`; state 0 |
 | 3 | `FUN_0206C438` | `SetPlayerGender` | Answer 0 or 1 to `+0xB8` (Red `playerGender`) and to a byte at `+8` of a global (game options); `func_0x02138CC0(0)` (Red `sub_8099690(0)`); state 4 |
-| 4 | `FUN_0206C394` | `RevealPersonality` | `RandInt(0xD)`, then 12 wrap-around steps keeping the strictly larger total. Nature at `+0x48`; starter id from the table at `[gender*2 + nature*4]`, stored at `+8` (Red `StarterID`); `FUN_0206C034` (`PrintPersonalityTypeDescription`); state 5 |
+| 4 | `FUN_0206C394` | `RevealPersonality` | `RandInt(0xD)`, then 12 wrap-around steps keeping the strictly larger total. Nature at `+0x48`; starter id from the table at `[gender*2 + nature*4]`, stored at `+8` (Red `StarterID`); `FUN_0206C034` (`PrintPersonalityTypeDescription`); state 5. Golden run (#575, [progression P7.1](progression.md#p7-personality-quiz-and-starter-blue-verified-static)): nature 5, starter 158, gender 0 [emulator-verified] |
 | 5 | `FUN_0206C340` | `RevealStarter` | Wait, dialogue, `FUN_0206BF74` (`PersonalityTest_DisplayStarterSprite`); state 6 |
 | 6 | `FUN_0206C310` | `AdvanceToPickPartnerPrompt` | Wait; state 7 |
 | 7 | `FUN_0206C2D0` | `PromptPickPartner` | Dialogue; state 8 |
