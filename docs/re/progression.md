@@ -92,13 +92,43 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 
 - **Stores** (all s16): roster record `+0x0A` (10 bits in the save), party record `+0x06`, entity info `+0x0C`. New hero and partner (`02003510`) and a recruit start at IQ 1. The ally spawn (`02179990`) copies party to entity; `02179128` writes back.
 - **Only gain: gummis** `02145EC8(user, target, gummiType)`. For a team member whose `+0x40` is not `'J'` or `'G'`: `IQ += T[type1][gummi] + T[type2][gummi]` over the target's two types (`info+0x56`, `+0x57`), clamped to 1 to 999; then `021804CC` and `02175E60` (messages for newly unlocked skills). The IQ table is 18 x 18 s16 at `02092308`; a second table at `02092590` (same shape) drives belly. Tables not copied. Level-up, evolution and recruiting do not change IQ.
-- **Unlock** `02004464(iq, skill) = skill != 0 && threshold[skill] <= iq`, `threshold` being 24 words at `02091F48`. `02004404` lists all unlocked skills. Skill names are [red-hypothesis] except index 1, which matches the Type-Advantage Master note in [combat.md](combat.md).
+- **Unlock** `02004464(iq, skill) = skill != 0 && threshold[skill] <= iq`, `threshold` being 24 words at `02091F48`. `02004404` lists all unlocked skills. Skill names are in the name table below ([blue-verified], string-read).
 - **Correction to [`structs.md`](structs.md):** a set bit in `+0x84..+0x86` means the skill is **enabled** (the player's on/off choice), not blocked. Evidence: `021804CC` sets bit `n` of `+0x87` when `02004464(IQ, n)` and `02004250(info+0x84, 1<<n)` are both true; the default writer `0200429C` sets bits 2, 3 and 22 (and 18 if its flag is nonzero); `0200439C` toggles. The same 24 bits are the roster `+0x18` and party `+0x42` fields shown by the IQ menu.
 - **Active skills** `+0x87..+0x89` = unlocked AND enabled, rebuilt from scratch by `021804CC` (callers include the gummi, spawn `02179990`, `021833BC`, `02183120`). Wild monsters ignore IQ: a fixed set of bits, plus bit 18 when `+0xD4` is nonzero and bit 22 when the level reaches a cap read from `021AA1F8`.
 - **Exclusive groups.** `020042F8(p, n)` sets bit `n` after clearing every bit with the same group id; the group array (24 words) is at `0208FA84`. Seven groups of two to four skills; the others stand alone. Enabling one skill switches off its group mates.
-- **Partner at start:** IQ 1, enabled and active {2, 3, 22}; skills 21 and 23 are unlocked at IQ 1 but off by default.
-- **Not verified:** skill names, whether a gummi IQ persists to the roster at dungeon exit (party-to-roster copy not traced), the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
+- **Partner at start:** IQ 1, enabled and active {2 Item Catcher, 3 Course Checker, 22 Item Master}; skills 21 Dedicated Traveler and 23 Exclusive Move-User are unlocked at IQ 1 but off by default.
+- **Not verified:** whether a gummi IQ persists to the roster at dungeon exit (party-to-roster copy not traced), the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
 - **Sim:** per member IQ (1 to 999) and a 24-bit enabled mask; derive the active bits when either changes.
+
+**Skill names.** Evidence: the u16 table at `02092FC4` holds `0x394 + n` for skill `n` (n = 1 to 23; entry 0 is "no skill"). Reader `0200457C` returns entry `n`. The text lookup `0201D948` takes bank id `id - 1` (string offset `(id - 1) * 4`, bit 15 clear), so each name is the English message-bank string at that id. Every row is **[blue-verified]** (string-read; the in-game lookup was not run). This confirms names and ids, not the effect of each skill.
+
+Source for reproduction: English `message_e.str` in the EUR APHP ROM (NitroFS file id 149). The strings were read statically from the `.str` offset table (entry `id - 1`, string to the next NUL). The table at `02092FC4` was confirmed two ways: a static decompile of the literal at `0200458C` (the pointer `0200457C` loads), and a runtime read in py-desmume on a scratch copy of the ROM. No probe script or table dump is committed; a reader repeats the check from the ROM's NitroFS and the `0200457C` decompile.
+
+| n | Name |
+|---|---|
+| 1 | Type-Advantage Master |
+| 2 | Item Catcher |
+| 3 | Course Checker |
+| 4 | Sure-Hit Attacker |
+| 5 | Quick Dodger |
+| 6 | PP Checker |
+| 7 | Nontraitor |
+| 8 | Status Checker |
+| 9 | Exp. Go-Getter |
+| 10 | Efficiency Expert |
+| 11 | Weak-Type Picker |
+| 12 | All-Terrain Hiker |
+| 13 | Super Mobile |
+| 14 | Trap Avoider |
+| 15 | House Avoider |
+| 16 | Energy Saver |
+| 17 | Nonsleeper |
+| 18 | Self-Curer |
+| 19 | Trap Seer |
+| 20 | Lava Evader |
+| 21 | Dedicated Traveler |
+| 22 | Item Master |
+| 23 | Exclusive Move-User |
 
 ## P6. Evolution [blue-verified, static; no runtime run]
 
@@ -125,7 +155,7 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 - **Not verified:** runtime run; where the tracker's starter (`+8`) and partner (`+0xA`) go next (roster creation); the leader's and partner's starting level, moves and IQ (IQ 1 is P5); personality names.
 
 ## Red comparison
-The recruit gate order, the roll shape, the exclusive IQ groups and the evolution fields follow Red's structures; every Red name above is [red-hypothesis]. Two differences were read in Blue: the level term indexes the recruiter's level, and the in-dungeon team cap comes from four slots rather than a setup value.
+The recruit gate order, the roll shape, the exclusive IQ groups and the evolution fields follow Red's structures; every Red name above is [red-hypothesis], except the IQ skill names in P5, which are [blue-verified] (string-read). Two differences were read in Blue: the level term indexes the recruiter's level, and the in-dungeon team cap comes from four slots rather than a setup value.
 
 ## Open questions (follow-ups)
 - A natural recruit from a savestate in a dungeon with recruiting enabled (record 1 or later), to observe gates 1 to 8 and the roll without forcing.
