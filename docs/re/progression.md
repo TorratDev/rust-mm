@@ -1,6 +1,6 @@
 # Progression: level-up, moves, recruiting, IQ, evolution, quiz
 
-**Date:** 2026-11-20
+**Date:** 2026-11-22
 **Status:** blue-verified (per section tag below; names are hypotheses unless said)
 **Subsystem:** dungeon progression, party, ARM9 data tables
 
@@ -22,7 +22,13 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 | `ov_0001::0217F388` | join sequence (`MonsterJoinSequence_Async`) | blue-verified |
 | `ov_0001::0217F7EC` | recruit-allowed check (friend area) | blue-verified (flow); name red-hypothesis |
 | `ov_0001::021B473C` | join flag (byte) | blue-verified (writers) |
-| `ov_0001::02178068` | commit recruits at dungeon end | blue-verified (static) |
+| `ov_0001::02178068` | dungeon-end commit: party to roster (IQ copy, lines 57 to 67), recruit list (lines 98 to 103) | blue-verified (static) |
+| `ov_0001::02179274`, `ov_0001::02179128` | four-slot team loop (called from `0206DC20` at line 477); party record writeback from the entity (IQ `info+0xC` to party `+0x06`) | blue-verified (static) |
+| `02001D24`, `02001E24` | party to roster copy (roster `+0x0A` = party `+0x06`); `02001E24` is the tail jump that passes roster record `idx*0x40` | blue-verified (static) |
+| `02006444` | dungeon byte gate for the exit copy (nonzero: held item only, `02001CD8`); table not traced | blue-verified (reader); meaning not traced |
+| `0200457C`, `02092FC4` | skill index to name message id (u16 table) | blue-verified (static) |
+| `ov_0001::02175E60` | IQ skill unlock message (old list against new list) | blue-verified (static) |
+| `0203A87C` | IQ menu draw (skill name, enabled mask test) | blue-verified (static) |
 | `02008EC4`, `02009000`, `02009014`, `02003130` | friend-area count, owned test, owned set, roster insert | blue-verified (static) |
 | `ov_0001::02145EC8` | gummi IQ gain | blue-verified (static) |
 | `02004464`, `02004250`, `0200429C`, `020042F8`, `0200439C` | IQ unlock test, bit test, default mask, set with group exclusion, toggle | blue-verified (static) |
@@ -91,14 +97,38 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 ## P5. IQ [blue-verified, static]
 
 - **Stores** (all s16): roster record `+0x0A` (10 bits in the save), party record `+0x06`, entity info `+0x0C`. New hero and partner (`02003510`) and a recruit start at IQ 1. The ally spawn (`02179990`) copies party to entity; `02179128` writes back.
-- **Only gain: gummis** `02145EC8(user, target, gummiType)`. For a team member whose `+0x40` is not `'J'` or `'G'`: `IQ += T[type1][gummi] + T[type2][gummi]` over the target's two types (`info+0x56`, `+0x57`), clamped to 1 to 999; then `021804CC` and `02175E60` (messages for newly unlocked skills). The IQ table is 18 x 18 s16 at `02092308`; a second table at `02092590` (same shape) drives belly. Tables not copied. Level-up, evolution and recruiting do not change IQ.
-- **Unlock** `02004464(iq, skill) = skill != 0 && threshold[skill] <= iq`, `threshold` being 24 words at `02091F48`. `02004404` lists all unlocked skills. Skill names are [red-hypothesis] except index 1, which matches the Type-Advantage Master note in [combat.md](combat.md).
+- **IQ to the roster at dungeon exit: yes, unless the dungeon's `02006444` byte is nonzero** ([blue-verified] static, export only, no runtime run). Chain:
+  1. Gummi `02145EC8` sets `info+0xC` (line 36 to 38 of its export). Only team members (`+6 == 0`, species `+0x40` not `'J'` or `'G'`) gain IQ.
+  2. Writeback `ov_0001::02179128(slot, info)`: party `+0x06` = `info+0x0C` (line 39); party `+0x42..0x44` = `info+0x84..0x86` (lines 40 to 42). Callers: `ov_0001::02179274` (the four team slots of `gDungeon+0x11314`, each live entity; the arguments are not visible in the decompile) and `ov_0001::021778F4` (entity removal; `02177C24`, `02177E48`). `02179274` is called from `0206DC20` at `0206E948` (export line 477 of `0206DC20`), which comes before the exit switch (lines 592 to 603). Reachability on each exit path is not traced.
+  3. Exit copy `ov_0001::02178068(param)`, called from `0206DC20` at `0206ED24`, `0206ED3C`, `0206ED4C` (exit switch lines 595, 598, 602). For each party record with bit 0 set, not matched by `02176368`, with `02176344(party+8) != 0` (a valid roster index): if `02006444(gDungeon+0x63C)` is 0, it calls `02001E24(idx, party)` (xref `021781E4`), which tail-jumps to `02001D24(roster, party)`; otherwise it calls `02001CD8`, which copies only the held item. `021778F4` runs the same gate for fainted or removed members (`02177C58`, `02177E7C`).
+  4. `02001D24` (line 11): roster `+0x0A` = party `+0x06`, the IQ. Line 12 to 14: roster `+0x18..0x1A` = party `+0x42..0x44`, the enabled mask. Moves, species and held item are copied in the same function (not listed).
+  5. Recruits (party `+8 < 0`, `02176330`) are copied into a temp record through `02001D24` (lines 98 to 103), so a new recruit's IQ goes into the roster insert `02003130`.
+  - **Flag meaning:** `02006444` reads a byte at `DAT_02006450 + id*0x10`. Which dungeons set it is not traced. Hypothesis, [red-hypothesis]: fixed-level dungeons, where only the held item is kept.
+- **Only gain: gummis** `02145EC8(user, target, gummiType)`. For a team member whose `+0x40` is not `'J'` or `'G'`: `IQ += T[type1][gummi] + T[type2][gummi]` over the target's two types (`info+0x56`, `+0x57`), clamped to 1 to 999 (lines 36 to 44 of `02145EC8`'s export); then, only when the IQ changed (line 45), `021804CC` and `02175E60` (the unlock messages; `02145EC8` passes the old IQ as the second argument, line 93). The IQ table is 18 x 18 s16 at `02092308`; a second table at `02092590` (same shape) drives belly. Tables not copied. Level-up, evolution and recruiting do not change IQ.
+- **Unlock** `02004464(iq, skill) = skill != 0 && threshold[skill] <= iq`, `threshold` being 24 entries of 4 bytes at `02091F48` (the `DATA` xref is at `02004474`). `02004404(out, iq)` lists all unlocked skills for that IQ. In `02175E60` the call without an IQ argument uses the old IQ that `02145EC8` passes in the second argument register (line 93); [blue-verified, medium: inferred from the argument flow, the entry of `02175E60` was not read].
+- **Skill names.** The index-to-name mapping is a u16 table of 24 message ids at `02092FC4`: `0200457C(skill)` returns entry `skill` (`DATA` xref from `02004584`), [blue-verified static]. The message id is resolved by `0201D8E4` (through `thunk_FUN_0201D948`), [blue-verified static]. Readers of the table: the IQ menu `0203A87C` (line 26), the unlock message `02175E60` (line 38), `ov_0001::0216B2C0` (line 22, lead) and `02004DB0` (line 186, lead). The text bank was not read, so no name below is blue-verified as a string.
+
+| Index | Name | Tag | Blue evidence (use site, [blue-verified] behaviour) |
+|-------|------|-----|------|
+| 0 | none (never unlocked, `02004464`) | blue-verified | `02004464` returns false for skill 0 |
+| 1 | Type Advantage Master ([combat.md](combat.md#defeat-and-experience) note, Red) | red-hypothesis | `0217BD94:287` (odds term) |
+| 2, 3 | none in docs | lead | default-enabled by `0200429C` (blue-verified) |
+| 4 | Sure Hit ([combat.md](combat.md), Red) | red-hypothesis | `0215A928:22,39` |
+| 5 | Quick Dodger ([combat.md](combat.md), Red) | red-hypothesis | `0215A928:22,39`; penalty read at runtime in [combat.md](combat.md#defeat-and-experience) |
+| 8 | Status Checker ([combat.md](combat.md), Red) | red-hypothesis | `02191F84:35`, `02192728:36` |
+| 17 | Nonsleeper ([status.md](status.md), Red) | red-hypothesis | `0218B140` through `021805B0` (blue-verified gate) |
+| 18 | none in docs | lead | halves turn rolls, `0219CF28:12` (blue-verified) |
+| 22 | Item Master ([ai.md](ai.md), Red) | red-hypothesis | `0218579C:23` (AI item gate, blue-verified); default-enabled |
+| 6, 7, 9 to 16, 19 to 21, 23 | none in docs | lead | use sites only (`02192D24:77`, `0215A520:37`, `02191F84:28`, `021921B0:18`, `021861E8:82`, `02165B00:63`, `02188030:78`, `02192D24:150`, and others) |
+
+Use sites come from the blue-verified usage map (`021805B0(entity, n)` tests bit `n` of `info+0x87`); the status-family pairs 12 and 13 and 14 and 15 are not split per name.
+
 - **Correction to [`structs.md`](structs.md):** a set bit in `+0x84..+0x86` means the skill is **enabled** (the player's on/off choice), not blocked. Evidence: `021804CC` sets bit `n` of `+0x87` when `02004464(IQ, n)` and `02004250(info+0x84, 1<<n)` are both true; the default writer `0200429C` sets bits 2, 3 and 22 (and 18 if its flag is nonzero); `0200439C` toggles. The same 24 bits are the roster `+0x18` and party `+0x42` fields shown by the IQ menu.
 - **Active skills** `+0x87..+0x89` = unlocked AND enabled, rebuilt from scratch by `021804CC` (callers include the gummi, spawn `02179990`, `021833BC`, `02183120`). Wild monsters ignore IQ: a fixed set of bits, plus bit 18 when `+0xD4` is nonzero and bit 22 when the level reaches a cap read from `021AA1F8`.
 - **Exclusive groups.** `020042F8(p, n)` sets bit `n` after clearing every bit with the same group id; the group array (24 words) is at `0208FA84`. Seven groups of two to four skills; the others stand alone. Enabling one skill switches off its group mates.
 - **Partner at start:** IQ 1, enabled and active {2, 3, 22}; skills 21 and 23 are unlocked at IQ 1 but off by default.
-- **Not verified:** skill names, whether a gummi IQ persists to the roster at dungeon exit (party-to-roster copy not traced), the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
-- **Sim:** per member IQ (1 to 999) and a 24-bit enabled mask; derive the active bits when either changes.
+- **Not verified:** the 24 skill name strings (the message bank is not read); which dungeons have a nonzero `02006444` byte (so the exit copy keeps only the held item there); a runtime run of the exit copy; the meaning of `+0x40` `'J'`/`'G'`; the flag argument of `0200429C` at the roster-creation sites.
+- **Sim:** per member IQ (1 to 999) and a 24-bit enabled mask; derive the active bits when either changes. The sim has no roster, so the exit rule is not modelled yet. Rule for when it is: at dungeon end, for a dungeon whose `02006444` byte is 0, roster IQ and enabled mask take the party values (the last entity IQ and mask); otherwise the roster keeps its IQ and only the held item is written.
 
 ## P6. Evolution [blue-verified, static; no runtime run]
 
@@ -136,7 +166,8 @@ The recruit gate order, the roll shape, the exclusive IQ groups and the evolutio
 - Town evolution runtime, condition item names, and whether the menu is the Luminous Spring.
 - Roster-creation consumers of the quiz result and the starting level, moves and IQ.
 - Initial friend-area ownership, the dungeon-end commit at runtime, and area table fields 2 and 3.
-- IQ persistence to the roster at dungeon exit; skill names.
+- Dungeon exit IQ: which dungeon ids have a nonzero `02006444` byte (read the table at `DAT_02006450`), and a runtime check that roster `+0x0A` equals the last gummi IQ after an exit in a normal dungeon. The chain is traced in P5.
+- IQ skill names 1 to 23: read the message bank at the ids in `02092FC4` (`0201D948` resolves them) and record the names as blue-verified; the Red names in the P5 table stay red-hypothesis until then. Index 18 has no recorded name.
 
 ## Links
 - Symbols: [symbols.md](../symbols.md)
