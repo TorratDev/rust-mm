@@ -97,7 +97,14 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 - **Active skills** `+0x87..+0x89` = unlocked AND enabled, rebuilt from scratch by `021804CC` (callers include the gummi, spawn `02179990`, `021833BC`, `02183120`). Wild monsters ignore IQ: a fixed set of bits, plus bit 18 when `+0xD4` is nonzero and bit 22 when the level reaches a cap read from `021AA1F8`.
 - **Exclusive groups.** `020042F8(p, n)` sets bit `n` after clearing every bit with the same group id; the group array (24 words) is at `0208FA84`. Seven groups of two to four skills; the others stand alone. Enabling one skill switches off its group mates.
 - **Partner at start:** IQ 1, enabled and active {2, 3, 22}; skills 21 and 23 are unlocked at IQ 1 but off by default.
-- **Not verified:** skill names, whether a gummi IQ persists to the roster at dungeon exit (party-to-roster copy not traced), the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
+- **Dungeon exit copy (#588) [blue-verified, static; no runtime run].** `ov_0001::02178068` (exit commit, see "Where a recruit goes") copies each valid party slot (bit 0 of the u16 at `+0`) whose `ov_0001::02176368(party +8)` is 0 and whose `ov_0001::02176344(party +8)` is nonzero (a range check; the bound at `DAT_ov_0001__02176364` was not read). The copy depends on `FUN_02006444(gDungeon+0x63C)` (ARM9 `0x02006444`, called from `02178068` at `021781C0`; the two copy calls are at `021781E4` and `021781D4`):
+  - **Zero:** `02001E24` (call `021781E4`), a wrapper of `0x02001D24` through the pointer at `0x02001E3C`, with the roster base `0x020DDF84`. Copies the whole party record: IQ (party `+0x06` to roster `+0x0A`), the skill-enable bits (party `+0x42` to `+0x44` to roster `+0x18` to `+0x1A`), and the held item (party `+0x36`, flag bit 0, to roster `+0x1C`; 0 if the flag is clear).
+  - **Nonzero:** `02001CD8` (call `021781D4`). Copies only the held item, with the same flag rule (party `+0x36` to roster `+0x1C`). IQ and the skill bits stay as they were in the roster.
+  - **Table.** `FUN_02006444` is `ldrb r0,[r1,r0,lsl #4]` (element size `0x10`), with `r1` loaded from the literal at `0x02006450`. That word is a pointer, `0x0209281E`, which is record `id`'s `+6` in the dungeon table at `0x02092818` ([structs.md](structs.md#dungeon-data-table-170-p1b)). So the decompile's `DAT_02006450 + id*0x10` names the pointer, not the table.
+  - **Dungeon ids with a nonzero byte: `0x1A`, `0x3A`, `0x3E`** (decimal 26, 58, 62). Ids `0x00` to `0x61` are the dungeon records; from `0x62` on the rows have another layout and are not read as dungeon flags. Every other id in `0x00` to `0x61` is zero, so those dungeons copy IQ to the roster at exit. No name for these ids is in the repo ([data.md](../formats/data.md): dungeon names are in the message tables, not mapped), so they are given by id only.
+  - **Xrefs** (export `xrefs.tsv`, [blue-verified]): `FUN_02006444` is called from `02178068` at `021781C0`, from `ov_0001::021778F4` at `02177C44` and `02177E68` (zero calls `02001E24`; no `02001CD8` in that function), from `ov_0001::02178828` at `021788C4` (nonzero calls `020033A8`, not the copy), and from ARM9 `0206DC20` at `0206DF84` (not read in detail).
+  - **Not checked:** the bounds behind `02176368` and `02176344`, the meaning of the byte (Red's name `levelResetTo1` is [red-hypothesis]), and the result at runtime (no probe run).
+- **Not verified:** skill names, the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
 - **Sim:** per member IQ (1 to 999) and a 24-bit enabled mask; derive the active bits when either changes.
 
 ## P6. Evolution [blue-verified, static; no runtime run]
@@ -136,7 +143,7 @@ The recruit gate order, the roll shape, the exclusive IQ groups and the evolutio
 - Town evolution runtime, condition item names, and whether the menu is the Luminous Spring.
 - Roster-creation consumers of the quiz result and the starting level, moves and IQ.
 - Initial friend-area ownership, the dungeon-end commit at runtime, and area table fields 2 and 3.
-- IQ persistence to the roster at dungeon exit; skill names.
+- Skill names (only the red-hypothesis names are known). IQ persistence at exit is answered statically (P5, #588): IQ is copied to the roster except in dungeon ids `0x1A`, `0x3A` and `0x3E`, which keep only the held item. Runtime check of the copy is not done.
 
 ## Links
 - Symbols: [symbols.md](../symbols.md)

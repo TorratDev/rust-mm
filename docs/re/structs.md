@@ -401,6 +401,8 @@ The table at `0x02092818` holds one `0x10`-byte record per dungeon, Red's `Dunge
 | `+0xC` | `turnLimit` (s16) | 0x03E8 (1000), 0x03E8 |
 | `+0xE` | `randomMovementChance` (s16) | 0, 0 |
 
+**Byte `+6` at dungeon exit (#588) [blue-verified for the read; red-hypothesis for the name].** `FUN_02006444` (`0x02006444`) returns byte `+6` of record `id`, that is `0x0209281E + id * 0x10`. The base is the pointer at the literal `0x02006450`, not `DAT_02006450` itself. Red's name for this field is `levelResetTo1`. Within ids `0x00` to `0x61` the byte is nonzero only for `0x1A`, `0x3A` and `0x3E`. Those dungeons keep only the held item at exit (the zero case copies IQ too; see [progression.md](progression.md) P5). Records from `0x62` on have another layout, so this byte is not read as a dungeon flag there.
+
 `FUN_02006410(index)` is `GetRescuesAllowed` (proposed; red-hypothesis name). It returns byte `+3` of record `index`, that is `0x0209281B + index * 0x10`. Both callers use this one global table: the mail builder `FUN_0200D4DC` (index from mail `+4`) and `RunDungeon_Async` (`0x0206DCEC`, index from the setup struct's `+4`). Records beyond 1 are not mapped to dungeon ids or names.
 
 ## Roster and mail helpers (#170 P1, proposed names)
