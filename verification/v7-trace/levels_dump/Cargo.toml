@@ -1,0 +1,14 @@
+[package]
+name = "levels-dump"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Standalone (not in the workspace; see verification/). Prints the parse_level_data records for every lvmpNNN
+# entry of a ROM as JSON lines. Run: cargo run --release --manifest-path verification/v7-trace/levels_dump/Cargo.toml -- ROM > LEVELS
+[dependencies]
+rescue-data = { path = "../../../crates/data" }
+rescue-formats = { path = "../../../crates/formats" }
+rescue-nds = { path = "../../../crates/nds" }
+
+[workspace]
