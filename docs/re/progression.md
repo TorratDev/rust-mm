@@ -1,6 +1,6 @@
 # Progression: level-up, moves, recruiting, IQ, evolution, quiz
 
-**Date:** 2026-11-20
+**Date:** 2026-11-22
 **Status:** blue-verified (per section tag below; names are hypotheses unless said)
 **Subsystem:** dungeon progression, party, ARM9 data tables
 
@@ -24,6 +24,12 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 | `ov_0001::021B473C` | join flag (byte) | blue-verified (writers) |
 | `ov_0001::02178068` | commit recruits at dungeon end | blue-verified (static) |
 | `02008EC4`, `02009000`, `02009014`, `02003130` | friend-area count, owned test, owned set, roster insert | blue-verified (static) |
+| `02002288`, `020022DC` | species friend flag (`+0x12`) and area id (`+0x16`) readers | blue-verified (static) |
+| `02009110`, `02009120`, `02009230` | area table readers: field 3 (`u32` at `+4`), field 2 (byte at `+2`), roster index to area | blue-verified (static) |
+| `02069848` | roster and area init, sets owned areas 1 to 57 | blue-verified (static); new-game identity red-hypothesis |
+| `020699B4`, `020628BC` | init sub-state step (sub-state 6 calls `02069848`) and dispatcher state `0x10` | blue-verified (static) |
+| `0206DC20` | floor exit; calls `02178068` with a flag from the result code | blue-verified (static) |
+| `ov_0001::0217F7EC` | recruit-allowed check; friend-area test | blue-verified (static) |
 | `ov_0001::02145EC8` | gummi IQ gain | blue-verified (static) |
 | `02004464`, `02004250`, `0200429C`, `020042F8`, `0200439C` | IQ unlock test, bit test, default mask, set with group exclusion, toggle | blue-verified (static) |
 | `ov_0001::021804CC` | rebuild active skill bits | blue-verified (static) |
@@ -65,13 +71,13 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
   1. Fixed-room number (`gDungeon+0x34B4`) 4, 5, 9 or 15 passes; `0x2C` to `0x30` needs `gDungeon+0x64D`; `0x31` needs `+0x64A` and an event-flag test (`02010B1C`); otherwise the per-dungeon byte read by `02006400(gDungeon+0x63C)` (`recruitingEnabled`, dungeon record byte `+2`) must be nonzero. **Runtime:** this byte is 0 for the first dungeon, so no probe could recruit there naturally.
   2. `gDungeon+0x64E` must be 0.
   3. About a dozen special species (a literal list near `0217FB28`) fail if already in the roster (`020012C4`: scan of the 0x40-byte records, bit 0 valid, species at `+6`). This is the only "already owned" gate; ordinary species can be recruited again.
-  4. `0217F7EC(species)` nonzero: `gDungeon+0x649` nonzero; `0219F9C4(species)` nonzero; a few species always fail (and `0x97` when `+0x668 == 1`); and the friend-area test: if species byte `+0x12` is nonzero it passes, else the species' area (`+0x16`) must be owned (P4). Names are [red-hypothesis]; **runtime:** it returned 0 for species 290 natively (`+0x649` was 0).
+  4. `0217F7EC(species)` nonzero ([blue-verified static], export of `ov_0001::0217F7EC`, gate code at `0217F7F4` to `0217F8C0`): `gDungeon+0x649` nonzero (`0217F7F4`); `0219F9C4(species)` nonzero (`0217F810`); species `0x198` always fails (immediate compare in the same function); `0x97` fails when `+0x668 == 1`; four more species ids from literal words at `ov_0001::0217F8D4` to `0217F8E0` always fail (ids not copied). Then the friend-area test: `02002288(species)` (species `+0x12`, reader at `0217F890`) nonzero passes; else `020022DC(species)` (`+0x16`, `0217F8A0`) gives the area and `02008EC4(area)` (`0217F8B0`) gives its owned byte; owned zero returns 0, owned passes (P4). Names are [red-hypothesis]; **runtime:** it returned 0 for species 290 natively (`+0x649` was 0). Friend-area branch: not seen at runtime (static only).
   5. Adjacent on both axes (`|dx| <= 1`, `|dy| <= 1`, diagonals count).
   6. Target `+0x40` is not `'J'` and `+0x98` is not 1.
   7. `02141C08(target, recruiter)` nonzero (reach/visibility: refuses on the status bytes `+0xC7`, `+0xC9`, then a same-room test). Runtime: 1 natively.
   8. `0217F8E4()` runs here, before the roll: it rebuilds the 6-cell formation array (`021B4250`) from the four team slots. It has a side effect even if the roll fails.
 - **Roll.** `DungeonRandInt(1000)` (0 to 999), drawn once whenever gates 1 to 7 passed, even if the species is unrecruitable. `rate` is the species recruit rate (record `+0x40`, s16, per mille via `020021B0`); `-999` fails after the draw. Add 100 (s16 at `021AA1EC`) if the recruiter's held item is `0x2E` (held, not sticky; "Friend Bow" is [red-hypothesis]). Add `gRecruitRateByLevel[recruiter level]` (s16 array at `021AA96C`, 101 entries, rising in steps from 0 at low levels; the index is `info+9` of the **recruiter**, which settles the data-tables hypothesis; runtime log: recruiter level 5). Success iff `rate_total > roll`, so the chance is `clamp(rate_total, 0, 1000) / 1000`.
-- **Capacity gates** (after the roll; a failure returns 0): the target's size (species byte `+9`) must fit a run of free cells in the 6-cell array; a free entry among the four 0x54-byte party records at `+0x6740` (bit 0 clear); not all four team entity slots (`gDungeon+0x11314`) live. So the in-dungeon team cap is 4 entities, leader included. `0217F254` (caller `021A8CD4`) is the same gate set without the roll.
+- **Capacity gates** (after the roll; a failure returns 0): the target's size (species byte `+9`) must fit a run of free cells in the 6-cell array; a free entry among the four 0x54-byte party records at `*020DDF84 + 0x6740` (the roster cell, not `gDungeon`; bit 0 clear); not all four team entity slots (`gDungeon+0x11314`) live. So the in-dungeon team cap is 4 entities, leader included. `0217F254` (caller `021A8CD4`) is the same gate set without the roll.
 - **Join** `0217F388(recruiter, target, record)`, `record` being the 0x44-byte snapshot from `02176D68`. Order: face the recruiter; prompt `02153E80` (decline: return 0, so the caller faints the target with 501); re-check a free party slot; set the area owned (`02009014`, so the join **unlocks the area**); `HandleFaint_Async(target, 500, recruiter)` removes the wild monster (reason 500); fill the party record (species `+0xC`, `+8` = `0xFFFF` marks "recruited this run", IQ `+6` = 1, default skill bits via `0200429C`); `02179990` spawns the ally (failure: message, slot cleared, return 1); a second prompt for the nickname (`02168240` keyboard loop, [red-hypothesis] for the role); the "joined" message; species `0x97` also sets `gDungeon+4 = 1` and `+0x11 = 3`. Returns 1.
 - **Runtime** (gates forced: `+0x649` = 1, the table byte at `0217FA74` = 1, `0217F7EC` = 1, `02141C08` = 1, roll = 0; the natural draw was 683): `0217F9B8` returned 1, `0217F388` ran for species 290, prompt 1 returned 1, `HandleFaint_Async` ran for the target, `02179990` returned 1, prompt 2 was forced to 0 (the keyboard would block), and the join returned 1 about 400 frames later. **Not seen:** a natural recruit.
 - **Join flag** (`021B473C`). A write watch saw a store of 1 right after the join returned 1, and a store of 0 four frames later in `0218453C` (per-turn code; callers `021408F8`, `02140AC0`; static store at `021846FC`, the watch pc `02184704` is the instruction after the store). A third writer, `0215BE14`, also clears it (store at `0215BF14`, static only, not seen at runtime) and reads it at `0215BFFC`. Other reader: `0215B384` (`0215B7E8`). It means "a monster joined this turn"; the runtime watch saw the clear in `0218453C`, and `0215BE14` can clear it too. [blue-verified] writers and timing; the readers (#572, [blue-verified] static) are stop-gates:
@@ -80,32 +86,77 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
   - Net: a recruited target ends the current use and remaining linked moves; `0218453C` clears the flag at turn end and `0215BF14` resets a stale value at action start. Not verified at runtime (a join meeting a linked or multi-hit move); intent of the stale clear is medium confidence.
 - **Address check (the 501 vs flag discrepancy).** The export has, in `0217D5FC`: the join call at `0217E82C`; a literal load at `0217E834` from `0217E888` (the flag pointer); a **write** at `0217E83C` (the flag store); a conditional jump at `0217E840` to the common exit `0217E87C` when the join returned nonzero; a literal load at `0217E844` from `0217E88C` (501); the faint call at `0217E850`; the plain faint call at `0217E864`. So the flag store is `0217E83C` and the 501 reason is loaded at `0217E844`. The runtime watch reported `0217E844` as the store's pc because it fires after the store, with the program counter already past it (an inference from the two sources agreeing, not a separate check). [combat.md](combat.md#defeat-and-experience) now reads this way. Return address `0217E868` is the plain faint at `0217E864`.
 
-## P4. Friend areas [blue-verified, static; table read at the title screen]
+## P4. Friend areas [blue-verified, static; runtime not run for the points marked unverified]
 
-- **Species to area.** Species record byte `+0x16` (`020022DC`) is the area id (0 to 57). Eleven species have byte `+0x12` nonzero: their area need not be owned to recruit. Meaning [red-hypothesis] "recruitable without the area".
-- **Area table** at `02092138`: 58 entries of 8 bytes, `s16 capacity`, `s16 field2` (0 to 3, unidentified), `u32 field3` (zero or a round number; looks like a price, [red-hypothesis]). Capacities sum to 413, the roster size. Readers `02008EC4` and `02009230`.
-- **Roster.** 413 entries of 0x40 bytes at `*020DDF84`, partitioned by area (area `a` owns `capacity[a]` slots after the running sum). Entry bit 0 valid, `+4` = `'A'` special, `+6` species. Owned flags: 58 bytes at `*020DED04`; `02009000` reads, `02009014` sets. The starting set of owned areas was not traced.
+- **Species to area.** Species record byte `+0x16` (reader `020022DC`, [blue-verified static]) is the area id (0 to 57). Byte `+0x12` (reader `02002288`, [blue-verified static]) is the friend flag: eleven species have it nonzero, and they pass the recruit gate without their area (P3 gate 4). Meaning of the flag [red-hypothesis] "recruitable without the area".
+- **Area table** at `02092138`: 58 entries of 8 bytes (no values copied; the shape and the readers are the note):
+  - **Field 1, `s16` capacity at `+0`** [blue-verified static]: readers `02008EC4` (`02008EDC`, `02008F20`: running sum of capacities before an area) and `02009230` (`02009238` to `02009260`: roster index to area). Capacities sum to 413, the roster size (earlier static work).
+  - **Field 2, byte at `+2`** [blue-verified static, reader `02009120`, callers `0200F4A8`, `0200FB8C`, `0204252C`, `02042618`, `020441CC`, `021A7140`]: the callers compare it with 0, 1, 2 and 3. `0200F46C` takes unowned areas with field 2 equal to 2; `02042578` takes unowned areas with field 2 equal to 0; `021A7124` drops unowned areas with field 2 equal to 2 or 3; `020424B0` (argument 2) returns 0 on field 2 equal to 0 and, on field 2 equal to 1, tests flag 6 (`0201F994(6)`); `02043C34` case `0x18` (`0204438C` record) branches on field 2 equal to 1 and the same flag test. Meaning: a class that decides which list an area is on [red-hypothesis]; names not known.
+  - **Field 3, `u32` at `+4`** [blue-verified static, reader `02009110`, callers `02042758` in `02042674` and `02042B70` in `02042AF4`]: `02042AF4` returns 3 after `FUN_02029A3C(2)` when the `u32` at `*DAT_020428E8+0x234` is below field 3; `02042674` takes the same comparison and shows a message instead. So field 3 is a cost checked against a stored value. "Price" and the name of the value at `+0x234` are [red-hypothesis]. `02009040` also reads the same `0x0209213C`-based literal (`02009064`, stride 8) as a number to format when its flag is 1 ([lead]: the literal's identity is not confirmed).
+- **Owned flags.** 58 bytes, one per area, at the base pointer `*020DED04` (read at `02009004`; area index = byte index). Reader `02009000`, setter `02009014` (both [blue-verified static]). No setter with a constant argument sets area 0 (see below).
+- **Roster.** 413 entries of 0x40 bytes at `*020DDF84`, partitioned by area (area `a` owns `capacity[a]` slots after the running sum). Entry bit 0 valid, `+4` = `'A'` special, `+6` species. [blue-verified static, earlier work]
+- **Setters of owned areas** (every `02009014` caller in the export, [blue-verified static]):
+  1. **Bulk init:** `02069848` loops with `02009014` from area 1 while the counter is below 0x3A (areas 1 to 57; export lines 19 to 22, the call's own address is not in the decompile export) and inserts 300 roster records with `02003130`. Caller `020699B4` case 6 (call at `02069A5C`), reached from the dispatcher `020628BC` case `0x10` (call at `02062A98`).
+  2. **Scripted** (dispatcher `ov_0000::02140860`, selected by its second argument; the event caller is not traced [lead]): mode `0x17` sets areas `0x0C` and `0x12` (`02140E88`, `02140E90`); mode `0x19` sets the area of species `0x51` (`02140EBC`); mode `0x1B` sets the area of a species from a literal (`02140F74`); mode `0x25` sets the area of a species from a literal only when it is unowned (`02141270`); mode `0x2C` sets the area of a chosen species (`0214172C`).
+  3. **Map id to area:** `0201F8A8` sets the area that `0201F960` maps from an id (`0201F8D8`); called from the dispatcher at `021410E8`, from `ov_0000::02145494` (in `021421CC`), and through `0201F8E8` from `ov_0000::02145768` [blue-verified static; the map ids are not traced].
+  4. **Join:** `ov_0001::0217F4CC` in `0217F388` sets the recruit's area ([blue-verified static], P3 join).
+  5. **Recruit from list:** `ov_0001::0217F0F0` in `ov_0001::0217EF24` sets the area when the owned read (`0217F0E0`) is zero; caller not traced [lead on role].
+  6. `ov_0001::021A79A4` in `021A75C0` sets an area from a picked value; role [lead].
+  7. `02057B74`, `02057BA8` in `02057994` (state machine `02057E40`, case 3) set the area of a byte in the record at `+0x24`; role [lead].
+- **Initial owned set at new game** [red-hypothesis for the trigger; static chain blue-verified]: the only setter that covers many areas is `02069848` (setter 1), and it sets 1 to 57. So under the hypothesis that `020699B4` sub-state 6 runs once in a new game, the starting set is areas 1 to 57. Area 0 is not set by any constant-argument setter; the dynamic setters were not checked for a 0 argument, so its starting value is not settled. The dispatcher state `0x10` as the new-game path is not traced. **Runtime: unverified** (no probe was run; see the verification note in the Open questions).
 - **Where a recruit goes.** In the dungeon it is only a 0x54 party record. At the end of the dungeon `02178068` builds a per-area list: with room, each recruit is inserted with `02003130`; with a full area, a selection screen (`02175178`) makes the player release monsters (old ones or the recruit), then the survivors are inserted. `02003130` adds nothing if the area is not owned or its block is full, and marks the species seen (`020115BC`, [red-hypothesis]). A guard on entries with `+4` equal to `0x44` or `0x45` re-prompts; it is not understood (low).
-- **Sim:** needs the area table parser (58 x 8 bytes, test: capacity sum 413), an owned set, and the dungeon-exit flow; not modelled.
+- **Dungeon-end commit `02178068`** ([blue-verified static]; **runtime: unverified**). Its argument is a flag: 1 marks and inserts, 0 does neither (the mark and the insert are both behind `param_1 != 0`). The floor exit `0206DC20` calls it with the result code at its `+0x60`: codes 1, 2 and 4 call `02178068(1)` (`0206ED24`); code -2 calls `02178068(0)` (`0206ED3C`); code -1 calls `02177FD8` and then `02178068(0)` (`0206ED4C`); other codes do not call it here. The whole block sits inside `if (code == 1 || code == -2 || code == 4 || code == -1 || code == 2)` (export lines 592 to 602) [blue-verified static]. With flag 1, each party slot's recruit area comes from `020022DC` on the slot's species (calls at `021781F8` and `0217832C`; a 58-byte list marks the areas). The per-area list is built with `02009144` (`0217828C`) and counted with `02008EC4` (`021782A0`); the prompt text is `02009040` (`021783CC`); with a full area the selection screen `02175178` runs; inserts are `02003130` (`021783AC`, `02178508`). Not seen at runtime: no probe reached a floor exit.
+- **Sim:** not modelled: the owned set (58 flags), the area table parser (58 x 8 bytes: capacity, field 2, field 3; test: capacity sum 413), the friend flag and area per species, and the dungeon-exit commit. A probe that reaches a floor exit and a new game is needed to settle the initial set and the commit.
 
 ## P5. IQ [blue-verified, static]
 
 - **Stores** (all s16): roster record `+0x0A` (10 bits in the save), party record `+0x06`, entity info `+0x0C`. New hero and partner (`02003510`) and a recruit start at IQ 1. The ally spawn (`02179990`) copies party to entity; `02179128` writes back.
 - **Only gain: gummis** `02145EC8(user, target, gummiType)`. For a team member whose `+0x40` is not `'J'` or `'G'`: `IQ += T[type1][gummi] + T[type2][gummi]` over the target's two types (`info+0x56`, `+0x57`), clamped to 1 to 999; then `021804CC` and `02175E60` (messages for newly unlocked skills). The IQ table is 18 x 18 s16 at `02092308`; a second table at `02092590` (same shape) drives belly. Tables not copied. Level-up, evolution and recruiting do not change IQ.
-- **Unlock** `02004464(iq, skill) = skill != 0 && threshold[skill] <= iq`, `threshold` being 24 words at `02091F48`. `02004404` lists all unlocked skills. Skill names are [red-hypothesis] except index 1, which matches the Type-Advantage Master note in [combat.md](combat.md).
+- **Unlock** `02004464(iq, skill) = skill != 0 && threshold[skill] <= iq`, `threshold` being 24 words at `02091F48`. `02004404` lists all unlocked skills. Skill names are in the name table below ([blue-verified], string-read).
 - **Correction to [`structs.md`](structs.md):** a set bit in `+0x84..+0x86` means the skill is **enabled** (the player's on/off choice), not blocked. Evidence: `021804CC` sets bit `n` of `+0x87` when `02004464(IQ, n)` and `02004250(info+0x84, 1<<n)` are both true; the default writer `0200429C` sets bits 2, 3 and 22 (and 18 if its flag is nonzero); `0200439C` toggles. The same 24 bits are the roster `+0x18` and party `+0x42` fields shown by the IQ menu.
 - **Active skills** `+0x87..+0x89` = unlocked AND enabled, rebuilt from scratch by `021804CC` (callers include the gummi, spawn `02179990`, `021833BC`, `02183120`). Wild monsters ignore IQ: a fixed set of bits, plus bit 18 when `+0xD4` is nonzero and bit 22 when the level reaches a cap read from `021AA1F8`.
 - **Exclusive groups.** `020042F8(p, n)` sets bit `n` after clearing every bit with the same group id; the group array (24 words) is at `0208FA84`. Seven groups of two to four skills; the others stand alone. Enabling one skill switches off its group mates.
-- **Partner at start:** IQ 1, enabled and active {2, 3, 22}; skills 21 and 23 are unlocked at IQ 1 but off by default.
+- **Partner at start:** IQ 1, enabled and active {2 Item Catcher, 3 Course Checker, 22 Item Master}; skills 21 Dedicated Traveler and 23 Exclusive Move-User are unlocked at IQ 1 but off by default.
+- **IQ persistence at dungeon exit** [blue-verified; runtime with a forced call]: `02178068` → `02001E24` → `02001D24` copies party `+0x06` (IQ) to roster `+0x0A`, and party `+0x42..+0x44` to roster `+0x18..+0x1A`. `02001E24` is entered with r0 = party index (`+8`) and r1 = party record; it tail-jumps to `02001D24`, whose entry has r0 = roster record (`*020DDF84 + idx*0x40`) and r1 = party record (party base `*020DDF84 + 0x6740`, stride `0x54`). Runtime (`verification/v7-trace/iq_persist_probe.py` on pmdb.nds, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`; command `~/venvs/desmume/bin/python verification/v7-trace/iq_persist_probe.py <ROM> <OUT.json> --force-call`; output SHA-256 `b45616155588fbe3f3ab3319a598ca5ffd46c06674784ea7c9ebf6fb3704f636`): sentinel IQ 564 and skill bytes `0x11, 0x22, 0x33` were written to the leader's party record; `02001E24` was hit for both party records (leader r0 = 54), and `02001D24` after it for both. The leader's copy reached roster record `0x020E1D0C` (idx 54): roster `+0x0A` = 564, `+0x18..+0x1A` = `0x11, 0x22, 0x33`. The partner's record (IQ 1, bytes 12, 0, 64) reached `0x020E43CC` with the same offsets. **Caveat:** `--force-call` sets r0 = 0 and jumps to `02178068` at the first turn-loop trigger (`0x021411BC`), so the entry is forced; the natural floor-exit trigger was not driven. **Not verified:** that trigger (`FUN_0206dc20` calls at `0206ED24`, `0206ED3C`, `0206ED4C`), and whether the other copier `02001CD8` copies the same fields.
 - **Dungeon exit copy (#588) [blue-verified, static; no runtime run].** `ov_0001::02178068` (exit commit, see "Where a recruit goes") copies each valid party slot (bit 0 of the u16 at `+0`) whose `ov_0001::02176368(party +8)` is 0 and whose `ov_0001::02176344(party +8)` is nonzero (a range check; the bound at `DAT_ov_0001__02176364` was not read). The copy depends on `FUN_02006444(gDungeon+0x63C)` (ARM9 `0x02006444`, called from `02178068` at `021781C0`; the two copy calls are at `021781E4` and `021781D4`):
   - **Zero:** `02001E24` (call `021781E4`), a wrapper of `0x02001D24` through the pointer at `0x02001E3C`, with the roster base `0x020DDF84`. Copies the whole party record: IQ (party `+0x06` to roster `+0x0A`), the skill-enable bits (party `+0x42` to `+0x44` to roster `+0x18` to `+0x1A`), and the held item (party `+0x36`, flag bit 0, to roster `+0x1C`; 0 if the flag is clear).
   - **Nonzero:** `02001CD8` (call `021781D4`). Copies only the held item, with the same flag rule (party `+0x36` to roster `+0x1C`). IQ and the skill bits stay as they were in the roster.
   - **Table.** `FUN_02006444` is `ldrb r0,[r1,r0,lsl #4]` (element size `0x10`), with `r1` loaded from the literal at `0x02006450`. That word is a pointer, `0x0209281E`, which is record `id`'s `+6` in the dungeon table at `0x02092818` ([structs.md](structs.md#dungeon-data-table-170-p1b)). So the decompile's `DAT_02006450 + id*0x10` names the pointer, not the table.
   - **Dungeon ids with a nonzero byte: `0x1A`, `0x3A`, `0x3E`** (decimal 26, 58, 62). Ids `0x00` to `0x61` are the dungeon records; from `0x62` on the rows have another layout and are not read as dungeon flags. Every other id in `0x00` to `0x61` is zero, so those dungeons copy IQ to the roster at exit. No name for these ids is in the repo ([data.md](../formats/data.md): dungeon names are in the message tables, not mapped), so they are given by id only.
   - **Xrefs** (export `xrefs.tsv`, [blue-verified]): `FUN_02006444` is called from `02178068` at `021781C0`, from `ov_0001::021778F4` at `02177C44` and `02177E68` (zero calls `02001E24`; no `02001CD8` in that function), from `ov_0001::02178828` at `021788C4` (nonzero calls `020033A8`, not the copy), and from ARM9 `0206DC20` at `0206DF84` (not read in detail).
-  - **Not checked:** the bounds behind `02176368` and `02176344`, the meaning of the byte (Red's name `levelResetTo1` is [red-hypothesis]), and the result at runtime (no probe run).
-- **Not verified:** skill names, the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
+  - **Not checked:** the bounds behind `02176368` and `02176344`, the meaning of the byte (Red's name `levelResetTo1` is [red-hypothesis]), and a runtime check of the dungeon-id copy (no probe run). The IQ result at runtime is in the IQ persistence bullet above.
+- **Not verified:** the meaning of `+0x40` `'J'`/`'G'`, the flag argument of `0200429C` at the roster-creation sites.
 - **Sim:** per member IQ (1 to 999) and a 24-bit enabled mask; derive the active bits when either changes.
+
+**Skill names.** Evidence: the u16 table at `02092FC4` holds `0x394 + n` for skill `n` (n = 1 to 23; entry 0 is "no skill"). Reader `0200457C` returns entry `n`. The text lookup `0201D948` takes bank id `id - 1` (string offset `(id - 1) * 4`, bit 15 clear), so each name is the English message-bank string at that id. Every row is **[blue-verified]** (string-read; the in-game lookup was not run). This confirms names and ids, not the effect of each skill.
+
+Source for reproduction: English `message_e.str` in the EUR APHP ROM (NitroFS file id 149). The strings were read statically from the `.str` offset table (entry `id - 1`, string to the next NUL). The table at `02092FC4` was confirmed two ways: a static decompile of the literal at `0200458C` (the pointer `0200457C` loads), and a runtime read in py-desmume on a scratch copy of the ROM. No probe script or table dump is committed; a reader repeats the check from the ROM's NitroFS and the `0200457C` decompile.
+
+| n | Name |
+|---|---|
+| 1 | Type-Advantage Master |
+| 2 | Item Catcher |
+| 3 | Course Checker |
+| 4 | Sure-Hit Attacker |
+| 5 | Quick Dodger |
+| 6 | PP Checker |
+| 7 | Nontraitor |
+| 8 | Status Checker |
+| 9 | Exp. Go-Getter |
+| 10 | Efficiency Expert |
+| 11 | Weak-Type Picker |
+| 12 | All-Terrain Hiker |
+| 13 | Super Mobile |
+| 14 | Trap Avoider |
+| 15 | House Avoider |
+| 16 | Energy Saver |
+| 17 | Nonsleeper |
+| 18 | Self-Curer |
+| 19 | Trap Seer |
+| 20 | Lava Evader |
+| 21 | Dedicated Traveler |
+| 22 | Item Master |
+| 23 | Exclusive Move-User |
 
 ## P6. Evolution [blue-verified, static; no runtime run]
 
@@ -132,7 +183,7 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 - **Not verified:** runtime run; where the tracker's starter (`+8`) and partner (`+0xA`) go next (roster creation); the leader's and partner's starting level, moves and IQ (IQ 1 is P5); personality names.
 
 ## Red comparison
-The recruit gate order, the roll shape, the exclusive IQ groups and the evolution fields follow Red's structures; every Red name above is [red-hypothesis]. Two differences were read in Blue: the level term indexes the recruiter's level, and the in-dungeon team cap comes from four slots rather than a setup value.
+The recruit gate order, the roll shape, the exclusive IQ groups and the evolution fields follow Red's structures; every Red name above is [red-hypothesis], except the IQ skill names in P5, which are [blue-verified] (string-read). Two differences were read in Blue: the level term indexes the recruiter's level, and the in-dungeon team cap comes from four slots rather than a setup value.
 
 ## Open questions (follow-ups)
 - A natural recruit from a savestate in a dungeon with recruiting enabled (record 1 or later), to observe gates 1 to 8 and the roll without forcing.
@@ -142,9 +193,12 @@ The recruit gate order, the roll shape, the exclusive IQ groups and the evolutio
 - Dungeon evolution: the dungeon rows that allow it, and a runtime trace.
 - Town evolution runtime, condition item names, and whether the menu is the Luminous Spring.
 - Roster-creation consumers of the quiz result and the starting level, moves and IQ.
-- Initial friend-area ownership, the dungeon-end commit at runtime, and area table fields 2 and 3.
-- Skill names (only the red-hypothesis names are known). IQ persistence at exit is answered statically (P5, #588): IQ is copied to the roster except in dungeon ids `0x1A`, `0x3A` and `0x3E`, which keep only the held item. Runtime check of the copy is not done.
-
+- **Friend areas (#574).** Static part settled above (P4, P3 gate 4). Still open, all runtime:
+  - Initial owned set: confirm that `02069848` runs once in a new game (state `020628BC` 0x10, sub-state 6) and that areas 1 to 57 read 1 with area 0 at 0 (hook `02009014`, `02069848`, read the 58 bytes at `*020DED04`). Area 0 start value and the trigger of state `0x10` are open.
+  - Dungeon-end commit `02178068` at runtime (flag 1 from codes 1, 2, 4; flag 0 from code -2, and from code -1 after `02177FD8`, at `0206DC20`): **still unverified**. Needs a probe that reaches a floor exit; the boot-to-dungeon inputs (`boot_to_dungeon.txt`) stop at the first floor. The IQ probe (P5) reached `02178068` only by a forced call, so the natural exit trigger (`FUN_0206dc20` calls at `0206ED24`, `0206ED3C`, `0206ED4C`) and the other copier `02001CD8` remain unverified.
+  - Field 2 names (the four classes) and field 3 (the price, and the value at `+0x234`): static, [red-hypothesis] names.
+  - Gate `0217F7EC` friend-area branch: static only. A runtime check hooks `0217F7EC` (species in r0) and its return sites `0217FB40` (from `0217F9B8`), `02172168` and `0217F274`, and reads the species record's `+0x12` and `+0x16` and the owned byte.
+  - **Why no runtime run here:** the probe needs a copy of the retail ROM under a throwaway name (DeSmuME writes `<rom>.dsv`, so the copy must not be `pmdb.nds`), and copying the ROM from the main checkout needed approval that this session did not have. No probe script was added to `verification/v7-trace/`.
 ## Links
 - Symbols: [symbols.md](../symbols.md)
 - Verification: [verification.md](../verification.md)
