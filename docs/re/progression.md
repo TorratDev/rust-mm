@@ -22,7 +22,13 @@ Issues: [#361](https://github.com/TorratDev/rust-mm/issues/361) (runtime checks,
 | `ov_0001::0217F388` | join sequence (`MonsterJoinSequence_Async`) | blue-verified |
 | `ov_0001::0217F7EC` | recruit-allowed check (friend area) | blue-verified (flow); name red-hypothesis |
 | `ov_0001::021B473C` | join flag (byte) | blue-verified (writers) |
-| `ov_0001::02178068` | commit recruits at dungeon end | blue-verified (static) |
+| `ov_0001::02178068` | dungeon-end commit: party to roster (IQ copy, lines 57 to 67), recruit list (lines 98 to 103) | blue-verified (static) |
+| `ov_0001::02179274`, `ov_0001::02179128` | four-slot team loop (called from `0206DC20` at line 477); party record writeback from the entity (IQ `info+0xC` to party `+0x06`) | blue-verified (static) |
+| `02001D24`, `02001E24` | party to roster copy (roster `+0x0A` = party `+0x06`); `02001E24` is the tail jump that passes roster record `idx*0x40` | blue-verified (static) |
+| `02006444` | dungeon byte gate for the exit copy (nonzero: held item only, `02001CD8`); table not traced | blue-verified (reader); meaning not traced |
+| `0200457C`, `02092FC4` | skill index to name message id (u16 table) | blue-verified (static) |
+| `ov_0001::02175E60` | IQ skill unlock message (old list against new list) | blue-verified (static) |
+| `0203A87C` | IQ menu draw (skill name, enabled mask test) | blue-verified (static) |
 | `02008EC4`, `02009000`, `02009014`, `02003130` | friend-area count, owned test, owned set, roster insert | blue-verified (static) |
 | `02002288`, `020022DC` | species friend flag (`+0x12`) and area id (`+0x16`) readers | blue-verified (static) |
 | `02009110`, `02009120`, `02009230` | area table readers: field 3 (`u32` at `+4`), field 2 (byte at `+2`), roster index to area | blue-verified (static) |

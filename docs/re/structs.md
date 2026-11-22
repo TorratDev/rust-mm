@@ -339,7 +339,7 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x04` | `dungeonLocation` | `0x04` |
 | `+0x06` | `speciesNum` (the species id, #170 P3b; [blue-verified], see [Roster record +6](#roster-record-6-is-the-species-id-170-p3b)) | `0x08` |
 | `+0x08`, `+0x09` | `unkC[2]` (levels) | `0x0C` |
-| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]). Written from party `+0x06` by `02001D24` on the dungeon-exit chain (`02178068` → `02001E24`; [blue-verified], runtime with a forced call, see [progression.md](progression.md) P5) | `0x14` |
+| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]). Written from party `+0x06` by `02001D24` on the dungeon-exit chain (`02178068` → `02001E24`; [blue-verified], runtime with a forced call, see [progression.md](progression.md) P5). A dungeon whose `02006444` byte is nonzero copies only the held item ([progression.md](progression.md) P5, #588) | `0x14` |
 | `+0x0C` | `pokeHP` | `0x16` |
 | `+0x0E`–`+0x11` | `offense` (attack, sp. attack, defense, sp. defense) | `0x18` |
 | `+0x14` | `currExp` | `0x1C` |
