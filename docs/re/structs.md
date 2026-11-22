@@ -401,11 +401,28 @@ The table at `0x02092818` holds one `0x10`-byte record per dungeon, Red's `Dunge
 | `+0xC` | `turnLimit` (s16) | 0x03E8 (1000), 0x03E8 |
 | `+0xE` | `randomMovementChance` (s16) | 0, 0 |
 
-**Byte `+6` (#588, #595).** The byte is record `id`'s `+6`, that is `0x0209281E + id * 0x10`; the base comes from the literal pool, not from `DAT_02006450` itself. Two readers, both code-verified [blue-verified]:
+**Byte `+6` (#588, #595).** The byte is record `id`'s `+6`: `DAT_02006450` holds `0x0209281E`, so `FUN_02006444(id)` reads `0x0209281E + id * 0x10`. Two readers, both code-verified [blue-verified]:
 - **Entry rule.** `FUN_02005A0C` (`0x02005A0C`) reads the byte through the literal at `0x02006114` (`0x02005F6C`) and, when it is nonzero (the branch at export line 201; the message pointer is loaded at `0x02005FA4`), adds a dungeon-entry rule line. The message id comes from the word at `0x02092E3C` (read at `0x02005FAC`), which is `0x50B` in RAM. Message `0x50B` is "The team will enter at Level 1." (static read of NitroFS `message_e.str`, file 149, entry id-1; the in-game line was not seen). So the flag is the entry rule "team enters at Level 1". **This confirms Red's name `levelResetTo1` for the entry rule.**
-- **Exit selector.** `FUN_02006444` returns the byte, and `02178068` (`021781C0`) chooses the copy from it: zero copies the whole party record, nonzero copies only the held item ([progression.md](progression.md) P5). **[red-hypothesis]:** the exit effect is that the members come back reset and only the held item is kept. The reset code (`020033A8`, `02003320`, `02001CD8`) is not read, so the level value is not shown.
+- **Exit selector.** `FUN_02006444` returns the byte, and `02178068` (`021781C0`) chooses the copy from it: zero copies the whole party record, nonzero copies only the held item ([progression.md](progression.md) P5). **[blue-verified, static]:** nonzero means only the held item is copied back (`02001CD8`: flag at team `+0x36`, then two bytes to roster `+0x1C`/`+0x1D`), and the entry build (`02178828`, `02003320`) sets the level word `+0xA` to 1 ([progression.md](progression.md) P5). Zero copies the whole team entry back (`02001E24` tail-calls `02001D24`). The in-game result is not run.
 - **Ids.** Within ids `0x00` to `0x61` the byte is nonzero only for `0x1A`, `0x3A` and `0x3E` (runtime RAM read of the table on a scratch ROM copy, [#591](https://github.com/TorratDev/rust-mm/issues/591); no table dump committed). Why these three: the table has no code or rule that derives the value, so it is per-dungeon data. No dungeon name is mapped in the repo for them. Records from `0x62` on have another layout, so this byte is not read as a dungeon flag there.
-- **Not verified:** that the level is set to 1 at entry in a run, and the exit effect above. A runtime check is in [#589](https://github.com/TorratDev/rust-mm/issues/589).
+- **Not verified:** the entry level and the exit effect in a run. A runtime check is in [#589](https://github.com/TorratDev/rust-mm/issues/589).
+
+**Rule lines in `FUN_02005A0C` (#603)** [blue-verified, static; the literals were read from the ARM9 image, record `id` at `0x02092818 + id * 0x10`]. Error lines are added first; if any was added, the function returns 1 and the rule lines below are skipped. The rule lines are the no-error branch. Message ids come from the literal pointers: prompt `0x509`, save `0x50A`, Level 1 `0x50B`, items `0x50C`, money `0x50D`.
+
+| Byte | Literal | Use in `02005A0C` |
+|------|---------|-------------------|
+| `+4` | `DAT_020060C4` (`0x0209281C`) | Item limit. If nonzero and below the carried count, error line `0x4FF`, or `0x500` after an earlier error. If zero and the carried or held items are nonzero, the "All items will be lost" rule line (`0x50C`). |
+| `+5` | `DAT_020060B4` (`0x0209281D`) | Member limit, capped to 3 unless `param_4` is set. If below the party count, error line `0x4FE` (limit 1) or `0x4FD` (limit N). |
+| `+6` | `DAT_02006114` (`0x0209281E`) | Nonzero: "enter at Level 1" rule line (`0x50B`). |
+| `+7` | `DAT_02006120` (`0x0209281F`) | Zero and team money (`+0x234`) nonzero: "All money will be lost" rule line (`0x50D`). |
+| `+0xA` | `DAT_02006108` (`0x02092822`) | Zero (or `param_5` set): the "Game will be saved" rule line (`0x50A`). |
+| `+0xB` | `DAT_020060EC` (base `0x02092818`), `DAT_020060FC` (`0x02092823`) | Both read `+0xB`. Low four bits: required-move check on `param_4` (`FUN_02005944`, `FUN_020079F0`). Bit `0x10`: needs a member for which `FUN_0200220C` returns 3. |
+
+`+2` and `+9` are not read by `02005A0C`, and neither is a rule line:
+- **`+2`** is read by `FUN_02006400` (`0x02006400`). Its callers are `ov_0001::02172824` (a different path when it is zero) and `ov_0001::0217F9B8` (returns 0, so the entry is not selectable, when it is zero).
+- **`+9`** is read by `FUN_02006454` (`0x02006454`). Its caller `ov_0001::0219C7A4` uses a nonzero value to take a compare against a constant (the checkpoint branch).
+
+The Red names `recruitingEnabled` and `hasCheckpoint` for `+2` and `+9` are [red-hypothesis].
 
 `FUN_02006410(index)` is `GetRescuesAllowed` (proposed; red-hypothesis name). It returns byte `+3` of record `index`, that is `0x0209281B + index * 0x10`. Both callers use this one global table: the mail builder `FUN_0200D4DC` (index from mail `+4`) and `RunDungeon_Async` (`0x0206DCEC`, index from the setup struct's `+4`). Records beyond 1 are not mapped to dungeon ids or names.
 
