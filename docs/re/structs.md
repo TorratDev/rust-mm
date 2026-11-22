@@ -49,8 +49,8 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x5A` | `heldItem` (3-byte `Item`: `flags` `+0`, `id` `+2`) | `0x60` | −6 | `HasHeldItem` (flag `1` exists, `8` sticky) |
 | `+0x70` | `aiTarget` (`aiTargetPos` `+0x10` = info `+0x80`, written by `0219082C`; `aiObjective` `+0`, `aiTargetSpawnGenID` `+4`, `aiTarget` `+8` are written by the same unnamed writer; readers partly found, see [aiTarget readers](#aitarget-readers-164); blue-verified (writer), offsets high (#164 P2b)) | `0x78` | −8 | `0219082C` (blue-verified writer; unnamed in Blue) |
 | `+0x71` | `aiNotNextToTarget` (inside `aiTarget`; blue-verified by structure, #164 P1b; the name is red-hypothesis, the offset medium) | `0x79` | −8 | `ov_0001::02188030` (`RunMonsterAI`) clears it when the action is above PASS_TURN (blue-verified write); `ov_0001::02190FEC` (`DecideMovement`) sets it |
-| `+0x84`..`+0x86` | IQ skills enabled mask, 24 bits; bit *n* set = skill *n* is switched on by the player (set = enabled, not blocked) | — | — | Default writer `0200429C`: bits 2, 3, 22, plus 18 if its flag is non-zero. Toggled by `0200439C` (the IQ menu, caller `0216C43C`); set via `020042F8`, which first clears the bits of the same exclusion group (table `DAT_02004398`, contents not read, [hypothesis] for the group meaning). Read by `FUN_02004250` (true = bit set). [blue-verified, static; #571] |
-| `+0x87` | IQ skills, one bit per skill (bit *n* is tested with mask `1 << n`). Derived from IQ (`+0x0C`) and the enabled mask at `+0x84` by `021804CC` (see below); a bit is set only when the skill is both unlocked (IQ at or above the table entry) and enabled | — | — | `ov_0001::021805B0` (`HasIQSkill`) reads it. `021804CC` is its sole writer besides `020042F8` bit-sets. Bits 4, 5 and 8 are used in the hit and AI paths |
+| `+0x84`..`+0x86` | IQ skills enabled mask, 24 bits; bit *n* set = skill *n* is switched on by the player (set = enabled, not blocked) | — | — | Default writer `0200429C`: bits 2 (Item Catcher), 3 (Course Checker), 22 (Item Master), plus 18 (Self-Curer) if its flag is non-zero. Toggled by `0200439C` (the IQ menu, caller `0216C43C`); set via `020042F8`, which first clears the bits of the same exclusion group (table `DAT_02004398`, contents not read, [hypothesis] for the group meaning). Read by `FUN_02004250` (true = bit set). [blue-verified, static; #571] |
+| `+0x87` | IQ skills, one bit per skill (bit *n* is tested with mask `1 << n`). Derived from IQ (`+0x0C`) and the enabled mask at `+0x84` by `021804CC` (see below); a bit is set only when the skill is both unlocked (IQ at or above the table entry) and enabled | — | — | `ov_0001::021805B0` (`HasIQSkill`) reads it. `021804CC` is its sole writer besides `020042F8` bit-sets. Bits 4 (Sure-Hit Attacker), 5 (Quick Dodger) and 8 (Status Checker) are used in the hit and AI paths |
 | `+0x8A` | `tactic` | `0x94` | −0xA | `IsTacticSet` |
 | `+0x99`, `+0x9A` | `sleepClassStatus` status, turns | `0xA8` | −0xF | `TickStatusAndHealthRegen` |
 | `+0x9B`, `+0x9C` | `burnClassStatus` status, turns | `0xAC` | −0x11 | `CalcSpeedStage` (paralysis), `TickStatusAndHealthRegen` |
@@ -93,10 +93,10 @@ Pointed to by `entity+0x70`. Blue's struct is shorter than Red's (0x208): bytes 
 | `+0x1C8` | `expGainedInTurn` (may lie past the end of the struct: the size bound is 0x1C8 to 0x208) | — | — | `AddExpPoints` (`ov_0001::02183F78`) records the EXP gained here |
 
 The IQ field is `+0x0C` (the row above). The IQ-skill bits at `+0x87` are rebuilt from scratch by `021804CC` (#164 P3b, [blue-verified structure]):
-- Enemies (`info+6 != 0`): set bits 8, 6 and 2, bit 18 if `info+0xD4` is non-zero, and bit 22 if the level is at or above the cap. Set `+0x8A` to 2. IQ is not used.
+- Enemies (`info+6 != 0`): set bits 8 (Status Checker), 6 (PP Checker) and 2 (Item Catcher), bit 18 (Self-Curer) if `info+0xD4` is non-zero, and bit 22 if the level is at or above the cap. Set `+0x8A` to 2. IQ is not used.
 - Team members (`info+6 == 0`): clear `+0x87` to `+0x89`. Then, for each n from 1 to 23, set bit n of `+0x87` when `table[n] <= IQ` (`FUN_02004464`, the table at `02091F48`) and bit n of the 3-byte enabled mask at `+0x84` is set (`FUN_02004250` returns true; a set bit means enabled). The bit setter is `FUN_020042F8`.
 
-The table values were read from data at a pool pointer. The skill number to name mapping is a u16 table of message ids at `02092FC4` ([blue-verified] static, read by `0200457C`); the names are in the message bank and not read. [red-hypothesis for the Red IQ names; see [progression P5](progression.md#p5-iq-blue-verified-static)]
+The table values were read from data at a pool pointer. Skill numbers map to names in the table in [progression.md](progression.md) ([blue-verified], string-read).
 
 **`+0xCA = 8` is not a status default (#166 P2b).** `FUN_0205938C` (ARM9 `020593B0`) is a menu-state init. It stores `+0xC8 = 1`, `+0xC9 = 0`, `+0xCA = 8` and `+0xCB = 0` into a menu object, not into an entity info. `+0xCA = 8` is the cursor column that `FUN_020591E4` reads when it draws the list. The matching offsets are a coincidence.
 
@@ -339,11 +339,11 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x04` | `dungeonLocation` | `0x04` |
 | `+0x06` | `speciesNum` (the species id, #170 P3b; [blue-verified], see [Roster record +6](#roster-record-6-is-the-species-id-170-p3b)) | `0x08` |
 | `+0x08`, `+0x09` | `unkC[2]` (levels) | `0x0C` |
-| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]). Written at dungeon exit from party `+0x06` by `02001D24` (via `02001E24`) unless `02006444` of the dungeon is nonzero ([blue-verified] static, see [progression P5](progression.md#p5-iq-blue-verified-static)) | `0x14` |
+| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]). Written from party `+0x06` by `02001D24` on the dungeon-exit chain (`02178068` → `02001E24`; [blue-verified], runtime with a forced call, see [progression.md](progression.md) P5). A dungeon whose `02006444` byte is nonzero copies only the held item ([progression.md](progression.md) P5, #588) | `0x14` |
 | `+0x0C` | `pokeHP` | `0x16` |
 | `+0x0E`–`+0x11` | `offense` (attack, sp. attack, defense, sp. defense) | `0x18` |
 | `+0x14` | `currExp` | `0x1C` |
-| `+0x18` | `IQSkills` (24 bits, the enabled mask; a set bit means enabled). Copied from party `+0x42..0x44` at dungeon exit with the IQ ([progression P5](progression.md#p5-iq-blue-verified-static)) | `0x20` |
+| `+0x18` | `IQSkills` (24 bits). Written from party `+0x42..+0x44` by `02001D24` on the same exit chain ([blue-verified], runtime with a forced call; [progression.md](progression.md) P5) | `0x20` |
 | `+0x1B` | `tacticIndex` | `0x24` |
 | `+0x1C` | `heldItem` (2-byte `BulkItem`) | `0x28` |
 | `+0x1E` | `moves[4]` (6 bytes each) | `0x2C` |

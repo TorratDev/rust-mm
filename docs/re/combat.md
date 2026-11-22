@@ -107,7 +107,7 @@ The item boosts are gated by the argument `arg_10`, as in Red.
 
 - The crit roll (`DungeonRandInt(100)`, `0217C698`) is drawn only when the defender has neither Battle Armor (`0x0C`) nor Shell Armor (`0x13`). This gate is static. The runtime probes drew the roll on every attack they ran ([P2](#p2-critical-hit-roll)), and the findings do not say whether those targets had either ability, so the gate stays open.
 - Focus Energy (status 4) sets the odds to 999.
-- IQ Type Advantage Master (IQ skill ID 1, not confirmed) sets the odds to 40 when the type result is super-effective.
+- IQ Type-Advantage Master (IQ skill 1; name [blue-verified], string-read, the effect is not checked) sets the odds to 40 when the type result is super-effective.
 - A crit multiplies by 1.5. The crit flag is stored in the damage struct at `+0xD` and is cleared when the damage is 0.
 
 ### Rounding
@@ -173,9 +173,9 @@ The hit check is `AccuracyCalc`, at `ov_0001::0215A928`. It is the Blue counterp
   - Target exposed (flag at info `+0xD2`): evasion stage 10.
   - Sand Veil (`0x1D`) in a sandstorm (weather 2): +2 evasion stage.
   - Hustle (`0x30`) with a physical move: **+2 to the target's evasion stage** (`info+0x26`, static). That lowers the hit chance. See [P5](#p5-static-leftovers).
-- Penalties: a target holding the Detect Band (item 35) takes −30. A target with the Quick Dodger IQ skill (IQ bit 5) takes −30. For move `0x163` (Regular Attack), an attacker with IQ bit 4 (Sure Hit) is a sure-hit case.
+- Penalties: a target holding the Detect Band (item 35) takes −30. A target with the Quick Dodger IQ skill (IQ bit 5) takes −30. For move `0x163` (Regular Attack), an attacker with IQ bit 4 (Sure-Hit Attacker) is a sure-hit case.
 - Stage tables: accuracy at `ov_0001::021AA8C4` (pointer slot `ov_0001::0215AB2C`) and evasion at `ov_0001::021AA918` (pointer slot `ov_0001::0215AB30`). Both have 21 entries and match Red's `gAccEvsStatStageMultipliers` entry by entry. Blue stores integers where Red's table holds s24.8 values. The stage is clamped to 0 to 20, and the multiplier to a cap of `0x6400`.
-- `HasIQSkill` (formerly `IqSkillIsEnabled`, #359 P4) at `ov_0001::021805B0` tests bit `n` of the info's 24-bit IQ bitfield, at `+0x87` to `+0x89`. It calls the helper `02004250` (`IsIQSkillSet`) through the pointer `PTR_FUN_021805C8` (blue-verified). The bit numbers 4, 5 and 8 match Red's IQ skill indices.
+- `HasIQSkill` (formerly `IqSkillIsEnabled`, #359 P4) at `ov_0001::021805B0` tests bit `n` of the info's 24-bit IQ bitfield, at `+0x87` to `+0x89`. It calls the helper `02004250` (`IsIQSkillSet`) through the pointer `PTR_FUN_021805C8` (blue-verified). The bit numbers 4, 5 and 8 are Sure-Hit Attacker, Quick Dodger and Status Checker (names [blue-verified], string-read; see [progression.md](progression.md)).
 - Callers of the random outcome functions and their chance sources are in [P4](#p4-outcome-wrappers-and-ai-chance-sources). Of the 63 move-side wrapper calls in overlay 1, 19 pass a literal 0 and draw nothing, and 44 draw. The AI chance sources are open.
 
 ## Basic attack at runtime (#356)
@@ -562,7 +562,7 @@ Unresolved items from the three investigation files for this issue. Each item is
 
 - The disassembly-level store of the sixth argument (the roll) to `CalcStatBoosts` has not been seen.
 - The offsets of `isTeamLeader` (`+7`), `isNotTeamMember` (`+6`) and `level` (`+9`) are checked statically against Red (P3, see [`structs.md`](structs.md)). `belly` (`+0x10E`) stays *probable*, because `FUN_0200b9a4` is inferred ([#46](https://github.com/TorratDev/rust-mm/issues/46)).
-- The weather enum values (1, 3, 4, 6) and the IQ skill ID 1 (Type Advantage Master) are taken from Red, not checked in Blue.
+- The weather enum values (1, 3, 4, 6) are taken from Red, not checked in Blue. The IQ skill 1 name (Type-Advantage Master) is [blue-verified] by string-read; its effect is not checked.
 - Red's `u24_8` round-up is compared by structure only.
 - The `gDungeon` `+0x3358` and `+0x335A` Plus and Minus flags need a struct check (the pairing is inferred).
 - `arg8`: the flow and callers are static (see [argument 8](#argument-8-arg8)). Its meaning as a scale is medium confidence.
