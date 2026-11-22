@@ -101,7 +101,7 @@ Not statuses, so not in the list: the stat-stage moves already ported (Growl, Le
 ### Duration roll (all rows)
 
 - `CalculateStatusTurns` (`0219CF28`) rolls `DungeonRandRange(min, max)` (`0219D014`), which is `min + DungeonRandInt(max - min)`, and **makes no draw when min equals max**. The setters store roll + 1, except sleep (stored = roll). **[blue-verified]**, high.
-- The flag adjusts the roll only for a team member: IQ skill `0x12` (Self-Curer) halves it, ability `0x14` caps it at 5 above 4, and the result is at least 1. Neither applies to `0x7F` (see [Sleep: duration and roll](#sleep-duration-and-roll)). **[blue-verified]**, high.
+- The flag adjusts the roll only for a team member: IQ skill `0x12` Self-Curer (`021805B0`) halves it, ability `0x14` (`0218067C`, which compares `info+0x58`/`+0x59`) caps it at 5 above 4, and the result is at least 1. Reader: `0219CF28`. Neither applies to `0x7F` (see [Sleep: duration and roll](#sleep-duration-and-roll)). **[blue-verified]**, high.
 - Flag per setter, from the runtime call log: Hypnosis 1, paralysis 1, burn 1, Bubble 1, Smokescreen 1, Bite 1, Rage 0, Focus Energy 0. Leech Seed passes 1 in the flag register (its decompile shows an extra third argument); treat it as 1. The flag matters only for team-member targets.
 
 ### Setters, durations and effects
@@ -369,7 +369,7 @@ Blue-verified. It writes zero to `+0x99` to `+0x9E`, `+0xA0`, `+0xA8`, `+0xA9`, 
 - `FUN_ov_0001__0218F27C` (`0218F2EC`) reads and clears it. `FUN_ov_0001__0217930C` resets it.
 - Readers compare `== 1` or `!= 0`, except two. `0213FF34` indexes a table at `PTR_DAT_021ABA70 + (+0xCB) * 4`, and `02176EB8` uses the value in a status-icon byte (`+0xCB + 'N'`).
 - No writer of 2 or 3 exists. This is Red's `muzzled` 0/1 flag (#189 P2: Safeguard gate, pool `0x021AA2B0` = (10, 10) = `gMuzzledTurnRange`). The blinker class is `+0xC9` (setters `0218BBB4`, `0218BAC8`, `0218B9F4` write 1 to 3). Checked on `rescue-arm9-c` in review: `0218C1AC` stores `+0xCB`/`+0xCC`, `0218BBB4` stores `+0xC9`/`+0xCA`, `0218CE68` stores `+0xC7`/`+0xC8`.
-- Turn roll: `FUN_ov_0001__0219CF28(entity, range, flag)` rolls `DungeonRandRange` on the range. A `0x7F` result is permanent. For a monster with flag set, IQ bit `0x12` (Self-Curer) halves it, and ability `0x14` caps it at 5 when it is above 4. The result is never below 1 (blue-verified behaviour; name red-hypothesis as `CalculateStatusTurns`).
+- Turn roll: `FUN_ov_0001__0219CF28(entity, range, flag)` rolls `DungeonRandRange` on the range. A `0x7F` result is permanent. For a monster with flag set, IQ bit `0x12` Self-Curer (`021805B0`) halves it, and ability `0x14` (`0218067C`) caps it at 5 when it is above 4 [blue-verified, reader `0219CF28`]. The result is never below 1 (blue-verified behaviour; name red-hypothesis as `CalculateStatusTurns`).
 
 ## Reflect class (`+0xB1`, `+0xB2`)
 
@@ -785,7 +785,7 @@ Tag: **blue-verified** (decompile); **red-hypothesis** (the Red side, from the p
 - **Yawning per-turn function.** `0213F6B0` is not identified.
 - **Wake on hit.** Both checks need `0x9A == 0x7F`; they differ only for nightmare and napping, and a finite sleep is not woken by damage (static, #359 P2; see [wake on hit](#sleep-wake-on-hit)). The runtime check is in [wake on hit](#sleep-wake-on-hit) (#359 L2): the static read holds.
 - **Countdown gate.** Closed by #359 P2: there is no gate. Each caller ticks its own entity class (see [Per-turn order](#per-turn-order)).
-- **Ability and item IDs.** `IsSleeping` (`021818D0`), `HasIQSkill` (`021805B0`, IQ checks `0x11` (Nonsleeper) and `0x12` (Self-Curer)) and `HasNegativeStatus` (`02181904`) are named (#359 P4; the names are red-hypothesis). The `0x14` check is `AbilityIsActive` (`0218067C`), an ability test, not the IQ test. Held items `0x14` and `0x15` are matched by value only.
+- **Ability and item IDs.** `IsSleeping` (`021818D0`), `HasIQSkill` (`021805B0`, IQ checks `0x11` Nonsleeper and `0x12` Self-Curer) and `HasNegativeStatus` (`02181904`) are named (#359 P4; the names are red-hypothesis). The `0x14` check is `AbilityIsActive` (`0218067C`), an ability test, not the IQ test [blue-verified: `0219CF28` calls `0218067C(entity, 0x14)`; the name is red-hypothesis]. Held items `0x14` and `0x15` are matched by value only.
 - **Calls with unknown arguments.** `0218DF38` (heal) argument order, `0217BCA4` (`…, 1, 0x208`) argument list, and `02190100` behaviour (inferred from its body).
 - **Burn-end and burn-apply conditions** in `021760B4`: `0x2A & 3 == 2` and the dungeon flag `0x34AE`, unnamed. Callers of `0215C774` and `0214650C` are unknown.
 - **Residual-damage reason tags** mapped in [#191 P3](#residual-damage-tags-191-p3).
