@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Runtime hooks for the friend-area notes (#594, docs/re/progression.md P4).
+"""Runtime hooks for the friend-area notes (#594, docs/re/progression/p4-friend-areas.md P4).
 
 One boot per run: boot_to_dungeon.txt from a fresh save until the first dungeon floor, a snapshot
 of the owned set, then optional turn inputs from that frame. Exec hooks (addresses are the
-retail EUR dump, see docs/re/progression.md P4):
+retail EUR dump, see docs/re/progression/p4-friend-areas.md P4):
   owned set : 02069848 (bulk setter), 02009014 (setter, r0 = area), 02003510 (new hero/partner)
               At the first floor the 58 owned bytes at *020DED04 are read (area 0 = index 0).
   exit      : 0206DC20 (entry: r0, result code at gDungeon+0x60), 0206ED24, 0206ED3C, 0206ED4C,

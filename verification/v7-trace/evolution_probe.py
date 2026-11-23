@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runtime hooks for the dungeon-evolution notes (#573, docs/re/progression.md P6.2).
+"""Runtime hooks for the dungeon-evolution notes (#573, docs/re/progression/p6-evolution.md P6.2).
 
 FORCED run, not a natural one: with --force, info+0x11B is set to 1 on every team/wild entity and
 gDungeon+0xD to 1 at the first floor, so 02183BB4 takes its evolution branch. Natural runs never set
@@ -7,7 +7,7 @@ gDungeon+0xD to 1 at the first floor, so 02183BB4 takes its evolution branch. Na
 savestate (created on the first run, loaded afterwards if --savestate exists). Then
 combat_attack_inputs.txt for --frames frames.
 
-Exec hooks (retail EUR dump addresses, docs/re/progression.md P6.2):
+Exec hooks (retail EUR dump addresses, docs/re/progression/p6-evolution.md P6.2):
   02183BB4  evolution pass entry (main; records gDungeon+0xD, +0x10 and each slot's species)
   02001738  candidate list (r0 = species, r1 = buffer, r2 = 0, r3 = 0)
   0219D058  DungeonRandInt (r0 = candidate count)
