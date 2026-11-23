@@ -37,7 +37,7 @@ use crate::start::{RowError, state_from_row, team_index};
 pub const SKIPPED_FIELDS: &[(&str, &str)] = &[
     (
         "sPRNGState",
-        "global LCG; whether display code also steps it is open in #351",
+        "global LCG; stepped per frame and by sprite callers, not by turn logic, so its advance between rows is not predictable (docs/re/rng.md, During a floor, #351)",
     ),
     (
         "dungeonPreseed",
