@@ -872,3 +872,16 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Outcome:** confirmed: leader faint gives `+0x648` = 1, result -1, no `AddExpPoints`, then a fresh dungeon 0 floor 1; EXP results 290@1 15, 191@1 16, 16@1 12, 191@10 30, 290@100 163; level-ups read `02001C48(species, level + 1)` with `<=`. Open: a defeat outside dungeon 0, the -2 path, levels past 9, stat gains against `LevelData`.
 - **Fallback adopted:** none.
 - **Notes:** `crates/sim/tests/defeat_exp.rs` checks the five EXP values on the sim with its own tables (no ROM needed).
+
+## #573 — Dungeon evolution trace (forced run)
+
+- **Assumption:** the evolution half of `02183BB4` (candidate list `02001738`, draw `DungeonRandInt`, floor list `021389A0`, table `02178C04`, apply `02182900`) runs when `info+0x11B` is set, and applies the target species (P6.2).
+- **Date:** 2026-11-22.
+- **Environment:** py-desmume (DeSmuME 0.9.12), SDL dummy drivers, the supported dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, not committed); a throwaway copy of the ROM with a name other than `pmdb.nds`, outside the repository. First floor of a new game (`boot_to_dungeon.txt` plus 60 frames), saved to a scratch savestate.
+- **Probe:** `verification/v7-trace/evolution_probe.py`, SHA-1 `752088323197d4a78462576f615eb41a867ec83d`.
+- **Command:** `python verification/v7-trace/evolution_probe.py <ROM> <OUT.json> --force --force-returns --frames 480 --savestate <SAV>`. The JSON and the savestate stay outside the repository. `--force` sets `info+0x11B = 1` on each entity and `gDungeon+0xD = 1`; `--force-returns` sets the returns of `021389A0` (`02183DE0`) and `02178C04` (`02183DF8`, `0218293C`) to 1. Without `--force-returns` the apply path does not run.
+- **Evidence:** exec hooks on `02183BB4`, `02001738`, `0219D058`, `02182900`, `02178C04` and the return sites above. Candidate counts (the `DungeonRandInt` argument): 158 gives 1, 4 gives 1, 290 gives 2. Apply ran for 158 to 159, 4 to 5, 290 to 291; level bytes unchanged; `+0x11B` cleared on the hero and partner (end-of-run read). Recorded in `docs/re/progression.md` P6.2.
+- **Outcome:** confirmed, forced: candidate lists, draw and forced apply (the run above, re-run with the committed probe). Not reached in 480 frames: the 191 entities and the Ninjask/Shedinja branch.
+- **Natural path (not re-run in this PR):** the earlier scratch runs without return forcing reported `021389A0` returning 0 for every candidate, so apply does not run on this floor. The committed probe was not run without `--force-returns` here.
+- **Fallback adopted:** none.
+- **Notes:** the scratch version of the probe also hooked `02182A70`; that address is not a return site and was dropped. The apply's before and after values are in the JSON output only (not committed).
