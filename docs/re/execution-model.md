@@ -136,7 +136,7 @@ The scene runner is `FUN_0206F7EC`. Its state is `DAT_0207035C` (`0x02133CE0`). 
 
 **Not verified**
 
-- The inner phases `0x0` to `0x11` of states 1 and 2 (the second `switch` on `DAT_02070358`, `0x02133CF0`). They load the scene and are not named here.
+- The inner phases `0x0` to `0x11` of states 1 and 2 (the second `switch` on the scene-id cell `DAT_02070334`; `DAT_02070358` is a frame countdown, not the switch). They load the scene. Per-id actions are in [scripts.md](scripts.md) P6.
 - Scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` are not traced.
 - Whether ground mode reads variable `0x19` beyond `RunGameMode_Async`.
 
@@ -430,7 +430,7 @@ In Red, step 2 is a stub with a comment that the NDS version loads the dungeon o
 - The caller of the 4 RNG steps per frame, and the A and Select effect (Select has no data after emulated frame 2508).
 - The writer of the flag word that `FUN_02018ACC` tests (see [#159](rng.md#per-frame-steps-159)). Its caller is the IRQ dispatcher (VBlank, IRQ 0; [`io.md`](io.md#frame-path)).
 - Overlay 7 on the real title path (#161 P3). The screen is seen only under fault injection (see [Overlay 7](#overlay-7-the-choice-5-screen-161-p3)). The fresh-boot title menu shows New Game and Adventure Log only, so choice 5 is not offered in that boot. Whether state `0xF` of `FUN_020628BC` runs with a save is open and needs a save.
-- Scene-runner inner phases `0x0` to `0x11` of states 1 and 2 (the switch on `DAT_02070358`, not named), and the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (their readers are not traced). The phase names and the variable `0x19` values are in [Scene runner states](#scene-runner-states-161-p1).
+- Scene-runner inner phases `0x0` to `0x11` of states 1 and 2 (the switch on the scene-id cell `DAT_02070334`; see [scripts.md](scripts.md) P6), and the scene variables `0x10`, `0x12`, `0x14`, `0x15` and `0x17` (named and partly traced in [scripts.md](scripts.md) P5; `0x17` has no reader found). The phase names and the variable `0x19` values are in [Scene runner states](#scene-runner-states-161-p1).
 - Whether modes 2 and 3 are reached in play.
 - Names for the IME helpers (proposed in #157 P2, awaiting confirmation) and the rename of `FUN_0201DE24` to `RemoveMoneyAndRandomItems` (proposed in [Scene graph](#scene-graph), awaiting confirmation).
 - Closed (#353 P1): `RunDungeon_Async` advances no turn itself. Its loop calls `RunFractionalTurn_Async`, which advances `fractionalTurn` when it ends. What a V7 row shows, and when a leader action appears in one, is in [`turns.md`](turns.md#for-golden-traces-v7).

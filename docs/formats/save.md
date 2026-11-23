@@ -187,6 +187,12 @@ The sections end at `0x534D`, inside the `0x57D8` block. The restore function fo
 - **[blue-verified]** Descriptor tables of 16-byte entries: table A (83 entries at `0x02098060`, base word `0x021EE640`) and table B (index `0x400` and up; 4 valid entries by the layout, medium confidence). Entry: `+0` type (1 bit, 2 or 7 byte, 3 s8, 4 u16, 5 s16, 6 s32, 8 special); `+4` offset in the block; `+6` bit shift; `+8` count; `+0xA` a value read only by `RestoreGlobalScriptVars`; `+0xC` pointer to the debug name (#197 P4b).
 - **[blue-verified]** The only check that runs is in `RestoreGlobalScriptVars` (`0x0201F81C`). It compares `VERSION` (table A id 0, expected 30 at `+0xA`) with the first word of the block, and a mismatch sets the load result to 4. It runs only in the branch of `ReadSaveFromPak` where `*DAT_0202A41C == 0`. The other branch copies the block with no check. So `VERSION == 30` is the only check, and only on that branch (#197 P4c). The meaning of 30 is not confirmed against a real save.
 
+### Story flags and scene variables (#362 P5)
+
+- **[blue-verified]** Every story flag and scene variable the scripts use is a table-A id, and its descriptor lies in the 0x400-byte block above. The save holds that block raw, so it holds them all, including bit-typed flags such as the dungeon clear list.
+- **[blue-verified]** Debug names read at runtime: `0x10` GROUND_GETOUT, `0x12` GROUND_PLACE, `0x14` DUNGEON_ENTER, `0x15` DUNGEON_ENTER_INDEX, `0x17` DUNGEON_RESULT, `0x19` START_MODE, `0x26` WARP_LOCK, `0x33` DUNGEON_CLEAR_LIST. Meanings, readers and the code for `0x14` are in [re/scripts.md](../re/scripts.md#p5--story-flags-and-scene-variables).
+- **Open:** the table-A base word here (`0x021EE640`) does not match the block address in [execution-model.md](../re/execution-model.md) (`0x0210E640`). One is probably a typo. Neither is linked as fact until checked.
+
 ## 3. Corrupt or blank detection
 
 **Load result** (`ReadSaveFromPak` `0202A1AC`; the codes are Blue's, tied to addresses where marked)
