@@ -198,3 +198,4 @@ Red's `charmap.txt` names `CENTER_ALIGN` (`#+`), `UNK_MACRO_3E` (`#>`) and `UNK_
 - Symbols: [symbols.md](../symbols.md) (not changed here; see the note in the PR).
 - Verification: [verification.md](../verification.md)
 - Spec: [formats/text.md](../formats/text.md)
+- Script side of dialogue (message opcodes and the inline per-language strings): [scripts.md](scripts.md) P4

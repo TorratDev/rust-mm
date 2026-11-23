@@ -67,3 +67,4 @@ On the supported dump, `ground_maps_parse`:
 - Which loader table row each map uses, and so the maps without their own parts.
 - BPA frame info layout (frame durations, `[hypothesis]` from Red).
 - BMA layer priority (which layer is drawn on top).
+- The bank overlays also hold script data ([scripts.md](scripts.md), [format](../formats/scripts.md)). Not checked whether a bank's BPC parts sit in the same overlay.

@@ -886,6 +886,28 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Fallback adopted:** none.
 - **Notes:** the scratch version of the probe also hooked `02182A70`; that address is not a return site and was dropped. The apply's before and after values are in the JSON output only (not committed).
 
+---
+## #362 — Script engine probes
+
+- **Assumption:** ground scripts are found through the loader table and the bank overlays (P1); the interpreter loop, the 0x18-byte record and the dispatch read as the static reading says (P2); the scene-runner cell holds the scene id (P6). Opcode, actor, camera and variable claims are checked where a probe reaches them.
+- **Date:** runs made before this change; the findings do not record their dates. Committed 2026-11-23.
+- **Environment:** Linux, py-desmume (DeSmuME 0.9.12), `SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`, a fresh `XDG_CONFIG_HOME` per run, a scratch copy of the dump. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (not committed; no committed probe hashes it, so the value is a record, not a gate). Input [`boot_to_dungeon.txt`](../verification/v7-trace/boot_to_dungeon.txt), SHA-1 `b3f969cec1bb5aeb790c50e62727b5cdc5686d61`.
+- **Evidence:**
+  - Probes committed unchanged from the scratch copies that were run: [`script_lookup_probe.py`](../verification/v7-trace/script_lookup_probe.py) (SHA-1 `3a4708d659d536bf0840222c0a4e9027a2361aa6`), [`interp_probe.py`](../verification/v7-trace/interp_probe.py) (SHA-256 `e88b2d6e29db02f843937905ca1c81d8e104ee4a670ff72f58e3a85fde182e5f`), [`op_probe.py`](../verification/v7-trace/op_probe.py) (SHA-256 `21e5db31bcb7361669118484137c02cc6127da05d23e1d113af4ffdf0230c89b`), [`actor_probe.py`](../verification/v7-trace/actor_probe.py) (SHA-256 `327d1a27e3e9099109c8d2efbcbe230e878e9310189ed3ba6ee4197e42e3a447`), [`scene_probe.py`](../verification/v7-trace/scene_probe.py) (SHA-256 `f06b054c76e5720d78af9548bbabacd6f4117830224339a6e8b14f1596f4cfa0`).
+  - **Script lookup (P1):** `XDG_CONFIG_HOME=<fresh> SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ~/venvs/desmume/bin/python -I verification/v7-trace/script_lookup_probe.py <scratch ROM copy> <OUT.jsonl> 3200 verification/v7-trace/boot_to_dungeon.txt verification/v7-trace`. Output SHA-1 `26990dcd362042bc7064166ac848be087728c6a0`, the same in two runs. 10 of 10 installs match.
+  - **Interpreter (P2):** `~/venvs/desmume/bin/python verification/v7-trace/interp_probe.py <scratch ROM copy> <OUT.jsonl> 3000 verification/v7-trace/boot_to_dungeon.txt verification/v7-trace`. Output SHA-1 `4301f2e7d72c70a19f5fdd76e66a39342c243fa6`. Counts: 228 dispatches, 114 entries, 228 record checks, 1207 of 1213 frame pairs dropped by 1.
+  - **Opcodes (P3):** the same arguments with `op_probe.py`. Output SHA-1 `673e0cb02d56ae5576a62da7f6dafe4bb4ec59e5`. 36 distinct opcodes seen.
+  - **Actors and camera (P4):** `XDG_CONFIG_HOME=<fresh> ~/venvs/desmume/bin/python verification/v7-trace/actor_probe.py <scratch ROM copy> <OUT.jsonl> 3000 verification/v7-trace/boot_to_dungeon.txt verification/v7-trace`. Output SHA-256 `06c5ddeb6a9ddb44f84522dd0b8324574b484f3ae0a182df43df5b60e4794839`. Its `rc` was 0.
+  - **Scene variables and phases (P5, P6):** the same form with `scene_probe.py`. Output SHA-256 `60e620558a709741fb98d2627b0a99efff77e06fcf816bf32e8b309ade8735ad`. Its `rc` was 0.
+  - **Not committed:** `optable.py` and `dump_ov0.py` (static helpers that read an overlay-0 byte dump, which the repo must not hold). Their B-table decode is cited in [`re/scripts.md`](re/scripts.md) P2 as **blue-verified** from the export; it cannot be re-run from the repo alone.
+- **Outcome:** P1 and P2 **blue-verified** (static, with the runtime counts above). P3 covers the 36 opcodes of the opening run. P4–P6 are partly runtime-checked: the camera ran only in modes 0; the dungeon return path (scene ids 9–0xC) did not run in 3000 frames. Details and open items in [`re/scripts.md`](re/scripts.md).
+- **Fallback adopted:** none.
+- **Notes:**
+  - The outputs are in an ignored scratch directory; only the hashes and commands are recorded here.
+  - The probes use the `-I` flag only for `script_lookup_probe.py`, as run; the other four were run without it.
+
+---
+
 ## #351 — Global LCG callers during a floor
 
 - **Question:** which callers step the global LCG (`sPRNGState`, `020DF704`) during a dungeon floor, and does a row's `sPRNGState` advance match the frame count. Results: [`re/rng.md`](re/rng.md#during-a-floor-351).

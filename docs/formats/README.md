@@ -17,6 +17,7 @@ One spec per parser, with its verification status. Issue: [#41](https://github.c
 | [text.md](text.md) | `crates/formats` `text`, `font` | verified; some control codes open |
 | [data.md](data.md) | `crates/data` | verified; equals Red for species, moves, items |
 | [save.md](save.md) | save layout (#53) | research notes |
+| [scripts.md](scripts.md) | none (research; layout from ARM9 and overlay code) | research notes; runtime pointers verified (#362) |
 
 ## Open items (follow-ups)
 
