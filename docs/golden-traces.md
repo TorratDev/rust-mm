@@ -35,7 +35,7 @@ Traces are language-neutral fixtures: the capture side may be Lua or Python, the
 | `fractionalTurn` | s16 | Turn fraction. | dungeon `+0x650` (`fractionalTurn`), [`re/structs.md`](re/structs.md#dungeon-struct) |
 | `runSeed` | u32 | Run preseed (the 24-bit value at `+0x66C`). The name comes from `retail_trace.py`. | dungeon `+0x66C` (`prngPreseed23Bit`), [`re/structs.md`](re/structs.md#dungeon-struct); [`re/rng.md`](re/rng.md) (seeding a dungeon run) |
 | `floorSeed` | u32 | Seed for the current floor. | dungeon `+0x670` (`unk3C`, floor seed), [`re/structs.md`](re/structs.md#dungeon-struct); [`re/rng.md`](re/rng.md) |
-| `sPRNGState` | u32 | Global LCG state. | `020DF704`, [`re/rng.md`](re/rng.md) (global LCG) |
+| `sPRNGState` | u32 | Global LCG state. Recorded but not compared; see [Compared fields](#compared-fields-351). | `020DF704`, [`re/rng.md`](re/rng.md) (global LCG) |
 | `dungeonRng` | u32 | Dungeon LCG state. | `ov_0001::021B3F58`, [`re/rng.md`](re/rng.md) (dungeon LCG) |
 | `dungeonPreseed` | u32 | Preseed LCG state. | `ov_0001::021B3F5C`, [`re/rng.md`](re/rng.md) (preseed LCG) |
 | `team` | array of 4, each an entity or `null` | Team slots. `null` means the pointer is 0 or the entity is not valid. | dungeon `+0x11314` (4 entity pointers), [`re/structs.md`](re/structs.md#dungeon-struct) |
@@ -91,6 +91,26 @@ A `param` or source outside those is an `ActionError` with its position, not a s
 ### Note on `tilesSha256`
 
 The name says SHA-256, but `retail_trace.py` writes the first 16 hex digits of the digest (`hexdigest()[:16]`), not all 64. Version 1 keeps that value, so existing captures stay valid. The harness compares the 16-digit string as a whole. A 64-digit value would need a new schema version.
+
+## Compared fields (#351)
+
+Which row fields a replay compares, and why. The list is `SKIPPED_FIELDS` in [`apps/trace-harness/src/lib.rs`](../apps/trace-harness/src/lib.rs); every other field in the table above is compared.
+
+| Field | Replay | Why |
+|-------|--------|-----|
+| `dungeonRng` | compared, exact, every row | Only the dungeon LCG is stepped by dungeon logic. The display callers do not touch it (the probe found its advance reachable in every pair). See [`re/rng.md`](re/rng.md#during-a-floor-351) P4. |
+| `sPRNGState` | skipped | Stepped per frame (2 or 4 steps) and by sprite callers, which the sim has no clock for. Its advance between rows is not explained by the frame count (probe: 255 pairs, hash in [`verification.md`](verification.md#351--global-lcg-callers-during-a-floor)). The gameplay values it produces (Hidden Power at a spawn, floor item quantities) are read from the trace, not drawn. See [`re/rng.md`](re/rng.md#during-a-floor-351) P4. |
+| `dungeonPreseed` | skipped | The preseed generator is not in the snapshot; restore rebuilds it from `floorsEntered`. |
+| `runSeed` | skipped | In the snapshot, but not in the comparison list. |
+| `floorSeed` | skipped | The snapshot keeps the floor generator's current state, not the seed it started from. |
+| `fractionalTurn` | skipped | Game turn fraction (0-23); the sim has no field for it yet. |
+| `frame` | skipped | Capture-run frame counter, not game state. |
+| `turn` (counter) | skipped | The sim counts commands that take a turn; `fractionalTurn` is a different unit. |
+| `tilesSha256` | skipped | A hash over the tile grid; the comparison is per field. |
+| entity `type` | skipped | Entity kind; the snapshot does not store it. |
+| entity `speedStage` | skipped | Speed stage; the snapshot's entity info leaves it out. |
+
+Open: whether the harness restores floor items from the snapshot or the row (the sim must not draw them, see `re/rng.md`).
 
 ## Validation
 

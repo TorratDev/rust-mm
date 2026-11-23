@@ -905,3 +905,15 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Notes:**
   - The outputs are in an ignored scratch directory; only the hashes and commands are recorded here.
   - The probes use the `-I` flag only for `script_lookup_probe.py`, as run; the other four were run without it.
+
+---
+
+## #351 — Global LCG callers during a floor
+
+- **Question:** which callers step the global LCG (`sPRNGState`, `020DF704`) during a dungeon floor, and does a row's `sPRNGState` advance match the frame count. Results: [`re/rng.md`](re/rng.md#during-a-floor-351).
+- **Probe:** [`verification/v7-trace/rng_turn_callers.py`](../verification/v7-trace/rng_turn_callers.py). It boots to the first floor with `boot_to_dungeon.txt`, plays `turn_inputs.txt` for 3000 frames, and writes one JSON line per pair of turn rows (`RunFractionalTurn_Async` `021411BC`, dungeon set).
+- **Command:** `~/venvs/desmume/bin/python verification/v7-trace/rng_turn_callers.py <ROM> <OUT.jsonl>`, with `<ROM>` the supported `pmdb.nds` at the repository root and `<OUT.jsonl>` outside the repo (the output is not committed). Environment: py-desmume (DeSmuME 0.9.12), Linux.
+- **Output hash:** `sha256` of `<OUT.jsonl>` = `756f4141a8b720fdd6a1a45e726c01f797e6186bd5986a67d3a53124868b97ac`. Two scratch runs from the same inputs and the committed copy gave the same hash. 255 pairs; the summary line on stderr reads `pairs 255`, `lcgEqCounted 255`.
+- **Evidence:** blue-verified (runtime): every global step has a known caller (no reseeds); frame routine 2 or 4 steps per frame; the Hidden Power roll (`02001330`) runs at a wild spawn. Tags and the rest are in `re/rng.md`.
+- **Not verified:** combat, item drops and evolution were not in the run (movement and turns only, one floor).
+- **Fallback adopted:** none.

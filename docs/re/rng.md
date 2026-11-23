@@ -32,7 +32,7 @@ Seeding:
 - **At boot** (#158 P2, blue-verified): the seed is copied at `0x02000CB8`, which calls `0x02077F20`, a wrapper for a block copy (`0x0207853C`, source `027FFCF4`, 6 bytes). `SeedRng` (`0x020119D8`) is called at `0x02000CC4`. `SeedRng` computes `s = seed[4]*seed[5] + seed[2]*seed[3] + seed[0]*seed[1] + 0xD305` (`0xD305` at `0x02011A18`, the store to `sPRNGState` at `0x020DF704`). `027FFCF4` is in the DS system area, where the console's wireless MAC address is kept. In the emulator it comes from the firmware's MAC address. **Runtime:** after `SeedRng` the six bytes are `00 09 BF 12 34 56`, the MAC the emulator reports (`00:09:BF:12:34:56`), and `sPRNGState` = `0x0000F1EB`, which equals the formula on those bytes (match). **Not verified:** that `027FFCF4` holds the wireless MAC on a real DS (only the emulator's firmware was run); whether `0x0207853C` is a NitroSDK function by that name (its shape is `copy(src, dst, len)`); a second boot with another firmware MAC (not run). **Red differs:** it seeds from 6 constant bytes in `main.c`.
 - **From the save file:** see [Save round trip](#save-round-trip) below.
 
-Use: 25 call sites of `Rand32Bit` (16 functions), 44 of `RandInt` (29 functions), 7 of `RandRange` (5 functions). Callers are in the ARM9 and in overlays 0, 1 and 7, so **the global LCG also advances during dungeons**. A golden trace must capture both `sPRNGState` and `gDungeonRngState`. The callers, by subsystem, are in [Call sites by subsystem](#call-sites-by-subsystem).
+Use: 25 call sites of `Rand32Bit` (16 functions), 44 of `RandInt` (29 functions), 7 of `RandRange` (5 functions). Callers are in the ARM9 and in overlays 0, 1 and 7, so **the global LCG also advances during dungeons**. A golden trace captures both `sPRNGState` and `gDungeonRngState`, but a replay compares only the dungeon LCG; `sPRNGState` is skipped (see [During a floor](#during-a-floor-351)). The callers, by subsystem, are in [Call sites by subsystem](#call-sites-by-subsystem).
 
 ## Per-frame steps (#159)
 
@@ -49,7 +49,7 @@ The global LCG also advances once or twice per emulated frame, from the VBlank h
 
 - The name of the flag word at `0x020DF89C` (the target of `DAT_02018B24`).
 - The callback slot that calls `FUN_02018ACC` (the PARAM reference at `0x02000C2C`, a data word that points to the function, probably a callback slot). The run shows it is called every emulated frame, but not which slot.
-- The other callers in the 42 four-step frames with the flag clear (`0x020126F8`, `0x02011974`, `0x0217AFC0` and others).
+- The other callers in the 42 four-step frames with the flag clear: answered for a dungeon floor by [During a floor](#during-a-floor-351) (`0x0217B2C4`, `0x02155820`, and `0x0217AFC0` in the static census, not hit in the probe).
 - Whether the A-window 6-step and 8-step frames come from the player's action or from the turn logic.
 - Whether `FUN_02019130` is the only writer of the flag word at `0x020DF89C`, and what bit 15 of that word does.
 - The A and Select check on the frame routine: the frame routine runs only in boot frames 2418 to 2561, and the windows were run in the dungeon. A new run needs inputs before frame 2561.
@@ -412,6 +412,47 @@ Source: investigator B. Static Ghidra only; no runtime run. Red names are **red-
 - **`FUN_0219037C` (monster house trigger)** = Red `TriggerMonsterHouse_Async` (red-hypothesis). **Blue-verified, matching Red line by line:** it returns early unless the entity passes `info+6 == 0`, the tile has flag `0x40` (Red `TERRAIN_TYPE_IN_MONSTER_HOUSE`), and the one-shot flag at dungeon `+0x661` is 0 (it sets the flag to 1). The room is dungeon `+0x34AC` (Red `monsterHouseRoom`; see #165 P4), with 0xFF meaning none. The candidates are the room's tiles, or a 9x9 area around the entity. The count comes from `DungeonRandRange(min, max)`, capped to the candidate count. Each monster is placed by `DungeonRandInt(cap)` over the candidates (with wrap-around), then `FUN_021388D4(1)` (Red `GetRandomFloorMonsterId(1)`), a spawn struct with level 0, `FUN_02175BA0`, `FUN_02179CFC` (`SpawnWildMon`), the drop-in animation, and `FUN_021401CC(1)`. Its nine callers are movement and step handlers (`02187200`, `021732C4`, `02173F18`, `0217371C`, `021740EC`, `02173CCC`, `02173A48`, `02174280`, `02173800`), not AI.
 
 **Not verified (#168 P2b):** the exact status each of the ~59 secondary-effect handlers applies (only sampled); the identity of `DungeonRandOutcome` and `DungeonRandOutcome_2` in Blue (the table above lists both; P2b did not check it); the behaviour for multi-hit moves (the roll runs per hit that reaches the handler, not verified); any runtime check.
+
+## During a floor (#351)
+
+Question: which callers step the global LCG (`sPRNGState`, `020DF704`) while a dungeon floor runs, whether a gameplay value comes from it, and whether its advance between two turn rows is explained by frames. Tags as above. Sources: the static census (Ghidra text export, read-only; xrefs from `Rand32Bit` `0201198C`, `RandInt` `02011968` and `RandRange` `02011924`, walked up through CALL and JUMP refs to overlay 1; only ARM9 and overlay 1 are resident on a floor, see [`execution-model.md`](execution-model.md)) and the runtime probe below.
+
+**P1. Callers that run on a floor.** Class: **gameplay** means the result changes dungeon state; **display** means animation, frame or message only.
+
+| Caller (site) | Class | Tag | Note |
+|---------------|-------|-----|------|
+| `02018ACC` frame routine (`Rand32Bit` at `02018B00`, `02018B08`) | display | blue-verified | 2 or 4 steps per frame; see [Per-frame steps](#per-frame-steps-159). Runtime: 5006 and 5106 steps. |
+| `0217B120` UpdateMonsterSprite, via sprite routine `02012648` (`Rand32Bit` at `020126F8`), call at `0217B2C0` | display | blue-verified | Runtime: 800 steps (ret `0217B2C4`). |
+| `02155760` HUD sprite, call at `0215581C` | display | blue-verified | Runtime: 230 steps (ret `02155820`). |
+| `0217AF58` SetMonsterAnim (`Rand32Bit` at `0217AFC0`, `0217AFFC`), random start frame `&3` | display | blue-verified (static) | Static callers include `0217D5FC` (damage path) and `02182900` (evolution). Not hit in the probe. |
+| `0213E6D8` wind particles (`RandInt` at `0213E7E0`, `0213E808`, `0213E824`), from `0213EE9C` | display | blue-verified (call); red-hypothesis (class) | Not hit in the probe. |
+| `0219F09C` / `0219F128` random facing (`RandInt` at `0219F0E8`, `0219F170`, `0219F1F0`); the random branch writes only entity `+0x6C` (sprite direction) | display | blue-verified (body read) | Gameplay direction `info+0x44` is written only in the fixed branch. Not hit in the probe. |
+| `021492EC` tile `+4` variant (`RandInt(4)` at `02149590`) | display | red-hypothesis | Assumes `tile+4` is the graphic variant only; not checked at runtime. |
+| `0219DCF0` countdown and `gDungeon+0x15F94` (`RandInt(6)` at `0219DD34`, `0219DD48`) | display | red-hypothesis | Probably a screen flash. Not hit in the probe. |
+| `02001330` Hidden Power roll (`RandInt(10)` at `0200133C`, then `RandInt(0x12)` at `0200135C`, up to 100 tries), called from `021794CC` (monster spawn) and from `0217855C` → `02001E40` (recruit path) | gameplay | blue-verified (call, offset `+0x3C`/`+0x3E`); red-hypothesis (name) | Every monster spawn draws at least 2 steps. Runtime: 2 + 2 steps at turn frame 1704 (wild spawn). |
+| Item quantity `02008458` (`RandRange(min, max)` for a stackable item; the RandRange site `020084B0` is from the scratch census, not re-read in the export), from `021448A0`, `02153190`, `02142CF4`, `02142F74`, `02162F28`, `02179990`, `021A6918`, `021A6D1C`, `021A6DC0`, `021A6E64`; also via `02008040` from `0215B218` and `0219D5B4` | gameplay | blue-verified (static) | No draw when min equals max. Not hit in the probe. |
+| `020083D4` bulk item quantity (`RandRange` at `0200841C`), from run setup `02178828` and `021763D4`, both through `020033A8` | run entry, not per floor | blue-verified (static) | |
+| `0206DC20` RunDungeon_Async (`Rand32Bit` at `0206DEA8`) | run entry | blue-verified (static) | |
+
+Not reachable from overlay 1 by direct calls (static walk): the mission cluster (`0200EDA4`, `0200EED4`, `0200F3E4`, `0200F46C`, `0200F5C4`, `0200F768`, `0206A*`), Kecleon (`02006B4C`, `02006E0C`), personality (`0200D4DC`, `0206C*`), `0200E8BC`, `0201DE24`, `0201F008`, `0204730C`, `02007184`, and `SetRNGSeed` `020118EC`. The walk does not follow indirect calls or DATA/PARAM references, so `02005828` (`RandInt` ×2, reached only through DATA pointers) is open.
+
+**P2. Does a gameplay decision use the global LCG instead of the dungeon LCG?** **Yes, for the Hidden Power roll** (`02001330`, above). It writes the monster's `+0x3C` and `+0x3E` at every spawn, and it is blue-verified at runtime (the probe below: 2 steps at the wild spawn of frame 1704). The item quantity (`02008458`) is also gameplay, but it draws only when a stackable item has min below max, and the probe did not hit it. **The sim cannot reproduce these values from `dungeonRng`.** The global state at a spawn depends on every frame and sprite step before it (the frame count and the animation callers above), so a sim would have to model the whole display path to get the same state. Instead the sim reads the value (monster `+0x3C`/`+0x3E`, floor item quantity) from the trace or the snapshot. The trace schema does not carry Hidden Power today; that is for #331 to decide.
+
+**P3. Does the advance between two rows match the frame numbers?** **No.** Probe `verification/v7-trace/rng_turn_callers.py` (command and hashes in [`verification.md`](../verification.md#351--global-lcg-callers-during-a-floor)), 3000 frames from the first floor, movement and turns only. Over 255 pairs of rows:
+
+- `lcgSteps` (the step count from `sPRNGState`) equals 2 × the number of `Rand32Bit` calls (`countedSteps`) in 255 of 255 pairs. There are no reseeds (`020118EC` and `020119D8` hit 0 times), so every step has a known caller. Blue-verified (runtime).
+- 183 pairs have the same frame and 0 steps, so rows inside one frame never differ. The other 72 advance.
+- The frame routine adds 2 or 4 steps per frame, as above. Sprite callers add more, and their count depends on animation. Frame count alone does not give the advance: 19 distinct frame deltas give 43 distinct (frame delta, steps) pairs, and 9 of those deltas map to more than one step count. Example: frame 463, 84 frames gave 336 frame steps plus 34 sprite steps.
+- Totals over the run: `02018B0C` 5106, `02018B04` 5006 (frame routine), `0217B2C4` 800 (UpdateMonsterSprite), `02155820` 230 (HUD), `02001340` 2 and `02001360` 2 (Hidden Power, one spawn).
+- The frame routine's hit count differs from the frame delta in 19 pairs (±1, in adjacent pairs that cancel). Hypothesis: the turn hook and the frame routine fall in different orders within one emulated frame. Not checked.
+
+**P4. Rules for the harness (#331).**
+
+- **`sPRNGState`: skip.** Its advance between rows is the frame routine (2 or 4 per frame, flag `020DF89C`) plus sprite steps that depend on animation, and the sim has no frame clock. The only point where it can be predicted is "equal within one frame", which checks the trace against itself and not the sim. Tag: blue-verified (runtime), probe hash in [`verification.md`](../verification.md#351--global-lcg-callers-during-a-floor).
+- **`dungeonRng`: compare exactly, every row.** No display caller in the table steps it, and the probe found its advance reachable in all 255 pairs (568 steps in total, not compared to the sim here). `compare_row` already compares it (`apps/trace-harness/src/lib.rs`). Tag: blue-verified (static: no display caller; runtime: reachable in every pair). The exact match against the sim is the existing harness check, not verified by this section.
+- **Gameplay values from the global LCG (Hidden Power, floor item quantity):** the sim reads them from the trace or the snapshot and does not draw them. Whether the harness already restores floor items from the snapshot or the row is open (see [`golden-traces.md`](../golden-traces.md#compared-fields-351)).
+
+**Open (#351).** `02005828` (reach through DATA pointers only). Whether `021492EC` and `0219DCF0` are display only (no runtime check). The item-quantity and combat paths (`02008458`, `0217AF58` from damage and evolution) were not hit: the probe covered one floor with movement and turns only. The probe's stderr summary did not print in the first scratch run; it did print in the repo run (the output is captured with `2>&1`).
 
 ## Open questions
 

@@ -139,7 +139,7 @@ Static only. Source: investigator A's read-only reads of overlay 1 and the ARM9 
 
 - **P3a, `ov_0001::021818A4`.** Returns `(+0xE s16) <= FUN_0208625C(+0x10 s16, 4)`, a signed divide by 4. The field identities are not verified, so there is no "low HP" name yet.
 - **P3b, `ov_0001::021818D0` (`IsSleeping`, #359 P4).** True when the mode byte at `+0x99` is 1, 3 or 5.
-- **P3c, `ov_0001::02181904` (`HasNegativeStatus`, #359 P4).** Returns 1 when `+0x99` is 1, 3 or 4. Otherwise it checks `+0x9B`, `+0xA0` (neither 0 nor 5), `+0xAC`, `+0xB3` (1 or 2), `+0xB8` (1), `+0xC4` (2), `+0xC9` (1 or 2), `+0xCB` (1), `+0xD2`, `+0xDA`, the move slots at `+0xF4 + 6i` (flag bits 0 and 1) and `+0xE9` to `+0xED`. It returns 0 only if all of them fail.
+- **P3c, `ov_0001::02181904` (`HasNegativeStatus`, #359 P4).** Returns 1 when `+0x99` is 1, 3 or 4. Otherwise it checks `+0x9B`, `+0xA0` (neither 0 nor 5), `+0xAC`, `+0xB3` (1 or 2), `+0xB8` (1), `+0xC4` (2), `+0xC9` (1 or 2), `+0xCB` (1), `+0xD2`, `+0xDA`, bit 0 of both the first and second byte of the six-byte block at `+0xF4 + 6i` (i = 0 to 3) and `+0xE9` to `+0xED`. It returns 0 only if all of them fail.
 - **P3d, `ov_0001::02191A30`.** Returns `0x73` when the item ID at `+2` is `0xED`, `param_3 == 0` and `FUN_02180644(entity, 0xE) == 0`. Otherwise it returns `FUN_0200B4EC(param_2, param_3)`.
 - **P3e, `ov_0001::02180644(entity, n)`.** True when `n == 0`, or when `n` equals the AI-struct byte `+0x56` or `+0x57`.
 - **P3f, `ov_0001::0215A2C0` (bide match).** If `FUN_02142AE4` is nonzero, it scans up to 100 four-byte rows at `DAT_0215A340` (a `u16` ID, and a byte at `+2`). It returns 1 when the ID matches a row and the AI-struct byte `+0xAE` matches that row's byte. The rows are read in P2.2 above (#275 P2a).
