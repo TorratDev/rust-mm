@@ -45,3 +45,11 @@ Each claim names one of these three kinds of evidence:
 - **Never commit** ROM data, extracted assets, save files, `reference/` contents or emulator dumps from the retail ROM ([`legal.md`](../legal.md)). Check `git status` and the diff before each commit.
 - **Stop the ghidra-cli bridge** when you finish (`ghidra --project rescue-arm9 stop`). It listens on `127.0.0.1` without authentication, and only one process may open the project at a time.
 - **Links** are standard Markdown, with no `[[wikilinks]]` and no YAML frontmatter ([`CONTRIBUTING.md`](../../CONTRIBUTING.md)).
+
+## Shared lists
+
+Several runs edit `docs/re/` in parallel and rebase onto `main` before publishing. A big note split into one file per topic (for example [`progression.md`](progression.md) and its `progression/` folder) keeps them apart:
+
+- **Edit only your topic's file.** Do not touch the other topic files or the index for a change that belongs to one topic.
+- **Shared lists** (`progression/addresses.md`, `progression/open-questions.md`) hold one entry per line. Add each new address or open question as a single new line. Never reflow, re-wrap, re-sort or reorder those lists, and do not split an entry over several lines.
+- These lists use git's `merge=union` driver (`.gitattributes`), so two runs that each add lines never conflict. The catch: if two runs edit the **same** line, both versions survive as two lines, with no conflict marker. To change or close an existing entry, edit that one line and check the merged file for a duplicate after rebasing.

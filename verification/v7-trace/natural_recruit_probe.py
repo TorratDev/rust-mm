@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Natural (unforced) recruit probe (#569, docs/re/progression.md P3).
+"""Natural (unforced) recruit probe (#569, docs/re/progression/p3-recruiting.md P3).
 
 Starts from a savestate taken in a dungeon whose record byte +2 (recruitingEnabled, read by
 02006400 from the dungeon id at gDungeon+0x63C) is nonzero, then plays the input file and logs

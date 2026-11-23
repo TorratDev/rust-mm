@@ -96,7 +96,7 @@ The IQ field is `+0x0C` (the row above). The IQ-skill bits at `+0x87` are rebuil
 - Enemies (`info+6 != 0`): set bits 8 (Status Checker), 6 (PP Checker) and 2 (Item Catcher), bit 18 (Self-Curer) if `info+0xD4` is non-zero, and bit 22 if the level is at or above the cap. Set `+0x8A` to 2. IQ is not used.
 - Team members (`info+6 == 0`): clear `+0x87` to `+0x89`. Then, for each n from 1 to 23, set bit n of `+0x87` when `table[n] <= IQ` (`FUN_02004464`, the table at `02091F48`) and bit n of the 3-byte enabled mask at `+0x84` is set (`FUN_02004250` returns true; a set bit means enabled). The bit setter is `FUN_020042F8`.
 
-The table values were read from data at a pool pointer. Skill numbers map to names in the table in [progression.md](progression.md) ([blue-verified], string-read).
+The table values were read from data at a pool pointer. Skill numbers map to names in the table in [progression/p5-iq.md](progression/p5-iq.md) ([blue-verified], string-read).
 
 **`+0xCA = 8` is not a status default (#166 P2b).** `FUN_0205938C` (ARM9 `020593B0`) is a menu-state init. It stores `+0xC8 = 1`, `+0xC9 = 0`, `+0xCA = 8` and `+0xCB = 0` into a menu object, not into an entity info. `+0xCA = 8` is the cursor column that `FUN_020591E4` reads when it draws the list. The matching offsets are a coincidence.
 
@@ -339,11 +339,11 @@ The team roster outside dungeons (Red `Pokemon`). Offsets read from `WritePoke1B
 | `+0x04` | `dungeonLocation` | `0x04` |
 | `+0x06` | `speciesNum` (the species id, #170 P3b; [blue-verified], see [Roster record +6](#roster-record-6-is-the-species-id-170-p3b)) | `0x08` |
 | `+0x08`, `+0x09` | `unkC[2]` (levels) | `0x0C` |
-| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]). Written from party `+0x06` by `02001D24` on the dungeon-exit chain (`02178068` → `02001E24`; [blue-verified], runtime with a forced call, see [progression.md](progression.md) P5). A dungeon whose `02006444` byte is nonzero copies only the held item ([progression.md](progression.md) P5, #588) | `0x14` |
+| `+0x0A` | `IQ` (also the learn gate: `FUN_02001844` reads it against 333 for move IDs 238, 239, 272 and 354; [hypothesis]). Written from party `+0x06` by `02001D24` on the dungeon-exit chain (`02178068` → `02001E24`; [blue-verified], runtime with a forced call, see [progression/p5-iq.md](progression/p5-iq.md) P5). A dungeon whose `02006444` byte is nonzero copies only the held item ([progression/p5-iq.md](progression/p5-iq.md) P5, #588) | `0x14` |
 | `+0x0C` | `pokeHP` | `0x16` |
 | `+0x0E`–`+0x11` | `offense` (attack, sp. attack, defense, sp. defense) | `0x18` |
 | `+0x14` | `currExp` | `0x1C` |
-| `+0x18` | `IQSkills` (24 bits). Written from party `+0x42..+0x44` by `02001D24` on the same exit chain ([blue-verified], runtime with a forced call; [progression.md](progression.md) P5) | `0x20` |
+| `+0x18` | `IQSkills` (24 bits). Written from party `+0x42..+0x44` by `02001D24` on the same exit chain ([blue-verified], runtime with a forced call; [progression/p5-iq.md](progression/p5-iq.md) P5) | `0x20` |
 | `+0x1B` | `tacticIndex` | `0x24` |
 | `+0x1C` | `heldItem` (2-byte `BulkItem`) | `0x28` |
 | `+0x1E` | `moves[4]` (6 bytes each) | `0x2C` |
@@ -403,7 +403,7 @@ The table at `0x02092818` holds one `0x10`-byte record per dungeon, Red's `Dunge
 
 **Byte `+6` (#588, #595).** The byte is record `id`'s `+6`: `DAT_02006450` holds `0x0209281E`, so `FUN_02006444(id)` reads `0x0209281E + id * 0x10`. Two readers, both code-verified [blue-verified]:
 - **Entry rule.** `FUN_02005A0C` (`0x02005A0C`) reads the byte through the literal at `0x02006114` (`0x02005F6C`) and, when it is nonzero (the branch at export line 201; the message pointer is loaded at `0x02005FA4`), adds a dungeon-entry rule line. The message id comes from the word at `0x02092E3C` (read at `0x02005FAC`), which is `0x50B` in RAM. Message `0x50B` is "The team will enter at Level 1." (static read of NitroFS `message_e.str`, file 149, entry id-1; the in-game line was not seen). So the flag is the entry rule "team enters at Level 1". **This confirms Red's name `levelResetTo1` for the entry rule.**
-- **Exit selector.** `FUN_02006444` returns the byte, and `02178068` (`021781C0`) chooses the copy from it: zero copies the whole party record, nonzero copies only the held item ([progression.md](progression.md) P5). **[blue-verified, static]:** nonzero means only the held item is copied back (`02001CD8`: flag at team `+0x36`, then two bytes to roster `+0x1C`/`+0x1D`), and the entry build (`02178828`, `02003320`) sets the level word `+0xA` to 1 ([progression.md](progression.md) P5). Zero copies the whole team entry back (`02001E24` tail-calls `02001D24`). The in-game result is not run.
+- **Exit selector.** `FUN_02006444` returns the byte, and `02178068` (`021781C0`) chooses the copy from it: zero copies the whole party record, nonzero copies only the held item ([progression/p5-iq.md](progression/p5-iq.md) P5). **[blue-verified, static]:** nonzero means only the held item is copied back (`02001CD8`: flag at team `+0x36`, then two bytes to roster `+0x1C`/`+0x1D`), and the entry build (`02178828`, `02003320`) sets the level word `+0xA` to 1 ([progression/p5-iq.md](progression/p5-iq.md) P5). Zero copies the whole team entry back (`02001E24` tail-calls `02001D24`). The in-game result is not run.
 - **Ids.** Within ids `0x00` to `0x61` the byte is nonzero only for `0x1A`, `0x3A` and `0x3E` (runtime RAM read of the table on a scratch ROM copy, [#591](https://github.com/TorratDev/rust-mm/issues/591); no table dump committed). Why these three: the table has no code or rule that derives the value, so it is per-dungeon data. No dungeon name is mapped in the repo for them. Records from `0x62` on have another layout, so this byte is not read as a dungeon flag there.
 - **Not verified:** the entry level and the exit effect in a run. A runtime check is in [#589](https://github.com/TorratDev/rust-mm/issues/589).
 
