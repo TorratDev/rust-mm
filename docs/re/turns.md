@@ -239,8 +239,10 @@ Direction tables: `gAdjacentTileOffsets` at `ov_0001::021A98B4` (s16 x, s16 y, s
 1. The destination tile with `terrainFlags & 0x10` (impassable wall) is blocked. A monster on the destination tile (tile `+0xC`) blocks it.
 2. The mobility class. The overrides below apply only when `tileset <= 0x3F` (not a fixed boss floor; Red `DUNGEON_OUT_ON_RESCUE = 63`). The base class is `GetCrossableTerrain(species)` (`0218267C`); see [Mobility class source](#mobility-class-source-184-p1).
    - Status `+0xC7` = 3 (STATUS_MOBILE), or held item 9 (Mobile Scarf): class 3 (wall) in all directions.
-   - Otherwise IQ skill 12 (all-terrain hiker): class 2 (crevice).
-   - Otherwise IQ skill 13 (super mobile): class 3 for even directions, class 2 for odd ones. Red's comment says Super Mobile cannot break walls diagonally.
+   - Otherwise IQ skill 12 (All-Terrain Hiker): class 2 (crevice).
+   - Otherwise IQ skill 13 (Super Mobile): class 3 for even directions, class 2 for odd ones. Red's comment says Super Mobile cannot break walls diagonally.
+
+   The two IQ skill names are [blue-verified] by string-read (message bank, [`progression/p5-iq.md`](progression/p5-iq.md) P5); what each skill does in game is not verified here.
 3. The source tile's mask byte at `+6 + class` (regular 0, liquid 1, crevice 2, wall 3), ANDed with `1 << (dir & 7)`, must be nonzero.
 
 Tag blue-verified for the code path, confidence high. The IQ test (`021805B0`, bit `1 << id` at info `+0x87`) was read in #359 P4, so its body is decompiled. The `+0xC7` values are recorded in [`status.md`](status.md#muzzled-transform-invisible-mobile-blinker-189-p2) (#189 P2): values 1, 2 and 3 are written by `0218CE68`, `0218BFA8` and `0218BECC` [blue-verified]; the names INVISIBLE, TRANSFORMED and MOBILE are [red-hypothesis].
