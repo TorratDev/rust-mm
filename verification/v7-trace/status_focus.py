@@ -10,7 +10,7 @@ Output is RAM values; nothing is written to the repo.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_play import Probe, hook_exit, play
+from status_play import Probe, wild, hook_exit, play
 
 if len(sys.argv) < 3:
     sys.exit(__doc__)
@@ -18,6 +18,15 @@ pr = Probe(sys.argv[1], sys.argv[2]); R = pr.R
 frames = int(sys.argv[3]) if len(sys.argv) > 3 else 1500
 clear = len(sys.argv) > 4 and sys.argv[4] == "clear"
 L = pr.team[0]; li = pr.info(L)
+# Place the leader one tile left and one down of the first wild monster, as the golden trace starts
+# (leader (20,25), monster (21,24), attack up-right). Position is entity +0x04 (x) and +0x06 (y).
+mons = wild(pr)
+if mons:
+    mx, my = pr.s16(mons[0] + 4), pr.s16(mons[0] + 6)
+    lx, ly = mx - 1, my + 1
+    for off, v in ((4, lx), (6, ly)):
+        pr.w8(L + off, v & 0xFF); pr.w8(L + off + 1, (v >> 8) & 0xFF)
+    print("monster at", (mx, my), "leader moved to", (lx, ly), flush=True)
 pr.w8(li + 0xC4, 0 if clear else 4); pr.w8(li + 0xC5, 0 if clear else 4)
 
 
