@@ -25,6 +25,8 @@ One entry per line, merged with `merge=union` (see [workflow](../workflow.md#sha
 | `0203A87C` | IQ menu draw (skill name, enabled mask test) | blue-verified (static) |
 | `02008EC4`, `02009000`, `02009014`, `02003130` | friend-area count, owned test, owned set, roster insert | blue-verified (static) |
 | `02002288`, `020022DC` | species friend flag (`+0x12`) and area id (`+0x16`) readers | blue-verified (static) |
+| `020022A0`, `020022F4`, `020DDF80` | species-table reader literals (both load the cell `020DDF80`) and the species-base cell; the runtime base `0x06609AD0` is the `monspara` first record in VRAM (`0x06608000 + 0x1AD0`), not main RAM | blue-verified (static pointers; runtime base read); runtime flag count unverified |
+| `020E7B6C+9`, `020E7B6C+26` | owned bytes for areas 9 and 26 in the fresh-save owned table; write watches are registered by the probe but have not run | blue-verified (runtime read); writer unverified |
 | `02009110`, `02009120`, `02009230` | area table readers: field 3 (`u32` at `+4`), field 2 (byte at `+2`), roster index to area | blue-verified (static) |
 | `02069848`, `*020DED04` | bulk roster/area init and owned table; runtime at the first floor of a fresh save: only areas 9 and 26 read 1, area 0 reads 0, and `02069848` did not run on that path | blue-verified (static init; runtime owned bytes); new-game identity of init red-hypothesis |
 | `020699B4`, `020628BC` | init sub-state step (sub-state 6 calls `02069848`) and dispatcher state `0x10` | blue-verified (static) |
