@@ -3,21 +3,20 @@
 
 Usage: status_paralysis.py ROM OUT_DIR [FRAMES]
 
-Sets `+0x9B` = 4, `+0x9C` = 2 on every valid wild monster, then plays the scripted inputs. Logs the
+Sets `+0x9B` = 4, `+0x9C` = 2 on the team leader, then plays the scripted inputs. Logs the
 speed-stage return value (with the entity's `+0x9B`), each gate entry 02172ADC, and each change of the
 monsters' paralysis byte. Output is RAM values; nothing is written to the repo.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_play import Probe, wild, on_ptr, play
+from status_play import Probe, on_ptr, play
 
 if len(sys.argv) < 3:
     sys.exit(__doc__)
 pr = Probe(sys.argv[1], sys.argv[2]); R = pr.R
 frames = int(sys.argv[3]) if len(sys.argv) > 3 else 1500
-mons = wild(pr)
-for e in mons:
-    pr.w8(pr.info(e) + 0x9B, 4); pr.w8(pr.info(e) + 0x9C, 2)
+L = pr.team[0]; mons = [L]
+pr.w8(pr.info(L) + 0x9B, 4); pr.w8(pr.info(L) + 0x9C, 2)
 
 
 def p9b(ent):

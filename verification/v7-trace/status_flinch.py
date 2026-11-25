@@ -3,21 +3,20 @@
 
 Usage: status_flinch.py ROM OUT_DIR [FRAMES]
 
-Sets `+0xAC` = 1, `+0xAD` = 2 on every valid wild monster, then plays the scripted inputs. Logs each
+Sets `+0xAC` = 1, `+0xAD` = 2 on the team leader (the move gate 02172ADC is reached by the leader), then plays the scripted inputs. Logs each
 entry to the move gate 02172ADC (r0 and its `+0xAC`), each clear 0218FA80, and each change of the
 monsters' flinch bytes. Output is RAM values; nothing is written to the repo.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from status_play import Probe, wild, on_ptr, play
+from status_play import Probe, on_ptr, play
 
 if len(sys.argv) < 3:
     sys.exit(__doc__)
 pr = Probe(sys.argv[1], sys.argv[2]); R = pr.R
 frames = int(sys.argv[3]) if len(sys.argv) > 3 else 1500
-mons = wild(pr)
-for e in mons:
-    pr.w8(pr.info(e) + 0xAC, 1); pr.w8(pr.info(e) + 0xAD, 2)
+L = pr.team[0]; mons = [L]
+pr.w8(pr.info(L) + 0xAC, 1); pr.w8(pr.info(L) + 0xAD, 2)
 
 
 def ac(ent):

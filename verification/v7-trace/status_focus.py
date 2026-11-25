@@ -22,9 +22,9 @@ pr.w8(li + 0xC4, 0 if clear else 4); pr.w8(li + 0xC5, 0 if clear else 4)
 
 
 def on_entry():
-    if R.r0 == L:
-        c4 = pr.u8(li + 0xC4)
-        hook_exit(pr, 0x0217BD94, lambda ret: print("calc_dmg leader +0xC4", c4, "ret", ret & 0xFFFFFFFF, flush=True))
+    # Every CalcDamage call: attacker pointer, the leader's +0xC4 at entry, and the return value.
+    c4 = pr.u8(li + 0xC4); att = R.r0
+    hook_exit(pr, 0x0217BD94, lambda ret: print("calc_dmg attacker", hex(att), "leader +0xC4", c4, "ret", ret & 0xFFFFFFFF, flush=True))
 
 
 pr.hook(0x0217BD94, on_entry)
