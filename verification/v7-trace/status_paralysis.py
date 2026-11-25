@@ -34,4 +34,4 @@ def speed_entry():
 
 pr.hook(0x02181E58, speed_entry)
 pr.hook(0x02172ADC, lambda: print("gate 02172ADC r0", hex(R.r0), "+0x9B", p9b(R.r0), flush=True))
-play(pr, frames, lambda f: [p9b(e) for e in mons])
+play(pr, frames, lambda f: [p9b(e) for e in mons], inputs="combat_attack_inputs.txt")

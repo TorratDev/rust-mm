@@ -25,4 +25,4 @@ def ac(ent):
 
 pr.hook(0x02172ADC, lambda: print("gate 02172ADC r0", hex(R.r0), "+0xAC", ac(R.r0), flush=True))
 pr.hook(0x0218FA80, lambda: print("clear 0218FA80 r0", hex(R.r0), flush=True))
-play(pr, frames, lambda f: [(ac(e), pr.u8(pr.info(e) + 0xAD)) for e in mons])
+play(pr, frames, lambda f: [(ac(e), pr.u8(pr.info(e) + 0xAD)) for e in mons], inputs="combat_attack_inputs.txt")

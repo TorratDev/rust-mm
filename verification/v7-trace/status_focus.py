@@ -28,4 +28,4 @@ def on_entry():
 
 
 pr.hook(0x0217BD94, on_entry)
-play(pr, frames, lambda f: pr.u8(li + 0xC4))
+play(pr, frames, lambda f: pr.u8(li + 0xC4), inputs="combat_attack_inputs.txt")
