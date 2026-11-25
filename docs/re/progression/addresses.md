@@ -39,3 +39,9 @@ One entry per line, merged with `merge=union` (see [workflow](../workflow.md#sha
 | `02006400`, `02006454` | dungeon record `+2` and `+9` readers | blue-verified (reader and callers) |
 | `ov_0001::0217855C` | add a member to a free team slot (writes `0x55AA` via `02001E40`) | blue-verified (static) |
 | `ov_0001::0217A054` | collect `0x55AA` team slots, flip to `0x5AA5`, spawn | blue-verified (static) |
+| `02006130` | dungeon row byte (`0x02092819 + id*0x10`, record `+1`); the wild-evolution trigger's test | blue-verified (static; literal `02006134`) |
+| `0206DE4C`, `0206DE64` | `gDungeon+0x63C` dungeon-id writers (`0206DE64` forces floor 1) | blue-verified (static) |
+| `ov_0001::0217E7BC` | only direct nonzero `info+0x11B` store (wild/non-team branch of `0217D5FC`); also sets `gDungeon+0xD` | blue-verified (static) |
+| `ov_0001::02178C04`, `ov_0001::02178B9C` | loaded-sprite pointer read (`gDungeon+0x158DC+species*4`) and per-species `ax%03d` fill | blue-verified (static) |
+| `ov_0001::02178CB0`, `ov_0001::02178C4C` | per-floor sprite-pointer loads (floor list, team, special records) and live-entity reload | blue-verified (static) |
+| `ov_0001::02182A74` | common join after dungeon-evolution apply (the 316 branch rejoins here) | blue-verified (static) |
