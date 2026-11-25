@@ -19,7 +19,7 @@ One entry per line, merged with `merge=union` (see [workflow](../workflow.md#sha
 | `ov_0001::02178068` | dungeon-end commit: party to roster (IQ copy, lines 57 to 67), recruit list (lines 98 to 103) | blue-verified (static) |
 | `ov_0001::02179274`, `ov_0001::02179128` | four-slot team loop (called from `0206DC20` at line 477); party record writeback from the entity (IQ `info+0xC` to party `+0x06`) | blue-verified (static) |
 | `02001D24`, `02001E24` | party to roster copy (roster `+0x0A` = party `+0x06`); `02001E24` is the tail jump that passes roster record `idx*0x40` | blue-verified (static) |
-| `02006444` | dungeon byte gate for the exit copy (nonzero: held item only, `02001CD8`); table not traced | blue-verified (reader); meaning not traced |
+| `02006444` | dungeon record `+6` reader (`0x0209281E + id*0x10`): entry rule and exit copy selector (nonzero: held item only, `02001CD8`); callers `0206DF84`, `021788C4`, `021781C0`, `02177C44`, `02177E68` | blue-verified (reader, table, call sites) |
 | `0200457C`, `02092FC4` | skill index to name message id (u16 table) | blue-verified (static) |
 | `ov_0001::02175E60` | IQ skill unlock message (old list against new list) | blue-verified (static) |
 | `0203A87C` | IQ menu draw (skill name, enabled mask test) | blue-verified (static) |
@@ -36,3 +36,6 @@ One entry per line, merged with `merge=union` (see [workflow](../workflow.md#sha
 | `0200475C`, `0200468C`, `02004590`, `02047D74` | town evolution check, apply, record copy, menu | blue-verified (static) |
 | `ov_0001::02182900`, `02001738` | dungeon evolution apply, candidate list | blue-verified (static) |
 | `0206C590`, `0206C394`, `0206C978`, `0206C6E4` | quiz question draw, nature pick, partner filter, state machine | blue-verified (static) |
+| `02006400`, `02006454` | dungeon record `+2` and `+9` readers | blue-verified (reader and callers) |
+| `ov_0001::0217855C` | add a member to a free team slot (writes `0x55AA` via `02001E40`) | blue-verified (static) |
+| `ov_0001::0217A054` | collect `0x55AA` team slots, flip to `0x5AA5`, spawn | blue-verified (static) |

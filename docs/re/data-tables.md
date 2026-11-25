@@ -12,7 +12,7 @@ Tags: **[blue-verified]** read in Blue's code, or confirmed by a ROM scan; **[hy
 
 | Table | Reader | Globals | File | Layout | Tag |
 |-------|--------|---------|------|--------|-----|
-| species | `LoadMonsterParameters` `02003794`, field getters (29 checked, e.g. `FUN_02002288`, `FUN_020022a4`, `FUN_02002368`) | table pointer `020DDF80` | `system.sbin` `monspara` | 0x48 bytes per entry; fields in `species.rs` | blue-verified (offsets); attack/defence order medium |
+| species | `LoadMonsterParameters` `02003794`, field getters (29 checked, e.g. `FUN_02002288`, `FUN_020022a4`, `FUN_02002368`) | table pointer `020DDF80` | `system.sbin` `monspara` | 0x48 bytes per entry, **424 entries (0x1A8)**; fields in `species.rs` | blue-verified (offsets and count); attack/defence order medium |
 | moves | `FUN_0200b888` (language-indexed SIR0 load into a 0x18000 buffer) | move table `020DED10`, learnsets `020DED08` | `wazapara`, `wazapar{f,g,i,s}` | 0x24 bytes per move; accessors `GetMoveBasePower` `0200b3e8`, `GetMoveType` `0200b4cc`, `GetMoveBasePP` `0200b3a4`, `FUN_0200b4ec` and others | blue-verified (offsets); `+0x07`, `+0x1A`–`+0x1B` unread |
 | learnsets | `FUN_0200b48c` (level-up at `+0`), `FUN_0200b448` (TM/HM at `+4`) | as moves | same file | 8 bytes per species (424 entries) | blue-verified |
 | move stream decoder | `FUN_02001c20` (ID), `FUN_02001844` (level-up walk with level bytes) | — | — | 1 or 2 bytes per ID; `(b0 & 0x7F) << 7 \| (b1 & 0x7F)` | blue-verified |
@@ -44,6 +44,8 @@ The table holds TM/HM streams for species 420 (2 move IDs) and 421 (59 move IDs)
 Level gate: `FUN_02001844` skips move IDs 0xEE (238), 0xEF (239), 0x110 (272) and 0x162 (354) unless a monster field at `+0xA` (`u16`) is at least 333. The threshold is read from `02091E18`, `02091E34`, `02091E28` and `02091E2C` (`0x014D`). The field is not a level (levels run 1 to 100), so its meaning is [unverified]. The learn cap is 413 (`DAT_02001a2c`).
 
 ## Species fields
+
+**Table count: 424 (`0x1A8`)** [blue-verified, static]. `020020C8(species, i)` indexes `*020DDF80 + species*0x48`. The count is only an immediate loop bound (`cmp …, #0x1A8`) in ARM9 `020017B8`, `020047B4`/`020047BC`, `02004B9C`, `02042E10`, `020457A4` and ov_0001 `02172050`, `02178ABC`, `02178CD8`; no stored count word exists in `arm9.bin` or `overlay_0001.bin` (a 4-byte scan for `0x1A8` finds none). The data count is 424 too: `(0x06611210 - 0x06609AD0)/0x48` (see [turns.md](turns.md)). 413 (`0x19D`) is the roster record count, not the species count. The loader `02003794` stores no count; `0x1A8` is only the code bound.
 
 - Regen byte `+0x1B`: speed `(b & 0x7F) << 1` (`FUN_02002368`); bit 7 is a flag [hypothesis: meaning unknown].
 - Byte `+0x12`, read by `FUN_02002288` from `ov_0001::0217F7EC`; byte `+0x33`, read by `FUN_020022a4` from `ov_0001::021803B8`. Both are flags [hypothesis: meaning unknown].
