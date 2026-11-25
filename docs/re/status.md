@@ -128,6 +128,10 @@ Tags for the table: the setter and draw columns are **[blue-verified]** (setter 
 - Ability-caused statuses (see the lead above).
 - Message text and IDs (patched out in the runs).
 
+- **Flinch return value** (#624, `status_tail_checks.py`, leader with the attack inputs): `02172ADC` returned 216 on every entry, flinched (`+0xAC` = 1) or not (control, `flinch0`). The return does not change with the flag, so it is **not** the refusal signal. The refusal is still not measured; the return is some other value.
+- **Enraged message** (#624, `status_tail_checks.py rage`): `02154BF0` was called once with `r3` = 0x72 and the leader's `+0xAE` already 0, at the expiry. The message id is read from `r3`, not from the message text.
+- **Message IDs** `DAT_021871D8` = 0x20D and `DAT_021871DC` = 0x1FA (read from the savestate, no play). Their use is display only (not traced).
+
 Runtime runs for #624 (natural play, scratch ROM copy, outputs kept outside the repo; probes in `verification/v7-trace/status_*.py`, shared helpers in `status_play.py`):
 
 - **Flinch** ([`status_flinch.py`](../../verification/v7-trace/status_flinch.py), leader, 4000 frames): the leader entered the move gate `02172ADC` with `+0xAC` = 1 at about frame 1155, and `0218FA80` cleared the flag at frame 1358 with no further gate entry in between (also with the attack inputs). The refusal is **inferred** from that path; the gate's return value was not hooked, so it is not measured. Clear by `0218FA80` seen. Partly open.
