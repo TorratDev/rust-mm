@@ -99,7 +99,7 @@ Which row fields a replay compares, and why. The list is `SKIPPED_FIELDS` in [`a
 | Field | Replay | Why |
 |-------|--------|-----|
 | `dungeonRng` | compared, exact, every row | Only the dungeon LCG is stepped by dungeon logic. The display callers do not touch it (the probe found its advance reachable in every pair). See [`re/rng.md`](re/rng.md#during-a-floor-351) P4. |
-| `sPRNGState` | skipped | Stepped per frame (2 or 4 steps) and by sprite callers, which the sim has no clock for. Its advance between rows is not explained by the frame count (probe: 255 pairs, hash in [`verification.md`](verification.md#351--global-lcg-callers-during-a-floor)). The gameplay values it produces (Hidden Power at a spawn, floor item quantities) are read from the trace, not drawn. See [`re/rng.md`](re/rng.md#during-a-floor-351) P4. |
+| `sPRNGState` | skipped | Stepped per frame (2 or 4 steps) and by sprite callers, which the sim has no clock for. Its advance between rows is not explained by the frame count (probe: 255 pairs, hash in [`verification.md`](verification.md#351--global-lcg-callers-during-a-floor)). The gameplay values it produces must be supplied by the trace or snapshot, not drawn. Hidden Power is not yet in the schema; floor-item restore is described below. See [`re/rng.md`](re/rng.md#during-a-floor-351) P4. |
 | `dungeonPreseed` | skipped | The preseed generator is not in the snapshot; restore rebuilds it from `floorsEntered`. |
 | `runSeed` | skipped | In the snapshot, but not in the comparison list. |
 | `floorSeed` | skipped | The snapshot keeps the floor generator's current state, not the seed it started from. |
@@ -110,7 +110,7 @@ Which row fields a replay compares, and why. The list is `SKIPPED_FIELDS` in [`a
 | entity `type` | skipped | Entity kind; the snapshot does not store it. |
 | entity `speedStage` | skipped | Speed stage; the snapshot's entity info leaves it out. |
 
-Open: whether the harness restores floor items from the snapshot or the row (the sim must not draw them, see `re/rng.md`).
+**Floor-item restore:** the normal row-to-state replay currently does neither restore nor draw floor items. `state_from_row` ignores `row.items` and starts with `ItemsSnapshot::default()`; `compare_items` only compares. A row containing items therefore diverges instead of seeding the sim. A separately prepared `GameState` can restore an item snapshot, but that is not the public replay path. See [`re/rng.md`](re/rng.md#during-a-floor-351) P4.
 
 ## Validation
 
