@@ -128,6 +128,14 @@ Tags for the table: the setter and draw columns are **[blue-verified]** (setter 
 - Ability-caused statuses (see the lead above).
 - Message text and IDs (patched out in the runs).
 
+Runtime runs for #624 (natural play, scratch ROM copy, outputs kept outside the repo; probes in `verification/v7-trace/status_*.py`, shared helpers in `status_play.py`):
+
+- **Flinch** ([`status_flinch.py`](../../verification/v7-trace/status_flinch.py)): with `+0xAC` = 1 and `+0xAD` = 2 set on the wild monsters, `+0xAD` counted down during play and `0218FA80` cleared `+0xAC` once it reached 0 (one monster, about frame 1416). No flinched monster reached the move gate `02172ADC` in 1500 frames, so the refusal is **not** observed. Open.
+- **Paralysis** ([`status_paralysis.py`](../../verification/v7-trace/status_paralysis.py)): with `+0x9B` = 4 on the wild monsters, `02181E58` returned 0 for each of them and 1 for the leader and partner (`+0x9B` 0). The meaning of the return value and the −1 itself are not confirmed. No paralysed monster reached `02172ADC` in 1500 frames. Open.
+- **Focus Energy** ([`status_focus.py`](../../verification/v7-trace/status_focus.py), `clear` run as control): the leader never reached `0217BD94` as attacker in 1500 frames, so the crit is **not** observed. Open.
+- **Speed lowered, restore at expiry** ([`status_speed_restore.py`](../../verification/v7-trace/status_speed_restore.py)): the down counter counted 7 to 6 to 5 in 1471 frames, with the stage at 0. The restore comes later; not reached. Open.
+- **Leech Seed frozen skip** ([`status_leech_frozen.py`](../../verification/v7-trace/status_leech_frozen.py)): the game cleared `+0xA0` before the first end-of-turn drain, so the flag was 0 when the drain ran. The skip is **not** tested. Open.
+
 Closed in this pass (#359 P2): Leech Seed's drain and timing, and the stat Enraged raises (Attack, `0217EEF0`).
 
 ## Sleep class (`+0x99`, `+0x9A`)
