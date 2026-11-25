@@ -13,8 +13,12 @@ Exec hooks (retail EUR dump addresses, docs/re/progression/p6-evolution.md P6.2)
   0219D058  DungeonRandInt (r0 = candidate count)
   02183DE0  return of 021389A0 (floor species list; --force-returns sets r0 = 1)
   02183DF8  return of 02178C04 inside 02183BB4 (--force-returns sets r0 = 1)
-  02182900  apply (entry: r1 = entity; reads info+2, +4, +0x18, +9)
+  02182900  apply (entry: r1 = entity; snapshots info species/target/HP/EXP/level)
   0218293C  return of 02178C04 inside apply (--force-returns sets r0 = 1)
+  02182A74  common apply join; snapshots the same fields after apply (not after 02183720)
+
+The 02178C04 entry also reads gDungeon+0x158DC+species*4, its loaded-sprite pointer slot.
+02182A70 is not used: it is specific to the 316/317 branch, after the 021389A0(317) check.
 
 A hook that never fires means "not reached", not a negative result. Nothing is written to the
 repository; the JSON goes to OUT. Keep the ROM and OUT outside the repository, and use a throwaway
@@ -36,8 +40,10 @@ from retail_trace import G_DUNGEON, Ram, parse_inputs  # noqa: E402
 
 ENTITY_ARRAY = 0x11364  # gDungeon + 0x11364, 20 slots of entity pointers
 INFO_SPECIES, INFO_TARGET, INFO_LEVEL = 2, 0x4, 0x9  # info+2 species, +4 target, +9 level
-INFO_FORCE, INFO_EXP = 0x11B, 0x1C8
+INFO_HP, INFO_MAX_HP, INFO_EXP_TOTAL = 0xE, 0x10, 0x18
+INFO_FORCE, INFO_PENDING_EXP = 0x11B, 0x1C8
 DUNGEON_FLAG, DUNGEON_MODE = 0xD, 0x10
+SPRITE_POINTERS = 0x158DC  # gDungeon + species*4; 0x1A8 entries
 BOOT_LIMIT = 30000
 
 
@@ -69,6 +75,7 @@ def main():
     mem = emu.memory
     ev = []
     ph = {"f": 0}
+    pending_apply = {"event": None, "info": 0}
 
     def rec(name, fn=None):
         def cb(addr, size):
@@ -84,16 +91,38 @@ def main():
         x["flag_D"] = ram.u8(d + DUNGEON_FLAG)
         x["mode_10"] = ram.u8(d + DUNGEON_MODE)
         x["ents"] = [(i, ram.s16(inf + INFO_SPECIES), ram.u8(inf + INFO_LEVEL),
-                      ram.u8(inf + INFO_FORCE), ram.u32(inf + INFO_EXP))
+                      ram.u8(inf + INFO_FORCE), ram.u32(inf + INFO_PENDING_EXP))
                      for i, _, inf in entities(ram)]
+
+    def apply_snapshot(inf):
+        return {"species": ram.s16(inf + INFO_SPECIES), "target": ram.s16(inf + INFO_TARGET),
+                "hp": ram.s16(inf + INFO_HP), "max_hp": ram.s16(inf + INFO_MAX_HP),
+                "exp": ram.u32(inf + INFO_EXP_TOTAL), "level": ram.u8(inf + INFO_LEVEL)}
 
     def on_apply(x):
         inf = ram.u32(x["r1"] + 0x70)
-        x["before"] = (ram.s16(inf + 2), ram.s16(inf + 4), ram.u32(inf + 0x18), ram.u8(inf + 9))
+        x["info"] = hex(inf)
+        x["before"] = apply_snapshot(inf)
+        pending_apply["event"], pending_apply["info"] = x, inf
+
+    def on_tbl(x):
+        species = x["r0"]
+        x["species"] = species
+        if 0 <= species < 0x1A8:
+            d = ram.u32(G_DUNGEON)
+            slot = d + SPRITE_POINTERS + species * 4
+            x["sprite_slot"] = hex(slot)
+            x["sprite_ptr"] = hex(ram.u32(slot))
+
+    def on_apply_exit(addr, size):
+        if pending_apply["event"] is not None:
+            pending_apply["event"]["after"] = apply_snapshot(pending_apply["info"])
+            pending_apply["event"]["exit"] = hex(addr)
+            pending_apply["event"] = None
 
     for addr, name, fn in [(0x02183BB4, "main", on_main), (0x02001738, "cand", None),
                            (0x0219D058, "rand", None), (0x02182900, "apply", on_apply),
-                           (0x02178C04, "tbl", None)]:
+                           (0x02178C04, "tbl", on_tbl)]:
         mem.register_exec(addr, rec(name, fn))
 
     def ret_forced(name):
@@ -107,6 +136,7 @@ def main():
     mem.register_exec(0x02183DE0, rec("inlist_ret", ret_forced("ret")))
     mem.register_exec(0x02183DF8, rec("tbl_ret", ret_forced("tblret")))
     mem.register_exec(0x0218293C, rec("tbl_in_apply_ret", ret_forced("tbl2")))
+    mem.register_exec(0x02182A74, on_apply_exit)
 
     if a.savestate and os.path.exists(a.savestate):
         emu.savestate.load_file(a.savestate)
