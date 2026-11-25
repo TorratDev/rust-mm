@@ -26,7 +26,7 @@ One entry per line, merged with `merge=union` (see [workflow](../workflow.md#sha
 | `02008EC4`, `02009000`, `02009014`, `02003130` | friend-area count, owned test, owned set, roster insert | blue-verified (static) |
 | `02002288`, `020022DC` | species friend flag (`+0x12`) and area id (`+0x16`) readers | blue-verified (static) |
 | `02009110`, `02009120`, `02009230` | area table readers: field 3 (`u32` at `+4`), field 2 (byte at `+2`), roster index to area | blue-verified (static) |
-| `02069848` | roster and area init, sets owned areas 1 to 57 | blue-verified (static); new-game identity red-hypothesis |
+| `02069848`, `*020DED04` | bulk roster/area init and owned table; runtime at the first floor of a fresh save: only areas 9 and 26 read 1, area 0 reads 0, and `02069848` did not run on that path | blue-verified (static init; runtime owned bytes); new-game identity of init red-hypothesis |
 | `020699B4`, `020628BC` | init sub-state step (sub-state 6 calls `02069848`) and dispatcher state `0x10` | blue-verified (static) |
 | `0206DC20` | floor exit; calls `02178068` with a flag from the result code | blue-verified (static) |
 | `ov_0001::0217F7EC` | recruit-allowed check; friend-area test | blue-verified (static) |
