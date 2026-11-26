@@ -887,6 +887,21 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Notes:** the scratch version of the probe also hooked `02182A70`; #619 static analysis shows that it is inside the 316-only branch after the `021389A0(317)` check, not a common return site. The current probe uses `02182A74` instead. The apply's HP/EXP before/after values and a comparison with `parse_level_data` remain unverified because the updated probe was not run. JSON output stays outside the repository.
 
 ---
+## #645 — Ground script recording (#522, #524, #525, #526, #527)
+
+- **Question:** one recording of the ground script engine that answers the runtime points of the batch: the opcodes of the opening and of a town walk (#522 P4, #527 P5), the order of story-variable writes from a new game to the first clear (#525 P2), and walking, walls, an exit and a talk in ground mode (#524 P5).
+- **Date:** 2026-11-26.
+- **Environment:** Linux, py-desmume (DeSmuME 0.9.12), `SDL_VIDEODRIVER=dummy`, `SDL_AUDIODRIVER=dummy`, a fresh `XDG_CONFIG_HOME`, a scratch copy of the dump under a throwaway name. ROM `pmdb.nds`, SHA-1 `6f01887356268de39085df01490347bbcc3aa330` (not committed).
+- **Probe:** [`ground_script_log.py`](../verification/v7-trace/ground_script_log.py). Hooks the dispatch `ov_0000::02142340`, the variable setters, the scene runner, the loader and bank installs, the talk probe, the step-on call and the script installer; logs GROUND_MAP and the player's box when they change.
+- **Run A:** `XDG_CONFIG_HOME=<fresh> ~/venvs/desmume/bin/python -I verification/v7-trace/ground_script_log.py <scratch ROM copy> <OUT.jsonl> 36000 verification/v7-trace/boot_to_dungeon.txt` (input SHA-1 `b3f969cec1bb5aeb790c50e62727b5cdc5686d61`). Output SHA-256 `a4ffb5d2cbf8e766dc3ce2bc780715948be6e6a77cd4c88035e4f5f21cd52bb7`. The run reaches the first dungeon floor at frame 25020 (the input does not clear the floor; nothing is logged after it). 603 interpreter dispatches on 9 contexts and 71 distinct opcodes, plus 3 rows at frame 25017 from overlay 1 code at the hooked address. Scenario writes at frames 2579 and 10775 as in [`re/story-flags.md`](re/story-flags.md).
+- **Run B:** `XDG_CONFIG_HOME=<fresh> ~/venvs/desmume/bin/python -I verification/v7-trace/ground_script_log.py <scratch ROM copy> <OUT.jsonl> 5000 verification/v7-trace/ground_walk_inputs.txt --save <raw 256 KiB save>` (input SHA-1 `aaa93b9eb9ab26a4bfd1aeeb8e4a915afc3afd30`). The save is the first 0x40000 bytes of a maintainer `.dsv` made at the Pokémon Team Base (SHA-1 prefix `8a41cc4c4535`; not committed). Output SHA-256 prefix `01b2e3177020ddd2`. Walk 2 px per frame, walls at grid cells, the door's step-on at frame 4072, GROUND_MAP 13 → 9 at frame 4130, the mailbox talk at frame 4520.
+- **Outcome:** see [`re/script-opcodes.md`](re/script-opcodes.md#p4--runtime-log), [`re/story-flags.md`](re/story-flags.md#p2--what-advances-them-new-game-to-the-first-clear-and-back), [`re/ground-mode.md`](re/ground-mode.md#p5--runtime-check) and [`re/scripts.md`](re/scripts.md#p5--runtime-check).
+- **Not verified:** camera modes 1–3 and the menu opcodes did not run; no lives NPC was talked to; the job board was not opened (the #526 runtime remains the forced call).
+- **Fallback adopted:** none.
+- **Notes:** outputs and savestates stay in `~/rescue-re/scratch/645/` (outside the repo); only hashes and commands are recorded.
+
+---
+
 ## #362 — Script engine probes
 
 - **Assumption:** ground scripts are found through the loader table and the bank overlays (P1); the interpreter loop, the 0x18-byte record and the dispatch read as the static reading says (P2); the scene-runner cell holds the scene id (P6). Opcode, actor, camera and variable claims are checked where a probe reaches them.

@@ -466,3 +466,31 @@ Topic pages: [`formats/save.md`](formats/save.md), [`re/rng.md`](re/rng.md), [`r
 | ov_0001::021B473C | JoinedThisTurnFlag | u8 | tentative | Set to 1 at `0217E83C` after a successful join, cleared by `0218453C` (`021846FC`); also cleared by `0215BE14` (`0215BF14`). Read as a stop-gate by `0215BE14` (`0215BFFC`) and `0215B384` (`0215B7E8`). Our name (#361, #572). [`re/progression/p3-recruiting.md`](re/progression/p3-recruiting.md) |
 | ov_0001::02182BD4 | LearnMove | int LearnMove(void * entity, int move_id) | tentative | Insert into the first free of 8 slots, forget chooser `0216D77C` while 5 or more, copy back, messages. Single caller `02145CE4`. Our name (#572). [`re/progression/p2-move-learning.md`](re/progression/p2-move-learning.md) |
 | ov_0001::02145CE4 | UseLearnMoveItem | int UseLearnMoveItem(void * entity, void * item) | tentative | TM-like item: move id from the item parameter, target pick, calls `02182BD4`, consumes the item on 1. Signature unverified. Our name (#572). |
+| ov_0000::021421CC | GroundScript_Interpret | int GroundScript_Interpret(void * ctx) | blue-verified | Ground script interpreter: 247-slot dispatch at `ov_0000::02142344`; strings "AnalyzeProcess command null", "GroundScript command error" ([`re/script-opcodes.md`](re/script-opcodes.md), #522) |
+| ov_0000::021461D0 | GroundScript_Step | int GroundScript_Step(void * ctx) | tentative | Per-context stepper: states at ctx+0x26, calls `GroundScript_Interpret`, runs the wait tests (#522) |
+| ov_0000::021405B4 | GroundScript_CaseDispatch | int GroundScript_CaseDispatch(void * ctx, int value) | tentative | Scans the `0xCC`–`0xCE` case records after the cursor and returns the new cursor (#522) |
+| ov_0000::021406A8 | GroundScript_FindLabel | int GroundScript_FindLabel(void * ctx, int id) | tentative | Scans from the script base for an `0xF4` record with the label id (#522) |
+| ov_0000::02147B80 | GroundScript_WaitToken | int GroundScript_WaitToken(void * ctx, int token) | tentative | Parks a context on a sync token (ctx+0x46), state 2 (#522, #527) |
+| ov_0000::02147AAC | GroundScript_SignalToken | void GroundScript_SignalToken(int token) | tentative | Sets the token's flag and clears its result word; opcode `0xE4` (#527) |
+| ov_0000::0214074C | GroundScript_ReleaseTokens | void GroundScript_ReleaseTokens(void) | tentative | Per-frame pass from the scene runner: releases the waiters of every signalled token in all four context kinds (#527) |
+| ov_0000::02147C48 | GroundScript_Install | void GroundScript_Install(void * ctx, int pos, void * ref) | tentative | Installs a script reference on a context; kind 5 saves the replaced one at ctx+0x84 (#362, #524) |
+| 02021108 | ScriptVar_Resolve | void ScriptVar_Resolve(void * out, void * base, int id) | blue-verified | Descriptor table A `0x02098060` (ids below `0x400`, data at `0x0210E640`) or table B `0x020977F8` (locals at base) (#522) |
+| 02020F74 | ScriptVar_Get | int ScriptVar_Get(void * base, int id) | tentative | Element 0 of a script variable; type-8 ids computed (#522) |
+| 02020B48 | ScriptVar_Set | void ScriptVar_Set(void * base, int id, int value) | tentative | Element 0 setter (#522) |
+| 020208E8 | ScriptVar_SetElement | void ScriptVar_SetElement(void * base, int id, int index, int value) | tentative | One element; bit for type 1 (#522) |
+| 02020D90 | ScriptVar_GetElement | int ScriptVar_GetElement(void * base, int id, int index) | tentative | One element; bit for type 1 (#522) |
+| 020206AC | SetScenario | void SetScenario(int id, int stage, int sub) | tentative | Writes a scenario pair; clears CLEAR_COUNT when SCENARIO_MAIN changes; opcode `0xA9` ([`re/story-flags.md`](re/story-flags.md), #525) |
+| 02020614 | ScenarioIsBefore | bool ScenarioIsBefore(int id, int stage, int sub) | tentative | Mirror of `CompareEventVarStage` (`02020518`): stage before, or equal with the sub before (#525) |
+| 020205B0 | ScenarioIsExactly | bool ScenarioIsExactly(int id, int stage, int sub) | tentative | Stage equal and sub equal or ignored (#525) |
+| 02070890 | GetDungeonRecord | void * GetDungeonRecord(int id) | tentative | 0x53 records of 0x12 bytes at `0x020B9DD8`, indexed by DUNGEON_ENTER (#525) |
+| ov_0000::0213F7D8 | GroundInput_Controller | int GroundInput_Controller(void * state, int * action, int * dir, void * touch, void * touchxy, void * flags) | tentative | Player input to a ground action and direction (walk 7, run 8, talk 10) ([`re/ground-mode.md`](re/ground-mode.md), #524) |
+| ov_0000::02150DF0 | GroundLives_ApplyAction | void GroundLives_ApplyAction(void * life, int action, int dir) | tentative | Runs the sub-steps of a walk or run, or the talk probe (#524) |
+| ov_0000::021522FC | GroundLives_Step | int GroundLives_Step(void * life, void * vec) | tentative | One sub-step with collision; 0 moved, 1 blocked, 2 a script started; step-on events (#524) |
+| ov_0000::02152F54 | GroundLives_CheckCollision | int GroundLives_CheckCollision(void * life, void * p1, void * p2) | tentative | Grid bits `0x80`/`0x40` and AABB against lives, objects and events by the mover's flags (#524) |
+| ov_0000::02151B04 | GroundLives_TryTalk | void GroundLives_TryTalk(void * life, int facing) | tentative | A-button probe ahead of the player; installs the target's talk script (#524) |
+| ov_0000::0213FE04 | GroundCamera_Update | void GroundCamera_Update(void) | tentative | Per-frame camera: follow modes 0–3, shake, clamp to the map, scroll output (#524, #527) |
+| 0200F768 | GenerateMailJobInfo | int GenerateMailJobInfo(void * job) | blue-verified | Same draws and order as `pmd-red` `GenerateMailJobInfo`; runtime draw log ([`re/missions.md`](re/missions.md), #526) |
+| 0200E598 | AcceptJob | int AcceptJob(void * job) | blue-verified | Copies the record into the first empty of 8 job slots; 0 or 1 when full, as in `pmd-red` (#526) |
+| 0200881C | GetRescueTeamRank | int GetRescueTeamRank(void) | blue-verified | First threshold index above the points, else 6, as in `pmd-red` (#526) |
+| 02008860 | AddToTeamRankPts | void AddToTeamRankPts(int points) | blue-verified | Adds with a cap, as in `pmd-red` (#526) |
+| 0206A428 | BuildJobReward | void BuildJobReward(void * job, void * out) | tentative | Money, items, friend area and rank points by reward kind; `pmd-red` `sub_803C21C` (#526) |
