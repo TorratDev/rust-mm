@@ -45,6 +45,13 @@ Tracker: [#644](https://github.com/TorratDev/rust-mm/issues/644). Environment: [
 - Output: one level-gaining call and one learn call on entity `0x2124F4C`, with `pre_valid` 5. That entity is not one of the forced records, so the learn did not run on a full four-move team member. Forget menu calls: 0. Removal calls: 0. Gains matched the levels dump (`all_match: true`). Output SHA-1 is not recorded here.
 - Status: #642 forget menu and non-team removal are still not reached. Next step is to force the level-up on the forced hero itself, or to identify entity `0x2124F4C` from the forced record list.
 
+## Forced pending EXP, forget menu reached (#642)
+
+- Probe: `levelup_probe.py --force-four-moves --force-pending-exp 200000` (FORCED). The hero (species 158, entity `0x2124ED8`) starts at level 5 with pending EXP 200000 written at `info+0x1C8`, and four valid moves in slots 0 to 3. Turn inputs are the natural `combat_inputs.txt`.
+- Output (3000 frames and 8000 frames): one EXP pass, two learn calls on the hero (`pre_valid` 4), and one forget-menu call (`0216D77C`, r2 = 1, r3 = 0). The forget menu's pre-state shows the hero's move list at entry.
+- The menu never returned: its return value is `null` in both runs. The probe presses A every 120 frames and stops after 3000 menu frames, so the menu stayed open. The cases for choose, cancel and new move are not tested. Non-team removal (`02182A94`) was not reached.
+- Status: forget menu entry is reached under this forced state; its result and the removal are still open. Output JSON SHA-1 not recorded here.
+
 ## Open
 
 - A savestate at a dungeon floor exit (for #641) and one with a learnable four-move team member (for #642 forget menu). Neither was made.
