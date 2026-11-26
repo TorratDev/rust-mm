@@ -13,9 +13,9 @@ Addresses are ARM9 unless marked `ov_0000::` (overlay 0). Names of the form `FUN
 | Point | Status | What is open |
 |-------|--------|--------------|
 | P1 storage, lookup, record layout | **blue-verified** | Whether bank overlays are compressed in the ROM; the unread sector and element fields |
-| P2 interpreter | **blue-verified** (loop, dispatch, record, arguments, waits) | Meanings of the return codes 1, 3 and 4; six frame-counter outliers; input-wait opcodes |
-| P3 opcode table | Opening-run set **blue-verified** for handlers; names mostly **red-hypothesis** | Per-variant meanings of the movement, camera and window families |
-| P4 actors, camera, dialogue | **blue-verified** for the calls and fields; names **red-hypothesis** | Camera modes 1–3 never ran; vtable slots +0x3C and +0x40 |
+| P2 interpreter | **blue-verified** (loop, dispatch, record, arguments, waits, return codes, sync tokens) | Six frame-counter outliers; who signals tokens 0 and 1 |
+| P3 opcode table | All 247 slots **blue-verified** for handler and fields in [script-opcodes.md](script-opcodes.md) (#522); names of unread callees **red-hypothesis** | Callee bodies (window, screen, camera, sound) |
+| P4 actors, camera, dialogue | **blue-verified** for the calls and fields; choices and waits in [Cutscene commands (#527)](#cutscene-commands-527); names **red-hypothesis** | Camera modes 1–3 never ran; vtable slots +0x3C and +0x40 |
 | P5 story flags and scene variables | **blue-verified** (storage in the save, names, `0x14` codes) | Readers of `0x17`; `0x10` meaning; the save base word (see P5) |
 | P6 inner phases 0x0–0x11 | **blue-verified** (per-id actions) | Demo meaning of `0xE`–`0x11`; `0x9`–`0xC` not reached at runtime |
 
@@ -39,7 +39,7 @@ Full layout in [../formats/scripts.md](../formats/scripts.md).
 | The script is a sequence of 0x18-byte command records with no header: the pointer is the first command. Byte 0 is the opcode. | `FUN_ov_0000__021421CC` loop top; record copy at ctx+0x28/0x40 | **blue-verified** |
 | Labels are opcode `0xF4` with the label id in word 0's high halfword (`s16` at +2). Jumps go by label id, not byte offset. `FUN_ov_0000__021406A8` scans from the script base for the label and asserts the scan does not cross opcode `0x00` or `0xF6`. | `FUN_ov_0000__021406A8`; `ov_0000::021421CC` case `0xF4` | **blue-verified** (scan and assert) |
 | `0xF6` marks the end of a script block. | Assert text in `FUN_021406A8`; no run reached it | **red-hypothesis**: Blue must show a script's last record is `0xF6` or `0x00` |
-| `0xEF` ends a script (returns 0). `0xF0` returns 1 to the stepper. Whether `0xF0` ends the script or parks it is not settled. [execution-model.md](execution-model.md) says it ends a script. | `ov_0000::02146134` (`0xEF`), `ov_0000::02146154` (`0xF0`) | `0xEF` **blue-verified**; `0xF0` return code **blue-verified**, its meaning **lead** (conflicts with execution-model.md) |
+| `0xEF` ends a script (returns 0). `0xF0` returns 1: the stepper keeps the context suspended (state 1) instead of ending it. An exit door's script is `0x01` then `0xF0` ([ground-mode.md](ground-mode.md#p3--interaction-and-exits)). | `ov_0000::02146134` (`0xEF`), `ov_0000::02146154` (`0xF0`), stepper states ([script-opcodes.md](script-opcodes.md#p2--flow-control)) | **blue-verified** |
 
 **Open (P1):** whether bank overlays are compressed (the loader uses the normal FS overlay API, so probably not); the sector record fields `+0x00`–`+0x1F` and element fields `+0`, `+4`, `+0xC` onward (a **lead** for P4 placement lists); whether element `list[1..]` holds other scripts used by `0x1D`, `0xEA` or `0xEB`.
 
@@ -51,7 +51,7 @@ Full layout in [../formats/scripts.md](../formats/scripts.md).
 | Main loop top is `0x02142304`. Each step reads the cursor at ctx+0x28, advances it by 0x18, stores the record pointer at ctx+0x40 and the opcode at ctx+0x44, and copies the record to the stack. | Loop top of `ov_0000::021421CC`; runtime: record = cursor − 0x18 in 228 of 228 dispatches | **blue-verified** (static + runtime) |
 | Dispatch: `cmp r2, #0xF6` then `addls pc, pc, r2 lsl #2` at `0x02142344`. Out of range (`> 0xF6`) goes to `0x02146164`, the error path. | Instructions at `0x02142344`, `0x02142348` | **blue-verified** (static) |
 | The dispatch is an inline table of 0xF7 `B` instructions from `0x0214234C` to `0x02142724`. | Same | **blue-verified** (static) |
-| Number of opcodes: 247 dispatch slots (`0x00`–`0xF6`). Slots `0x00`, `0x40`, `0x96`, `0xCC`–`0xCE`, `0xD0`, `0xD1` and `0xD9` go to the error handler `0x02146164` ("GroundScript command error %d %p"). `0xF2`–`0xF6` are no-ops that fall through to the loop top. | Table decode (not committed) | **blue-verified** (static). The count of distinct handlers is not computed. |
+| Number of opcodes: 247 dispatch slots (`0x00`–`0xF6`) reaching 164 distinct handlers. Slots `0x00`, `0x40`, `0x96`, `0xCC`–`0xCE`, `0xD0`, `0xD1` and `0xD9` go to the error handler `0x02146164` ("GroundScript command error %d %p"); `0xCC`–`0xCE`, `0xD0`, `0xD1` and `0xD9` are data records read by other opcodes. `0xF2`–`0xF6` are no-ops that fall through to the loop top. | Table decode (not committed) | **blue-verified** (static) |
 | Runtime: 228 dispatches in one 3000-frame run (boot to dungeon), 114 interpreter entries; every opcode ≤ `0xF6`; the cursor moved by exactly one record 105 times and jumped 9 times. | Probe `interp_probe.py`; counts only | **blue-verified** (runtime) |
 | Argument encoding: record byte 1 is a small arg (frame counts, compare ops); `s16` at +2 is a label or variable id; `s32` at +4 is the main operand (low `s16` often an id); +8, +0xC, +0x10, +0x14 are more `s32` operands. A field of `-1` means "read from a variable". | Field use in `ov_0000::021421CC`; `FUN_ov_0000__021421CC` cases 2 and 7 call `FUN_02020F74` with id `0x14` | **blue-verified** (static) |
 | Variables: ids below `0x400` are global (valid range checked in `FUN_02021108`); ids `0x400` and up are local, held in the frame at ctx+0x74. The getter is `FUN_02020F74` (ARM9 `0x02020F74`). The value switches `0xC0`–`0xC2` and the `0xCE` case record read variables through the same getter; `0xCC`–`0xCD` compare immediates. | `FUN_02020F74`, `FUN_02021108` (ARM9) | **blue-verified** (static). Runtime local reads not observed (no call with the interpreter as caller in the run). |
@@ -63,14 +63,14 @@ Full layout in [../formats/scripts.md](../formats/scripts.md).
 | Text, menu and input waits: opcodes lock the script (`FUN_ov_0000__02147B80`) and return 2; the stepper polls `FUN_0213C0CC` each frame and resumes when the window is ready. Input (`0x3D`–`0x3F`) and key waits (`0x2C`) use the same path. | Stepper cases ov_0000 `021461D0` lines 272–425; `FUN_0213C0CC` (ov0 call) | **blue-verified** (flow); which opcode is which window is P4 |
 | Fade and event waits: `0x22`–`0x28` and `0xDF` poll `ARM9 FUN_02139E64`; `0xE0` polls `FUN_02029AE0` with a frame timeout; `0xE1`/`0xE2` poll a sound/event helper with a 0xE10-frame timeout. | `ov_0000::02145ED4` group, stepper `LAB_02146710` | **blue-verified** (flow); the meanings are **red-hypothesis** |
 | Sound waits print "bgm wait time over" and "me or se wait time over" if they time out. | Debug strings in the stepper | **lead** |
-| Return codes from the interpreter: 0 = end, 1 = hold, 2 = wait, 3 = run on, 4 = suspend. The stepper stores the return value in ctx+0x26 and branches on it. On 0, a saved frame in ctx+0x84 is restored if ctx+0x86 is nonzero, else `FUN_ov_0000__021480E4` runs. | `FUN_ov_0000__021461D0` call at `0x0214787C` | Numeric values and branches **blue-verified** (static). The meanings of 1, 3 and 4 **red-hypothesis**. |
+| Return codes from the interpreter: 0 = end, 1 = suspend (`0xF0`), 2 = wait, 3 = run on (`0x21`), 4 = finished (`0xF1`; `0x1D`/`0x1E` after a bank change on a non-main context). The stepper stores the return value in ctx+0x26 and branches on it. On 0, the pending slot at ctx+0x84 is copied into the active slot if ctx+0x86 is nonzero, else cleared. | `FUN_ov_0000__021461D0` call at `0x0214787C`; [script-opcodes.md](script-opcodes.md#p2--flow-control) | **blue-verified** (static) |
 | Execution frame: PC at +0x28, script base at +0x2C, record at +0x40, opcode at +0x44, sub-state at +0x4C, frame counter at +0x4E, elapsed at +0x50, locals at +0x74. | `FUN_ov_0000__021421CC`, stepper | **blue-verified** (static) |
 
-**Open (P2):** meanings of return codes 1, 3 and 4 and of stepper state 4; the six counter outliers; input wait opcodes; whether the three stepper callers (`FUN_ov_0000__021505D0`, `FUN_0215574C`, `FUN_02156CD8`, at `0x0215064C`, `0x02155780`, `0x02156D0C`) are the owner updaters. **lead**: they are probably the station/map, lives and object updaters, from the cancel strings.
+**Open (P2):** the six counter outliers; who signals tokens 0 and 1 when a box closes; whether the three stepper callers (`FUN_ov_0000__021505D0`, `FUN_0215574C`, `FUN_02156CD8`, at `0x0215064C`, `0x02155780`, `0x02156D0C`) are the owner updaters. **lead**: they are probably the station/map, lives and object updaters, from the cancel strings.
 
 ## P3 — Opcode table
 
-Handler addresses are `ov_0000` unless marked ARM9. "Seen" means the opcode dispatched in the 3000-frame boot-to-dungeon run; the run saw 36 opcodes, from frame 76 to 2582, and the most frequent were `0x80`, `0x54`, `0xE3`, `0xDB`, `0xE4`, `0x53` and `0x52`. Not seen in that run: `0x0B`, `0x6D`, `0xDC`, `0xC3`.
+The full table of all 247 slots, with the fields each handler reads, is in [script-opcodes.md](script-opcodes.md) (#522); where the two differ, that note is newer. Handler addresses are `ov_0000` unless marked ARM9. "Seen" means the opcode dispatched in the 3000-frame boot-to-dungeon run; the run saw 36 opcodes, from frame 76 to 2582, and the most frequent were `0x80`, `0x54`, `0xE3`, `0xDB`, `0xE4`, `0x53` and `0x52`. Not seen in that run: `0x0B`, `0x6D`, `0xDC`, `0xC3`.
 
 The meaning column is a one-line reading. Where the name is a Blue debug string, the string is the evidence; where only the handler's calls are known, the meaning is marked.
 
@@ -83,9 +83,9 @@ The meaning column is a one-line reading. Where the name is a Blue debug string,
 | `0x1E` | `0x02143190` | Map execute sub command: loads a sector of the current map. Falls into the `0x1D` path: `FUN_0214D1F0`, `FUN_0214D420`, `FUN_0214D510`. | **blue-verified** |
 | `0x22`, `0x23` | `0x0214350C`, `0x02143528` | Call `FUN_0213A11C` / `FUN_0213A104` with byte 1; with byte 1 nonzero they return 2 and wait on `FUN_02139E64`. | Flow **blue-verified**; meaning (screen fade in/out) **red-hypothesis** |
 | `0x27`, `0x28` | `0x021435B0` | Fade family with `FUN_02139FC4` / `FUN_02139EE4` and a 4-byte parameter. | Flow **blue-verified**; fade with colour **red-hypothesis** |
-| `0x2D` | `0x02143710` | Speaker/portrait setup, 11 sub-modes in byte 1. Debug string "FLOOR_LEVEL". See P4. | **red-hypothesis** (message/speaker setup); **lead** for sub-modes |
+| `0x2D` | `0x02143710` | Binds a speaker or a name placeholder for the next message, 11 sub-modes in byte 1 (see P4). Debug string "FLOOR_LEVEL". | Calls **blue-verified**; sub-mode meanings **lead** |
 | `0x37` | `0x0214393C` (group `0x32`–`0x38`) | Show message with no speaker (`FUN_0213C510`), then lock and wait. | Handler **blue-verified**; meaning **red-hypothesis** |
-| `0x3B` | `0x02143B48` | Writes 0 to ctx+0x4E and returns 2; the stepper resumes when the message closes. | **red-hypothesis** (wait for message close) |
+| `0x3B` | `0x02143B48` | Writes 0 to ctx+0x4E and returns 2; the stepper polls the script special `FUN_02140860(ctx, b, c, A)` and case-dispatches on its result. | **blue-verified** (static) |
 | `0x3C` | `0x02143B0C` | MENU: `FUN_0213C104` and `FUN_02154004`, returns 2. String "MENU". | **blue-verified** (string) |
 | `0x44` | `0x02143C98` | Audio: `FUN_0201BFA0`, or `FUN_0201BE04` when the id is a sentinel. | **red-hypothesis** (BGM play); the sound thunks are not verified here |
 | `0x47` | `0x02143D60` | Calls `thunk_FUN_0201BE04` only. | **red-hypothesis** (BGM stop) |
@@ -97,7 +97,7 @@ The meaning column is a one-line reading. Where the name is a Blue debug string,
 | `0x6B` | `0x021444A4` | Move toward an actor; duration 0xFFFF (until arrival). Same handler family as `0x63`, `0x64`, `0x65`. | **blue-verified** (static); "move to actor" **red-hypothesis** |
 | `0x80` | `0x02144804` (`0x74` family) | Sliding move to a position, interpolated over frames (lerp `FUN_02021660`). | **blue-verified** (static and runtime: 1522 lerp calls, none from other ops) |
 | `0x8B` | `0x02144B30` | Set direction from the argument (ctx+0x4A) and wait. | **blue-verified** (static); "turn" **red-hypothesis** |
-| `0x91` | `0x02144DBC` | Sets ctx+0x71 from byte 1 and returns 2. | **lead** |
+| `0x91` | `0x02144DBC` | Sets the turn target ctx+0x71 from byte 1 and returns 2. | **blue-verified** (static) |
 | `0x98`, `0x99` | `0x02144E20`, `0x02144E88` | **Camera** ops: attach camera to self or var 2/3 (`0x98`); fix camera to self (`0x99`). Setters `ov_0000::0214033C` and `ov_0000::02140358`. | **blue-verified** (setters, runtime counts); name **red-hypothesis**. Source conflict: the opcode-table pass read these as actor attach through the same setters. The camera reading is the one the setter addresses and the runtime counts support (see P4). |
 | `0xA6` | `0x02145390` | Variable arithmetic through ARM9 `FUN_0201FDD8` (locals, var, value, op). | Call **blue-verified**; "arithmetic" **red-hypothesis** |
 | `0xA9` | `0x021453E8` | Set two elements of a scenario variable through ARM9 `FUN_020206AC` / `FUN_020208E8`. For var 4 it resets var `0x1A`. | **blue-verified** (static) |
@@ -108,8 +108,8 @@ The meaning column is a one-line reading. Where the name is a Blue debug string,
 | `0xE4` | `0x02145F00` | `FUN_02147AAC(id)`: unlock or signal, paired with `0xE3`. | **red-hypothesis** |
 | `0xE9` | `0x02145FA0` | Jump to a script reference: ctx+0x28 = ctx+0x2C = the entry's +8 from the table indexed by the argument. | **blue-verified** (static) |
 | `0xEF` | `0x02146134` | End the script; returns 0. Logs "Script end stack error" if ctx+0x34 ≠ 0. | **blue-verified** |
-| `0xF0` | `0x02146154` | Returns 1 to the stepper. | Return **blue-verified**; meaning **lead** (see P1) |
-| `0xF1` | `0x0214615C` | Returns 4 (suspend). | Return **blue-verified**; meaning **lead** |
+| `0xF0` | `0x02146154` | Suspend (returns 1). | **blue-verified** |
+| `0xF1` | `0x0214615C` | Finish (returns 4). | **blue-verified** |
 
 ### Other opcodes (named or grouped, not seen in the opening run)
 
@@ -157,7 +157,7 @@ The meaning column is a one-line reading. Where the name is a Blue debug string,
 
 **Grouped shapes** (dispatch shares one handler): `0x08/09`; `0x0C`–`0x15`; `0x27/28`; `0x32`–`0x38`; `0x49/4C`, `0x4A/4D`, `0x4B/4E`; `0x61/69`, `0x62/6A`, `0x63/6B`, `0x64/6C`, `0x65/6D`, `0x66/67/6E/6F`, `0x68/70`; `0x8E`–`0x90`; `0x93`–`0x95`; `0xD2`–`0xD8`; `0xDF`–`0xE2`.
 
-**Open (P3):** the per-variant meanings of `0x71`–`0x88`, `0x0C`–`0x14` and `0x98`–`0xA3`; the exact meaning of `0x2D`, `0x91` and `0xF1`; the `0x6D` and `0xDC` runs past frame 3000.
+**Open (P3):** settled for `0x71`–`0x88` and `0x0C`–`0x18` in [script-opcodes.md](script-opcodes.md); still open: the camera forms `0x9B`–`0xA3` (never ran), the `0x2D` sub-modes, and `0x6D`, `0xDC` at runtime.
 
 ## P4 — Actors, camera and dialogue
 
@@ -234,7 +234,7 @@ Names come from the descriptor debug names read at runtime (the probe `scene_pro
 **Reset.** `FUN_02021310` (ARM9 `0x02021310`) clears the block, applies per-descriptor defaults, then sets ids `0xE`–`0x20` explicitly. Seen at runtime at frames 52, 61, 2459 and 2562. **blue-verified**.
 
 **Open (P5).**
-- The base word for table A is `0x021EE640` in [save.md](../formats/save.md) and the block is `0x0210E640` in [execution-model.md](execution-model.md). One of them is probably a typo. This note does not resolve it and does not link them.
+- Resolved (#522): the block is at `0x0210E640`; save.md's `0x021EE640` was a typo and is fixed. The full variable model is in [script-opcodes.md](script-opcodes.md#p3--variable-model).
 - Readers of `0x17`; the meaning of `0x10`.
 - Vars `0x34`–`0x37` are read by `0x5E` and written by `0x5F` through ARM9 `0x020208E8`. Not traced beyond that.
 
@@ -267,6 +267,55 @@ Names come from the descriptor debug names read at runtime (the probe `scene_pro
 
 **Open (P6).** The `0x9`–`0xC` path was not reached at runtime; which scene ids `1`–`8` and `0xA`–`0xC` the game passes, and from which callers; whether `0xE`–`0x11` are demo or attract scenes beyond the title loop; the `0x02133CF0` address that [execution-model.md](execution-model.md) gives with the old switch cell is not re-checked here.
 
+## Cutscene commands (#527)
+
+Issue [#527](https://github.com/TorratDev/rust-mm/issues/527) (batch [#645](https://github.com/TorratDev/rust-mm/issues/645)). The opcode rows are in [script-opcodes.md](script-opcodes.md); this section says how they combine into a cutscene. Status is per row.
+
+### P1 — Dialogue
+
+| Claim | Evidence | Status |
+|-------|----------|--------|
+| Message text is inline in the script, not a message-table id: word 3 of the record points to the string and words 4–5 hold per-language offsets (`FUN_ov_0000__021421A0`). [../formats/text.md](../formats/text.md) covers the encoding and the `$` placeholders; the string-id table is not used by ground scripts. | P4 above; `FUN_021421A0` | **blue-verified** (static); runtime: every `0x37` pointed at a printable string |
+| Speaker and portrait: `0x2D` binds the speaker or a name placeholder (sub-mode in byte 1; 7–9 call `FUN_021404E8`/`FUN_021404C0`; 10 writes a name into slot c); `0x2E`/`0x2F` set and update a portrait slot ([../formats/portraits.md](../formats/portraits.md)); `0x32`/`0x33` show text with speaker kind 0 or 1, `0x34`–`0x36` take the speaker from three values held on the stack, `0x37` shows with no speaker. | `ov_0000::02143710`, `ov_0000::0214393C` | Calls **blue-verified**; sub-mode meanings **lead** |
+| Wait for A: every text opcode ends with `FUN_02147B80(ctx, 0)`, which waits on token 0 unless no box is open (then it goes on at once). `0x2C` waits on token 0 without showing text. `0x30` closes the box, `0x31` forces it. | `FUN_02147B80`; [script-opcodes.md](script-opcodes.md#sync-tokens-how-scripts-wait-for-each-other) | **blue-verified** (static) |
+| Yes/no: `0x3A` opens a question (`FUN_0213C410`, byte 1 a flag), waits on token 1, then polls `FUN_0213C3D8` for the answer and case-dispatches on it. Query windows: `0x3C` (`FUN_0213C104`) and the name and password screens `0x3D`–`0x3F` are polled through `FUN_0213C0CC` (window state `+0x420` == 3, result `+0x430`) and case-dispatched. | Interpreter cases; stepper wait cases `':'`, `'<'`–`'?'` | **blue-verified** (static) |
+| Multi-choice menus: `0xD2`–`0xD8` build a menu from the `0xD9` item records that follow (each item's inline string and its index, in 0xC-byte entries built at `0x0215D35C`; the count is a global named by the pool word at `ov_0000::02146198`), pick a title (for `0xD6`–`0xD8` by a variable's value through `0xD0`/`0xD1` records), open it with `FUN_0213C210`, wait on token 1, and case-dispatch on the chosen index. | Interpreter `LAB_ov_0000__02145B5C`; stepper wait | **blue-verified** (static) |
+| How a choice reaches a variable: it does not, directly. Every choice and query result goes to the case dispatch `FUN_021405B4`, which jumps to the label of the matching `0xCC`/`0xCD`/`0xCE` record. A script that needs the value later writes it itself in the case body (`0xA6`, `0xA8`). Exceptions: `0x04` and `0x06` write DUNGEON_SELECT or DUNGEON_ENTER from the chooser; `0x3D` copies the entered name into the lives record. `0xCF` is the reverse: it picks a message variant by a variable's value. | Stepper cases for `0x04`, `0x06`, `0x3A`–`0x3F`, `0xD2`–`0xD8` | **blue-verified** (static) |
+
+### P2 — Actors
+
+| Claim | Evidence | Status |
+|-------|----------|--------|
+| Spawn and remove: actors come in per group and sector with `0x0C`–`0x10` (select a layer) and go with `0x11`–`0x18` (cancel); `0x19`/`0x1A` add one object or effect at the caller's position. Each actor runs its own script on its own context (kinds 1–3). | [script-opcodes.md](script-opcodes.md); P4 entity classes above | **blue-verified** |
+| Walking: `0x61`–`0x70` walk at a speed (c) to an absolute, relative, mark or actor target; the stepper moves the actor through vtable +0x48 each frame until arrival (or a collision stop). Sliding: `0x71`–`0x88` lerp over frames (fixed or from distance and speed), with or without turning along the path. Instant: `0x58`–`0x60`. Facing: `0x89`–`0x95`. Animation: `0x54` (+0x30), waits `0xDD`/`0xDE`. | Same | **blue-verified** (static); runtime counts below |
+
+### P3 — Camera
+
+| Claim | Evidence | Status |
+|-------|----------|--------|
+| The per-frame update `FUN_0213FE04` follows the target by mode (struct word 2): 0 snaps to the target each frame; 1 moves toward it by a step whose length is capped by the speed (word 3, `FUN_020216BC`) until it arrives; 2 lerps from the current centre over the frame count (word 4, `FUN_02021660`); 3 turns the distance and the speed into a frame count and switches to mode 2. At the end of a move the mode drops to 0. | `FUN_ov_0000__0213FE04` | **blue-verified** (static) |
+| So `0x9B`–`0x9D` (setter `021402F0`, mode 1) move at a speed, `0x9E`–`0xA0` (`021402A4`, mode 2) over c frames, `0xA1`–`0xA3` (`02140258`, mode 3) at a speed with a computed duration. The three forms of each target the entity, its position, or the default. The stepper waits until the camera is idle (`FUN_02140238`). | Setters; stepper block `ov_0000::02146DB4` | **blue-verified** (static); none ran in the recordings |
+| Shake `0x97` (`FUN_02140380(mode, amplitude, period)`): mode 1 draws a new offset every 4 frames, mode 2 every `period` frames scaled by `amplitude`; each offset is two draws of `FUN_02023B6C(−2, 2)`. Other modes clear it. | `FUN_02140380`, `FUN_0213FE04` | **blue-verified** (static) |
+| Screen fades: `0x22`–`0x28` (screen effect calls, waited by `FUN_02139E64` or `0xDF`) and `0x42`/`0x43` (`FUN_02029B90`/`FUN_02029B60`, waited by `0xE0`). | [script-opcodes.md](script-opcodes.md) | Calls **blue-verified**; "fade" **red-hypothesis** |
+
+### P4 — Waiting
+
+| Claim | Evidence | Status |
+|-------|----------|--------|
+| A script waits by returning 2; the stepper keeps it in state 2 and runs the wait test of its last opcode each frame. Kinds of wait: frame counts (`0xDB`, `0xDC`, and every move with a duration in ctx+0x4E), an actor's own state (`0xDD`, `0xDE`, the walk and slide groups), the camera (`0x9B`–`0xA3`), screen effects, fades and sound (`0xDF`–`0xE2`, with frame limits), a window (text, choice, menu), and a sync token (`0xE3`, `0xE5`, `0xDA`). | Stepper `FUN_021461D0` | **blue-verified** (static) |
+| Waiting for another context is the token pair `0xE3` c / `0xE4` c: the waiter parks on token c, the other context signals it, and the per-frame sync pass `FUN_0214074C` releases every context of all four kinds that waits on it. Timing: a token signalled in frame N releases its waiters in the scene runner's pass of frame N, and they run on in the next interpreter step. | [script-opcodes.md](script-opcodes.md#sync-tokens-how-scripts-wait-for-each-other) | **blue-verified** (static); one-frame timing **lead** |
+
+### P5 — Runtime check
+
+| Claim | Evidence | Status |
+|-------|----------|--------|
+| The opening after New Game (frame 2579, run A) runs on the main context: scenario checks and sets (`0xC4`, `0xA9`), a jump to a loader script (`0xE9`), BGM stop (`0x47`), a script special (`0x3B`), a bank load (`0x1E`) and the map (`0x08`), then narration with `0x37` (no speaker), each waiting on token 0 until A. | Run A frames 2579–2652 | **blue-verified** (runtime) |
+| The scene after the quiz (frames 10775–24900) is mostly actor contexts: 354 dispatches, 294 on kind 1. Most frequent: `0xDB` 45, `0xE3` 25, `0xE4` 23, `0x30` 21, `0xE8`/`0xEE` 17, `0x2E` 14, `0x34` 13, `0x4C` 13, `0xCF` 12, `0x54` 12, `0x91` 12, `0x6B` 12, `0x56` 11. So a cutscene is actors walking (`0x6B`, `0x70`, `0x80`), turning (`0x8B`, `0x91`) and animating (`0x54`), speakers and portraits (`0x2D`, `0x2E`) with text from the speaker's locals (`0x34`) closed by `0x30`, and the actors kept in step with `0xE3`/`0xE4` and `0xDB` frame waits. | Run A | **blue-verified** (runtime) for the commands; the reading of the pattern **red-hypothesis** |
+| A talk in town (run B, the mailbox): the object waits on token 2 (`0xE3`) while the player's context runs `0x54`, `0x2D` (sub-mode 7), `0xDB` 1, `0xCA`, `0x32` and, on the next A, `0x32` again. | Run B frames 4520–4702 | **blue-verified** (runtime) |
+| Not run: menus (`0xD2`–`0xD8`), yes/no (`0x3A`), camera moves (`0x9B`–`0xA3`) and shake (`0x97`). The camera ran only `0x98` (4) and `0x99` (3). | Runs A and B | – |
+
+Commands and hashes: [script-opcodes.md](script-opcodes.md#trace-checks), [ground-mode.md](ground-mode.md#trace-checks).
+
 ## Trace checks
 
 Commands use the committed probes in `verification/v7-trace/`. `<scratch copy of pmdb.nds>` is a copy of the dump above; no committed probe checks its SHA-1. Output files stay outside the repo. Hashes and commands are in [verification.md](../verification.md#362--script-engine-probes).
@@ -290,13 +339,11 @@ Not done in this pass. The names in P3 and P4 are Blue's debug strings or are ma
 ## Open questions
 
 - P1: are bank overlays compressed; the unread sector and element fields.
-- P2: meanings of return codes 1, 3 and 4; the six frame-counter outliers; input-wait opcodes; the stepper callers' roles.
-- P2: the number of distinct handlers behind the 247 slots.
-- P3: per-variant meanings of the movement, direction, camera and window families.
+- P2: the six frame-counter outliers; the stepper callers' roles; who signals tokens 0 and 1.
+- P3: the camera forms `0x9B`–`0xA3`; the window callees' bodies.
 - P4: camera modes 1–3; vtable +0x3C and +0x40; the `0x2D` sub-modes; the renderer for the opening's text.
-- P5: the `0x021EE640` vs `0x0210E640` base-word conflict; readers of `0x17`; meaning of `0x10`.
+- P5: readers of `0x17`; meaning of `0x10`.
 - P6: runtime for `0x9`–`0xC`; scene ids 1–8 and `0xA`–`0xC` and their callers.
-- `0xF0`: does it end a script or park it (execution-model.md says ends).
 
 ## Links
 
