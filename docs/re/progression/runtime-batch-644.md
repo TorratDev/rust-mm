@@ -19,6 +19,13 @@ Tracker: [#644](https://github.com/TorratDev/rust-mm/issues/644). Environment: [
 | #642 | `levelup_probe.py` from the boot route, 12000 frames, natural run | Ran. `levels_dump` output SHA-1 `30ffdbb32f2f5bf8c122ed6cc6958ece129b0b02`. One level-gaining call; every gain matched the parsed level record (`all_match: true`). One interactive move-learn call (`0x02182E5C`). The forget menu (`0216D77C`) and the non-team removal (`02182A94`) were **not reached**, so the menu-key cases and the `DungeonRandInt` removal draw are open. | `2b1f265308a3d9b39a2b95a5328184a115340c38` | Partly reached. Gains verified; forget menu and removal open. |
 | #624 | `status_effects.py` (12 samples), `status_leech_seed.py` (3000 frames), `status_rage.py` (1500 frames, AF = 1) | All three ran to completion (rc 0). Speed-down setter: `+0xE0` equals the up-counter count in 12 of 12 samples. Leech Seed: drain (5 hits) and heal (5) events recorded at end of turn. Enraged: stage-change events and end-of-turn expiry recorded; the hit at frame 1441 fired. Outputs are in scratch. | effects `eba40e4ad5edf32905cb2572e8928d7d7e500666`, leech `b153a100665916096ceb58164870c363f037cd66`, rage `5e3f6766196dfe423bc5d8f99db6061c2619a6f8` | Ran. Rows in `docs/re/status.md` not yet updated with these results. |
 
+## Static finding for #641 (read-only, from the export `ram/0206dc20_FUN_0206dc20.c`)
+
+- `0206DC20` is the whole dungeon-run function, not an exit routine. Its `param_1` is the run struct. It does setup first (`+0x58`, `+0x5C`, the floor tables), then play, and writes the result code at `param_1+0x60` on each branch (`0xFFFF`, `0xFFFE`, and `1`, `2`, `3`, `4` at lines 465 to 571 of the export).
+- The exit chain sits at the tail: `LAB_0206eca0` reads `+0x60` (lines 588 and 592), calls `02178068(1)` for codes 1, 2, 4, `02178068(0)` for -2, and `02177FD8` then `02178068(0)` for -1. The exit hooks `0206ED24`, `0206ED3C`, `0206ED4C` are inside this function's span.
+- So a forced exit cannot be a plain call with a chosen `+0x60`. It would need `+0x60` set and a jump into `LAB_0206eca0` with the function's stack frame and saved registers intact. That is an unverified emulator hack, not a clean run, and it has not been tried.
+- The run that reached `0206DC20` at frame 24952 (boot) was this function's entry, which is dungeon setup. It is not evidence of an exit.
+
 ## Open
 
 - A savestate at a dungeon floor exit (for #641) and one with a learnable four-move team member (for #642 forget menu). Neither was made.
