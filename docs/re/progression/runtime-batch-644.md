@@ -39,6 +39,12 @@ Tracker: [#644](https://github.com/TorratDev/rust-mm/issues/644). Environment: [
 - Output: the emulator stopped again at `ARM9: Undefined instruction: 0x264309B0 PC=0x0211128C`, and no exit hook fired.
 - Reading: the crash is in the resume itself (the restored `r5` and `sp`, or other registers the tail depends on), not in the exit code. Full frame restore or a natural floor exit is still needed for #641.
 
+## Forced four-move state (#642): forget menu not reached
+
+- Probe: `levelup_probe.py --force-four-moves --frames 12000` (FORCED). It writes four valid move records (ids in bytes 0 to 5 of each slot) onto the hero (species 158, info `0x2113FB0`) and partner (species 4, info `0x2114184`) after boot, then plays `combat_inputs.txt` naturally.
+- Output: one level-gaining call and one learn call on entity `0x2124F4C`, with `pre_valid` 5. That entity is not one of the forced records, so the learn did not run on a full four-move team member. Forget menu calls: 0. Removal calls: 0. Gains matched the levels dump (`all_match: true`). Output SHA-1 is not recorded here.
+- Status: #642 forget menu and non-team removal are still not reached. Next step is to force the level-up on the forced hero itself, or to identify entity `0x2124F4C` from the forced record list.
+
 ## Open
 
 - A savestate at a dungeon floor exit (for #641) and one with a learnable four-move team member (for #642 forget menu). Neither was made.

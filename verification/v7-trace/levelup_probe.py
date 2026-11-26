@@ -70,6 +70,8 @@ def main():
     p.add_argument("--frames", type=int, default=12000)
     p.add_argument("--menu-key", choices=["a", "b", "new"], default="a")
     p.add_argument("--force-nonteam", action="store_true")
+    p.add_argument("--force-four-moves", action="store_true",
+                   help="FORCED: write four valid move records on the hero (158) and partner (4) before play")
     a = p.parse_args()
     levels, learnset = load_levels(a.levels)
 
@@ -188,6 +190,21 @@ def main():
             for _ in range(4): emu.cycle(with_joystick=False)
             emu.input.keypad_update(0)
             for _ in range(20): emu.cycle(with_joystick=False)
+
+    forced_moves = []
+    if a.force_four_moves:
+        d = ram.u32(G_DUNGEON)
+        four = [[5, 0, 224, 0, 27, 0], [5, 0, 4, 1, 22, 0], [5, 0, 99, 0, 188, 2], [5, 0, 1, 0, 5, 0]]
+        for i in range(20):
+            e = ram.u32(d + 0x11364 + 4 * i)
+            inf = ram.u32(e + 0x70) if e else 0
+            if inf and ram.s16(inf + 2) in (158, 4):
+                for k, rec in enumerate(four):
+                    for j, b in enumerate(rec):
+                        emu.memory.write_byte(inf + 0xF4 + 6 * k + j, b)
+                forced_moves.append({"info": hex(inf), "species": ram.s16(inf + 2),
+                                     "moves": [list(ram.bytes(inf + 0xF4 + 6 * k, 6)) for k in range(4)]})
+    res["forced_four_moves"] = forced_moves or None
 
     menu_seq = {"a": ["A"], "b": ["B", "A"], "new": ["DOWN"] * 4 + ["A"]}[a.menu_key]
     turns = parse_inputs(a.inputs)
