@@ -69,4 +69,6 @@ def main():
         if f in boot: emu.input.keypad_update(boot[f])
         emu.cycle(with_joystick=False)
     out.close(); emu.destroy()
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    import romarg; romarg.fill()
+    main()

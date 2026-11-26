@@ -13,6 +13,7 @@ V=os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0,V)
 from desmume.emulator import DeSmuME
 from retail_trace import parse_inputs, Ram, G_DUNGEON, S_PRNG
+import romarg; romarg.fill()
 rom,out,nframes,nth,poke40=sys.argv[1],sys.argv[2],int(sys.argv[3]),int(sys.argv[4]),int(sys.argv[5],0)
 emu=DeSmuME(); emu.open(rom); ram=Ram(emu); R=emu.memory.register_arm9
 mem=emu.memory

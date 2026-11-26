@@ -61,4 +61,6 @@ def main():
     out.write(json.dumps({"checks": c, "opcodes_seen": len(ops), "max_op": hex(max(ops)) if ops else None,
                           "dispatches": sum(ops.values())}, sort_keys=True) + "\n")
     out.close(); emu.destroy()
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    import romarg; romarg.fill()
+    main()

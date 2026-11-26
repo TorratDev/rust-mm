@@ -63,4 +63,6 @@ def main():
     with open(outp, "w", encoding="utf-8", newline="\n") as out:
         out.write(json.dumps({"counts": c, "cam_mode_frames": {str(k): v for k, v in modes.items()}}, sort_keys=True) + "\n")
     emu.destroy()
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    import romarg; romarg.fill()
+    main()
