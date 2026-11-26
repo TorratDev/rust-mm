@@ -33,6 +33,12 @@ Tracker: [#644](https://github.com/TorratDev/rust-mm/issues/644). Environment: [
 - Reading: a mid-function resume is not safe with only `r5` and `sp` restored. The tail reads more than `r5`, and the stack frame or the saved registers are not in the state the epilogue expects. Output SHA-1 of the partial JSON: `a4f4e1e50f7dfb1cdb7e4b66b6aa6aeb6af3d388` (its `summary.forced` is set).
 - Status: #641 is still not reached. A floor exit needs either a natural floor end (a walk to the stairs, not reached yet) or a correct full frame restore (not attempted).
 
+## Forced floor exit (#641), attempt 2: failed
+
+- Same forced resume at `0206ECA0` with result code -2 (`--force-exit -2 --frames 600`, FORCED). The code -2 path skips the `02142B70` call, which lives in overlay `ov_0001`, so the overlay hypothesis for attempt 1 was not the cause.
+- Output: the emulator stopped again at `ARM9: Undefined instruction: 0x264309B0 PC=0x0211128C`, and no exit hook fired.
+- Reading: the crash is in the resume itself (the restored `r5` and `sp`, or other registers the tail depends on), not in the exit code. Full frame restore or a natural floor exit is still needed for #641.
+
 ## Open
 
 - A savestate at a dungeon floor exit (for #641) and one with a learnable four-move team member (for #642 forget menu). Neither was made.
