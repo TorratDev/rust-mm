@@ -26,6 +26,13 @@ Tracker: [#644](https://github.com/TorratDev/rust-mm/issues/644). Environment: [
 - So a forced exit cannot be a plain call with a chosen `+0x60`. It would need `+0x60` set and a jump into `LAB_0206eca0` with the function's stack frame and saved registers intact. That is an unverified emulator hack, not a clean run, and it has not been tried.
 - The run that reached `0206DC20` at frame 24952 (boot) was this function's entry, which is dungeon setup. It is not evidence of an exit.
 
+## Forced floor exit (#641), attempt 1: failed
+
+- Probe: `friend_areas_probe.py --force-exit 1 --frames 600` (FORCED). It captures `0206DC20`'s entry `r0` and `sp`, writes result code 1 at the run struct's `+0x60`, sets `r5` = struct, `sp` = entry sp - 0x20 (the prologue frame), and resumes at `0206ECA0`, the tail label.
+- Output: the resume ran, but no exit hook fired (`0206ED24`, `02178068`, and the other exit hooks are all in `not_reached`). The emulator then stopped with `ARM9: Undefined instruction: 0x264309B0 PC=0x0211128C`.
+- Reading: a mid-function resume is not safe with only `r5` and `sp` restored. The tail reads more than `r5`, and the stack frame or the saved registers are not in the state the epilogue expects. Output SHA-1 of the partial JSON: `a4f4e1e50f7dfb1cdb7e4b66b6aa6aeb6af3d388` (its `summary.forced` is set).
+- Status: #641 is still not reached. A floor exit needs either a natural floor end (a walk to the stairs, not reached yet) or a correct full frame restore (not attempted).
+
 ## Open
 
 - A savestate at a dungeon floor exit (for #641) and one with a learnable four-move team member (for #642 forget menu). Neither was made.

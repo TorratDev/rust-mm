@@ -59,6 +59,9 @@ def main():
     p.add_argument("out")
     p.add_argument("--turn-inputs", default=os.path.join(HERE, "combat_attack_inputs.txt"))
     p.add_argument("--frames", type=int, default=1500)
+    p.add_argument("--force-exit", type=int, default=None,
+                   help="FORCED: after the floor settles, write result code CODE at the run struct's +0x60 "
+                        "and resume at 0206ECA0 (the exit tail) with r5 = struct, sp = entry sp - 0x20")
     a = p.parse_args()
 
     emu = DeSmuME()
@@ -104,10 +107,14 @@ def main():
             e["gate_species"] = last_gate.get("species")
         return fn
 
+    entry = {}
+
     def on_exit(e):
         d = ram.u32(G_DUNGEON)
         if d and e["hook"] == "0206DC20":
             e["code"] = ram.s16(d + RESULT_CODE)
+        if e["hook"] == "0206DC20" and "sp" not in entry:
+            entry.update(r0=int(R.r0), sp=int(R.sp))
 
     for s in SETTERS:
         emu.memory.register_exec(s, hook("%08X" % s))
@@ -158,8 +165,21 @@ def main():
 
     turns = parse_inputs(a.turn_inputs) if a.turn_inputs else {}
     t0 = phase["frame"]
+    forced = None
     for k in range(a.frames):
         phase["frame"] = t0 + k
+        if k == 0 and a.force_exit is not None:
+            if "sp" not in entry:
+                sys.exit("0206DC20 entry was not seen; no forced exit")
+            code = a.force_exit & 0xFFFF
+            struct = entry["r0"]
+            emu.memory.write_byte(struct + RESULT_CODE, code & 0xFF)
+            emu.memory.write_byte(struct + RESULT_CODE + 1, code >> 8)
+            R.r5 = struct
+            R.sp = entry["sp"] - 0x20  # prologue: stmdb 5 regs (20) + sub 12
+            R.pc = 0x0206ECA0
+            forced = {"code": a.force_exit, "struct": hex(struct), "entry_sp": hex(entry["sp"]),
+                      "resume": "0206ECA0", "frame": phase["frame"]}
         if k in turns:
             emu.input.keypad_update(turns[k])
         emu.cycle(with_joystick=False)
@@ -175,6 +195,7 @@ def main():
                "write_hooks": dict(Counter(w["hook"] for w in writes)),
                "owned_write_events": len(writes),
                "not_reached": not_reached}
+    summary["forced"] = forced
     res = {"snapshot": snapshot, "summary": summary, "events": events, "owned_writes": writes}
     with open(a.out, "w") as f:
         json.dump(res, f, indent=1)
