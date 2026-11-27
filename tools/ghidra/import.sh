@@ -78,6 +78,7 @@ print(m["arm7"]["ram_address"])' "$code_dir/manifest.json") || { echo "error: no
     -processor ARM:LE:32:v4t -cspec default \
     -scriptPath "$script_dir" \
     -preScript RescueNdsImport.java "$code_dir/manifest.json" arm7 \
+    -preScript RescueSharedRam.java \
     -postScript RescueNdsReport.java ${check[@]+"${check[@]}"} \
     ${analysis[@]+"${analysis[@]}"} > "$log" 2>&1 || status=$?
   grep -E 'RESCUE(-REPORT)?:' "$log" | sed -E 's/^.*(RESCUE(-REPORT)?:)/\1/; s/ \((GhidraScript|HeadlessAnalyzer)\) *$//' || true
@@ -99,6 +100,7 @@ status=0
   -processor ARM:LE:32:v5t -cspec default \
   -scriptPath "$script_dir" \
   -preScript RescueNdsImport.java "$code_dir/manifest.json" \
+  -preScript RescueSharedRam.java \
   -postScript RescueNdsReport.java ${check[@]+"${check[@]}"} \
   ${analysis[@]+"${analysis[@]}"} > "$log" 2>&1 || status=$?
 

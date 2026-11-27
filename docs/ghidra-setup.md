@@ -133,6 +133,7 @@ Check on your dump:
 
 - `RESCUE: mapped arm9 + N overlays` where N is the number of ARM9 overlays in the manifest. The survey counted 145 overlays across the ARM9 and ARM7 tables ([`file-survey.md`](file-survey.md)); the manifest's `overlays` and `arm7_overlay_count` give the split.
 - No `RESCUE: WARNING` about overlapping blocks, and the ROM SHA-1 is the supported one (no `UNSUPPORTED/SYNTHETIC` line).
+- `RESCUE: block shared 027ff000 - 027fffff`: the shared main-RAM page ([ARM7 program](#arm7-program-349), "Shared RAM").
 - Functions are found in `arm9` and in the `ov_NNNN` blocks, and calls from overlays into the ARM9 resolve (`from ov_...` lines).
 - **V8 spot check:** the type chart `gTypeEffectivenessChart` is in overlay 1 at decoded offset `0x72688` (V6). `--check ov_0001+0x72688` should list at least one reference, ideally from code or from a literal pool used by a function in `ov_0001`. If it lists none, look at the address in the GUI. The table may be reached through a pointer computed at run time, or analysis may have missed the function that uses it.
 
@@ -262,7 +263,7 @@ python tools\nds_extract_code.py <ROM> -o C:\rescue-re\code
 ghidra --project rescue-arm9 --program arm7.bin decompile 037fec28
 ```
 
-The import prints the blocks (`arm7`, `autoload_0_037F8000` and its `_bss`, `autoload_1_027E0000` and its `_bss`, `io`, `io_ipc`). The check address `027FFFA8` is the key shadow word (`docs/re/io.md`). It should list two references, both in `FUN_037fec28`: a load at `037FEC50` and the store at `037FEC54`. To run the check on an imported project without importing again:
+The import prints the blocks (`arm7`, `autoload_0_037F8000` and its `_bss`, `autoload_1_027E0000` and its `_bss`, `io`, `io_ipc`, `shared`). The check address `027FFFA8` is the key shadow word (`docs/re/io.md`). It should list two references, both in `FUN_037fec28`: a load at `037FEC50` and the store at `037FEC54`. To run the check on an imported project without importing again:
 
 ```sh
 $GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -process arm7.bin -noanalysis -readOnly \
@@ -271,7 +272,16 @@ $GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -proc
 
 - `--program arm7.bin` works in every ghidra-cli command (`decompile`, `x-ref to`, `function list`), with the same one-opener rule as the ARM9.
 - **Text export:** `tools/ghidra/export.sh ~/rescue-re/export-arm7 ~/rescue-re/ghidra arm7.bin` (about 25 s). The `re_*` helpers read it with `RESCUE_EXPORT=~/rescue-re/export-arm7` (for example `RESCUE_EXPORT=~/rescue-re/export-arm7 re_refs 027fffa8`). Regenerate it after an ARM7 import.
-- The shared main-RAM area at `027FF000` (the shadow word `027FFFA8` and other ARM9/ARM7 mailboxes) is not mapped in either program. References to it are still recorded, as the check shows.
+- **Shared RAM:** both programs map `027FF000`..`027FFFFF` as an uninitialised, volatile block `shared` ([`RescueSharedRam.java`](../tools/ghidra/RescueSharedRam.java)). It is the top 4 KiB of main RAM, where each CPU reads words the other writes (the key shadow word `027FFFA8`, `027FFC3C` and others). The import scripts run it after `RescueNdsImport.java`; on an existing project, run it on each program (it does nothing if the block is there):
+
+  ```sh
+  for p in arm9.bin arm7.bin; do
+    $GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -process $p -noanalysis \
+      -scriptPath tools/ghidra -postScript RescueSharedRam.java
+  done
+  ```
+
+  Its values exist only at run time; read them with a py-desmume probe.
 - Copies: make them again after an ARM7 import (below). The copies `rescue-arm9-a`, `-b`, `-c`, `-r` and `-r2` were made on 2026-11-27 after the ARM7 layout import, so they have it and the `docs/symbols.md` names. Older copies are in `~/rescue-re/backup-646/copies/`.
 - **Making a copy again** (after an import or `RescueApplySymbols.java`), with no bridge or GUI open on either project: a copy is the `.rep` folder plus an empty `.gpr`, and the folder does not store its own name.
 

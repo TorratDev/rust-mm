@@ -57,6 +57,7 @@ if ($Arm7) {
         "-processor", "ARM:LE:32:v4t", "-cspec", "default",
         "-scriptPath", $scriptDir,
         "-preScript", "RescueNdsImport.java", (Join-Path $codeDirAbs "manifest.json"), "arm7",
+        "-preScript", "RescueSharedRam.java",
         "-postScript", "RescueNdsReport.java") + $Check
     if ($NoAnalysis) { $args7 += "-noanalysis" }
     & $headless @args7 *> $log7
@@ -80,6 +81,7 @@ $argsList = @(
     "-processor", "ARM:LE:32:v5t", "-cspec", "default",
     "-scriptPath", $scriptDir,
     "-preScript", "RescueNdsImport.java", (Join-Path $codeDirAbs "manifest.json"),
+    "-preScript", "RescueSharedRam.java",
     "-postScript", "RescueNdsReport.java"
 ) + $Check
 if ($NoAnalysis) { $argsList += "-noanalysis" }
