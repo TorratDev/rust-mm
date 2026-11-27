@@ -250,8 +250,15 @@ python3 tools/ov_read.py arm9::02000010             # the ARM9 image
 The ARM7 binary is a second program in the same project, `arm7.bin`, with its own address space (ARMv4T). It is extracted with the ARM9 (`arm7.bin` and `"arm7"` in `manifest.json`; no ARM7 binary means `"arm7": null`), and imported with `--arm7`. The ARM9 program is not touched by this import.
 
 ```sh
-tools/ghidra/import.sh --arm7 ~/rescue-re/code ~/rescue-re/ghidra rescue-arm9
+tools/ghidra/import.sh --arm7 ~/rescue-re/code ~/rescue-re/ghidra rescue-arm9 --check 027FFFA8
 ghidra --project rescue-arm9 --program arm7.bin decompile 023801dc
+```
+
+The check address `027FFFA8` is the key shadow word (`docs/re/io.md`). It should list two references, both in `FUN_02386dd8`: a load at `02386E00` and the store at `02386E04`. To run the check on an imported project without importing again:
+
+```sh
+$GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -process arm7.bin -noanalysis -readOnly \
+  -scriptPath tools/ghidra -postScript RescueNdsReport.java 027FFFA8
 ```
 ```powershell
 .\tools\ghidra\import.ps1 -Arm7 -CodeDir C:\rescue-re\code -ProjectDir C:\rescue-re\ghidra
@@ -261,7 +268,14 @@ ghidra --project rescue-arm9 --program arm7.bin decompile 023801dc
 - `--program arm7.bin` works in every ghidra-cli command (`decompile`, `x-ref to`, `function list`), with the same one-opener rule as the ARM9.
 - Ghidra does not create a function at the ARM7 entry point (`02380000`) on its own; the functions it does find start at `023801B0`. Use `function list` to find starts, and mark the entry by hand before you rely on it.
 - The ARM7 BSS and autoload sections are not mapped (`shortcut: ARM7 BSS and autoloads not mapped, add when a question needs them`). ARM7 overlays are not extracted; the extractor warns when the ROM has some (`arm7_overlay_count` in the manifest).
-- Copies made before this import (`rescue-arm9-a`, `-b`, `-c`, `-r`) do not have `arm7.bin`. Make them again (section 6, when no investigator is running) before an investigator uses ARM7 queries.
+- The copies `rescue-arm9-a`, `-b`, `-c`, `-r` and `-r2` were made again on 2026-11-27, after the import and the symbol pass, so they have `arm7.bin` and the `docs/symbols.md` names. The old copies are in `~/rescue-re/backup-646/copies/`.
+- **Making a copy again** (after an import or `RescueApplySymbols.java`), with no bridge or GUI open on either project: a copy is the `.rep` folder plus an empty `.gpr`, and the folder does not store its own name.
+
+  ```sh
+  cd ~/rescue-re/ghidra
+  mv rescue-arm9-a.rep <backup folder>/   # or rm -rf, once nothing needs the old copy
+  cp -a rescue-arm9.rep rescue-arm9-a.rep && touch rescue-arm9-a.gpr
+  ```
 
 ## 7. Text export for read-only questions
 
