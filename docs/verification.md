@@ -917,3 +917,33 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Evidence:** blue-verified (runtime): every global step has a known caller (no reseeds); frame routine 2 or 4 steps per frame; the Hidden Power roll (`02001330`) runs at a wild spawn. Tags and the rest are in `re/rng.md`.
 - **Not verified:** combat, item drops and evolution were not in the run (movement and turns only, one floor).
 - **Fallback adopted:** none.
+
+---
+
+## #363 — Export timing and stale check (#646, batch C)
+
+- **Question:** how long a full text export of the `rescue-arm9` project takes, and whether the export stamp catches a stale export (`tools/ghidra/export.sh`, `--check`).
+- **Command:** `GHIDRA_INSTALL_DIR=<Ghidra 11.4.3> tools/ghidra/export.sh <folder outside the repo> ~/rescue-re/ghidra`, with the bridge and GUI closed. JDK 21.0.12. The run is headless, `-readOnly -noanalysis`.
+- **Result:** `5284 functions (0 failed), 121342 references`, wall-clock `elapsed-seconds: 192` (3 min 12 s) on this machine. The STAMP holds the SHA-1 of `docs/symbols.md`, the Ghidra version and the elapsed time.
+- **Stale check:** `export.sh --check <folder>` reports the export fresh against the current `docs/symbols.md`. The stale path (exit 1 after a change to `docs/symbols.md`, and on a missing STAMP) was run against a scratch copy of the repository with a stand-in headless script, not the real Ghidra.
+- **Not measured:** one `ghidra-cli` decompile for comparison. That needs a running bridge on a project copy, and this batch did not start one.
+- **Not verified:** the names. The first export was made before `RescueApplySymbols` ran on the project, so it had `FUN_` names for functions that `docs/symbols.md` names. Fixed in the batch below (the second export is the one in use).
+
+---
+
+## #646 batch C — constants, ARM7 import, names (#350, #349, #363)
+
+- **Question:** the three open pool words of #350, the ARM7 import of #349, and whether the project carries the `docs/symbols.md` names.
+- **Tools:** Ghidra 11.4.3 (the install on this machine; the `ghidra config` example in `ghidra-setup.md` names 12.1.4, so the runs here are not on that version), JDK 21.0.12, ghidra-cli 0.2.2. ROM: the supported dump, SHA-1 `6f01887356268de39085df01490347bbcc3aa330`.
+- **Pool words, read with `tools/ov_read.py` from the extracted files** (blue-verified, static):
+  - `ov_0001::0214C0A4` = `0x0000C11C`. Read by `FUN_ov_0001__0214bdbc` (ResetFloor) at its line 201, added to the dungeon pointer as the cell base. The `+0xC11C` offset is Blue's.
+  - `ov_0001::0214607C` = `0x000003E7` (999). Read by `FUN_ov_0001__02145ec8` (xref `02145F8C`), which clamps IQ to at least 1 and at most this value.
+  - `ov_0001::02149E78` = `0x021B45CC`. Read by `FUN_ov_0001__02149af8` (shop pass). The target `021B45CC` is in overlay 1's BSS and is written at `02149C1C`, so its four ints are not in any file. Not readable statically; lead: a runtime read in an emulator probe.
+  - A bare address is ambiguous here: `ov_0000` and `ov_0001` both cover `0x02138860`..`0x0215D260`. The tool refuses it and asks for the overlay name.
+- **ARM7 import (#349):** `nds_extract_code.py` writes `arm7.bin` (165532 bytes, RAM `0x02380000`, entry `0x02380000`, no ARM7 overlays in this ROM). `ARM9 sha1 unchanged` against the earlier extraction. `tools/ghidra/import.sh --arm7` adds program `arm7.bin` (ARMv4T) to `rescue-arm9`; the import log has `Analysis succeeded`, and the ARM9 program was not re-imported. Backup before the import: `~/rescue-re/backup-646/`.
+  - `ghidra --project rescue-arm9 --program arm7.bin decompile 023801dc` returns a decompiled function (16.5 s, including the bridge start). The ARM7 has 851 functions from `function list`. No function was created at the entry `02380000`.
+- **ghidra-cli decompile timing:** `ghidra --project rescue-arm9 --program arm9.bin decompile 0201f2e4` with the bridge running: 0.91 s, then 0.61 s on a repeat.
+- **Names:** `RescueApplySymbols.java` on `rescue-arm9`, headless: 858 `OK`, 4 `FAIL`. Two fixes were needed in `docs/symbols.md` (`uint8`, `u16`, `u32`, `s32` and `s16` are not Ghidra types; `GetAIUseItemProbability` lacked its overlay prefix). The script also stopped at the first unparseable type; its check phase now records a failure per row and goes on.
+  - The 4 `FAIL` rows were table conflicts, resolved in `docs/symbols.md` (second pass): `021467F4` keeps `ThrownProjectileItem` (blue-verified, matches the 4-parameter decompile); `021467BC` keeps `ThrownRockItem`; `02183994` keeps `RaiseLevelBy` (5 parameters, as in the decompile; `LevelUpTarget` had 3). The three dropped rows' evidence is moved into the kept rows. `GetMoneyValue` takes `void * item`, since the project defines no `Item` type. Second pass: 856 `OK`, `all checks passed`, 0 failures.
+- **Export after the names:** `tools/ghidra/export.sh ~/rescue-re/export ~/rescue-re/ghidra`, run after the second pass: `5286 functions (0 failed), 121342 references`, elapsed 162 s, stamp `symbols.md-sha1: 89d8f6bb…`. Earlier exports are kept at `~/rescue-re/export.before-646` and `~/rescue-re/export.prev-646`.
+- **Not done:** the investigator copies (`rescue-arm9-a`, `-b`, `-c`, `-r`) do not have the names or `arm7.bin`; they must be made again while no investigator runs.

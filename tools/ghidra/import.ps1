@@ -4,7 +4,7 @@ Build a Ghidra project with Blue's ARM9 and all ARM9 overlays mapped at their re
 addresses, from the output of tools/nds_extract_code.py. See docs/ghidra-setup.md.
 
 .DESCRIPTION
-Windows counterpart of import.sh. Needs GHIDRA_INSTALL_DIR (the folder with
+Windows counterpart of import.sh. With -Arm7, imports arm7.bin as a second program. Needs GHIDRA_INSTALL_DIR (the folder with
 ghidraRun.bat) and a JDK 21 (on PATH or JAVA_HOME). Never commit the project or the
 extracted binaries (docs/legal.md).
 
@@ -16,6 +16,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ProjectDir,
     [string]$ProjectName = "rescue-arm9",
     [switch]$NoAnalysis,
+    # Import arm7.bin as the program arm7.bin (ARMv4T) instead of the ARM9. Needs "arm7" in manifest.json.
+    [switch]$Arm7,
     # Addresses to print references to after analysis, e.g. ov_0001+0x72688.
     [string[]]$Check = @()
 )
@@ -42,6 +44,28 @@ if (($projAbs + $sep).StartsWith($repoRoot + $sep, [System.StringComparison]::Or
     if ($LASTEXITCODE -ne 0) { throw "$projAbs is inside the repository and not git-ignored (docs/legal.md)" }
 }
 New-Item -ItemType Directory -Force -Path $projAbs | Out-Null
+
+if ($Arm7) {
+    $arm7 = (Get-Content $manifest -Raw | ConvertFrom-Json).arm7
+    if (-not $arm7) { throw "manifest has no arm7 entry (the ROM has no ARM7 binary)" }
+    $log7 = Join-Path $projAbs "$ProjectName-arm7-import.log"
+    $args7 = @(
+        $projAbs, $ProjectName,
+        "-import", (Join-Path $codeDirAbs "arm7.bin"), "-overwrite",
+        "-loader", "BinaryLoader", "-loader-baseAddr", $arm7.ram_address,
+        "-processor", "ARM:LE:32:v4t", "-cspec", "default",
+        "-scriptPath", $scriptDir)
+    if ($Check.Count -gt 0) { $args7 += @("-postScript", "RescueNdsReport.java") + $Check }
+    if ($NoAnalysis) { $args7 += "-noanalysis" }
+    & $headless @args7 *> $log7
+    # analyzeHeadless exits 0 even when a script fails, so check the log as well.
+    if ($LASTEXITCODE -ne 0 -or (Get-Content $log7 | Select-String -Pattern 'SCRIPT ERROR' -Quiet)) {
+        Write-Error "ARM7 import failed; see $log7"
+        exit 1
+    }
+    Write-Host "OK: program arm7.bin in $(Join-Path $projAbs "$ProjectName.gpr") (ARM9 program unchanged)"
+    exit 0
+}
 
 $log = Join-Path $projAbs "$ProjectName-import.log"
 $argsList = @(

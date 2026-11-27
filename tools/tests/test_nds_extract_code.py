@@ -153,6 +153,53 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(man["arm9"]["module_params"]["found_by"], "magic search")
 
 
+class Arm7Tests(unittest.TestCase):
+    """ARM7 binary (header 0x30..0x3C). Synthetic ROM with an appended ARM7 blob (#349)."""
+
+    ARM7_RAM = 0x02380000
+
+    def rom_with_arm7(self, blob, ov7_size=0):
+        rom, _ = synth_nds.build()
+        off = len(rom)
+        rom = bytearray(rom + blob)
+        struct.pack_into("<4I", rom, 0x30, off, self.ARM7_RAM + 0x10, self.ARM7_RAM, len(blob))
+        struct.pack_into("<I", rom, 0x5C, ov7_size)
+        return bytes(rom)
+
+    def test_arm7_written_with_load_address(self):
+        blob = bytes(range(256)) * 4
+        files, manifest, warnings = x.extract(self.rom_with_arm7(blob), allow_unknown=True)
+        self.assertEqual(files["arm7.bin"], blob)
+        a7 = manifest["arm7"]
+        self.assertEqual(a7["ram_address"], "0x02380000")
+        self.assertEqual(a7["entry"], "0x02380010")
+        self.assertEqual(a7["size"], len(blob))
+        self.assertEqual(a7["sha1"], x.sha1(blob))
+        self.assertEqual(warnings, [])
+
+    def test_arm9_unchanged_by_arm7(self):
+        base_files, base_manifest, _ = x.extract(synth_nds.build()[0], allow_unknown=True)
+        files, manifest, _ = x.extract(self.rom_with_arm7(b"\x01" * 64), allow_unknown=True)
+        self.assertEqual(files["arm9.bin"], base_files["arm9.bin"])
+        self.assertEqual(manifest["arm9"], base_manifest["arm9"])
+
+    def test_no_arm7_means_no_file(self):
+        files, manifest, _ = x.extract(synth_nds.build()[0], allow_unknown=True)
+        self.assertNotIn("arm7.bin", files)
+        self.assertIsNone(manifest["arm7"])
+
+    def test_arm7_overlays_warned_not_extracted(self):
+        _, manifest, warnings = x.extract(self.rom_with_arm7(b"\x02" * 32, ov7_size=64),
+                                          allow_unknown=True)
+        self.assertEqual(manifest["arm7_overlay_count"], 2)
+        self.assertTrue(any("ARM7 overlay" in w for w in warnings), warnings)
+
+    def test_truncated_arm7_refused(self):
+        rom = self.rom_with_arm7(b"\x03" * 32)
+        with self.assertRaises(x.ExtractError):
+            x.extract(rom[:-16], allow_unknown=True)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_writes_outputs(self):
         rom, facts = synth_nds.build(compress_arm9=True)

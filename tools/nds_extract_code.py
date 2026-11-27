@@ -335,6 +335,23 @@ def extract(rom, allow_unknown=False):
                "size": mp["static_bss_end"] - mp["static_bss_start"]}
 
     files = {"arm9.bin": arm9}
+    # ARM7 binary (header 0x30..0x3C): stored as it is, with its load address. Its BSS and
+    # autoload sections are not mapped yet (docs/ghidra-setup.md, section 6).
+    arm7_off, arm7_entry, arm7_ram, arm7_size = struct.unpack_from("<4I", rom, 0x30)
+    arm7 = slice_checked(rom, arm7_off, arm7_size, "ARM7 binary")
+    # No ARM7 binary (size 0) means no arm7.bin and "arm7": null in the manifest.
+    arm7_entry_info = None
+    if arm7_size:
+        files["arm7.bin"] = arm7
+        arm7_entry_info = {
+            "file": "arm7.bin", "sha1": sha1(arm7), "size": len(arm7),
+            "rom_offset": arm7_off, "rom_size": arm7_size,
+            "ram_address": hx(arm7_ram), "entry": hx(arm7_entry),
+        }
+    if ov7_size:
+        # shortcut: ARM7 overlays are not extracted, add them with the same table code as the
+        # ARM9 ones when a question needs one (manifest keeps arm7_overlay_count).
+        warnings.append(f"ROM has {ov7_size // 32} ARM7 overlay(s); they are not extracted")
     arm9_entry = {
         "file": "arm9.bin", "sha1": sha1(arm9), "size": len(arm9),
         "rom_offset": arm9_off, "rom_size": arm9_size,
@@ -401,6 +418,7 @@ def extract(rom, allow_unknown=False):
         "processor": {"ghidra_language": GHIDRA_LANGUAGE, "compiler_spec": "default",
                       "cpu": "ARM946E-S (ARMv5TE)"},
         "arm9": arm9_entry,
+        "arm7": arm7_entry_info,
         "overlays": overlays,
         "arm7_overlay_count": ov7_size // 32,
         "warnings": warnings,

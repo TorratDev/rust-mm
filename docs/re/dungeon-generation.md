@@ -62,9 +62,9 @@ Five overlay 1 pool words, read from `rescue-re/code/overlay_0001.bin` at RAM ba
 
 | Pool word | Value | Meaning |
 |-----------|-------|---------|
-| `DAT_0214C0A4` | `0xC11C` | [hypothesis] Confirms the 8 × 8 cell base `+0xC11C` |
+| `DAT_0214C0A4` | `0xC11C` | blue-verified (#646): `ov_0001::0214C0A4` in the file. `ResetFloor` (`ov_0001::0214BDBC`) adds it to the dungeon pointer as the 8 × 8 cell base, so the base is `+0xC11C` |
 | `DAT_02179124` | `0x584` | [hypothesis] The spawn-request list is at `gDungeon + 0x584`, not Red's `0x57C` |
-| `DAT_02149E78` | `0x021B45CC` | [hypothesis] The shop bounds are the overlay global `021B45CC`, not `gDungeon + 0xC0E0..0xC0EC` |
+| `DAT_02149E78` | `0x021B45CC` | blue-verified (#646): the pointer is `ov_0001::02149E78` in the file. Its target `021B45CC` is in overlay 1's BSS, not in the file; `CarveShopAndPlaceItems` (`ov_0001::02149AF8`) writes it at `02149C1C`. The bounds are not readable statically; the `gDungeon + 0xC0E0` reading stays unverified |
 | `DAT_021525F0` | `0x021B45CC` | [hypothesis] Same global |
 | `DAT_021525FC` | `0x021B45C8` | [hypothesis] The shop-centre pair |
 
@@ -402,9 +402,9 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 - The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
 - The fixed rooms and the layout generators (cases 3 to 7, 9 and 10) are tracked in [#148](https://github.com/TorratDev/rust-mm/issues/148). The enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up are their own issues. The driver calls them through `FloorSteps`.
 - Unresolved in the #48 findings:
-  - `DAT_0214C0A4`, the base of ResetFloor's 8 × 8 cell records. It is an overlay pool word and could not be read: `memory read` fails on it, and overlay-form addresses are not accepted. The `+0xC11C` offset in `structs.md` is Red's and is not confirmed in Blue. The value is `0xC11C` in both reads (see the pool-word table above, #179 P1).
+  - Closed (#646): `DAT_0214C0A4` is `0xC11C`, the cell base offset, read from `ov_0001` with `tools/ov_read.py`; `ResetFloor` uses it at `0214BDBC` (decompile line 201). The `+0xC11C` offset is Blue's.
   - `DAT_02179124`, the base of the P2 list (`*PTR_gDungeon + DAT_02179124`). Value read from the overlay file: `0x584`, see the pool-word table above. The read value `0x584` is the same in both reads (#179 P1), and it puts the list at `gDungeon + 0x584`, not Red's `0x57C`. The consumer is `FUN_ov_0001__02178FC8` (Red `sub_806C3C0`); its caller is not located. See [Spawn-request list](#spawn-request-list-179-p2).
-  - `DAT_02149E78`, the shop-bounds pointer. The bounds are four ints there, not in `gDungeon`. The table in the struct notes lists `+0xC0E0` to `+0xC0EC` for them; that matches only if the pointer targets those offsets. Unverified. The pointer's value is read from the overlay file as `0x021B45CC` (see the pool-word table above). That the target is an overlay global and not `gDungeon + 0xC0E0` is a [hypothesis].
+  - Closed as not readable (#646): `DAT_02149E78` is the pointer `0x021B45CC` (`ov_0001::02149E78`, blue-verified). The target is in overlay 1's BSS (`0x021B40A0`..`0x021B4900`), which is not in the file, and `CarveShopAndPlaceItems` writes it at `02149C1C`. Its four ints are set at run time, so they are not in any file. The table in the struct notes lists `+0xC0E0` to `+0xC0EC`; that is still unverified. Lead: a runtime read of `021B45CC` in an emulator probe.
 
 ## Open questions
 
