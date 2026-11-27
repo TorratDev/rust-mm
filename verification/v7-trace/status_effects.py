@@ -13,6 +13,7 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from status_probe import Probe
 
+import romarg; romarg.fill()
 if len(sys.argv) < 3:
     sys.exit(__doc__)
 pr = Probe(sys.argv[1], sys.argv[2])

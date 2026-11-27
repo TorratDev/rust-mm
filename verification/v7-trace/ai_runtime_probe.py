@@ -11,6 +11,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy"); os.environ.setdefault("SDL_AU
 from desmume.emulator import DeSmuME
 from retail_trace import parse_inputs, Ram, G_DUNGEON, TRIGGER, TEAM, WILD
 
+import romarg; romarg.fill()
 p = argparse.ArgumentParser(); p.add_argument("rom"); p.add_argument("out")
 p.add_argument("--turn-frames", type=int, default=3000); p.add_argument("--max-boot", type=int, default=30000)
 a = p.parse_args()

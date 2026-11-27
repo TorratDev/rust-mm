@@ -4,6 +4,9 @@
 # or pi under hc with the environment the role scripts read, and checks it came up.
 #
 # Usage: scripts/orch/spawn.sh ROLE --issue N [fields] [--engine pi|go|claude] [--model M] [--dry-run]
+#   Every role gets RESCUE_ROM (the main checkout's pmdb.nds) and RESCUE_PY (the py-desmume
+#   interpreter, default ~/venvs/desmume/bin/python). An investigator is refused when either is
+#   missing. A tracker issue with a "## Members" section names its member issues in the dispatch.
 #   --engine pi (default): pi with Claude models. go: pi with OpenCode Go models (on a Claude
 #   limit). claude: Claude Code.
 #   investigator  --points "P1, P2" [--findings FILE]
@@ -45,6 +48,15 @@ model=${a[model]:-${models[$engine.$role]:-}}
 orch=${HC_TERMINAL_ID:-}
 [ -n "$orch" ] || [ "$dry" = 1 ] || die "HC_TERMINAL_ID is empty: run the orchestrator under hc"
 repo=$(main_repo "$HARNESS_DIR")
+rom="$repo/pmdb.nds" py=${RESCUE_PY:-$HOME/venvs/desmume/bin/python}
+if [ "$role" = investigator ]; then
+  [ -f "$rom" ] || die "spawn.sh: no ROM at $rom; put the supported dump there (docs/supported-dumps.md)"
+  "$py" -I -c 'import desmume' 2>/dev/null || die "spawn.sh: $py cannot import desmume (py-desmume)"
+fi
+# Members of a batch tracker: the #N numbers in its "## Members" section.
+members=$(gh issue view "$n" --json body --jq .body 2>/dev/null | python3 -c 'import re,sys
+m = re.search(r"^## Members\n(.*?)(?=^## |\Z)", sys.stdin.read(), re.S | re.M)
+print(" ".join(sorted(set(re.findall(r"#(\d+)", m.group(1))), key=int)) if m else "")' || true)
 live=$(hc ls 2>/dev/null | python3 -c 'import json,sys
 for t in json.load(sys.stdin).get("terminals", []):
     if t.get("name"): print(t["name"])' || true)
@@ -66,7 +78,7 @@ case "$role" in
     need points
     findings=${a[findings]:-$(cache_dir findings)/$n-$name.md}
     files=""
-    task="Dispatch: you are investigator ${name#investigator-}. Engine and model: $engine $model. Ghidra copy: $copy. Sub-issue #$n. Your points: ${a[points]}. Findings file: $findings. Start now." ;;
+    task="Dispatch: you are investigator ${name#investigator-}. Engine and model: $engine $model. Ghidra copy: $copy. Sub-issue #$n.${members:+ Member issues: $members.} Your points: ${a[points]}. Findings file: $findings. Start now." ;;
   executor)
     need slug objective files verify evidence link
     case "${a[link]}" in closes) link="Closes #$n" ;; refs) link="Refs #$n" ;; *) die "--link closes|refs" ;; esac
@@ -77,15 +89,16 @@ case "$role" in
     [ -n "${a[revise]:-}" ] && extra=" Revise: PR #${a[revise]}. The worktree and branch already hold the work. Read git log and the latest review comment on the PR, and make every change it lists."
     [ -n "${a[fix-checks]:-}" ] && extra=" Fix checks: the worktree and branch already hold the work. Failing check: ${a[fix-checks]}."
     [ -n "${a[resume]:-}" ] && extra=" Resume: the worktree already holds earlier work; read git log and git status first."
-    task="Dispatch: you are executor ${name#executor-}. Engine and model: $engine $model. Sub-issue #$n. Worktree: $wt. Branch: $branch. Objective: ${a[objective]}. Files you may touch: $files. Verification: ${a[verify]}. Evidence to record: ${a[evidence]}. Findings: $findings. PR link: $link.$extra Start now." ;;
+    task="Dispatch: you are executor ${name#executor-}. Engine and model: $engine $model. Sub-issue #$n.${members:+ Member issues: $members.} Worktree: $wt. Branch: $branch. Objective: ${a[objective]}. Files you may touch: $files. Verification: ${a[verify]}. Evidence to record: ${a[evidence]}. Findings: $findings. PR link: $link.$extra Start now." ;;
   reviewer)
     need pr slug objective files executor-line
     branch="$n-${a[slug]}" wt=$(wt_path "$branch" "$repo") files=${a[files]}
-    task="Dispatch: you are $name. Engine and model: $engine $model. Ghidra copy: $copy. Sub-issue #$n. PR #${a[pr]}. Worktree: $wt. Branch: $branch. Objective: ${a[objective]}. Files the task named: $files. Executor's line: ${a[executor-line]}. Start now." ;;
+    task="Dispatch: you are $name. Engine and model: $engine $model. Ghidra copy: $copy. Sub-issue #$n.${members:+ Member issues: $members.} PR #${a[pr]}. Worktree: $wt. Branch: $branch. Objective: ${a[objective]}. Files the task named: $files. Executor's line: ${a[executor-line]}. Start now." ;;
 esac
 
 env_args=(env ORCH="$orch" AGENT_ROLE="$role" AGENT_NAME="$name" AGENT_ENGINE="$engine"
-  AGENT_MODEL="$model" AGENT_GHIDRA="$copy" TASK_FILES="$files" TASK_ISSUE="$n")
+  AGENT_MODEL="$model" AGENT_GHIDRA="$copy" TASK_FILES="$files" TASK_ISSUE="$n"
+  RESCUE_ROM="$rom" RESCUE_PY="$py")
 role_line="Read prompts/$role.md in your working directory; it defines your role."
 readonly_role=0; [ "$role" = executor ] || readonly_role=1
 if [ "$engine" = claude ]; then
