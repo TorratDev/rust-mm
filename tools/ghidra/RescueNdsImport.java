@@ -14,7 +14,9 @@
 // and labels the entry point, module params and overlay static initialisers.
 //
 // Headless: tools/ghidra/import.sh or import.ps1 (runs this as a -preScript, so auto
-// analysis runs on the mapped program). Script argument: path to manifest.json.
+// analysis runs on the mapped program). Script arguments: path to manifest.json, then
+// optionally "arm7" to map arm7.bin instead (language ARM:LE:32:v4t): the same blocks
+// named arm7, arm7_bss, autoload_N_XXXXXXXX and ov7_NNNN, and ARM7 I/O labels.
 // GUI: import arm9.bin as Raw Binary, language ARM:LE:32:v5t, do NOT analyse yet,
 // run this script from the Script Manager (it asks for manifest.json), then analyse.
 //
@@ -55,7 +57,9 @@ public class RescueNdsImport extends HeadlessScript {
 
 	private static final String FORMAT = "rescue-nds-code-manifest";
 	private static final int VERSION = 1;
-	private static final String LANGUAGE = "ARM:LE:32:v5t";
+	private String cpu = "arm9";
+	private String cpuName = "ARM9";
+	private String language = "ARM:LE:32:v5t";
 
 	private Memory mem;
 	private AddressSpace ram;
@@ -82,6 +86,14 @@ public class RescueNdsImport extends HeadlessScript {
 		String[] args = getScriptArgs();
 		if (args.length > 0) {
 			manifestFile = new File(args[0]);
+			if (args.length > 1 && args[1].equals("arm7")) {
+				cpu = "arm7";
+				cpuName = "ARM7";
+				language = "ARM:LE:32:v4t";
+			}
+			else if (args.length > 1) {
+				throw new IllegalArgumentException("second argument must be arm7, got " + args[1]);
+			}
 		}
 		else {
 			manifestFile = askFile("Select manifest.json from nds_extract_code.py", "Map");
@@ -98,9 +110,12 @@ public class RescueNdsImport extends HeadlessScript {
 				"not a " + FORMAT + " v" + VERSION + " manifest: " + manifestFile);
 		}
 		String lang = currentProgram.getLanguageID().getIdAsString();
-		if (!LANGUAGE.equals(lang)) {
+		if (!language.equals(lang)) {
 			throw new IllegalStateException("program language is " + lang + ", expected " +
-				LANGUAGE + ". Re-import arm9.bin with language " + LANGUAGE + ".");
+				language + ". Re-import " + cpu + ".bin with language " + language + ".");
+		}
+		if (!m.has(cpu) || m.get(cpu).isJsonNull()) {
+			throw new IllegalArgumentException("manifest has no " + cpu + " entry: " + manifestFile);
 		}
 		JsonObject rom = m.getAsJsonObject("rom");
 		if (!rom.get("supported").getAsBoolean()) {
@@ -116,7 +131,7 @@ public class RescueNdsImport extends HeadlessScript {
 			mem.removeBlock(b, monitor);
 		}
 		// The raw-binary importer marks the ARM exception vectors (relative to its base
-		// address) as entry points; on an NDS ARM9 these are not code entry points.
+		// address) as entry points; on an NDS binary these are not code entry points.
 		SymbolTable symbols = currentProgram.getSymbolTable();
 		List<Address> stale = new ArrayList<>();
 		symbols.getExternalEntryPointIterator().forEachRemaining(stale::add);
@@ -124,22 +139,22 @@ public class RescueNdsImport extends HeadlessScript {
 			symbols.removeExternalEntryPoint(a);
 		}
 
-		JsonObject a9 = m.getAsJsonObject("arm9");
+		JsonObject a9 = m.getAsJsonObject(cpu);
 		FileBytes a9fb = fileBytes(str(a9, "file"), a9.get("size").getAsLong());
 		long a9ram = num(a9, "ram_address");
 		currentProgram.setImageBase(addr(a9ram), true);
 
 		JsonObject st = a9.getAsJsonObject("static");
-		MemoryBlock arm9 = mem.createInitializedBlock("arm9", addr(num(st, "ram_address")), a9fb,
+		MemoryBlock arm9 = mem.createInitializedBlock(cpu, addr(num(st, "ram_address")), a9fb,
 			st.get("file_offset").getAsLong(), st.get("size").getAsLong(), false);
-		perms(arm9, true, true, true, "ARM9 static, " + str(a9, "file") +
+		perms(arm9, true, true, true, cpuName + " static, " + str(a9, "file") +
 			(a9.get("compressed").getAsBoolean() ? " (BLZ-decoded)" : ""));
 		report(arm9);
 
 		if (a9.has("bss") && !a9.get("bss").isJsonNull()) {
 			JsonObject bss = a9.getAsJsonObject("bss");
-			uninit("arm9_bss", num(bss, "ram_address"), bss.get("size").getAsLong(),
-				"ARM9 static BSS");
+			uninit(cpu + "_bss", num(bss, "ram_address"), bss.get("size").getAsLong(),
+				cpuName + " static BSS");
 		}
 
 		for (JsonElement e : a9.getAsJsonArray("autoloads")) {
@@ -155,7 +170,7 @@ public class RescueNdsImport extends HeadlessScript {
 				}
 				MemoryBlock b = mem.createInitializedBlock(name, a, a9fb,
 					al.get("file_offset").getAsLong(), size, overlaps(a, size));
-				perms(b, true, true, true, "ARM9 autoload section " + al.get("index") +
+				perms(b, true, true, true, cpuName + " autoload section " + al.get("index") +
 					" (copied here by crt0 at boot), from " + str(a9, "file") + " +0x" +
 					Long.toHexString(al.get("file_offset").getAsLong()));
 				report(b);
@@ -176,7 +191,8 @@ public class RescueNdsImport extends HeadlessScript {
 			Address mp = addr(num(a9.getAsJsonObject("module_params"), "ram_address"));
 			if (mem.contains(mp)) {
 				createLabel(mp, "ModuleParams", true, SourceType.IMPORTED);
-				for (int i = 0; i < 9; i++) {
+				// Nine words with the ARM9 magic pair; the ARM7 block has six.
+				for (int i = 0; i < (cpu.equals("arm7") ? 6 : 9); i++) {
 					clearListing(mp.add(i * 4));
 					createData(mp.add(i * 4), DWordDataType.dataType);
 				}
@@ -185,11 +201,14 @@ public class RescueNdsImport extends HeadlessScript {
 
 		// Overlays: one overlay address space per overlay.
 		int nOv = 0;
-		for (JsonElement e : m.getAsJsonArray("overlays")) {
+		String ovKey = cpu.equals("arm7") ? "arm7_overlays" : "overlays";
+		String ovPrefix = cpu.equals("arm7") ? "ov7_" : "ov_";
+		JsonElement ovList = m.has(ovKey) ? m.get(ovKey) : new com.google.gson.JsonArray();
+		for (JsonElement e : ovList.getAsJsonArray()) {
 			monitor.checkCancelled();
 			JsonObject ov = e.getAsJsonObject();
 			int id = ov.get("id").getAsInt();
-			String name = String.format("ov_%04d", id);
+			String name = String.format(ovPrefix + "%04d", id);
 			long size = ov.get("size").getAsLong();
 			FileBytes fb = fileBytes(str(ov, "file"), size);
 			MemoryBlock b;
@@ -201,7 +220,7 @@ public class RescueNdsImport extends HeadlessScript {
 				b = mem.createUninitializedBlock(name, addr(num(ov, "ram_address")),
 					Math.max(1, ov.get("bss_size").getAsLong()), true);
 			}
-			perms(b, true, true, true, "ARM9 overlay " + id + ", file id " + ov.get("file_id") +
+			perms(b, true, true, true, cpuName + " overlay " + id + ", file id " + ov.get("file_id") +
 				(ov.get("compressed").getAsBoolean() ? ", BLZ-decoded" : "") + ", " +
 				str(ov, "file"));
 			report(b);
@@ -210,7 +229,7 @@ public class RescueNdsImport extends HeadlessScript {
 			if (bssSize > 0 && size > 0) {
 				MemoryBlock bb = mem.createUninitializedBlock(name + "_bss",
 					inSpace(space, num(ov, "bss_address")), bssSize, true);
-				perms(bb, true, true, false, "BSS of ARM9 overlay " + id);
+				perms(bb, true, true, false, "BSS of " + cpuName + " overlay " + id);
 				report(bb);
 			}
 			createLabel(b.getStart(), name + "_start", true, SourceType.IMPORTED);
@@ -219,7 +238,7 @@ public class RescueNdsImport extends HeadlessScript {
 		}
 
 		ioRegisters();
-		println("RESCUE: mapped arm9 + " + nOv + " overlays, " + created +
+		println("RESCUE: mapped " + cpu + " + " + nOv + " overlays, " + created +
 			" blocks; ROM SHA-1 " + str(rom, "sha1"));
 	}
 
@@ -341,10 +360,29 @@ public class RescueNdsImport extends HeadlessScript {
 		{0x100000, "REG_IPCFIFORECV"}, {0x100010, "REG_CARD_DATA_RD"},
 	};
 
+	// ARM7 I/O registers that sit at the same offsets as on the ARM9 (GBATEK), plus the
+	// ARM7-only ones the notes use.
+	private static final Object[][] IO7 = {
+		{0x004, "REG_DISPSTAT"}, {0x006, "REG_VCOUNT"},
+		{0x0B0, "REG_DMA0SAD"}, {0x0B4, "REG_DMA0DAD"}, {0x0B8, "REG_DMA0CNT"},
+		{0x100, "REG_TM0CNT_L"}, {0x102, "REG_TM0CNT_H"}, {0x104, "REG_TM1CNT_L"},
+		{0x106, "REG_TM1CNT_H"}, {0x108, "REG_TM2CNT_L"}, {0x10A, "REG_TM2CNT_H"},
+		{0x10C, "REG_TM3CNT_L"}, {0x10E, "REG_TM3CNT_H"},
+		{0x130, "REG_KEYINPUT"}, {0x132, "REG_KEYCNT"}, {0x136, "REG_EXTKEYIN"},
+		{0x138, "REG_RTC"},
+		{0x180, "REG_IPCSYNC"}, {0x184, "REG_IPCFIFOCNT"}, {0x188, "REG_IPCFIFOSEND"},
+		{0x1A0, "REG_AUXSPICNT"}, {0x1A2, "REG_AUXSPIDATA"}, {0x1A4, "REG_ROMCTRL"},
+		{0x1C0, "REG_SPICNT"}, {0x1C2, "REG_SPIDATA"},
+		{0x204, "REG_EXMEMSTAT"}, {0x208, "REG_IME"}, {0x210, "REG_IE"}, {0x214, "REG_IF"},
+		{0x241, "REG_WRAMSTAT"}, {0x300, "REG_POSTFLG"}, {0x301, "REG_HALTCNT"},
+		{0x304, "REG_POWCNT2"}, {0x400, "REG_SOUND0CNT"}, {0x500, "REG_SOUNDCNT"},
+		{0x100000, "REG_IPCFIFORECV"}, {0x100010, "REG_CARD_DATA_RD"},
+	};
+
 	private void ioRegisters() throws Exception {
 		long base = 0x04000000L;
 		MemoryBlock io = mem.createUninitializedBlock("io", addr(base), 0x2000, false);
-		perms(io, true, true, false, "ARM9 I/O registers");
+		perms(io, true, true, false, cpuName + " I/O registers");
 		io.setVolatile(true);
 		report(io);
 		MemoryBlock io2 = mem.createUninitializedBlock("io_ipc", addr(base + 0x100000), 0x20,
@@ -352,7 +390,7 @@ public class RescueNdsImport extends HeadlessScript {
 		perms(io2, true, true, false, "IPC FIFO receive / game card data");
 		io2.setVolatile(true);
 		report(io2);
-		for (Object[] r : IO) {
+		for (Object[] r : cpu.equals("arm7") ? IO7 : IO) {
 			createLabel(addr(base + (Integer) r[0]), (String) r[1], true, SourceType.IMPORTED);
 		}
 	}
