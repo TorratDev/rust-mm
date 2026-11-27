@@ -4,7 +4,9 @@ Boots the ROM and plays boot_to_dungeon.txt, then plays turn_inputs.txt on the f
 An entry hook on CalcDamage (ov_0001::0217BD94) records the arguments, the attacker and
 target info structs (entity+0x70), gDungeonRngState and the return address. Return hooks at
 the four call sites record the dmg_struct and the gDungeon working values. One JSON line per
-hit goes to OUT/hits.jsonl. At the first hit the lookup tables are read from RAM into
+hit goes to OUT/hits.jsonl. With a leader flag set (--focus, --flinch,
+--paralysis), each leader entry to the move gate (02172ADC) and to the attack it calls
+(0215B384) goes to OUT/gate.jsonl with the flinch and paralysis bytes (#624). At the first hit the lookup tables are read from RAM into
 OUT/tables.json (overlay 1 is resident there during a dungeon).
 
 Nothing from the ROM is written into the repository: OUT must be outside it.
@@ -28,6 +30,8 @@ CALC_DAMAGE = 0x0217BD94
 GDUNGEON_PTR = 0x0217C79C  # literal holding &gDungeon, as CalcDamage loads it
 G_DUNGEON = 0x020E0788  # pointer to the dungeon struct (retail_trace.py)
 RNG_STATE = 0x021B3F58  # gDungeonRngState
+MOVE_GATE = 0x02172ADC  # flinch / paralysis gate (#624); void, the refusal is the branch it takes
+GATE_ATTACK = 0x0215B384  # the attack call the gate makes only when not refused
 RET_SITES = [0x021567C8, 0x02161B50, 0x02161D5C, 0x0215672C]  # BL sites, from the x-ref
 INFO_LEN = 0x140
 GD_LO, GD_HI = 0x134, 0x16C  # damageCalcWorkingValues
@@ -47,8 +51,8 @@ def main() -> None:
     p.add_argument("out")
     p.add_argument("--frames", type=int, default=9000, help="turn frames after the dungeon starts")
     p.add_argument("--inputs", default=os.path.join(HERE, "combat_inputs.txt"), help="turn input file")
-    p.add_argument("--paralysis", action="store_true", help="set the team leader's +0x9B = 4, +0x9C = 2 (paralysis, #624)")
-    p.add_argument("--flinch", action="store_true", help="set the team leader's +0xAC = 1, +0xAD = 2 (flinch, #624)")
+    p.add_argument("--paralysis", action="store_true", help="set the team leader's +0x9B = 4, +0x9C = 9 (paralysis, #624)")
+    p.add_argument("--flinch", action="store_true", help="set the team leader's +0xAC = 1, +0xAD = 9 (flinch, #624)")
     p.add_argument("--focus", choices=["none", "on", "off"], default="none",
                    help="set the team leader's +0xC4/+0xC5 (Focus Energy) at the first dungeon frame (#624)")
     a = p.parse_args()
@@ -119,6 +123,20 @@ def main() -> None:
 
         return on_exit
 
+    leader = [0]  # leader entity, set after the team fills in
+    gate_out = open(os.path.join(a.out, "gate.jsonl"), "w")
+
+    def on_gate(name: str):
+        def hook(*_):
+            if leader[0] and regs.r0 == leader[0]:
+                info = rd32(leader[0] + 0x70)
+                gate_out.write(json.dumps({"frame": frame_no[0], "fn": name, "lr": regs.r14,
+                                           "ac": rd(info + 0xAC, 1)[0], "ad": rd(info + 0xAD, 1)[0],
+                                           "9b": rd(info + 0x9B, 1)[0], "9c": rd(info + 0x9C, 1)[0]}) + "\n")
+        return hook
+
+    emu.memory.register_exec(MOVE_GATE, on_gate("gate"))
+    emu.memory.register_exec(GATE_ATTACK, on_gate("attack"))
     emu.memory.register_exec(CALC_DAMAGE, on_entry)
     for site in RET_SITES:
         emu.memory.register_exec(site + 4, make_exit(site + 4))
@@ -157,6 +175,9 @@ def main() -> None:
             mem.write_byte(leader_info + 0xAD, 9)   # long window: the first attack comes near frame 1530
             print(f"leader info {leader_info:#x} +0xAC set to 1", flush=True)
 
+    gd = rd32(G_DUNGEON)
+    leader[0] = rd32(gd + 0x11314) if a.focus != "none" or a.flinch or a.paralysis else 0
+
     turns = h.parse_inputs(a.inputs)
     for f in range(a.frames):
         frame_no[0] = f
@@ -164,6 +185,7 @@ def main() -> None:
             emu.input.keypad_update(turns[f])
         emu.cycle(with_joystick=False)
     out.close()
+    gate_out.close()
     print(f"{a.frames} turn frames: {count['entry']} entries, {count['hit']} hits", flush=True)
     emu.destroy()
 
