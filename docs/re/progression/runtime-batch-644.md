@@ -52,6 +52,39 @@ Tracker: [#644](https://github.com/TorratDev/rust-mm/issues/644). Environment: [
 - The menu never returned: its return value is `null` in both runs. The probe presses A every 120 frames and stops after 3000 menu frames, so the menu stayed open. The cases for choose, cancel and new move are not tested. Non-team removal (`02182A94`) was not reached.
 - Status: forget menu entry is reached under this forced state; its result and the removal are still open. Output JSON SHA-1 not recorded here.
 
+## Escape Orb exit, result code 2 (#641), forced item
+
+- Probe: `escape_orb_probe.py --boot` (FORCED). The team bag is empty and the first floor has no Escape Orb (the floor-item bytes are `01 07 69`, `01 04 69`, `01 06 69`, none of them item 200). The probe writes item 200 into bag slot 0 (`01 01 C8`) and sets the bag gate `gDungeon+0x64C` to 1, tagged forced. The bag menu is opened with the `items_bag_probe.py` keys (`W X DOWN A A A`).
+- Output: `EscapeOrbAction` (`021623A4`, move 181) fires at frame 784. The slot clears after the use. `0206ED24` and `02178068(1)` fire at frame 1033, and the result code read at the run struct's `+0x60` is **2**. The struct is `0206DC20`'s entry `r0` (`0x027E3A24`), which the tail also holds in `r5`.
+- Reading: this matches the Red mapping. An escape sets the escaped reason (`unk11 = 1`), which is not a cleared run, so it gives code 2 ([`reference/pmd-red/src/run_dungeon.c`](../../reference/pmd-red/src/run_dungeon.c), lines 520 to 660). Blue's item 200 as the Escape Orb is confirmed by the move hook only, not by the item table.
+- Not reached: `0206ED3C` (code -2), `0206ED4C` (code -1), `02177FD8`, and `0206DC20` itself (its entry is seen only on the boot route, and the savestate route starts after it). Codes 1 and 4 are not tested.
+- Caveat: `friend_areas_probe.py` reads the result code at `gDungeon+0x60`. On this run that value was `0`, while the run struct gives `2`. So the friend probe's code column is not the result code. This is recorded, not fixed here.
+- Output JSON: `escape-orb-boot.json` in scratch, SHA-1 `ebad7d3439e51636c22422625c5acafa7d185cbb`.
+
+## Code -1 by the dungeon wind, not a defeat (#641)
+
+- Probe: `defeat_probe.py` (natural, nothing forced). It boots the normal route, presses A every 30 frames, and logs the leader's HP every 300 frames.
+- Output: the leader went from 30 HP to level 6 (34 max HP) through natural wild KOs, and was still alive (33 HP) at frame 40500. The run ended at frame 40530 with `02177FD8` (r0 = -2), `0206ED4C`, and `02178068(0)`, and the result code read at the run struct's `+0x60` was **-1**.
+- **Correction:** this was not a leader defeat. The run ended with the wind's blow-out (`DUNGEON_EXIT_BLOWN_OUT_UNSEEN_FORCE`, reason `0x21E`). Red's `dungeon_wind.c` raises that faint when the wind countdown reaches zero (`windTurns < 1` in `windPhase` 3, lines 77 to 81). The leader's faint reason was `0x21E` in every later run, which is the same wind exit. So the code -1 here is the wind exit, and a natural leader defeat has not been observed.
+- Not reached: codes 1, 4, and -2 (`0206ED3C`). Code 2 was reached above with the Escape Orb.
+- Output JSON in scratch: `defeat.json`.
+
+## Forced distress count, abandon attempt (#641, code -2): not reached
+
+- Probe: `defeat_probe.py --force-rescues 3` (FORCED). It writes 3 at `gDungeon+0x66B` after boot. That offset is Blue `unk644.unk37`, inferred from Red's struct layout and not checked on the ROM. Red offers the distress-call prompt on a leader faint only when this count is above 0, and the yes answer sets the abandon flag (`unk6`), so the exit is code -2.
+- Output: 28 faint calls (`021778F4`), the leader's last at frame 40334 with reason `0x21E`. The exit at frame 40530 was code **-1** (`02177FD8` with r0 = -2, `0206ED4C`, `02178068(0)`), the same as the natural defeat. No prompt was seen: the distress prompt's function was not hooked, and Red's exit-reason exclusion list does not map cleanly onto the Blue reason codes (the Blue codes such as `0x163` and `0x21E` are not Red's enum values).
+- Status: code -2 is not reached. Next, check that `+0x66B` holds 3 at the faint (the write may not persist or the offset is wrong), and hook the yes/no prompt to see whether it is offered.
+- Follow-up (checked on the Blue export, `021778F4_HandleFaint_Async.c`): the distress count is `gDungeon+0x66B` (read directly by the faint handler), so the forced offset is confirmed. The prompt (`AskYesNo`, `0x02153E80`) is skipped when the faint reason is `0x21C` or one of two other excluded values, and when `missionKind` is 1. Reason `0x21E` (blow-out) is one of the excluded values.
+- Two more runs with A every 25 and 45 frames (forced count 3, `unk37` read as 3 at every faint): the leader faints with reason `0x21E` in both, the prompt is not offered (`AskYesNo` not hit), and the exit is code -1 again (frames 40650 and 56835). So with these inputs the leader's natural faint on this floor is the excluded blow-out, and the distress path is not reached. Code -2 needs a leader faint with a reason outside the exclusions.
+
+## Code -2 by the distress prompt (#641), forced HP and forced count
+
+- Probe: `defeat_probe.py --force-hp 1 --force-rescues 3 --a-every 30` (FORCED twice: the leader's HP is set to 1 at info `+0xE` and the distress count to 3 at `gDungeon+0x66B`, both after boot). The rest is the normal run.
+- Output: the leader's faint at frame 432 with reason `0x9A` (a normal KO, not one of the excluded values), `unk37` = 3. `AskYesNo` ran at frame 512 (message `35372012`). The exit `0206ED3C` fired at frame 710 with the result code **-2** read from the run struct, then `02178068(0)`.
+- Reading: the prompt answer (A, default) set the abandon flag, so the exit is -2, as in Red's `run_dungeon.c` and the Blue tail. The answer was not read directly from `AskYesNo`'s return, so "yes" is inferred from the -2 code.
+- Forced inputs: the 1 HP and the count 3 are not natural. A natural run reaches code -2 only if the leader is KO'd by a monster hit with a non-excluded reason and the count is above 0. Not checked on a savestate with a natural count.
+- Output JSON in scratch: `ko-attack.json`.
+
 ## Open
 
 - A savestate at a dungeon floor exit (for #641) and one with a learnable four-move team member (for #642 forget menu). Neither was made.
