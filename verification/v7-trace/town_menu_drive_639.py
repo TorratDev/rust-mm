@@ -12,9 +12,11 @@ Start) while hooks log the town evolution functions:
 
 Record layout read: +0x03 level, +0x06 species (u16), +0x0C HP (s16), +0x14 EXP (u32).
 Options (the test, not the game): --level N writes N into the record's level byte at the first check;
+--species N writes N into the record's species (+6) at the first check, to start from a later stage;
+--give-item N writes item id N into out[0] when the menu calls the check with hasItemsGiven (r2 != 0);
 --force-item makes the item-count helper 02007AF8 return 0 (an item "owned") so item stages pass.
 
-Usage: town_menu_drive_639.py ROM STATE FRAMES SEED [--level N] [--force-item]
+Usage: town_menu_drive_639.py ROM STATE FRAMES SEED [--level N] [--species N] [--give-item N] [--force-item]
 ROM is a scratch copy under a throwaway name; run with XDG_CONFIG_HOME in a scratch directory.
 The savestate is made outside the repository from a user save.
 """
@@ -44,6 +46,8 @@ def main():
     p.add_argument("frames", type=int)
     p.add_argument("seed", type=int)
     p.add_argument("--level", type=int, default=None)
+    p.add_argument("--species", type=int, default=None)
+    p.add_argument("--give-item", type=int, default=None)
     p.add_argument("--force-item", action="store_true")
     a = p.parse_args()
 
@@ -64,6 +68,12 @@ def main():
         if a.level is not None and not ph["level_set"]:
             emu.memory.write_byte(rec + 3, a.level)
             ph["level_set"] = True
+        if a.species is not None and not ph.get("species_set"):
+            emu.memory.write_byte(rec + 6, a.species & 0xFF)
+            emu.memory.write_byte(rec + 7, a.species >> 8)
+            ph["species_set"] = True
+        if a.give_item is not None and int(R.r2) != 0:
+            emu.memory.write_byte(out, a.give_item)  # the menu's hasItemsGiven path reads out[0], out[1]
         before = rec_fields(rec)
 
         def on_ret(_a2, _s2):
