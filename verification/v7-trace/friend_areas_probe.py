@@ -59,6 +59,17 @@ def main():
     p.add_argument("out")
     p.add_argument("--turn-inputs", default=os.path.join(HERE, "combat_attack_inputs.txt"))
     p.add_argument("--frames", type=int, default=1500)
+    p.add_argument("--force-kind", type=int, default=0,
+                   help="FORCED gate: write gDungeon+0x11 = KIND at turn frame --force-frame (0 = off)")
+    p.add_argument("--force-frame", type=int, default=0)
+    p.add_argument("--force-over", type=int, default=0,
+                   help="FORCED: post-loop 0219C868 returns this (nonzero gives code -1 or -2)")
+    p.add_argument("--force-stairs", action="store_true",
+                   help="FORCED tile check: write gDungeon+1 = 1 at --force-frame; the rest is natural")
+    p.add_argument("--stairs-each-floor", action="store_true",
+                   help="FORCED tile check on every floor: write gDungeon+1 = 1 once per new floor")
+    p.add_argument("--force-plus6", type=int, default=-1,
+                   help="FORCED: write gDungeon+6 = this at --force-frame (-1 = leave it)")
     a = p.parse_args()
 
     emu = DeSmuME()
@@ -104,10 +115,16 @@ def main():
             e["gate_species"] = last_gate.get("species")
         return fn
 
+    setup = {}
+
     def on_exit(e):
         d = ram.u32(G_DUNGEON)
         if d and e["hook"] == "0206DC20":
             e["code"] = ram.s16(d + RESULT_CODE)
+        if e["hook"] == "0206DC20":
+            setup["p"] = e["r0"]  # RunDungeon_Async(setup): its exit code is at setup+0x60
+        elif setup.get("p"):
+            e["setup_code"] = ram.s16(setup["p"] + 0x60)
 
     for s in SETTERS:
         emu.memory.register_exec(s, hook("%08X" % s))
@@ -116,6 +133,28 @@ def main():
     emu.memory.register_exec(GATE, hook("%08X" % GATE, on_gate))
     for r in GATE_RET:
         emu.memory.register_exec(r, hook("%08X" % r, on_ret("%08X" % r)))
+
+    # FORCED floor end: IsFloorOver (0214067C) is called at 0206E6A4 in the turn do-while, return
+    # site 0206E6A8. The first return after --force-frame is set to 1, so the do-while ends and
+    # gDungeon+0x11 (--force-kind) picks the exit path. Every other return is the game's own.
+    forced_end = {}
+
+    def on_floor_over_ret(addr, size):
+        if a.force_kind and phase.get("turns") and not forced_end:
+            forced_end.update(frame=phase["frame"], r0_natural=int(R.r0) & 0xFFFFFFFF)
+            R.r0 = 1
+    emu.memory.register_exec(0x0206E6A8, on_floor_over_ret)
+
+    # FORCED exit test: 0219C868 (0206EB6C, return 0206EB70) is the post-loop "game over" test. A
+    # nonzero return with gDungeon+6 == 0 gives code -1 (02177FD8, then 02178068(0)); with +6 != 0,
+    # code -2 (02178068(0)). --force-over sets that return; --force-plus6 writes gDungeon+6.
+    over_done = {}
+
+    def on_868_ret(addr, size):
+        if a.force_over and phase.get("turns") and not over_done:
+            over_done.update(frame=phase["frame"], r0_natural=int(R.r0) & 0xFFFFFFFF)
+            R.r0 = a.force_over
+    emu.memory.register_exec(0x0206EB70, on_868_ret)
 
     for f in range(30000):
         phase["frame"] = f
@@ -158,12 +197,45 @@ def main():
 
     turns = parse_inputs(a.turn_inputs) if a.turn_inputs else {}
     t0 = phase["frame"]
+    forced = None
+    stairs_trace = []
+    seen_floor = {}
+    each_floor = []
+    phase["turns"] = True
     for k in range(a.frames):
         phase["frame"] = t0 + k
         if k in turns:
             emu.input.keypad_update(turns[k])
+        if k % 30 == 0 and ram.u32(G_DUNGEON):
+            g = ram.u32(G_DUNGEON)
+            stairs_trace.append({"frame": t0 + k, "dun+1": ram.u8(g + 1), "dun+2": ram.u8(g + 2),
+                                 "dun+0x648": ram.u8(g + 0x648), "dun+0x11": ram.u8(g + 0x11),
+                                 "dun+0x63D": ram.u8(g + 0x63D)})
+        if a.stairs_each_floor and k % 10 == 0 and ram.u32(G_DUNGEON):
+            g = ram.u32(G_DUNGEON)
+            fl = ram.u8(g + 0x63D)
+            if fl != seen_floor.get("f"):
+                seen_floor.update(f=fl, pend=k + 60)
+            if seen_floor.get("pend") == k:
+                emu.memory.write(g + 1, g + 2, 1, bytes([1]))
+                each_floor.append({"frame": t0 + k, "floor": fl, "dun+1_after_write": ram.u8(g + 1)})
+        if a.force_stairs and k == a.force_frame:
+            g = ram.u32(G_DUNGEON)
+            emu.memory.write(g + 1, g + 2, 1, bytes([1]))
+            forced = {"stairs_flag_forced": True, "frame": t0 + k, "dun+1_after_write": ram.u8(g + 1)}
+        if a.force_kind and k == a.force_frame:
+            g = ram.u32(G_DUNGEON)
+            emu.memory.write(g + 0x11, g + 0x12, 1, bytes([a.force_kind & 0xFF]))
+            forced = {"kind": a.force_kind, "frame": t0 + k, "gDungeon": hex(g),
+                      "byte_0x11_after_write": ram.u8(g + 0x11)}
+            if a.force_plus6 >= 0:
+                emu.memory.write(g + 6, g + 7, 1, bytes([a.force_plus6 & 0xFF]))
+                forced["plus6_after_write"] = ram.u8(g + 6)
         emu.cycle(with_joystick=False)
     emu.input.keypad_update(0)
+    if forced is not None:
+        forced["floor_end"] = forced_end or None
+        forced["post_loop_868"] = over_done or None
 
     fired_hooks = {e["hook"] for e in events}
     fired_writes = {w["hook"] for w in writes}
@@ -175,7 +247,8 @@ def main():
                "write_hooks": dict(Counter(w["hook"] for w in writes)),
                "owned_write_events": len(writes),
                "not_reached": not_reached}
-    res = {"snapshot": snapshot, "summary": summary, "events": events, "owned_writes": writes}
+    res = {"snapshot": snapshot, "summary": summary, "events": events, "owned_writes": writes,
+           "forced": forced, "stairs_trace": stairs_trace, "stairs_each_floor": each_floor}
     with open(a.out, "w") as f:
         json.dump(res, f, indent=1)
     print(json.dumps({"snapshot": {k: snapshot[k] for k in ("owned_ptr", "area0", "owned_areas",
