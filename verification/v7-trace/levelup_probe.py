@@ -11,6 +11,11 @@ team earns EXP from normal defeats. No EXP, level or move list is written, excep
   0x0216D77C forget menu      r0 = entity, r1 = 8-slot list (6 bytes each); the return value is recorded.
   0x0219D058 DungeonRandInt   r0 = cap; recorded only inside a removal call.
   0x02183BB4 EXP pass         counted only.
+  0x0215439C prompt           counted inside a learn; the probe then presses A until the menu opens.
+
+--force-moves and --force-exp are forced gates (marked in the output): at the species-4 learner's level-loop
+entry, the first fills its empty move slots with copies of slot 0 (all four valid), and the second raises its
+EXP to the level-7 threshold, so one pass gains levels 6 and 7 and the level-7 learn (move 262) makes five.
 
 Gains are checked against the scratch record dump (LEVELS, written by verification/v7-trace/levels_dump,
 which prints parse_level_data records; the output stays outside the repo):
@@ -18,9 +23,9 @@ for each level L gained in one call, the record index L-1 (level L) must match: 
 stat bytes at +0x14..+0x17 +[attack0, attack1, defense0, defense1] (capped at 255; max HP at 999).
 The level reached must be the highest L whose EXP threshold is <= the EXP total at +0x18.
 
---menu-key picks the forget-menu input: "a" (choose the highlighted move), "b" (press B first, then A: cancel
-must not close the menu), "new" (DOWN x4, then A: the new move sits in the fifth slot). The menu is driven
-only when it opens.
+--menu-key picks the forget-menu input: "a" (forget the highlighted first move), "b" (press B first: cancel
+must not close the menu; then as "a"), "new" (DOWN x4 to the new move in the fifth slot, then as "a"). Forgetting
+is A, A (Forget), UP+A (Yes). The menu is driven only when it opens, one step per 120 frames.
 
 --force-nonteam is a forced gate, not a natural path: it writes info+6 = 1 at the level-loop entry and
 restores 0 at its return, so 02182E5C takes the non-team branch and 02182A94 is reached. Marked "forced"
@@ -70,6 +75,14 @@ def main():
     p.add_argument("--frames", type=int, default=12000)
     p.add_argument("--menu-key", choices=["a", "b", "new"], default="a")
     p.add_argument("--force-nonteam", action="store_true")
+    p.add_argument("--menu-hold", type=int, default=4,
+                   help="frames each menu key is held (gap is 5x); default 4 as before")
+    p.add_argument("--force-pending-exp", type=int, default=None,
+                   help="FORCED: write this pending EXP (info+0x1C8) on the hero (158) so the EXP pass levels it")
+    p.add_argument("--force-four-moves", action="store_true",
+                   help="FORCED: write four valid move records on the hero (158) and partner (4) before play")
+    p.add_argument("--force-moves", action="store_true")
+    p.add_argument("--force-exp", action="store_true")
     a = p.parse_args()
     levels, learnset = load_levels(a.levels)
 
@@ -91,7 +104,9 @@ def main():
         return {"species": ram.s16(info + 2), "level": ram.u8(info + 9), "exp": s32(ram.u32(info + 0x18)),
                 "pending_exp": s32(ram.u32(info + 0x1C8)), "maxhp": ram.s16(info + 0x10),
                 "hp": ram.s16(info + 0xE), "stats": list(ram.bytes(info + 0x14, 4)),
-                "team": ram.u8(info + 6), "moves": [list(ram.bytes(info + 0xF4 + 6 * i, 6)) for i in range(8)]}
+                "team": ram.u8(info + 6), "moves": [list(ram.bytes(info + 0xF4 + 6 * i, 6)) for i in range(4)]}
+    # info holds 4 move slots (+0xF4..+0x10B); +0x10C on is another field, so never count slots 4..7 as moves.
+    # The 8-entry lists are the learn's stack copy (r1 of 0216D77C and 02182A94), read from that pointer.
 
     def valid(moves):
         return [m for m in moves if m[0] & 1]
@@ -106,6 +121,18 @@ def main():
         info = ram.u32(entity + 0x70)
         if not info:
             return
+        empty = [info + 0xF4 + 6 * i for i in range(4) if not ram.u8(info + 0xF4 + 6 * i) & 1]
+        if a.force_moves and ram.s16(info + 2) == 4 and empty:
+            # forced gate: fill the empty move slots with copies of slot 0, so the learn's copy holds 5
+            src = bytes(ram.bytes(info + 0xF4, 6))
+            for s in empty:
+                emu.memory.write(s, s + 6, 1, src)
+            res["forced_moves_calls"] = res.get("forced_moves_calls", 0) + 1
+        if a.force_exp and ram.s16(info + 2) == 4 and ram.u8(info + 9) < 7 and "forced_exp_calls" not in res:
+            # forced gate: raise EXP to the level-7 threshold so one pass gains levels 6 and 7 (species 4 learns move 262 at 7)
+            thr = levels[4][6][0]
+            emu.memory.write(info + 0x18, info + 0x1C, 1, int(thr).to_bytes(4, "little"))
+            res["forced_exp_calls"] = 1
         call = {"entity": hex(entity), "pre": snap(info)}
         if a.force_nonteam:
             w8 = ram.u8(info + 6)
@@ -129,29 +156,57 @@ def main():
         entity = int(R.r1)
         info = ram.u32(entity + 0x70)
         call = {"entity": hex(entity), "announce": int(R.r2), "interactive": int(R.r3),
-                "pre_valid": len(valid([list(ram.bytes(info + 0xF4 + 6 * i, 6)) for i in range(8)])) if info else -1}
+                "pre_valid": len(valid([list(ram.bytes(info + 0xF4 + 6 * i, 6)) for i in range(4)])) if info else -1}
+        call.update({"draws": [], "prompt": 0, "msg": 0})
         res["learn_calls"].append(call)
         st["learn"] = (call, info)
+        state["learn_win"] = call
+        emu.memory.register_exec(int(R.r14) & ~1, on_learn_ret)
 
-    def on_remove(addr, size):
-        info = ram.u32(int(R.r1) + 0x70) if int(R.r1) else 0
-        call = {"r0": hex(int(R.r0)), "r1": hex(int(R.r1)), "r2": int(R.r2), "r3": int(R.r3),
-                "pre_valid": len(valid([list(ram.bytes(info + 0xF4 + 6 * i, 6)) for i in range(8)])) if info else -1,
+    def on_learn_ret(addr, size):
+        state["learn_win"] = None
+
+    def on_prompt(addr, size):  # 0215439C: the prompt the menu branch shows before 0216D77C (announce set)
+        if state.get("learn_win") is not None:
+            state["learn_win"]["prompt"] += 1
+            state["prompt_open"], state["prompt_frames"] = True, 0  # it waits for input: press A until the menu opens
+
+    def on_msg(addr, size):  # 0213F50C(entity, 0x138): the learned message
+        if state.get("learn_win") is not None:
+            state["learn_win"]["msg"] += 1
+
+    def on_remove(addr, size):  # 02182A94(entity, list): list is the learn's 8-entry stack copy
+        lst = int(R.r1)
+        call = {"entity": hex(int(R.r0)), "list": hex(lst), "pre": [list(ram.bytes(lst + 6 * i, 6)) for i in range(8)],
                 "draws": []}
+        call["pre_valid"] = len(valid(call["pre"]))
         res["remove_calls"].append(call)
-        st["remove"] = call
+        st["remove"] = (call, lst)
         state["remove_window"] = True
         emu.memory.register_exec(int(R.r14) & ~1, on_remove_ret)
 
     def on_remove_ret(addr, size):
         state["remove_window"] = False
         if st["remove"]:
-            st["remove"]["returned"] = int(R.r0)
+            call, lst = st["remove"]
+            call["returned"] = int(R.r0)
+            call["post"] = [list(ram.bytes(lst + 6 * i, 6)) for i in range(8)]
+            # the list is compacted after the removal, so map the drawn index to the valid entries instead
+            pre_v, post_v = valid(call["pre"]), valid(call["post"])
+            drawn = call["draws"][0].get("drawn") if call["draws"] else None
+            if drawn is not None and drawn < len(pre_v):
+                call["removed_index"], call["removed_entry"] = drawn, pre_v[drawn]
+                call["removed_matches"] = pre_v[:drawn] + pre_v[drawn + 1:] == post_v
+                call["removed_new"] = bool(pre_v[drawn][1] & 4)  # byte 1 bit 2: the move just learned
         st["remove"] = None
 
-    def on_rand(addr, size):
-        if state["remove_window"] and st["remove"] is not None:
-            st["remove"]["draws"].append(int(R.r0))
+    def on_rand(addr, size):  # DungeonRandInt(cap): record the cap and, at its return, the drawn index
+        tgt = st["remove"][0] if state["remove_window"] and st["remove"] else state.get("learn_win")
+        if tgt is None:
+            return
+        d = {"cap": int(R.r0)}
+        tgt["draws"].append(d)
+        emu.memory.register_exec(int(R.r14) & ~1, lambda ad, sz, d=d: d.setdefault("drawn", int(R.r0)))
 
     def on_forget(addr, size):
         entity = int(R.r0)
@@ -162,6 +217,8 @@ def main():
         st["forget"] = (call, lst)
         state["menu_open"] = True
         state["menu_frames"] = 0
+        state["entity"] = entity
+        state["prompt_open"] = False
         emu.memory.register_exec(int(R.r14) & ~1, on_forget_ret)
 
     def on_forget_ret(addr, size):
@@ -180,22 +237,88 @@ def main():
     emu.memory.register_exec(REMOVE, on_remove)
     emu.memory.register_exec(FORGET, on_forget)
     emu.memory.register_exec(RAND, on_rand)
+    emu.memory.register_exec(0x0215439C, on_prompt)
+    # call-site counters (ghidra-cli): 021830D0 bl prompt, 021830E8 bl 0216D77C, 021830F8 bl 02182A94
+    res["entry_hits"] = {}
+    for ad in (0x021830D0, 0x021830E8, 0x021830F8):
+        def _hit(addr, size, ad=ad):
+            res["entry_hits"][hex(ad)] = res["entry_hits"].get(hex(ad), 0) + 1
+        emu.memory.register_exec(ad, _hit)
+    emu.memory.register_exec(0x0213F50C, on_msg)
     emu.memory.register_exec(EXP_PASS, on_exp_pass)
 
     def press(keys):
         for k in keys:
             emu.input.keypad_update(keymask(getattr(Keys, "KEY_" + k)))
-            for _ in range(4): emu.cycle(with_joystick=False)
+            for _ in range(a.menu_hold):
+                emu.cycle(with_joystick=False)
+                if len(res.setdefault("menu_trace_held", [])) < 400:
+                    res["menu_trace_held"].append(dict(key=k, **menu_sample()))
             emu.input.keypad_update(0)
-            for _ in range(20): emu.cycle(with_joystick=False)
+            for _ in range(a.menu_hold * 5): emu.cycle(with_joystick=False)
 
-    menu_seq = {"a": ["A"], "b": ["B", "A"], "new": ["DOWN"] * 4 + ["A"]}[a.menu_key]
+    forced_moves = []
+    if a.force_four_moves or a.force_pending_exp is not None:
+        d = ram.u32(G_DUNGEON)
+        four = [[5, 0, 224, 0, 27, 0], [5, 0, 4, 1, 22, 0], [5, 0, 99, 0, 188, 2], [5, 0, 1, 0, 5, 0]]
+        for i in range(20):
+            e = ram.u32(d + 0x11364 + 4 * i)
+            inf = ram.u32(e + 0x70) if e else 0
+            if inf and a.force_pending_exp is not None and ram.s16(inf + 2) == 158:
+                v = a.force_pending_exp & 0xFFFFFFFF
+                for j in range(4):
+                    emu.memory.write_byte(inf + 0x1C8 + j, (v >> (8 * j)) & 0xFF)
+                forced_moves.append({"info": hex(inf), "forced_pending_exp": a.force_pending_exp})
+            if inf and ram.s16(inf + 2) in (158, 4) and a.force_four_moves:
+                for k in range(8):  # all eight slots: four valid, four empty
+                    rec = four[k] if k < len(four) else [0, 0, 0, 0, 0, 0]
+                    for j, b in enumerate(rec):
+                        emu.memory.write_byte(inf + 0xF4 + 6 * k + j, b)
+                forced_moves.append({"info": hex(inf), "species": ram.s16(inf + 2),
+                                     "moves": [list(ram.bytes(inf + 0xF4 + 6 * k, 6)) for k in range(8)]})
+    res["forced_four_moves"] = forced_moves or None
+
+    # One step per 120-frame tick. On screen (#642): A on a move opens Forget/Delink/Info, A on Forget asks
+    # "will be forgotten. Is that OK?", and A there picks No (back to the list), so UP selects Yes first.
+    confirm = [["A"], ["A"], ["UP", "A"]]
+    menu_seq = {"a": confirm, "b": [["B"]] + confirm, "new": [["DOWN"] * 4] + confirm}[a.menu_key]
     turns = parse_inputs(a.inputs)
+    def u16(addr):
+        return int.from_bytes(ram.bytes(addr, 2), "little")
+
+    def menu_sample():
+        # Input word at [DAT_0216DCA0]+2 (pressed), +4, the mask from 0216F54C, and the state bytes at [DAT_0216DC9C]+0x27/+0x28.
+        ip, st_ptr = ram.u32(0x0216DCA0), ram.u32(0x0216DC9C)
+        ent = state.get("entity")
+        info = ram.u32(ent + 0x70) if ent else 0
+        return {"frame": state["menu_frames"],
+                "entity_info": hex(info) if info else None,
+                "state_c9": ram.u8(info + 0xC9) if info else None,
+                "entity_c9": ram.u8(ent + 0xC9) if ent else None,
+                # HasHeldItem(021432E8): info+0x5A bit 0 set, bit 3 clear, info+0x5C == item id
+                "held_5a": ram.u8(info + 0x5A) if info else None,
+                "held_5c": ram.u8(info + 0x5C) if info else None,
+                "input_ptr": hex(ip), "pressed": u16(ip + 2) if ip else None, "held": u16(ip + 4) if ip else None,
+                "mask": hex(ram.u32(0x0216F54C)),
+                "state_ptr": hex(st_ptr), "s27": ram.u8(st_ptr + 0x27) if st_ptr else None,
+                "s28": ram.u8(st_ptr + 0x28) if st_ptr else None}
+
+    menu_trace = res.setdefault("menu_trace", [])
     for f in range(a.frames):
+        if state.get("prompt_open") and not state["menu_open"]:
+            state["prompt_frames"] += 1
+            if state["prompt_frames"] % 60 == 1:
+                press(["A"])
+            if state["prompt_frames"] > 1800:  # the prompt never closed: stop pressing
+                state["prompt_open"] = False
+            emu.cycle(with_joystick=False)
+            continue
         if state["menu_open"]:
             state["menu_frames"] += 1
+            if state["menu_frames"] % 10 == 0 and len(menu_trace) < 400:
+                menu_trace.append(menu_sample())
             if state["menu_frames"] % 120 == 1:
-                press(menu_seq)
+                press(menu_seq[(state["menu_frames"] // 120) % len(menu_seq)])
             if state["menu_frames"] > 3000:  # menu never returned: stop driving it
                 state["menu_open"] = False
             emu.cycle(with_joystick=False)
@@ -253,4 +376,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import romarg; romarg.fill()
     main()

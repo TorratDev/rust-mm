@@ -153,6 +153,113 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(man["arm9"]["module_params"]["found_by"], "magic search")
 
 
+class Arm7Tests(unittest.TestCase):
+    """ARM7 binary (header 0x30..0x3C) with module params, autoloads and an ARM7 overlay,
+    appended to the synthetic ROM (#349). Written from scratch, no retail bytes."""
+
+    ARM7_RAM = 0x02380000
+    WRAM = 0x037F8000
+    OV7_RAM = 0x02390000
+
+    def arm7_blob(self):
+        """Static part 0x60 bytes (params at +0x40, hook word at +0x58), autoload data at
+        +0x60 (0x40 bytes to WRAM, then 0x20 bytes to 0x027E0000), autoload list at +0x100."""
+        r = self.ARM7_RAM
+        b = bytearray(0x120)
+        struct.pack_into("<2I", b, 0, 0xE3A00000, 0xE12FFF1E)  # mov r0,#0; bx lr
+        struct.pack_into("<6I", b, 0x40, r + 0x100, r + 0x118, r + 0x60, r + 0x60, r + 0x80, 0)
+        struct.pack_into("<I", b, 0x58, r + 0x40)
+        b[0x60:0xA0] = b"W" * 0x40
+        b[0xA0:0xC0] = b"D" * 0x20
+        struct.pack_into("<6I", b, 0x100, self.WRAM, 0x40, 0x10, 0x027E0000, 0x20, 0)
+        return bytes(b)
+
+    def rom_with_arm7(self, blob, hook=True, ov7=None):
+        rom, _ = synth_nds.build()
+        rom = bytearray(rom)
+        off = len(rom)
+        rom += blob
+        struct.pack_into("<4I", rom, 0x30, off, self.ARM7_RAM, self.ARM7_RAM, len(blob))
+        struct.pack_into("<I", rom, 0x74, self.ARM7_RAM + 0x5C if hook else 0)
+        if ov7 is not None:
+            # One ARM7 overlay: a fourth FAT entry (the FAT has room before the next file).
+            fat_off, fat_size = struct.unpack_from("<2I", rom, 0x48)
+            fid = fat_size // 8
+            data_off = len(rom)
+            rom += ov7
+            struct.pack_into("<2I", rom, fat_off + fat_size, data_off, data_off + len(ov7))
+            struct.pack_into("<I", rom, 0x4C, fat_size + 8)
+            table_off = len(rom)
+            rom += struct.pack("<8I", 0, self.OV7_RAM, len(ov7), 0x10, 0, 0, fid, 0)
+            struct.pack_into("<2I", rom, 0x58, table_off, 32)
+        return bytes(rom)
+
+    def test_arm7_laid_out_from_module_params(self):
+        blob = self.arm7_blob()
+        files, manifest, warnings = x.extract(self.rom_with_arm7(blob), allow_unknown=True)
+        self.assertEqual(warnings, [])
+        self.assertEqual(files["arm7.bin"], blob)
+        a7 = manifest["arm7"]
+        self.assertEqual((a7["ram_address"], a7["entry"], a7["sha1"]),
+                         ("0x02380000", "0x02380000", x.sha1(blob)))
+        self.assertEqual(a7["static"], {"ram_address": "0x02380000", "file_offset": 0, "size": 0x60})
+        self.assertEqual(a7["bss"], {"ram_address": "0x02380060", "size": 0x20})
+        self.assertEqual(a7["module_params"]["found_by"], "header 0x74")
+        self.assertEqual(a7["module_params"]["arm7_offset"], 0x40)
+        self.assertNotIn("sdk_version", a7["module_params"])
+        al = [(a["ram_address"], a["file_offset"], a["size"], a["bss_address"], a["bss_size"])
+              for a in a7["autoloads"]]
+        self.assertEqual(al, [("0x037F8000", 0x60, 0x40, "0x037F8040", 0x10),
+                              ("0x027E0000", 0xA0, 0x20, "0x027E0020", 0)])
+
+    def test_arm7_without_params_is_all_static(self):
+        blob = self.arm7_blob()
+        files, manifest, warnings = x.extract(self.rom_with_arm7(blob, hook=False),
+                                              allow_unknown=True)
+        self.assertTrue(any("ARM7 module params not found" in w for w in warnings), warnings)
+        a7 = manifest["arm7"]
+        self.assertEqual(a7["static"]["size"], len(blob))
+        self.assertEqual((a7["autoloads"], a7["bss"], a7["module_params"]), ([], None, None))
+
+    def test_bad_arm7_autoload_list_is_not_trusted(self):
+        blob = bytearray(self.arm7_blob())
+        struct.pack_into("<I", blob, 0x44, self.ARM7_RAM + 0x1000)  # list end past the binary
+        _, manifest, warnings = x.extract(self.rom_with_arm7(bytes(blob)), allow_unknown=True)
+        self.assertIsNone(manifest["arm7"]["module_params"])
+        self.assertTrue(warnings)
+
+    def test_arm7_overlay_extracted(self):
+        ov7 = bytes(range(64))
+        files, manifest, warnings = x.extract(self.rom_with_arm7(self.arm7_blob(), ov7=ov7),
+                                              allow_unknown=True)
+        self.assertEqual(warnings, [])
+        self.assertEqual(files["overlay7_0000.bin"], ov7)
+        self.assertEqual(manifest["arm7_overlay_count"], 1)
+        o = manifest["arm7_overlays"][0]
+        self.assertEqual((o["file"], o["ram_address"], o["size"], o["bss_size"], o["file_id"]),
+                         ("overlay7_0000.bin", "0x02390000", 64, 0x10, 3))
+        self.assertEqual(len(manifest["overlays"]), 3)  # ARM9 overlays unchanged
+
+    def test_arm9_unchanged_by_arm7(self):
+        base_files, base_manifest, _ = x.extract(synth_nds.build()[0], allow_unknown=True)
+        files, manifest, _ = x.extract(self.rom_with_arm7(self.arm7_blob(), ov7=b"\x05" * 32),
+                                       allow_unknown=True)
+        self.assertEqual(files["arm9.bin"], base_files["arm9.bin"])
+        self.assertEqual(manifest["arm9"], base_manifest["arm9"])
+        self.assertEqual(manifest["overlays"], base_manifest["overlays"])
+
+    def test_no_arm7_means_no_file(self):
+        files, manifest, _ = x.extract(synth_nds.build()[0], allow_unknown=True)
+        self.assertNotIn("arm7.bin", files)
+        self.assertIsNone(manifest["arm7"])
+        self.assertEqual(manifest["arm7_overlays"], [])
+
+    def test_truncated_arm7_refused(self):
+        rom = self.rom_with_arm7(self.arm7_blob())
+        with self.assertRaises(x.ExtractError):
+            x.extract(rom[:-16], allow_unknown=True)
+
+
 class CliTests(unittest.TestCase):
     def test_cli_writes_outputs(self):
         rom, facts = synth_nds.build(compress_arm9=True)

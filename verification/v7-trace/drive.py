@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pydesmume_dump as h
 from desmume.emulator import DeSmuME
 
+import romarg; romarg.fill()
 p = argparse.ArgumentParser()
 p.add_argument("rom"); p.add_argument("outdir")
 p.add_argument("--inputs")

@@ -14,6 +14,7 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from status_probe import Probe, WILD, HERE
 
+import romarg; romarg.fill()
 if len(sys.argv) < 5:
     sys.exit(__doc__)
 rom, out, frames, af = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])

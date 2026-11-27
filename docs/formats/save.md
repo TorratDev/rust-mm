@@ -184,14 +184,14 @@ The sections end at `0x534D`, inside the `0x57D8` block. The restore function fo
 
 - **[blue-verified]** The 0x400-byte script-variable block is copied raw (`thunk_FUN_02021F5C`).
 - **[blue-verified]** The debug asserts are empty in retail: `FUN_02029D8C` and `FUN_02029DAC` decompile to a bare `return`. The bounds checks in `FUN_02021108` and in the getters and setters (`FUN_02020D90`, `FUN_020208E8`, `FUN_02020B48`, `FUN_02020F74`) are therefore not run, so an out-of-range flag index is not caught (#197 P4a).
-- **[blue-verified]** Descriptor tables of 16-byte entries: table A (83 entries at `0x02098060`, base word `0x021EE640`) and table B (index `0x400` and up; 4 valid entries by the layout, medium confidence). Entry: `+0` type (1 bit, 2 or 7 byte, 3 s8, 4 u16, 5 s16, 6 s32, 8 special); `+4` offset in the block; `+6` bit shift; `+8` count; `+0xA` a value read only by `RestoreGlobalScriptVars`; `+0xC` pointer to the debug name (#197 P4b).
+- **[blue-verified]** Descriptor tables of 16-byte entries: table A (83 entries at `0x02098060`; data block at `0x0210E640`, the pool word at `0x020211A0`) and table B (index `0x400` and up; 4 valid entries by the layout, medium confidence). Entry: `+0` type (1 bit, 2 or 7 byte, 3 s8, 4 u16, 5 s16, 6 s32, 8 special); `+4` offset in the block; `+6` bit shift; `+8` count; `+0xA` a value read only by `RestoreGlobalScriptVars`; `+0xC` pointer to the debug name (#197 P4b).
 - **[blue-verified]** The only check that runs is in `RestoreGlobalScriptVars` (`0x0201F81C`). It compares `VERSION` (table A id 0, expected 30 at `+0xA`) with the first word of the block, and a mismatch sets the load result to 4. It runs only in the branch of `ReadSaveFromPak` where `*DAT_0202A41C == 0`. The other branch copies the block with no check. So `VERSION == 30` is the only check, and only on that branch (#197 P4c). The meaning of 30 is not confirmed against a real save.
 
 ### Story flags and scene variables (#362 P5)
 
 - **[blue-verified]** Every story flag and scene variable the scripts use is a table-A id, and its descriptor lies in the 0x400-byte block above. The save holds that block raw, so it holds them all, including bit-typed flags such as the dungeon clear list.
 - **[blue-verified]** Debug names read at runtime: `0x10` GROUND_GETOUT, `0x12` GROUND_PLACE, `0x14` DUNGEON_ENTER, `0x15` DUNGEON_ENTER_INDEX, `0x17` DUNGEON_RESULT, `0x19` START_MODE, `0x26` WARP_LOCK, `0x33` DUNGEON_CLEAR_LIST. Meanings, readers and the code for `0x14` are in [re/scripts.md](../re/scripts.md#p5--story-flags-and-scene-variables).
-- **Open:** the table-A base word here (`0x021EE640`) does not match the block address in [execution-model.md](../re/execution-model.md) (`0x0210E640`). One is probably a typo. Neither is linked as fact until checked.
+- **[blue-verified]** The block base is `0x0210E640`: the pool words at `0x020211A0` (the resolver `FUN_02021108`), `0x0201F87C` and `0x0201F8A4` (save and restore) all hold it. An earlier version of this page said `0x021EE640`, a typo (#522, [re/script-opcodes.md](../re/script-opcodes.md#p3--variable-model)).
 
 ## 3. Corrupt or blank detection
 
