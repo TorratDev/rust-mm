@@ -47,3 +47,6 @@ One entry per line, merged with `merge=union` (see [workflow](../workflow.md#sha
 | `ov_0001::02178C04`, `ov_0001::02178B9C` | loaded-sprite pointer read (`gDungeon+0x158DC+species*4`) and per-species `ax%03d` fill | blue-verified (static) |
 | `ov_0001::02178CB0`, `ov_0001::02178C4C` | per-floor sprite-pointer loads (floor list, team, special records) and live-entity reload | blue-verified (static) |
 | `ov_0001::02182A74` | common join after dungeon-evolution apply (the 316 branch rejoins here) | blue-verified (static) |
+| `ov_0001::02182A94` | random move removal (non-team): `DungeonRandInt(valid count, new move included)`, removes that entry, compacts the copy, returns 0 | blue-verified runtime (#642, forced gates) |
+| `ov_0001::0216D77C` | forget-a-move menu `(entity, copy, 1, 0)`: Forget / Delink / Info, Yes / No confirm; returns 1, compacts the copy | blue-verified runtime (#642, forced gates) |
+| `ov_0001::021830D0`, `ov_0001::021830E8`, `ov_0001::021830F8` | call sites in `02182E5C`: prompt `0215439C`, menu `0216D77C`, removal `02182A94` | blue-verified (ghidra-cli; each hit at runtime, #642) |
