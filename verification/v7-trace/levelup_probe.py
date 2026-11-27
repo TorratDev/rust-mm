@@ -145,8 +145,23 @@ def main():
         info = ram.u32(entity + 0x70)
         call = {"entity": hex(entity), "announce": int(R.r2), "interactive": int(R.r3),
                 "pre_valid": len(valid([list(ram.bytes(info + 0xF4 + 6 * i, 6)) for i in range(8)])) if info else -1}
+        call.update({"draws": [], "prompt": 0, "msg": 0})
         res["learn_calls"].append(call)
         st["learn"] = (call, info)
+        state["learn_win"] = call
+        emu.memory.register_exec(int(R.r14) & ~1, on_learn_ret)
+
+    def on_learn_ret(addr, size):
+        state["learn_win"] = None
+
+    def on_prompt(addr, size):  # 0215439C: the prompt the menu branch shows before 0216D77C (announce set)
+        if state.get("learn_win") is not None:
+            state["learn_win"]["prompt"] += 1
+            state["prompt_open"], state["prompt_frames"] = True, 0  # it waits for input: press A until the menu opens
+
+    def on_msg(addr, size):  # 0213F50C(entity, 0x138): the learned message
+        if state.get("learn_win") is not None:
+            state["learn_win"]["msg"] += 1
 
     def on_remove(addr, size):
         info = ram.u32(int(R.r1) + 0x70) if int(R.r1) else 0
@@ -167,6 +182,8 @@ def main():
     def on_rand(addr, size):
         if state["remove_window"] and st["remove"] is not None:
             st["remove"]["draws"].append(int(R.r0))
+        if state.get("learn_win") is not None:
+            state["learn_win"]["draws"].append(int(R.r0))
 
     def on_forget(addr, size):
         entity = int(R.r0)
@@ -177,6 +194,7 @@ def main():
         st["forget"] = (call, lst)
         state["menu_open"] = True
         state["menu_frames"] = 0
+        state["prompt_open"] = False
         emu.memory.register_exec(int(R.r14) & ~1, on_forget_ret)
 
     def on_forget_ret(addr, size):
@@ -195,6 +213,15 @@ def main():
     emu.memory.register_exec(REMOVE, on_remove)
     emu.memory.register_exec(FORGET, on_forget)
     emu.memory.register_exec(RAND, on_rand)
+    emu.memory.register_exec(0x0215439C, on_prompt)
+    # entry-address probe: 0216D77C may be Thumb (its alias 0216D77D) or the hook may need a later instruction
+    res["entry_hits"] = {}
+    for ad in (0x0216D77C, 0x0216D77D, 0x0216D780, 0x0216D784,
+               0x021830D0, 0x021830E8, 0x021830F0, 0x021830F8, 0x021830FC):  # 02182E5C is LEARN, hooked by on_learn
+        def _hit(addr, size, ad=ad):
+            res["entry_hits"][hex(ad)] = res["entry_hits"].get(hex(ad), 0) + 1
+        emu.memory.register_exec(ad, _hit)  # ghidra-cli: 021830D0 bl prompt, 021830E8 bl 0216D77C, 021830F8 bl 02182A94
+    emu.memory.register_exec(0x0213F50C, on_msg)
     emu.memory.register_exec(EXP_PASS, on_exp_pass)
 
     def press(keys):
@@ -207,6 +234,14 @@ def main():
     menu_seq = {"a": ["A"], "b": ["B", "A"], "new": ["DOWN"] * 4 + ["A"]}[a.menu_key]
     turns = parse_inputs(a.inputs)
     for f in range(a.frames):
+        if state.get("prompt_open") and not state["menu_open"]:
+            state["prompt_frames"] += 1
+            if state["prompt_frames"] % 60 == 1:
+                press(["A"])
+            if state["prompt_frames"] > 1800:  # the prompt never closed: stop pressing
+                state["prompt_open"] = False
+            emu.cycle(with_joystick=False)
+            continue
         if state["menu_open"]:
             state["menu_frames"] += 1
             if state["menu_frames"] % 120 == 1:
