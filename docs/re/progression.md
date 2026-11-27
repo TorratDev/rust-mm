@@ -12,7 +12,7 @@ The note is split into one file per topic, so parallel runs on different topics 
 
 - [P1. Level-up [blue-verified; runtime with forced EXP]](progression/p1-level-up.md)
 - [P2. Move learning [blue-verified; flow at runtime]](progression/p2-move-learning.md)
-- [P3. Recruiting [blue-verified; gates forced at runtime; natural recruit observed once (join return not logged)]](progression/p3-recruiting.md)
+- [P3. Recruiting [blue-verified; gates forced at runtime; natural recruit observed once, join returns 1]](progression/p3-recruiting.md)
 - [P4. Friend areas [blue-verified, static; runtime results tagged blue-verified runtime, the rest unverified]](progression/p4-friend-areas.md)
 - [P5. IQ [blue-verified, static]](progression/p5-iq.md)
 - [P6. Evolution [blue-verified static; dungeon-row and apply runs emulator-verified (forced); town runtime not run]](progression/p6-evolution.md)
