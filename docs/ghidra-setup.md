@@ -247,28 +247,32 @@ python3 tools/ov_read.py arm9::02000010             # the ARM9 image
 
 ### ARM7 program (#349)
 
-The ARM7 binary is a second program in the same project, `arm7.bin`, with its own address space (ARMv4T). It is extracted with the ARM9 (`arm7.bin` and `"arm7"` in `manifest.json`; no ARM7 binary means `"arm7": null`), and imported with `--arm7`. The ARM9 program is not touched by this import.
+The ARM7 binary is a second program in the same project, `arm7.bin`, with its own address space (ARMv4T). `nds_extract_code.py` writes `arm7.bin` and an `"arm7"` entry in `manifest.json` laid out like the ARM9 one: the static part, the static BSS and the autoload sections, read from the ARM7 module params (header word `0x74`), plus any ARM7 overlays (`overlay7_NNNN.bin`, `"arm7_overlays"`). No ARM7 binary means `"arm7": null`. `import.sh --arm7` imports it, and `RescueNdsImport.java` maps it from the manifest (second script argument `arm7`). The ARM9 program is not touched by this import.
+
+On the supported dump the static part is only `0x1B0` bytes at `02380000` (the entry `_start`). Most ARM7 code runs from two autoloads: `037F8000` (shared WRAM, `0x10234` bytes plus `0x3874` BSS) and `027E0000` (`0x182A0` bytes plus `0x1968` BSS). There are no ARM7 overlays. An address inside `arm7.bin` is therefore not its RAM address past `+0x1B0`: use the block addresses Ghidra shows, never `02380000 + file offset`.
 
 ```sh
+python3 tools/nds_extract_code.py <ROM> -o ~/rescue-re/code    # a manifest from before this change lacks the ARM7 layout
 tools/ghidra/import.sh --arm7 ~/rescue-re/code ~/rescue-re/ghidra rescue-arm9 --check 027FFFA8
-ghidra --project rescue-arm9 --program arm7.bin decompile 023801dc
+ghidra --project rescue-arm9 --program arm7.bin decompile 037fec28
+```
+```powershell
+python tools\nds_extract_code.py <ROM> -o C:\rescue-re\code
+.\tools\ghidra\import.ps1 -Arm7 -CodeDir C:\rescue-re\code -ProjectDir C:\rescue-re\ghidra -Check 027FFFA8
+ghidra --project rescue-arm9 --program arm7.bin decompile 037fec28
 ```
 
-The check address `027FFFA8` is the key shadow word (`docs/re/io.md`). It should list two references, both in `FUN_02386dd8`: a load at `02386E00` and the store at `02386E04`. To run the check on an imported project without importing again:
+The import prints the blocks (`arm7`, `autoload_0_037F8000` and its `_bss`, `autoload_1_027E0000` and its `_bss`, `io`, `io_ipc`). The check address `027FFFA8` is the key shadow word (`docs/re/io.md`). It should list two references, both in `FUN_037fec28`: a load at `037FEC50` and the store at `037FEC54`. To run the check on an imported project without importing again:
 
 ```sh
 $GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -process arm7.bin -noanalysis -readOnly \
   -scriptPath tools/ghidra -postScript RescueNdsReport.java 027FFFA8
 ```
-```powershell
-.\tools\ghidra\import.ps1 -Arm7 -CodeDir C:\rescue-re\code -ProjectDir C:\rescue-re\ghidra
-ghidra --project rescue-arm9 --program arm7.bin decompile 023801dc
-```
 
 - `--program arm7.bin` works in every ghidra-cli command (`decompile`, `x-ref to`, `function list`), with the same one-opener rule as the ARM9.
-- Ghidra does not create a function at the ARM7 entry point (`02380000`) on its own; the functions it does find start at `023801B0`. Use `function list` to find starts, and mark the entry by hand before you rely on it.
-- The ARM7 BSS and autoload sections are not mapped (`shortcut: ARM7 BSS and autoloads not mapped, add when a question needs them`). ARM7 overlays are not extracted; the extractor warns when the ROM has some (`arm7_overlay_count` in the manifest).
-- The copies `rescue-arm9-a`, `-b`, `-c`, `-r` and `-r2` were made again on 2026-11-27, after the import and the symbol pass, so they have `arm7.bin` and the `docs/symbols.md` names. The old copies are in `~/rescue-re/backup-646/copies/`.
+- **Text export:** `tools/ghidra/export.sh ~/rescue-re/export-arm7 ~/rescue-re/ghidra arm7.bin` (about 25 s). The `re_*` helpers read it with `RESCUE_EXPORT=~/rescue-re/export-arm7` (for example `RESCUE_EXPORT=~/rescue-re/export-arm7 re_refs 027fffa8`). Regenerate it after an ARM7 import.
+- The shared main-RAM area at `027FF000` (the shadow word `027FFFA8` and other ARM9/ARM7 mailboxes) is not mapped in either program. References to it are still recorded, as the check shows.
+- Copies: make them again after an ARM7 import (below). The copies `rescue-arm9-a`, `-b`, `-c`, `-r` and `-r2` were made on 2026-11-27 after the ARM7 layout import, so they have it and the `docs/symbols.md` names. Older copies are in `~/rescue-re/backup-646/copies/`.
 - **Making a copy again** (after an import or `RescueApplySymbols.java`), with no bridge or GUI open on either project: a copy is the `.rep` folder plus an empty `.gpr`, and the folder does not store its own name.
 
   ```sh

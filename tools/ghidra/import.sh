@@ -61,26 +61,28 @@ esac
 mkdir -p "$project_dir"
 
 if [ "$arm7" = 1 ]; then
-  # The ARM7 program: its own address space, loaded at the manifest's RAM address.
+  # The ARM7 program: its own address space, mapped from the manifest's "arm7" entry by the
+  # same pre-script (static part, BSS, autoloads, ARM7 overlays).
   base=$(python3 -c 'import json,sys
 m = json.load(open(sys.argv[1]))
 if not m.get("arm7"): sys.exit("manifest has no arm7 entry (the ROM has no ARM7 binary)")
-print(m["arm7"]["ram_address"])' "$code_dir/manifest.json") || { echo "error: no ARM7 binary in $code_dir" >&2; exit 1; }
+if "autoloads" not in m["arm7"]: sys.exit("manifest predates the ARM7 layout; run tools/nds_extract_code.py again")
+print(m["arm7"]["ram_address"])' "$code_dir/manifest.json") || { echo "error: no usable ARM7 entry in $code_dir/manifest.json" >&2; exit 1; }
   [ -f "$code_dir/arm7.bin" ] || { echo "error: $code_dir/arm7.bin not found" >&2; exit 1; }
   log=$project_dir/$project_name-arm7-import.log
-  postargs=()
-  if [ ${#check[@]} -gt 0 ]; then postargs=(-postScript RescueNdsReport.java "${check[@]}"); fi
-  echo "Running analyzeHeadless for arm7.bin at $base; log: $log"
+  echo "Running analyzeHeadless for arm7.bin; log: $log"
   status=0
   "$headless" "$project_dir" "$project_name" \
     -import "$code_dir/arm7.bin" -overwrite \
     -loader BinaryLoader -loader-baseAddr "$base" \
     -processor ARM:LE:32:v4t -cspec default \
     -scriptPath "$script_dir" \
-    ${postargs[@]+"${postargs[@]}"} \
+    -preScript RescueNdsImport.java "$code_dir/manifest.json" arm7 \
+    -postScript RescueNdsReport.java ${check[@]+"${check[@]}"} \
     ${analysis[@]+"${analysis[@]}"} > "$log" 2>&1 || status=$?
+  grep -E 'RESCUE(-REPORT)?:' "$log" | sed -E 's/^.*(RESCUE(-REPORT)?:)/\1/; s/ \((GhidraScript|HeadlessAnalyzer)\) *$//' || true
   # analyzeHeadless exits 0 even when a script fails, so check the log as well.
-  if [ "$status" -ne 0 ] || grep -q 'SCRIPT ERROR' "$log"; then
+  if [ "$status" -ne 0 ] || grep -q 'SCRIPT ERROR\|RESCUE: FAILED' "$log" || ! grep -q 'RESCUE: mapped arm7' "$log"; then
     echo "error: ARM7 import failed (exit $status); see $log" >&2
     exit 1
   fi

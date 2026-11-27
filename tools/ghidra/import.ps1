@@ -48,18 +48,23 @@ New-Item -ItemType Directory -Force -Path $projAbs | Out-Null
 if ($Arm7) {
     $arm7 = (Get-Content $manifest -Raw | ConvertFrom-Json).arm7
     if (-not $arm7) { throw "manifest has no arm7 entry (the ROM has no ARM7 binary)" }
+    if ($null -eq $arm7.autoloads) { throw "manifest predates the ARM7 layout; run tools/nds_extract_code.py again" }
     $log7 = Join-Path $projAbs "$ProjectName-arm7-import.log"
     $args7 = @(
         $projAbs, $ProjectName,
         "-import", (Join-Path $codeDirAbs "arm7.bin"), "-overwrite",
         "-loader", "BinaryLoader", "-loader-baseAddr", $arm7.ram_address,
         "-processor", "ARM:LE:32:v4t", "-cspec", "default",
-        "-scriptPath", $scriptDir)
-    if ($Check.Count -gt 0) { $args7 += @("-postScript", "RescueNdsReport.java") + $Check }
+        "-scriptPath", $scriptDir,
+        "-preScript", "RescueNdsImport.java", (Join-Path $codeDirAbs "manifest.json"), "arm7",
+        "-postScript", "RescueNdsReport.java") + $Check
     if ($NoAnalysis) { $args7 += "-noanalysis" }
     & $headless @args7 *> $log7
+    $status7 = $LASTEXITCODE
     # analyzeHeadless exits 0 even when a script fails, so check the log as well.
-    if ($LASTEXITCODE -ne 0 -or (Get-Content $log7 | Select-String -Pattern 'SCRIPT ERROR' -Quiet)) {
+    $text7 = Get-Content $log7 -Raw
+    $text7 -split "`n" | Select-String -Pattern 'RESCUE(-REPORT)?:' | ForEach-Object { $_.Line.Trim() }
+    if ($status7 -ne 0 -or $text7 -match 'SCRIPT ERROR|RESCUE: FAILED' -or $text7 -notmatch 'RESCUE: mapped arm7') {
         Write-Error "ARM7 import failed; see $log7"
         exit 1
     }

@@ -6,6 +6,8 @@ output directory:
 
     arm9.bin            ARM9 binary, BLZ-decoded if the ROM stores it compressed
     overlay_NNNN.bin    every ARM9 overlay, BLZ-decoded where flag bit 24 is set
+    arm7.bin            ARM7 binary (when the ROM has one), laid out the same way
+    overlay7_NNNN.bin   every ARM7 overlay (when the ROM has any)
     manifest.json       addresses, sizes, BSS, autoload (ITCM/DTCM) sections, static
                         initialiser ranges, entry point, overlay ids and the ROM SHA-1
 
@@ -38,6 +40,9 @@ Format notes (our own words; sources: GBATEK, ndspy docs, see docs/references.md
   offset of the module params in the ARM9 binary, then one more word. We only trust
   the offset when the magic pair is found there.
   We use the footer when present and fall back to searching for the magic pair.
+* ARM7 module params: the same first six words, without the magic pair. Header word
+  0x74 is the RAM address just past a word holding their address (0x70 is the same
+  for the ARM9). We trust them only when the autoload list lies inside arm7.bin.
 * If "compressed static end" is non-zero, the ARM9 bytes from its start up to
   that RAM address are one BLZ stream (the SDK's crt0 decodes it in place at boot).
   We decode it, keep any bytes after it as they are, and record the original value
@@ -260,20 +265,20 @@ def parse_module_params(arm9, off, ram):
     return mp
 
 
-def parse_autoloads(arm9, mp, ram):
+def parse_autoloads(arm9, mp, ram, what="ARM9"):
     lst, lend, data_start = mp["autoload_list_start"], mp["autoload_list_end"], mp["autoload_start"]
     if lst == lend:
         return []
     if not (ram <= lst <= lend <= ram + len(arm9)) or (lend - lst) % 12:
-        raise ExtractError(f"autoload list {hx(lst)}..{hx(lend)} is not inside the ARM9 binary")
+        raise ExtractError(f"autoload list {hx(lst)}..{hx(lend)} is not inside the {what} binary")
     if not ram <= data_start <= ram + len(arm9):
-        raise ExtractError(f"autoload data start {hx(data_start)} is not inside the ARM9 binary")
+        raise ExtractError(f"autoload data start {hx(data_start)} is not inside the {what} binary")
     out = []
     file_off = data_start - ram
     for i, ent in enumerate(range(lst - ram, lend - ram, 12)):
         dest, size, bss = struct.unpack_from("<3I", arm9, ent)
         if file_off + size > len(arm9):
-            raise ExtractError(f"autoload {i} ({hx(dest)}, 0x{size:X} bytes) runs past the ARM9 binary")
+            raise ExtractError(f"autoload {i} ({hx(dest)}, 0x{size:X} bytes) runs past the {what} binary")
         out.append({"index": i, "ram_address": hx(dest), "file_offset": file_off, "size": size,
                     "bss_address": hx(dest + size), "bss_size": bss,
                     "sha1": sha1(arm9[file_off:file_off + size])})
@@ -281,102 +286,53 @@ def parse_autoloads(arm9, mp, ram):
     return out
 
 
-def extract(rom, allow_unknown=False):
-    """Parse a ROM. Returns (files {name: bytes}, manifest dict, warnings list)."""
-    info = identify(rom, allow_unknown)
-    if len(rom) < 0x200:
-        raise ExtractError(f"file is {len(rom)} bytes, too small for an NDS header")
-    warnings = []
+def find_arm7_params(rom, arm7, ram):
+    """Offset in arm7 of the ARM7 module params, or None (see the format notes)."""
+    hook = u32(rom, 0x74)
+    if not ram + 4 <= hook <= ram + len(arm7):
+        return None
+    off = u32(arm7, hook - ram - 4) - ram
+    if not (0 <= off and off % 4 == 0 and off + 28 <= len(arm7)):
+        return None
+    lst, lend, data_start = struct.unpack_from("<3I", arm7, off)
+    end = ram + len(arm7)
+    if not (ram <= lst <= lend <= end and (lend - lst) % 12 == 0 and ram <= data_start <= end):
+        return None
+    return off
 
-    title = rom[0:12].rstrip(b"\0").decode("ascii", "replace")
-    code = rom[12:16].decode("ascii", "replace")
-    arm9_off, entry, ram, arm9_size = struct.unpack_from("<4I", rom, 0x20)
-    fat_off, fat_size = struct.unpack_from("<2I", rom, 0x48)
-    ov9_off, ov9_size = struct.unpack_from("<2I", rom, 0x50)
-    ov7_size = u32(rom, 0x5C)
 
-    arm9_raw = slice_checked(rom, arm9_off, arm9_size, "ARM9 binary")
-    if not ram <= entry < ram + max(arm9_size, 1) and not 0x01FF8000 <= entry < 0x02000000:
-        warnings.append(f"ARM9 entry {hx(entry)} is outside the ARM9 load range")
-    if arm9_off == 0x4000 and arm9_raw[:8] != SECURE_AREA_DECRYPTED and arm9_raw[:8] != b"\0" * 8:
-        warnings.append("ARM9 secure area (first 2 KiB) does not start with the decrypted marker; "
-                        "it may be encrypted, so code in its first 0x800 bytes may be garbage")
-
-    mp_off, mp_src = find_module_params(rom, arm9_off, arm9_size, arm9_raw, ram)
-    mp = None
-    arm9 = arm9_raw
-    compressed = False
-    if mp_off is None:
-        warnings.append(f"module params not found ({mp_src}); mapping the whole ARM9 as static, "
-                        "no BSS or autoload sections")
-    else:
-        mp = parse_module_params(arm9_raw, mp_off, ram)
-        mp["found_by"] = mp_src
+def lay_out(raw, ram, mp, what):
+    """BLZ-decode the static part if needed; return (image, compressed, autoloads,
+    static size, static BSS or None)."""
+    data, compressed = raw, False
+    if mp and mp["compressed_static_end"]:
         cse = mp["compressed_static_end"]
-        if cse:
-            if not ram < cse <= ram + arm9_size:
-                raise ExtractError(f"compressed static end {hx(cse)} is outside the ARM9 binary")
-            split = cse - ram
-            arm9 = blz_decompress(arm9_raw[:split], "ARM9 static (BLZ)") + arm9_raw[split:]
-            compressed = True
-        # The module params block lies before the compressed part, so re-read it from the
-        # decoded image to make sure it still checks out.
-        if u32(arm9, mp_off + 0x1C) != NITROCODE:
-            raise ExtractError("module params magic missing after ARM9 decompression")
-
-    autoloads = parse_autoloads(arm9, mp, ram) if mp else []
-    if mp and autoloads:
-        static_size = mp["autoload_start"] - ram
-    else:
-        static_size = len(arm9)
+        if not ram < cse <= ram + len(raw):
+            raise ExtractError(f"compressed static end {hx(cse)} is outside the {what} binary")
+        split = cse - ram
+        data = blz_decompress(raw[:split], f"{what} static (BLZ)") + raw[split:]
+        compressed = True
+    autoloads = parse_autoloads(data, mp, ram, what) if mp else []
+    static_size = mp["autoload_start"] - ram if mp and autoloads else len(data)
     bss = None
     if mp and mp["static_bss_end"] > mp["static_bss_start"]:
         bss = {"ram_address": hx(mp["static_bss_start"]),
                "size": mp["static_bss_end"] - mp["static_bss_start"]}
+    return data, compressed, autoloads, static_size, bss
 
-    files = {"arm9.bin": arm9}
-    # ARM7 binary (header 0x30..0x3C): stored as it is, with its load address. Its BSS and
-    # autoload sections are not mapped yet (docs/ghidra-setup.md, section 6).
-    arm7_off, arm7_entry, arm7_ram, arm7_size = struct.unpack_from("<4I", rom, 0x30)
-    arm7 = slice_checked(rom, arm7_off, arm7_size, "ARM7 binary")
-    # No ARM7 binary (size 0) means no arm7.bin and "arm7": null in the manifest.
-    arm7_entry_info = None
-    if arm7_size:
-        files["arm7.bin"] = arm7
-        arm7_entry_info = {
-            "file": "arm7.bin", "sha1": sha1(arm7), "size": len(arm7),
-            "rom_offset": arm7_off, "rom_size": arm7_size,
-            "ram_address": hx(arm7_ram), "entry": hx(arm7_entry),
-        }
-    if ov7_size:
-        # shortcut: ARM7 overlays are not extracted, add them with the same table code as the
-        # ARM9 ones when a question needs one (manifest keeps arm7_overlay_count).
-        warnings.append(f"ROM has {ov7_size // 32} ARM7 overlay(s); they are not extracted")
-    arm9_entry = {
-        "file": "arm9.bin", "sha1": sha1(arm9), "size": len(arm9),
-        "rom_offset": arm9_off, "rom_size": arm9_size,
-        "ram_address": hx(ram), "entry": hx(entry),
-        "compressed": compressed,
-        "static": {"ram_address": hx(ram), "file_offset": 0, "size": static_size},
-        "bss": bss, "autoloads": autoloads,
-        "module_params": None if mp is None else {
-            k: (hx(v) if k not in ("arm9_offset", "found_by") else v) for k, v in mp.items()},
-    }
 
-    # FAT and ARM9 overlay table.
-    if fat_size % 8 or fat_off + fat_size > len(rom):
-        raise ExtractError(f"FAT at 0x{fat_off:X}+0x{fat_size:X} is malformed or outside the ROM")
-    fat_count = fat_size // 8
-    if ov9_size % 32 or (ov9_size and ov9_off + ov9_size > len(rom)):
-        raise ExtractError(f"ARM9 overlay table at 0x{ov9_off:X}+0x{ov9_size:X} is malformed "
+def parse_overlays(rom, table_off, table_size, fat_off, fat_count, cpu, prefix, files, warnings):
+    """Overlay table entries of one CPU; adds the decoded files to `files`."""
+    if table_size % 32 or (table_size and table_off + table_size > len(rom)):
+        raise ExtractError(f"{cpu} overlay table at 0x{table_off:X}+0x{table_size:X} is malformed "
                            "or outside the ROM")
     overlays = []
     seen_ids = set()
-    for i in range(ov9_size // 32):
-        ent = ov9_off + i * 32
+    for i in range(table_size // 32):
+        ent = table_off + i * 32
         ov_id, ov_ram, ov_size, ov_bss, si_start, si_end, fid, flags = \
             struct.unpack_from("<8I", rom, ent)
-        what = f"ARM9 overlay {ov_id} (table entry {i})"
+        what = f"{cpu} overlay {ov_id} (table entry {i})"
         if ov_id in seen_ids:
             raise ExtractError(f"{what}: duplicate overlay id")
         seen_ids.add(ov_id)
@@ -398,7 +354,7 @@ def extract(rom, allow_unknown=False):
         if len(data) != ov_size:
             warnings.append(f"{what}: decoded size {len(data)} differs from the table's RAM size "
                             f"{ov_size}; mapping the decoded size")
-        name = f"overlay_{ov_id:04d}.bin"
+        name = f"{prefix}_{ov_id:04d}.bin"
         files[name] = data
         overlays.append({
             "id": ov_id, "file": name, "sha1": sha1(data), "size": len(data),
@@ -408,6 +364,93 @@ def extract(rom, allow_unknown=False):
             "static_init": {"start": hx(si_start), "end": hx(si_end)},
             "flags": hx(flags), "compressed": is_comp,
         })
+    return overlays
+
+
+def extract(rom, allow_unknown=False):
+    """Parse a ROM. Returns (files {name: bytes}, manifest dict, warnings list)."""
+    info = identify(rom, allow_unknown)
+    if len(rom) < 0x200:
+        raise ExtractError(f"file is {len(rom)} bytes, too small for an NDS header")
+    warnings = []
+
+    title = rom[0:12].rstrip(b"\0").decode("ascii", "replace")
+    code = rom[12:16].decode("ascii", "replace")
+    arm9_off, entry, ram, arm9_size = struct.unpack_from("<4I", rom, 0x20)
+    fat_off, fat_size = struct.unpack_from("<2I", rom, 0x48)
+    ov9_off, ov9_size = struct.unpack_from("<2I", rom, 0x50)
+    ov7_off, ov7_size = struct.unpack_from("<2I", rom, 0x58)
+
+    arm9_raw = slice_checked(rom, arm9_off, arm9_size, "ARM9 binary")
+    if not ram <= entry < ram + max(arm9_size, 1) and not 0x01FF8000 <= entry < 0x02000000:
+        warnings.append(f"ARM9 entry {hx(entry)} is outside the ARM9 load range")
+    if arm9_off == 0x4000 and arm9_raw[:8] != SECURE_AREA_DECRYPTED and arm9_raw[:8] != b"\0" * 8:
+        warnings.append("ARM9 secure area (first 2 KiB) does not start with the decrypted marker; "
+                        "it may be encrypted, so code in its first 0x800 bytes may be garbage")
+
+    mp_off, mp_src = find_module_params(rom, arm9_off, arm9_size, arm9_raw, ram)
+    mp = None
+    if mp_off is None:
+        warnings.append(f"module params not found ({mp_src}); mapping the whole ARM9 as static, "
+                        "no BSS or autoload sections")
+    else:
+        mp = parse_module_params(arm9_raw, mp_off, ram)
+        mp["found_by"] = mp_src
+    arm9, compressed, autoloads, static_size, bss = lay_out(arm9_raw, ram, mp, "ARM9")
+    # The module params block lies before the compressed part, so re-read it from the
+    # decoded image to make sure it still checks out.
+    if mp and u32(arm9, mp_off + 0x1C) != NITROCODE:
+        raise ExtractError("module params magic missing after ARM9 decompression")
+
+    files = {"arm9.bin": arm9}
+    # ARM7 binary (header 0x30..0x3C), laid out like the ARM9: static part, BSS and
+    # autoload sections from its module params (format notes).
+    arm7_off, arm7_entry, arm7_ram, arm7_size = struct.unpack_from("<4I", rom, 0x30)
+    arm7_raw = slice_checked(rom, arm7_off, arm7_size, "ARM7 binary")
+    # No ARM7 binary (size 0) means no arm7.bin and "arm7": null in the manifest.
+    arm7_entry_info = None
+    if arm7_size:
+        mp7_off = find_arm7_params(rom, arm7_raw, arm7_ram)
+        mp7 = None
+        if mp7_off is None:
+            warnings.append("ARM7 module params not found (header 0x74); mapping the whole ARM7 "
+                            "as static, no BSS or autoload sections")
+        else:
+            mp7 = parse_module_params(arm7_raw, mp7_off, arm7_ram)
+            del mp7["sdk_version"], mp7["arm9_offset"]  # ARM7 params end after six words
+            mp7["arm7_offset"] = mp7_off
+            mp7["found_by"] = "header 0x74"
+        arm7, compressed7, autoloads7, static7, bss7 = lay_out(arm7_raw, arm7_ram, mp7, "ARM7")
+        files["arm7.bin"] = arm7
+        arm7_entry_info = {
+            "file": "arm7.bin", "sha1": sha1(arm7), "size": len(arm7),
+            "rom_offset": arm7_off, "rom_size": arm7_size,
+            "ram_address": hx(arm7_ram), "entry": hx(arm7_entry),
+            "compressed": compressed7,
+            "static": {"ram_address": hx(arm7_ram), "file_offset": 0, "size": static7},
+            "bss": bss7, "autoloads": autoloads7,
+            "module_params": None if mp7 is None else {
+                k: (hx(v) if k not in ("arm7_offset", "found_by") else v) for k, v in mp7.items()},
+        }
+    arm9_entry = {
+        "file": "arm9.bin", "sha1": sha1(arm9), "size": len(arm9),
+        "rom_offset": arm9_off, "rom_size": arm9_size,
+        "ram_address": hx(ram), "entry": hx(entry),
+        "compressed": compressed,
+        "static": {"ram_address": hx(ram), "file_offset": 0, "size": static_size},
+        "bss": bss, "autoloads": autoloads,
+        "module_params": None if mp is None else {
+            k: (hx(v) if k not in ("arm9_offset", "found_by") else v) for k, v in mp.items()},
+    }
+
+    # FAT and ARM9 overlay table.
+    if fat_size % 8 or fat_off + fat_size > len(rom):
+        raise ExtractError(f"FAT at 0x{fat_off:X}+0x{fat_size:X} is malformed or outside the ROM")
+    fat_count = fat_size // 8
+    overlays = parse_overlays(rom, ov9_off, ov9_size, fat_off, fat_count, "ARM9", "overlay",
+                              files, warnings)
+    arm7_overlays = parse_overlays(rom, ov7_off, ov7_size, fat_off, fat_count, "ARM7", "overlay7",
+                                   files, warnings)
 
     manifest = {
         "format": MANIFEST_FORMAT, "version": MANIFEST_VERSION,
@@ -420,6 +463,7 @@ def extract(rom, allow_unknown=False):
         "arm9": arm9_entry,
         "arm7": arm7_entry_info,
         "overlays": overlays,
+        "arm7_overlays": arm7_overlays,
         "arm7_overlay_count": ov7_size // 32,
         "warnings": warnings,
     }
@@ -472,6 +516,11 @@ def main(argv=None):
           f"{len(a9['autoloads'])} autoload section(s)")
     n_comp = sum(o["compressed"] for o in manifest["overlays"])
     print(f"overlays: {len(manifest['overlays'])} ({n_comp} BLZ-decoded)")
+    a7 = manifest["arm7"]
+    if a7:
+        print(f"arm7.bin: {a7['size']} bytes at {a7['ram_address']}, entry {a7['entry']}, "
+              f"{len(a7['autoloads'])} autoload section(s), "
+              f"{len(manifest['arm7_overlays'])} ARM7 overlay(s)")
     print(f"wrote {len(files) + 1} files to {os.path.abspath(args.out)}")
     return 0
 
