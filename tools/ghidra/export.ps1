@@ -34,12 +34,13 @@ $out = [System.IO.Path]::GetFullPath($ExportDir)
 if ($Check) {
     $stamp = Join-Path $out "STAMP"
     if (-not (Test-Path $stamp)) { Write-Output "stale: no finished export in $out (no STAMP)"; exit 1 }
-    $recorded = (Select-String -Path $stamp -Pattern '^symbols\.md-sha1: (\S+)' | Select-Object -First 1).Matches.Groups[1].Value
-    if ($recorded -eq (Get-Sha1 $symbols)) {
+    # A STAMP from before this wrapper has no sha1 line: that counts as stale, not an error.
+    $match = Select-String -Path $stamp -Pattern '^symbols\.md-sha1: (\S+)' | Select-Object -First 1
+    if ($match -and $match.Matches[0].Groups[1].Value -eq (Get-Sha1 $symbols)) {
         Write-Output "fresh: $out was exported from the current docs/symbols.md"
         exit 0
     }
-    Write-Error "stale: docs/symbols.md changed since the export in $out; rerun tools\ghidra\export.ps1"
+    Write-Output "stale: docs/symbols.md changed since the export in $out; rerun tools\ghidra\export.ps1"
     exit 1
 }
 
