@@ -70,6 +70,7 @@ def main():
     p.add_argument("--frames", type=int, default=12000)
     p.add_argument("--menu-key", choices=["a", "b", "new"], default="a")
     p.add_argument("--force-nonteam", action="store_true")
+    p.add_argument("--force-moves", action="store_true")
     a = p.parse_args()
     levels, learnset = load_levels(a.levels)
 
@@ -106,6 +107,14 @@ def main():
         info = ram.u32(entity + 0x70)
         if not info:
             return
+        if a.force_moves and ram.s16(info + 2) == 158 and sum(1 for i in range(8) if ram.u8(info + 0xF4 + 6 * i) & 1) < 4:
+            # forced gate: fill empty move slots with copies of slot 0 until 4 are valid (the learn adds the fifth)
+            src = bytes(ram.bytes(info + 0xF4, 6))
+            for i in range(8):
+                s = info + 0xF4 + 6 * i
+                if not ram.u8(s) & 1 and sum(1 for j in range(8) if ram.u8(info + 0xF4 + 6 * j) & 1) < 4:
+                    emu.memory.write(s, s + 6, 1, src)
+            res["forced_moves_calls"] = res.get("forced_moves_calls", 0) + 1
         call = {"entity": hex(entity), "pre": snap(info)}
         if a.force_nonteam:
             w8 = ram.u8(info + 6)
