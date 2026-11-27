@@ -887,6 +887,22 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Notes:** the scratch version of the probe also hooked `02182A70`; #619 static analysis shows that it is inside the 316-only branch after the `021389A0(317)` check, not a common return site. The current probe uses `02182A74` instead. The apply's HP/EXP before/after values and a comparison with `parse_level_data` remain unverified because the updated probe was not run. JSON output stays outside the repository.
 
 ---
+## #639 — Dungeon evolution and town runtime checks (forced runs)
+
+- **Date:** 2026-11-27.
+- **Environment:** py-desmume, the EUR dump (SHA-1 `6f01887356268de39085df01490347bbcc3aa330`, not committed), a scratch copy of the ROM under a throwaway name, `XDG_CONFIG_HOME` in the scratchpad. Savestates `dungeon1-f1.dst` and `boot-town.dst` from the shared library (#648), loaded only; `dungeon1-f1.dst` SHA-1 `a804b76ab9439e977090b41ca1f17a923b24760c` unchanged.
+- **Dungeon command:** `XDG_CONFIG_HOME=SCRATCH/xdg python evolution_probe_639.py SCRATCH/evo-scratch.nds SCRATCH/out/final.json --force-returns --trace-apply --read-sprites --inject-for 290 --inject-target 316 --force-317 --frames 800 --savestate ~/rescue-re/saves/states/dungeon1-f1.dst`.
+- **Dungeon probe:** `verification/v7-trace/evolution_probe_639.py`, SHA-1 `42556b6da96a48f3d7a2921dc4f7cb759ccbc085`. Output JSON SHA-1 `f6c5866aaf5cd1497da849b42b26dbcd8b8be440`.
+- **Town command:** `python town_evolution_probe_639.py SCRATCH/evo-scratch.nds ~/rescue-re/saves/states/boot-town.dst SCRATCH/out/town2.json --frames 6000 --explore`. Probe SHA-1 `33623f05516e68322b8d321c22f13fe6298b3b36`; output JSON SHA-1 `ae1fcd95e318d9a85e0e0e10a7086cdab20cdd9f`.
+- **Dungeon evidence:** candidates [159], [5], [291, 293], [192]; apply 158→159, 4→5, 290→316 (injected test target), 191→192 (two slots); the 316 apply runs the forced `021389A0(0x13D)` return and ends with a 317 entity; apply waits at `LogMessageWithTarget` until the message is dismissed; sprite pointers for 158, 4, 290, 191 are nonzero; EXP after apply equals the `lvmp` table at the level (checked with `crates/data` `parse_level_data`).
+- **Natural check:** `evolution_probe_639.py --force-returns --read-sprites --frames 800` (no injection, no path tracing; savestate `dungeon1-f1.dst`). The 290→291 apply has its join at frame 495 with the after-snapshot (level 1, EXP 0, HP 10). The output JSON was not hashed.
+- **Town evidence:** no hook fired in 3000 walk frames plus 6000 button-press frames; GROUND_MAP stayed 13. Not reached.
+- **Town direct call (follow-up):** calling `0200475C` and `0200468C` with PC set through the py-desmume register and LR at a sentinel did not run the function (output unchanged, no hook fired); the harness was not kept.
+- **Outcome:** the 191, 316/317, sprite-slot, join-delay and EXP checks are done (forced where marked in p6-evolution.md P6.2). The dungeon-id check covers one floor only. The town functions were not reached. The US message check (item 7) is blocked: no US dump on this host.
+- **Luminous Cave run (follow-up):** a user save driven from the title to map 8 (Luminous Cave). The savestate loads on map 8; the menu `02047D74` and `020485D8` run within 600 frames; random menu inputs call the check `0200475C` (species 43, level 8, flags `0x2`) over 4000 frames for two seeds. With the leader's level set to 40 in the savestate (`town_menu_drive_639.py --level 40`): the check returns flags `1` for species 43, the apply runs (frame 699), the roster species reads 44 and EXP becomes 652045, the `lvmp044` level-40 value. 44 to 45 (`--species 44 --give-item 116`, 8000 frames, six seeds): applies in seeds 1, 3 and 4, EXP 4801 to 652045, level and HP unchanged. Recorded in `docs/re/progression/p6-evolution.md` P6.1.
+- **Recorded in:** `docs/re/progression/p6-evolution.md` P6.1 and P6.2.
+
+---
 ## #645 — Ground script recording (#522, #524, #525, #526, #527)
 
 - **Question:** one recording of the ground script engine that answers the runtime points of the batch: the opcodes of the opening and of a town walk (#522 P4, #527 P5), the order of story-variable writes from a new game to the first clear (#525 P2), and walking, walls, an exit and a talk in ground mode (#524 P5).
