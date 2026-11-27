@@ -47,6 +47,10 @@ def main() -> None:
     p.add_argument("out")
     p.add_argument("--frames", type=int, default=9000, help="turn frames after the dungeon starts")
     p.add_argument("--inputs", default=os.path.join(HERE, "combat_inputs.txt"), help="turn input file")
+    p.add_argument("--paralysis", action="store_true", help="set the team leader's +0x9B = 4, +0x9C = 2 (paralysis, #624)")
+    p.add_argument("--flinch", action="store_true", help="set the team leader's +0xAC = 1, +0xAD = 2 (flinch, #624)")
+    p.add_argument("--focus", choices=["none", "on", "off"], default="none",
+                   help="set the team leader's +0xC4/+0xC5 (Focus Energy) at the first dungeon frame (#624)")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
@@ -131,6 +135,27 @@ def main() -> None:
             break
     else:
         sys.exit("no dungeon reached")
+
+    if a.focus != "none" or a.flinch or a.paralysis:
+        for _ in range(120):  # let the team fill in after the dungeon struct appears (as status_probe does)
+            emu.cycle(with_joystick=False)
+        gd = rd32(G_DUNGEON)
+        leader_info = rd32(rd32(gd + 0x11314) + 0x70)
+        if leader_info < 0x02000000:
+            sys.exit(f"leader info pointer not valid yet: {leader_info:#x}")
+        if a.focus != "none":
+            v = 4 if a.focus == "on" else 0
+            mem.write_byte(leader_info + 0xC4, v)
+            mem.write_byte(leader_info + 0xC5, v)
+            print(f"leader info {leader_info:#x} +0xC4 set to {v}", flush=True)
+        if a.paralysis:
+            mem.write_byte(leader_info + 0x9B, 4)
+            mem.write_byte(leader_info + 0x9C, 9)
+            print(f"leader info {leader_info:#x} +0x9B set to 4", flush=True)
+        if a.flinch:
+            mem.write_byte(leader_info + 0xAC, 1)
+            mem.write_byte(leader_info + 0xAD, 9)   # long window: the first attack comes near frame 1530
+            print(f"leader info {leader_info:#x} +0xAC set to 1", flush=True)
 
     turns = h.parse_inputs(a.inputs)
     for f in range(a.frames):
