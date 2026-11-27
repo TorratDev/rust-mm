@@ -20,6 +20,8 @@ Each claim below carries one status: **blue-verified**, **red-hypothesis** or **
 | Re-check of the Enraged raise from the library state: when the leader hits enraged wild slot 0 (`0217E890` at frame 1529), `02189234` is called once with (attacker = leader, target = slot 0, stat 0, amount 1), returning to `0217E9E0` (the call at `0217E9DC`). Slot 0's Attack stage `+0x1C` goes 10 → 11 and no other stage changes. | Trace: run 5. Agrees with the Enraged raise in [status.md](status.md). | **blue-verified** |
 | No raise when the enraged monster itself attacks: slot 0 hits the leader at frames 1440 and 1653, and `02189234` is not called. | Trace: run 5 (one `raise` in the whole run). | **blue-verified** |
 | Re-check of the end-of-turn expiry: `+0xAF` drops by one per end-of-turn call per monster (2 → 1 at frame 1378 for all three). The call that reaches 0 also clears `+0xAE` (slot 0 at frame 1466, slot 1 at 1468, slot 2 at 1469). After the clear, the leader's hit on slot 0 at frame 1529 causes no raise. | Trace: run 4 (no `raise` in the whole run); run 5 shows the same one-per-turn decrement, 50 → 31 by frame 2265. Agrees with the Enraged expiry in [status.md](status.md). | **blue-verified** |
+| `make_state_library.py` also rebuilds `boot-town.dst`. It imports the first 0x40000 bytes of `pmdb-maintainer-20261107-2004-after-dream.dsv` (that image's SHA-1 starts `8a41cc4c4535`, the save named in [ground-mode.md](ground-mode.md)), then plays `ground_walk_inputs.txt` and saves at frame 3400. The rebuilt file's SHA-1 is `49ff8bf3…`, not the library's `adc5fc5a…`; same header-time caveat as `dungeon1-f1.dst`. | Trace: run 6. | **blue-verified** for the build; the cause of the byte mismatch is a **lead**, as above. |
+| The rebuilt and library `boot-town.dst` load to the same town state: `GROUND_MAP` (`0210E670`) = 13, player box (`*0215D1DC` +0x144, +0x148) = (59904, 59392). Holding Right for 60 frames moves the box to (73728, 59392) in both, with the map still 13, the same first step as the README's movement check. | Trace: run 7, identical output for both files. | **blue-verified** |
 | The leader's second hit on slot 0 (frame 1709, slot 0 HP 3 → 0) caused no second raise. The hit took slot 0 to 0 HP, so the raise may be skipped for a fainted target. | Trace: run 5. The branch in `0217E890` that would skip it was not read. | **lead** |
 
 ## Trace checks
@@ -30,13 +32,15 @@ Each claim below carries one status: **blue-verified**, **red-hypothesis** or **
 | 2 | scratch reader using `status_probe.Probe` (`RESCUE_STATE` set to each file) | `97bcd8d1cad5ba58` (the one summary line, identical for both) | `RESCUE_STATE=STATE python cmp_states.py verification/v7-trace STATE` | 3 |
 | 3 | `verification/v7-trace/status_rage.py` | `f7f02458ab72e67a` (the probe's own lines, emulator banner removed) | `XDG_CONFIG_HOME=SCRATCH/xdg python status_rage.py SCRATCH/state-probe.nds SCRATCH/out 300 2` | 4, 5, 6 |
 | 4 | `verification/v7-trace/status_rage.py`, AF = 2 | `82eb5bb1b3f4cbed` (probe lines only) | `XDG_CONFIG_HOME=SCRATCH/xdga python status_rage.py SCRATCH/rage-a.nds SCRATCH/oa 4700 2` | 6, 9 |
-| 5 | `verification/v7-trace/status_rage.py`, AF = 50 | `6c6127341adbbfe1` (probe lines only) | `XDG_CONFIG_HOME=SCRATCH/xdgb python status_rage.py SCRATCH/rage-b.nds SCRATCH/ob 4700 50` | 6, 7, 8, 9, 10 |
+| 5 | `verification/v7-trace/status_rage.py`, AF = 50 | `6c6127341adbbfe1` (probe lines only) | `XDG_CONFIG_HOME=SCRATCH/xdgb python status_rage.py SCRATCH/rage-b.nds SCRATCH/ob 4700 50` | 6, 7, 8, 9, 12 |
+| 6 | `verification/v7-trace/make_state_library.py` (builds `boot-town.dst`, keeps the existing `dungeon1-f1.dst`) | state SHA-1 `49ff8bf394b13de4a0861da810b35310582f545a` | `RESCUE_ROM=pmdb.nds RESCUE_PY=~/venvs/desmume/bin/python make_state_library.py SCRATCH/states` | 10 |
+| 7 | scratch reader: load the state, read map and box, hold Right 60 frames, read again | identical line for both files: `map 13 box [59904, 59392] after Right 60: map 13 box [73728, 59392]` | `RESCUE_ROM=pmdb.nds python town_check.py STATE` | 11 |
 
 Outputs stay in a scratch directory. The ROM copy for run 3 has a throwaway name, so DeSmuME's `.dsv` backup does not overwrite the user's save.
 
 ## Open questions
 
-- `boot-town.dst` is not built by `make_state_library.py`: it needs a maintainer save and `ground_script_log.py` (commands in `~/rescue-re/saves/states/README`).
+- `dungeon1-learn4moves.dst` (forced by RAM writes) and `boot-story-11000.dst` are still made by hand; `make_state_library.py` builds only `dungeon1-f1.dst` and `boot-town.dst`.
 - Does `0217E890` skip the Enraged raise when the hit takes the target to 0 HP (run 5, frame 1709)?
 - The Enraged message and `+0x11C` were still not watched at runtime.
 
