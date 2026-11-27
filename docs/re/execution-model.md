@@ -151,7 +151,7 @@ Investigator A's findings. **Decision:** no scene-to-bank table is committed, de
 | `GroundStation_LoadBank(bank)` `0214FD00` | Unloads, then reads `gGroundBankTable[bank * 8]` (`PTR_gGroundBankTable`), `FS_LoadOverlayInfo`, `FS_LoadOverlayImageAsync` and `FS_StartOverlay`. |
 | `FUN_0214D420(bank, group, sector, flag)` | Calls `FUN_0214D510` with `bank` as the first argument, then `FUN_02147C48`. Its one caller is `FUN_021421CC` at `0x02143268`. |
 | `FUN_0214D3A0(param)` | Calls the thunk `FUN_0214D4FC`, then `FUN_02147C48`. Called from `FUN_021421CC` case `0xEC`. |
-| `FUN_0214D4FC` | Thunk: calls through the pointer at `PTR_FUN_0214D510` (`0x0214D50C`). Ghidra did not recover the jump table. |
+| `FUN_0214D4FC` | Tail call to `FUN_0214D510(out, bank, 0, 0)`: the pool word at `0x0214D50C` is `0x0214D510`. Not a jump table; Ghidra's warning is only the indirect branch ([script-opcodes.md](script-opcodes.md#p1--dispatch-and-the-opcode-table), #522). |
 | `FUN_0214D1F0(v)` | Returns `3` for `v` 3 or 4, and `v` otherwise. |
 | `FUN_021421CC(param)` | The script and command processor. It holds the calls to `FUN_0214D420` (`0x02143268`) and `FUN_0214D510` (`0x02146064`). |
 
@@ -212,7 +212,6 @@ Ids 1 to `0xC`: [static only]. No input reached them. **Not verified:** the relo
 - The other scene variables read by `FUN_02020F74` (apart from `0x11` and `0x12`) are not traced. The meaning of `FUN_02020F74` and of the current-map pointer `DAT_02143158` is in [Where the map value comes from](#where-the-map-value-comes-from-160-p3).
 - The list of ground scenes 0 to C and their banks is not written down: no table is committed (see the decision above). A tool derives it from the user's dump.
 - The entry script of each scene (#160 P3-d): the mechanism is traced (#258 P1, see [Entry script of a scene](#entry-script-of-a-scene-258-p1)). Still open there: the scene-id to index mapping was observed only for ids `0xF`, `0x10` and `0`, and the variables that select ids 9 to `0xC`. Follow-up: [#267](https://github.com/TorratDev/rust-mm/issues/267).
-- The jump table behind `FUN_0214D4FC` (not recovered at `0x0214D508`). It may also map scenes to banks.
 - Whether the `case 0xEC` and command paths are the only ways `*psVar1` changes (`FUN_02147B48` and other writers were not checked).
 - Residency of overlay 0 for scene ids 1 to `0xC`: not reached by the boot run, so only the decompile supports it (see the residency paragraph above).
 - Whether any path loads overlay 1 or 7 during the ground scenes.
@@ -246,7 +245,7 @@ The bank layout behind this: the ARM9 table at `0x020DB8E0` has 246 entries of 8
 **Method (static walk and runtime cross-check).**
 
 1. Start points: the ARM9 loader entries (the pointer field of each 12-byte entry; the first walk used only entries 0 to 55 of the 406, see [#267 P1c](#runtime-repeat-and-forced-scene-ids-267)), and every sector-list element of every bank (`element + 8`).
-2. Walk 0x18-byte records. Byte 0 is the opcode, the low half of word 1 is a signed operand (-1 means "use the current value"), and `0xF0` ends a script. The cursor advances 0x18 per command.
+2. Walk 0x18-byte records. Byte 0 is the opcode, the low half of word 1 is a signed operand (-1 means "use the current value"), and `0xF0` suspends the script (`0xEF` ends it; [script-opcodes.md](script-opcodes.md), #522). The cursor advances 0x18 per command.
 3. Scene id to index: take it from the runner's switch on the user's dump, in the tool and not in a committed table. Or read the argument of `FUN_0214D498` at runtime.
 4. Cross-check at runtime: break on `FUN_0214D498` (the index; `lr` `0x0206FDB4`, `0x0206FDC4` or `0x0206FE9C` for the three runner paths), on `FUN_02147C48` with `r0 = *0x0215D1A8` (the script pointer and its kind: 2 is a loader script, or a bank script installed by a `0x1D` load; 5 means the install came with the flag set, which is a `0x1E` load), and on `FUN_0214D420` (bank, group, sector).
 
@@ -335,7 +334,7 @@ Probe: [`verification/v7-trace/scene_entry_probe.py`](../../verification/v7-trac
   - Overlay callers of the runner thunk and of `FUN_0206F7EC`. The x-refs were taken from the ARM9 only.
   - The Red names for 0xF, 0x10 and 0x11 are not settled. One reading gives the same numeric value (Red 15, 16, 17). The other reads Blue's calls as an offset (Red 14 to 0xF, 15 to 0x10, 17 to 0x11), at medium confidence. It also counts four Red calls against Blue's three. Not decided here.
   - The meaning of argument 3 differs between the readings: title choice 4 in one, the quicksave menu in the other. Both agree that it gives mode 0xB when `0x19` is 7.
-  - Which dungeon code writes the result values 1, 2, 4, 5 and -1 to `setup+0x60` is not verified.
+  - The writers of `setup+0x60` are in [story-flags.md](story-flags.md#p4--writers-of-the-post-dungeon-result-setup0x60) (#525 P4): all in `RunDungeon_Async` (values 3, −1, −2, 4, 1, 2) except 5 (`FUN_0201E204`). [blue-verified static; value 1 at runtime]
   - The constants behind the 1 and 2 written to var `0x43` (registers r6 and r7 at `0x0201EB20`) were not read. The flag conditions for ids 0xF and 0x10 (`FUN_02020848(4, ...)`) were not read.
   - Whether other code writes `0x19` with values that would create mode 3 or 6 was not swept.
   - The reach after a save (the last column) is inferred from the control flow, not run.

@@ -1,0 +1,42 @@
+# #645 run B: Continue a save at the Pokemon Team Base, then walk, run, bump walls, leave and talk.
+# FRAME KEYS...; '-' releases. Boot: START, START, A (Continue), UP, A (confirm).
+900 START
+906 -
+1020 START
+1026 -
+1250 A
+1256 -
+1500 UP
+1506 -
+1530 A
+1536 -
+2600 A
+2606 -
+# Walk right 25 frames, run right 10 frames, walk down-right 10 frames.
+3400 RIGHT
+3425 -
+3440 RIGHT B
+3450 -
+3470 RIGHT DOWN
+3480 -
+# Walk left and up into the walls.
+3500 LEFT
+3640 -
+3660 UP
+3760 -
+# Walk down to the wall, right until in line with the south door, then down into it (exit to map 9).
+3780 DOWN
+4000 -
+4020 RIGHT
+4044 -
+4060 DOWN
+4140 -
+# Outside: walk left 12 px, down to the mailbox, press A (then A again to close the text).
+4400 LEFT
+4406 -
+4420 DOWN
+4500 -
+4520 A
+4526 -
+4700 A
+4706 -

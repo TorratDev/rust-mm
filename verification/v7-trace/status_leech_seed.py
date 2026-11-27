@@ -17,6 +17,7 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from status_probe import Probe, WILD, HERE
 
+import romarg; romarg.fill()
 if len(sys.argv) < 3:
     sys.exit(__doc__)
 rom, out = sys.argv[1], sys.argv[2]

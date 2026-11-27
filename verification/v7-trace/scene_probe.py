@@ -41,4 +41,6 @@ def main():
         out.write(json.dumps({"desc": desc, "getters": getters}, sort_keys=True) + "\n")
         for e in ev: out.write(json.dumps(e) + "\n")
     emu.destroy()
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    import romarg; romarg.fill()
+    main()

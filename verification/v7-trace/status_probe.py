@@ -37,7 +37,9 @@ class Probe:
         self.h = h
         self.emu = DeSmuME(); self.emu.open(rom)
         self.mem = self.emu.memory; self.R = self.mem.register_arm9
-        self.state_path = os.path.join(out_dir, "dungeon1.dst")
+        # The shared library state (#643) when it exists; else build one in out_dir.
+        lib = os.environ.get("RESCUE_STATE", os.path.expanduser("~/rescue-re/saves/states/dungeon1-f1.dst"))
+        self.state_path = lib if os.path.exists(lib) else os.path.join(out_dir, "dungeon1.dst")
         if not os.path.exists(self.state_path):
             self._make_state()
         self.emu.savestate.load_file(self.state_path)

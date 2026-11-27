@@ -76,7 +76,14 @@ public class RescueApplySymbols extends GhidraScript {
 		for (Row r : rows) {
 			Address a = parse(r);
 			if (a != null) {
-				check(a, r);
+				// One row with a type Ghidra cannot parse must not stop the other checks.
+				try {
+					check(a, r);
+				}
+				catch (Exception e) {
+					failures++;
+					say("FAIL " + r.name() + " @ " + a + ": " + e.getMessage());
+				}
 			}
 		}
 		say(failures == 0 ? "all checks passed" : failures + " check(s) failed");

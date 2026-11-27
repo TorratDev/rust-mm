@@ -133,6 +133,7 @@ Check on your dump:
 
 - `RESCUE: mapped arm9 + N overlays` where N is the number of ARM9 overlays in the manifest. The survey counted 145 overlays across the ARM9 and ARM7 tables ([`file-survey.md`](file-survey.md)); the manifest's `overlays` and `arm7_overlay_count` give the split.
 - No `RESCUE: WARNING` about overlapping blocks, and the ROM SHA-1 is the supported one (no `UNSUPPORTED/SYNTHETIC` line).
+- `RESCUE: block shared 027ff000 - 027fffff`: the shared main-RAM page ([ARM7 program](#arm7-program-349), "Shared RAM").
 - Functions are found in `arm9` and in the `ov_NNNN` blocks, and calls from overlays into the ARM9 resolve (`from ov_...` lines).
 - **V8 spot check:** the type chart `gTypeEffectivenessChart` is in overlay 1 at decoded offset `0x72688` (V6). `--check ov_0001+0x72688` should list at least one reference, ideally from code or from a literal pool used by a function in `ov_0001`. If it lists none, look at the address in the GUI. The table may be reached through a pointer computed at run time, or analysis may have missed the function that uses it.
 
@@ -230,6 +231,66 @@ Then read `/path/outside/repo/words.txt`. Notes:
 - To cross-check a word, use `ghidra --project ... --program arm9.bin x-ref to ov_0001::ADDRESS`. It lists the loads of each pool word.
 - `disasm` at a pool word fails with "No instruction", because the word is data.
 
+### Reading overlay words without the bridge (#350)
+
+[`tools/ov_read.py`](../tools/ov_read.py) reads 32-bit words from the extracted files (section 1), with no Ghidra and no bridge. It takes the address as Ghidra prints it, with the overlay named, and works offline on your own dump:
+
+```sh
+python3 tools/ov_read.py ov_0001::0214C0A4          # one word
+python3 tools/ov_read.py ov_0001::0214C0A4 4        # four consecutive words
+python3 tools/ov_read.py arm9::02000010             # the ARM9 image
+```
+
+- An address inside several overlays (overlays share RAM) is refused until you name the one you mean.
+- A word past the end of its space, or in BSS, is refused: BSS is not in any file.
+- It reads `--code DIR` (default `extracted/code`, or `$RESCUE_CODE`) and changes nothing. Its output is game data: never commit it.
+- Tests on the synthetic ROM: `python3 -m unittest discover -s tools/tests -v`.
+
+### ARM7 program (#349)
+
+The ARM7 binary is a second program in the same project, `arm7.bin`, with its own address space (ARMv4T). `nds_extract_code.py` writes `arm7.bin` and an `"arm7"` entry in `manifest.json` laid out like the ARM9 one: the static part, the static BSS and the autoload sections, read from the ARM7 module params (header word `0x74`), plus any ARM7 overlays (`overlay7_NNNN.bin`, `"arm7_overlays"`). No ARM7 binary means `"arm7": null`. `import.sh --arm7` imports it, and `RescueNdsImport.java` maps it from the manifest (second script argument `arm7`). The ARM9 program is not touched by this import.
+
+On the supported dump the static part is only `0x1B0` bytes at `02380000` (the entry `_start`). Most ARM7 code runs from two autoloads: `037F8000` (shared WRAM, `0x10234` bytes plus `0x3874` BSS) and `027E0000` (`0x182A0` bytes plus `0x1968` BSS). There are no ARM7 overlays. An address inside `arm7.bin` is therefore not its RAM address past `+0x1B0`: use the block addresses Ghidra shows, never `02380000 + file offset`.
+
+```sh
+python3 tools/nds_extract_code.py <ROM> -o ~/rescue-re/code    # a manifest from before this change lacks the ARM7 layout
+tools/ghidra/import.sh --arm7 ~/rescue-re/code ~/rescue-re/ghidra rescue-arm9 --check 027FFFA8
+ghidra --project rescue-arm9 --program arm7.bin decompile 037fec28
+```
+```powershell
+python tools\nds_extract_code.py <ROM> -o C:\rescue-re\code
+.\tools\ghidra\import.ps1 -Arm7 -CodeDir C:\rescue-re\code -ProjectDir C:\rescue-re\ghidra -Check 027FFFA8
+ghidra --project rescue-arm9 --program arm7.bin decompile 037fec28
+```
+
+The import prints the blocks (`arm7`, `autoload_0_037F8000` and its `_bss`, `autoload_1_027E0000` and its `_bss`, `io`, `io_ipc`, `shared`). The check address `027FFFA8` is the key shadow word (`docs/re/io.md`). It should list two references, both in `FUN_037fec28`: a load at `037FEC50` and the store at `037FEC54`. To run the check on an imported project without importing again:
+
+```sh
+$GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -process arm7.bin -noanalysis -readOnly \
+  -scriptPath tools/ghidra -postScript RescueNdsReport.java 027FFFA8
+```
+
+- `--program arm7.bin` works in every ghidra-cli command (`decompile`, `x-ref to`, `function list`), with the same one-opener rule as the ARM9.
+- **Text export:** `tools/ghidra/export.sh ~/rescue-re/export-arm7 ~/rescue-re/ghidra arm7.bin` (about 25 s). The `re_*` helpers read it with `RESCUE_EXPORT=~/rescue-re/export-arm7` (for example `RESCUE_EXPORT=~/rescue-re/export-arm7 re_refs 027fffa8`). Regenerate it after an ARM7 import.
+- **Shared RAM:** both programs map `027FF000`..`027FFFFF` as an uninitialised, volatile block `shared` ([`RescueSharedRam.java`](../tools/ghidra/RescueSharedRam.java)). It is the top 4 KiB of main RAM, where each CPU reads words the other writes (the key shadow word `027FFFA8`, `027FFC3C` and others). The import scripts run it after `RescueNdsImport.java`; on an existing project, run it on each program (it does nothing if the block is there):
+
+  ```sh
+  for p in arm9.bin arm7.bin; do
+    $GHIDRA_INSTALL_DIR/support/analyzeHeadless ~/rescue-re/ghidra rescue-arm9 -process $p -noanalysis \
+      -scriptPath tools/ghidra -postScript RescueSharedRam.java
+  done
+  ```
+
+  Its values exist only at run time; read them with a py-desmume probe.
+- Copies: make them again after an ARM7 import (below). The copies `rescue-arm9-a`, `-b`, `-c`, `-r` and `-r2` were made on 2026-11-27 after the ARM7 layout import, so they have it and the `docs/symbols.md` names. Older copies are in `~/rescue-re/backup-646/copies/`.
+- **Making a copy again** (after an import or `RescueApplySymbols.java`), with no bridge or GUI open on either project: a copy is the `.rep` folder plus an empty `.gpr`, and the folder does not store its own name.
+
+  ```sh
+  cd ~/rescue-re/ghidra
+  mv rescue-arm9-a.rep <backup folder>/   # or rm -rf, once nothing needs the old copy
+  cp -a rescue-arm9.rep rescue-arm9-a.rep && touch rescue-arm9-a.gpr
+  ```
+
 ## 7. Text export for read-only questions
 
 Most questions about the binary are read-only: what a function does, who refers to an address. [`RescueExport.java`](../tools/ghidra/RescueExport.java) dumps the whole project to text once, so those are answered with a text search and no bridge has to run. Several sessions can read the export at the same time, which the one-opener rule above does not allow for a project.
@@ -240,6 +301,28 @@ ghidra --project rescue-arm9 --program arm9.bin script run tools/ghidra/RescueEx
 ```powershell
 ghidra --project rescue-arm9 --program arm9.bin script run tools\ghidra\RescueExport.java -- C:\Users\you\rescue-re\export
 ```
+
+Preferred: the wrapper runs the export headless into an empty folder, stamps it with the SHA-1 of `docs/symbols.md`, and reports the failed functions and the wall-clock time. It needs `GHIDRA_INSTALL_DIR` and a JDK 21, and the bridge and GUI closed:
+
+```sh
+GHIDRA_INSTALL_DIR=~/tools/ghidra_11.4.3_PUBLIC tools/ghidra/export.sh ~/rescue-re/export ~/rescue-re/ghidra
+tools/ghidra/export.sh --check ~/rescue-re/export     # exit 1 once docs/symbols.md has changed
+```
+```powershell
+.\tools\ghidra\export.ps1 -ExportDir C:\rescue-re\export -ProjectDir C:\rescue-re\ghidra
+.\tools\ghidra\export.ps1 -Check -ExportDir C:\rescue-re\export
+```
+
+Before the export, apply the names: `RescueApplySymbols.java` renames and types the program from `docs/symbols.md` and prints one `RESCUE-SYMBOLS: OK` or `FAIL` line per row. Close the bridge and run it headless:
+
+```sh
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" ~/rescue-re/ghidra rescue-arm9 -process arm9.bin -noanalysis \
+  -scriptPath tools/ghidra -postScript RescueApplySymbols.java "$PWD/docs/symbols.md"
+```
+
+The script is safe to run again. Rows it reports as `FAIL` have a conflict in `docs/symbols.md` (two names for one address, or a type Ghidra cannot parse) and must be fixed in the table, not in Ghidra.
+
+Regenerate the export after `docs/symbols.md` changes, and check it with `--check` before you rely on it. Note that the `--check` mode only compares `docs/symbols.md`: it does not see a changed Ghidra project, so rerun the export after any rename or import too.
 
 Any project that holds the analysed `arm9.bin` works, for example a copy such as `rescue-arm9-a`; "Requested project program file(s) not found: arm9.bin" means the project you named holds no program. It decompiles every function, so expect it to take about as long as the analysis did. If the bridge call times out, run the script headless instead, with the bridge and the GUI closed:
 

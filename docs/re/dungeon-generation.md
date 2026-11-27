@@ -62,13 +62,13 @@ Five overlay 1 pool words, read from `rescue-re/code/overlay_0001.bin` at RAM ba
 
 | Pool word | Value | Meaning |
 |-----------|-------|---------|
-| `DAT_0214C0A4` | `0xC11C` | [hypothesis] Confirms the 8 × 8 cell base `+0xC11C` |
+| `DAT_0214C0A4` | `0xC11C` | blue-verified (#646): `ov_0001::0214C0A4` in the file. `ResetFloor` (`ov_0001::0214BDBC`) adds it to the dungeon pointer as the 8 × 8 cell base, so the base is `+0xC11C` |
 | `DAT_02179124` | `0x584` | [hypothesis] The spawn-request list is at `gDungeon + 0x584`, not Red's `0x57C` |
-| `DAT_02149E78` | `0x021B45CC` | [hypothesis] The shop bounds are the overlay global `021B45CC`, not `gDungeon + 0xC0E0..0xC0EC` |
-| `DAT_021525F0` | `0x021B45CC` | [hypothesis] Same global |
+| `DAT_02149E78` | `0x021B45CC` | blue-verified (#646): the pointer is `ov_0001::02149E78` in the file. Its target `021B45CC` is in overlay 1's BSS, not in the file; `GenerateFloor` sets it to -1 (`02151F3C`), step 9 (`0214D448`) writes it (`0214D674`), and `CarveShopAndPlaceItems` (`ov_0001::02149AF8`) reads it and has a write at `02149C1C`. **[blue-verified runtime, #350]** four ints minX, minY, maxX, maxY with exclusive maxima; a separate global from the inclusive bounds at `gDungeon + 0xC0E0` (see Still not done) |
+| `DAT_021525F0` | `0x021B45CC` | Same global; `GenerateFloor` writes -1 to it at `02151F3C` (export xrefs) |
 | `DAT_021525FC` | `0x021B45C8` | [hypothesis] The shop-centre pair |
 
-The second read was done on the Ghidra copy `rescue-arm9-a`, through the loaded overlay block, and the values in the reviewer's table are the same. Not checked: what `0x021B45CC` and `0x021B45C8` hold at run time (they are in `ov_0001_bss`, `0x021B40A0` to `0x021B48FF`, uninitialised in the image). The meanings in the table rest on their callers, which were not decompiled here.
+The second read was done on the Ghidra copy `rescue-arm9-a`, through the loaded overlay block, and the values in the reviewer's table are the same. `0x021B45CC` at run time: see Still not done (#350). Not checked: what `0x021B45C8` holds at run time beyond the step-9 pair (they are in `ov_0001_bss`, `0x021B40A0` to `0x021B48FF`, uninitialised in the image). The meanings in the table rest on their callers, which were not decompiled here.
 
 ## Emulator check
 
@@ -307,7 +307,7 @@ Read from the disassembly; the names are ours unless marked. Only the shop pass 
   4. `0x0214C13C` at `0x0215259C`, when its flag is set (below).
 
   Then `CloseFile` at `0x021525B0`.
-- **Shop pass** (`0x02149AF8`, Red `sub_8051654`). The shop bounds are four ints at the pointer `DAT_02149E78`: minX, minY, maxX, maxY (see Still not done). The RNG draws, in order:
+- **Shop pass** (`0x02149AF8`, Red `sub_8051654`). The shop bounds are four ints at the pointer `DAT_02149E78` (`021B45CC`): minX, minY, maxX, maxY, with maxX and maxY exclusive (runtime, see Still not done). The RNG draws, in order:
   1. Width: `DungeonRandRange(3, w - 2)`, retried up to 20 times; it stops on the first draw. Every draw in this range is at least 3, so it stops after one draw. Height: `DungeonRandRange(3, h - 2)`, the same.
   2. Cut count: one `DungeonRandRange(2, 4)`, drawn once and used as the limit for both the west/east loop and the north/south loop.
   3. West and east cuts: while the area is wider than the narrowest width, `DungeonRandInt(100) < 50` removes the west column, else the east one. Each removed tile loses terrain bit `0x20`. The cut stops early when the width is at or below the narrowest.
@@ -358,7 +358,7 @@ Investigator C's static read of the spawn-request list, on [#179](https://github
 | `+0x34AE`, `+0x34B0`, `+0x34B4` | `tileset`, `unk3A10` (music), `fixedRoomNumber` | `0x3A0E`, `0x3A10`, `0x3A14` | `RunDungeon_Async` |
 | `+0x11304` | fixed-room file handle | — | `GenerateFloor` |
 | `+0x19DF6` | `unk1BDD4.unk1C05E` | `0x1C05E` | `RunDungeon_Async` |
-| `+0x34AC`, `+0x34B6`, `+0x678`, `+0xC0E0`..`+0xC0EC` | monster-house room, attempt index (maze gate), blocks the monster house (step 10), shop area bounds | — | steps 8 to 10 |
+| `+0x34AC`, `+0x34B6`, `+0x678`, `+0xC0E0`..`+0xC0EC` | monster-house room, attempt index (maze gate), blocks the monster house (step 10), shop area bounds (`+0xC0E0`..`+0xC0EC`: minX, minY, maxX, maxY, inclusive; runtime, #350) | — | steps 8 to 10 |
 | `+0x34A8`, `+0x678` | monster house present (byte), extra enemy spot (16 bit) | - | `SpawnEnemies`, steps 8 to 10 |
 | `+0xC0B8`, `+0xC0BA` / `+0xC0BC`, `+0xC0BE` / `+0x64D` | player (leader) start, then stairs positions (`-1` when unset) / trap flag for monster-house tiles | — | `SpawnNonEnemies` (pair A also `02152B20`) |
 | `+0x1A2F8`, `+0x1A2F9`, `+0x1A308` | `floorProperties.tileset`, `.bgMusic`, `.fixedRoomNumber` | `0x1C576`, `0x1C577`, `0x1C588` | `RunDungeon_Async` |
@@ -402,9 +402,9 @@ The disassembly was made with Capstone on `rescue-re/code/overlay_0001.bin` (RAM
 - The fixed-room placements `0x0214A0D4` (numbers below 50) and `0x02150788` (from 50 on). They read the fixed-room file, which is game data and not in the repo, so they stay behind `FloorSteps`.
 - The fixed rooms and the layout generators (cases 3 to 7, 9 and 10) are tracked in [#148](https://github.com/TorratDev/rust-mm/issues/148). The enemy spawns, the stairs marker and `GenerateStandardFloor` steps 6 and up are their own issues. The driver calls them through `FloorSteps`.
 - Unresolved in the #48 findings:
-  - `DAT_0214C0A4`, the base of ResetFloor's 8 × 8 cell records. It is an overlay pool word and could not be read: `memory read` fails on it, and overlay-form addresses are not accepted. The `+0xC11C` offset in `structs.md` is Red's and is not confirmed in Blue. The value is `0xC11C` in both reads (see the pool-word table above, #179 P1).
+  - Closed (#646): `DAT_0214C0A4` is `0xC11C`, the cell base offset, read from `ov_0001` with `tools/ov_read.py`; `ResetFloor` uses it at `0214BDBC` (decompile line 201). The `+0xC11C` offset is Blue's.
   - `DAT_02179124`, the base of the P2 list (`*PTR_gDungeon + DAT_02179124`). Value read from the overlay file: `0x584`, see the pool-word table above. The read value `0x584` is the same in both reads (#179 P1), and it puts the list at `gDungeon + 0x584`, not Red's `0x57C`. The consumer is `FUN_ov_0001__02178FC8` (Red `sub_806C3C0`); its caller is not located. See [Spawn-request list](#spawn-request-list-179-p2).
-  - `DAT_02149E78`, the shop-bounds pointer. The bounds are four ints there, not in `gDungeon`. The table in the struct notes lists `+0xC0E0` to `+0xC0EC` for them; that matches only if the pointer targets those offsets. Unverified. The pointer's value is read from the overlay file as `0x021B45CC` (see the pool-word table above). That the target is an overlay global and not `gDungeon + 0xC0E0` is a [hypothesis].
+  - Closed (#646, #350): `DAT_02149E78` is the pointer `0x021B45CC` (`ov_0001::02149E78`, blue-verified static). The target is in overlay 1's BSS (`0x021B40A0`..`0x021B4900`), so its four ints exist only at run time. Writers (export xrefs): `GenerateFloor` at `02151F3C` (sets -1), step 9 `0214D448` at `0214D674`, and `CarveShopAndPlaceItems` at `02149C1C`. **Runtime [blue-verified]:** `floor_stages.py` on floor 1, natural seed: the four ints are -1 at every checkpoint and no shop pass runs. With `--force-chance 9=100`, step 9 makes a shop: at step 10's entry the ints are minX, minY, maxX, maxY with maxX = inclusive max + 1 and maxY = inclusive max + 1, and the same four values stay through the shop pass's entry and `GenerateFloorEnd`. `gDungeon + 0xC0E0`..`+0xC0EC` holds the same rectangle with inclusive maxima (0 on the floor with no shop), so it is a second copy, not this global. Output SHA-1 of two runs each: natural `97c870fbc0113e6d68ad86505c6eafc19afd49e1`, forced `d7d24c192b8379ededa6c46730acc5159df72052`, the same both times. Not checked: what the write at `02149C1C` stores (the four ints read the same before and after the pass on this floor), and other floors.
 
 ## Open questions
 
