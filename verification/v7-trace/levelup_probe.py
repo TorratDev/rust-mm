@@ -71,6 +71,7 @@ def main():
     p.add_argument("--menu-key", choices=["a", "b", "new"], default="a")
     p.add_argument("--force-nonteam", action="store_true")
     p.add_argument("--force-moves", action="store_true")
+    p.add_argument("--force-exp", action="store_true")
     a = p.parse_args()
     levels, learnset = load_levels(a.levels)
 
@@ -107,7 +108,7 @@ def main():
         info = ram.u32(entity + 0x70)
         if not info:
             return
-        if a.force_moves and ram.s16(info + 2) == 158 and sum(1 for i in range(8) if ram.u8(info + 0xF4 + 6 * i) & 1) < 4:
+        if a.force_moves and ram.s16(info + 2) == 4 and sum(1 for i in range(8) if ram.u8(info + 0xF4 + 6 * i) & 1) < 4:
             # forced gate: fill empty move slots with copies of slot 0 until 4 are valid (the learn adds the fifth)
             src = bytes(ram.bytes(info + 0xF4, 6))
             for i in range(8):
@@ -115,6 +116,11 @@ def main():
                 if not ram.u8(s) & 1 and sum(1 for j in range(8) if ram.u8(info + 0xF4 + 6 * j) & 1) < 4:
                     emu.memory.write(s, s + 6, 1, src)
             res["forced_moves_calls"] = res.get("forced_moves_calls", 0) + 1
+        if a.force_exp and ram.s16(info + 2) == 4 and ram.u8(info + 9) < 7 and "forced_exp_calls" not in res:
+            # forced gate: raise EXP to the level-7 threshold so one pass gains levels 6 and 7 (species 4 learns move 262 at 7)
+            thr = levels[4][6][0]
+            emu.memory.write(info + 0x18, info + 0x1C, 1, int(thr).to_bytes(4, "little"))
+            res["forced_exp_calls"] = 1
         call = {"entity": hex(entity), "pre": snap(info)}
         if a.force_nonteam:
             w8 = ram.u8(info + 6)
