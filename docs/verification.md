@@ -925,8 +925,9 @@ Checks the epic #5 tasks of [#42](https://github.com/TorratDev/rust-mm/issues/42
 - **Question:** how long a full text export of the `rescue-arm9` project takes, and whether the export stamp catches a stale export (`tools/ghidra/export.sh`, `--check`).
 - **Command:** `GHIDRA_INSTALL_DIR=<Ghidra 11.4.3> tools/ghidra/export.sh <folder outside the repo> ~/rescue-re/ghidra`, with the bridge and GUI closed. JDK 21.0.12. The run is headless, `-readOnly -noanalysis`.
 - **Result:** `5284 functions (0 failed), 121342 references`, wall-clock `elapsed-seconds: 192` (3 min 12 s) on this machine. The STAMP holds the SHA-1 of `docs/symbols.md`, the Ghidra version and the elapsed time.
-- **Stale check:** `export.sh --check <folder>` reports the export fresh against the current `docs/symbols.md`. The stale path (exit 1 after a change to `docs/symbols.md`, and on a missing STAMP) was run against a scratch copy of the repository with a stand-in headless script, not the real Ghidra.
-- **Not measured:** one `ghidra-cli` decompile for comparison. That needs a running bridge on a project copy, and this batch did not start one.
+- **Stale check:** `export.sh --check ~/rescue-re/export` reports the export fresh (exit 0) against the current `docs/symbols.md`. Against the same real export, a copy of `export.sh` beside a copy of `docs/symbols.md` with one added blank line reports `stale` (exit 1); the unchanged copy reports fresh (exit 0). A missing STAMP also gives exit 1 (tested with a stand-in headless script).
+- **Text search by a known address:** `grep -i 021467bc ~/rescue-re/export/functions.tsv` finds `ThrownRockItem` (`ov_0001/021467bc_ThrownRockItem.c`), the name `docs/symbols.md` gives `ov_0001::021467BC`.
+- **One ghidra-cli decompile:** 0.61–0.91 s per function on a running bridge (batch below), against one grep of the export.
 - **Not verified:** the names. The first export was made before `RescueApplySymbols` ran on the project, so it had `FUN_` names for functions that `docs/symbols.md` names. Fixed in the batch below (the second export is the one in use).
 
 ---
