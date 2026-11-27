@@ -10,6 +10,8 @@ retail EUR dump, see docs/re/progression/p4-friend-areas.md P4):
               02177FD8, 02178068 (entry: r0 = flag)
   gate      : 0217F7EC (entry: r0 = species; record +0x12, +0x16 and the owned byte of that area),
               return sites 0217FB40, 02172168, 0217F274 (r0 = the gate's return value)
+  areas     : at the floor, the area table through each reader's literal (02009110 field 3 u32,
+              02009120 field 2 u8, capacity s16 before it; stride 8) and *(*020428E8)+0x234
   writes    : 020E7B6C+9 and +26 (owned bytes for areas 9 and 26 on the fresh-save path; the
               writer's pc is logged). The base is read again at the floor as *020DED04.
 
@@ -50,6 +52,9 @@ EXIT = (0x0206DC20, 0x0206ED24, 0x0206ED3C, 0x0206ED4C, 0x02177FD8, 0x02178068)
 GATE = 0x0217F7EC
 GATE_RET = (0x0217FB40, 0x02172168, 0x0217F274)
 RESULT_CODE = 0x60           # s16 at gDungeon+0x60 (exit code, as in exit_probe.py)
+AREA_F3_LIT = 0x0200911C     # 02009110: u32 field 3 at base + area*8
+AREA_F2_LIT = 0x0200912C     # 02009120: u8 field 2 at base + area*8 (capacity s16 two bytes before)
+STORED_LIT = 0x020428E8      # 02042674: *(*lit)+0x234 is the value field 3 is compared with
 WRITE_WATCHES = ((9, "area9"), (26, "area26"))  # offsets from FRESH_OWNED_BASE
 
 
@@ -71,6 +76,9 @@ def main():
                    help="FORCED tile check: write gDungeon+1 = 1 at --force-frame; the rest is natural")
     p.add_argument("--stairs-each-floor", action="store_true",
                    help="FORCED tile check on every floor: write gDungeon+1 = 1 once per new floor")
+    p.add_argument("--force-668-at-end", action="store_true",
+                   help="FORCED: write gDungeon+0x668 (missionKind) = 1 at 0206EB70, after the post-loop "
+                        "0219C7A4 read, so only the cleared branch's code 1/4 test sees it")
     p.add_argument("--force-plus6", type=int, default=-1,
                    help="FORCED: write gDungeon+6 = this at --force-frame (-1 = leave it)")
     a = p.parse_args()
@@ -157,7 +165,11 @@ def main():
     over_done = {}
 
     def on_868_ret(addr, size):
-        if a.force_over and phase.get("turns") and not over_done:
+        if a.force_668_at_end and phase.get("turns") and "mk" not in over_done:
+            g = ram.u32(G_DUNGEON)
+            over_done.update(mk={"frame": phase["frame"], "natural": ram.u8(g + 0x668)})
+            emu.memory.write(g + 0x668, g + 0x669, 1, bytes([1]))
+        if a.force_over and phase.get("turns") and "r0_natural" not in over_done:
             over_done.update(frame=phase["frame"], r0_natural=int(R.r0) & 0xFFFFFFFF)
             R.r0 = a.force_over
     emu.memory.register_exec(0x0206EB70, on_868_ret)
@@ -200,6 +212,15 @@ def main():
                 "friend_flag_values": dict(friend_hist),
                 "friend_flag_nonzero": nonzero,
                 "friend_flag_nonzero_count": len(nonzero)}
+
+    # Area table (P4 fields): each reader's own literal gives its base, stride 8, 58 areas.
+    f3_base, f2_base = ram.u32(AREA_F3_LIT), ram.u32(AREA_F2_LIT)
+    snapshot["area_table"] = {
+        "field3_base": hex(f3_base), "field2_base": hex(f2_base),
+        "capacity_sum": sum(ram.s16(f2_base - 2 + i * 8) for i in range(N_AREAS)),
+        "field2": [ram.u8(f2_base + i * 8) for i in range(N_AREAS)],
+        "field3": [ram.u32(f3_base + i * 8) for i in range(N_AREAS)],
+        "value_234": ram.u32(ram.u32(ram.u32(STORED_LIT)) + 0x234)}
 
     turns = parse_inputs(a.turn_inputs) if a.turn_inputs else {}
     t0 = phase["frame"]
@@ -251,6 +272,8 @@ def main():
                 forced["plus6_after_write"] = ram.u8(g + 6)
         emu.cycle(with_joystick=False)
     emu.input.keypad_update(0)
+    if a.force_668_at_end:
+        forced = dict(forced or {}, mission_kind_at_end=over_done.get("mk"))
     if forced is not None:
         forced["floor_end"] = forced_end or None
         forced["post_loop_868"] = over_done or None
@@ -278,6 +301,7 @@ def main():
                                                              "friend_flag_nonzero_count",
                                                              "friend_flag_nonzero")},
                       "friend_flag_value_counts": snapshot["friend_flag_values"],
+                      "area_table": snapshot["area_table"],
                       "summary": summary}, indent=1), flush=True)
     emu.destroy()
 

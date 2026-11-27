@@ -27,6 +27,9 @@ rescue_tests::rom_test! {
         let mons = species::parse_species(arc.get(&sys, "monspara").unwrap()).unwrap();
         assert_eq!(mons.len(), 424);
         assert_eq!((mons[1].name.as_str(), mons[1].types), ("Bulbasaur", [4, 8]));
+        // Friend flag +0x12 (P4): the same 15 species the runtime VRAM read gives (#641), not 11.
+        let friend: Vec<usize> = (0..mons.len()).filter(|&i| mons[i].byte_12 != 0).collect();
+        assert_eq!(friend, [144, 145, 146, 274, 276, 387, 408, 409, 410, 411, 412, 414, 417, 418, 419]);
         let mv = moves::parse_moves(arc.get(&sys, "wazapara").unwrap()).unwrap();
         assert_eq!((mv.moves.len(), mv.learnsets.len()), (413, 424));
         // Blue reads an empty learnset for species 420 and 421, whatever the table holds.
