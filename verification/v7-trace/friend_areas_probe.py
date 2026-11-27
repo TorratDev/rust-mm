@@ -64,6 +64,8 @@ def main():
     p.add_argument("--force-frame", type=int, default=0)
     p.add_argument("--force-over", type=int, default=0,
                    help="FORCED: post-loop 0219C868 returns this (nonzero gives code -1 or -2)")
+    p.add_argument("--force-stairs", action="store_true",
+                   help="FORCED tile check: write gDungeon+1 = 1 at --force-frame; the rest is natural")
     p.add_argument("--force-plus6", type=int, default=-1,
                    help="FORCED: write gDungeon+6 = this at --force-frame (-1 = leave it)")
     a = p.parse_args()
@@ -194,11 +196,21 @@ def main():
     turns = parse_inputs(a.turn_inputs) if a.turn_inputs else {}
     t0 = phase["frame"]
     forced = None
+    stairs_trace = []
     phase["turns"] = True
     for k in range(a.frames):
         phase["frame"] = t0 + k
         if k in turns:
             emu.input.keypad_update(turns[k])
+        if k % 30 == 0 and ram.u32(G_DUNGEON):
+            g = ram.u32(G_DUNGEON)
+            stairs_trace.append({"frame": t0 + k, "dun+1": ram.u8(g + 1), "dun+2": ram.u8(g + 2),
+                                 "dun+0x648": ram.u8(g + 0x648), "dun+0x11": ram.u8(g + 0x11),
+                                 "dun+0x63D": ram.u8(g + 0x63D)})
+        if a.force_stairs and k == a.force_frame:
+            g = ram.u32(G_DUNGEON)
+            emu.memory.write(g + 1, g + 2, 1, bytes([1]))
+            forced = {"stairs_flag_forced": True, "frame": t0 + k, "dun+1_after_write": ram.u8(g + 1)}
         if a.force_kind and k == a.force_frame:
             g = ram.u32(G_DUNGEON)
             emu.memory.write(g + 0x11, g + 0x12, 1, bytes([a.force_kind & 0xFF]))
@@ -224,7 +236,7 @@ def main():
                "owned_write_events": len(writes),
                "not_reached": not_reached}
     res = {"snapshot": snapshot, "summary": summary, "events": events, "owned_writes": writes,
-           "forced": forced}
+           "forced": forced, "stairs_trace": stairs_trace}
     with open(a.out, "w") as f:
         json.dump(res, f, indent=1)
     print(json.dumps({"snapshot": {k: snapshot[k] for k in ("owned_ptr", "area0", "owned_areas",
