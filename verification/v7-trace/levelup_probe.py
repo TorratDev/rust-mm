@@ -75,6 +75,12 @@ def main():
     p.add_argument("--frames", type=int, default=12000)
     p.add_argument("--menu-key", choices=["a", "b", "new"], default="a")
     p.add_argument("--force-nonteam", action="store_true")
+    p.add_argument("--menu-hold", type=int, default=4,
+                   help="frames each menu key is held (gap is 5x); default 4 as before")
+    p.add_argument("--force-pending-exp", type=int, default=None,
+                   help="FORCED: write this pending EXP (info+0x1C8) on the hero (158) so the EXP pass levels it")
+    p.add_argument("--force-four-moves", action="store_true",
+                   help="FORCED: write four valid move records on the hero (158) and partner (4) before play")
     p.add_argument("--force-moves", action="store_true")
     p.add_argument("--force-exp", action="store_true")
     a = p.parse_args()
@@ -211,6 +217,7 @@ def main():
         st["forget"] = (call, lst)
         state["menu_open"] = True
         state["menu_frames"] = 0
+        state["entity"] = entity
         state["prompt_open"] = False
         emu.memory.register_exec(int(R.r14) & ~1, on_forget_ret)
 
@@ -243,15 +250,60 @@ def main():
     def press(keys):
         for k in keys:
             emu.input.keypad_update(keymask(getattr(Keys, "KEY_" + k)))
-            for _ in range(4): emu.cycle(with_joystick=False)
+            for _ in range(a.menu_hold):
+                emu.cycle(with_joystick=False)
+                if len(res.setdefault("menu_trace_held", [])) < 400:
+                    res["menu_trace_held"].append(dict(key=k, **menu_sample()))
             emu.input.keypad_update(0)
-            for _ in range(20): emu.cycle(with_joystick=False)
+            for _ in range(a.menu_hold * 5): emu.cycle(with_joystick=False)
+
+    forced_moves = []
+    if a.force_four_moves or a.force_pending_exp is not None:
+        d = ram.u32(G_DUNGEON)
+        four = [[5, 0, 224, 0, 27, 0], [5, 0, 4, 1, 22, 0], [5, 0, 99, 0, 188, 2], [5, 0, 1, 0, 5, 0]]
+        for i in range(20):
+            e = ram.u32(d + 0x11364 + 4 * i)
+            inf = ram.u32(e + 0x70) if e else 0
+            if inf and a.force_pending_exp is not None and ram.s16(inf + 2) == 158:
+                v = a.force_pending_exp & 0xFFFFFFFF
+                for j in range(4):
+                    emu.memory.write_byte(inf + 0x1C8 + j, (v >> (8 * j)) & 0xFF)
+                forced_moves.append({"info": hex(inf), "forced_pending_exp": a.force_pending_exp})
+            if inf and ram.s16(inf + 2) in (158, 4) and a.force_four_moves:
+                for k in range(8):  # all eight slots: four valid, four empty
+                    rec = four[k] if k < len(four) else [0, 0, 0, 0, 0, 0]
+                    for j, b in enumerate(rec):
+                        emu.memory.write_byte(inf + 0xF4 + 6 * k + j, b)
+                forced_moves.append({"info": hex(inf), "species": ram.s16(inf + 2),
+                                     "moves": [list(ram.bytes(inf + 0xF4 + 6 * k, 6)) for k in range(8)]})
+    res["forced_four_moves"] = forced_moves or None
 
     # One step per 120-frame tick. On screen (#642): A on a move opens Forget/Delink/Info, A on Forget asks
     # "will be forgotten. Is that OK?", and A there picks No (back to the list), so UP selects Yes first.
     confirm = [["A"], ["A"], ["UP", "A"]]
     menu_seq = {"a": confirm, "b": [["B"]] + confirm, "new": [["DOWN"] * 4] + confirm}[a.menu_key]
     turns = parse_inputs(a.inputs)
+    def u16(addr):
+        return int.from_bytes(ram.bytes(addr, 2), "little")
+
+    def menu_sample():
+        # Input word at [DAT_0216DCA0]+2 (pressed), +4, the mask from 0216F54C, and the state bytes at [DAT_0216DC9C]+0x27/+0x28.
+        ip, st_ptr = ram.u32(0x0216DCA0), ram.u32(0x0216DC9C)
+        ent = state.get("entity")
+        info = ram.u32(ent + 0x70) if ent else 0
+        return {"frame": state["menu_frames"],
+                "entity_info": hex(info) if info else None,
+                "state_c9": ram.u8(info + 0xC9) if info else None,
+                "entity_c9": ram.u8(ent + 0xC9) if ent else None,
+                # HasHeldItem(021432E8): info+0x5A bit 0 set, bit 3 clear, info+0x5C == item id
+                "held_5a": ram.u8(info + 0x5A) if info else None,
+                "held_5c": ram.u8(info + 0x5C) if info else None,
+                "input_ptr": hex(ip), "pressed": u16(ip + 2) if ip else None, "held": u16(ip + 4) if ip else None,
+                "mask": hex(ram.u32(0x0216F54C)),
+                "state_ptr": hex(st_ptr), "s27": ram.u8(st_ptr + 0x27) if st_ptr else None,
+                "s28": ram.u8(st_ptr + 0x28) if st_ptr else None}
+
+    menu_trace = res.setdefault("menu_trace", [])
     for f in range(a.frames):
         if state.get("prompt_open") and not state["menu_open"]:
             state["prompt_frames"] += 1
@@ -263,6 +315,8 @@ def main():
             continue
         if state["menu_open"]:
             state["menu_frames"] += 1
+            if state["menu_frames"] % 10 == 0 and len(menu_trace) < 400:
+                menu_trace.append(menu_sample())
             if state["menu_frames"] % 120 == 1:
                 press(menu_seq[(state["menu_frames"] // 120) % len(menu_seq)])
             if state["menu_frames"] > 3000:  # menu never returned: stop driving it

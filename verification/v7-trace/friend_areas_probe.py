@@ -59,6 +59,9 @@ def main():
     p.add_argument("out")
     p.add_argument("--turn-inputs", default=os.path.join(HERE, "combat_attack_inputs.txt"))
     p.add_argument("--frames", type=int, default=1500)
+    p.add_argument("--force-exit", type=int, default=None,
+                   help="FORCED: after the floor settles, write result code CODE at the run struct's +0x60 "
+                        "and resume at 0206ECA0 (the exit tail) with r5 = struct, sp = entry sp - 0x20")
     p.add_argument("--force-kind", type=int, default=0,
                    help="FORCED gate: write gDungeon+0x11 = KIND at turn frame --force-frame (0 = off)")
     p.add_argument("--force-frame", type=int, default=0)
@@ -115,12 +118,15 @@ def main():
             e["gate_species"] = last_gate.get("species")
         return fn
 
+    entry = {}
     setup = {}
 
     def on_exit(e):
         d = ram.u32(G_DUNGEON)
         if d and e["hook"] == "0206DC20":
             e["code"] = ram.s16(d + RESULT_CODE)
+        if e["hook"] == "0206DC20" and "sp" not in entry:
+            entry.update(r0=int(R.r0), sp=int(R.sp))
         if e["hook"] == "0206DC20":
             setup["p"] = e["r0"]  # RunDungeon_Async(setup): its exit code is at setup+0x60
         elif setup.get("p"):
@@ -204,6 +210,18 @@ def main():
     phase["turns"] = True
     for k in range(a.frames):
         phase["frame"] = t0 + k
+        if k == 0 and a.force_exit is not None:
+            if "sp" not in entry:
+                sys.exit("0206DC20 entry was not seen; no forced exit")
+            code = a.force_exit & 0xFFFF
+            struct = entry["r0"]
+            emu.memory.write_byte(struct + RESULT_CODE, code & 0xFF)
+            emu.memory.write_byte(struct + RESULT_CODE + 1, code >> 8)
+            R.r5 = struct
+            R.sp = entry["sp"] - 0x20  # prologue: stmdb 5 regs (20) + sub 12
+            R.pc = 0x0206ECA0
+            forced = {"code": a.force_exit, "struct": hex(struct), "entry_sp": hex(entry["sp"]),
+                      "resume": "0206ECA0", "frame": phase["frame"]}
         if k in turns:
             emu.input.keypad_update(turns[k])
         if k % 30 == 0 and ram.u32(G_DUNGEON):
@@ -247,6 +265,7 @@ def main():
                "write_hooks": dict(Counter(w["hook"] for w in writes)),
                "owned_write_events": len(writes),
                "not_reached": not_reached}
+    summary["forced"] = forced
     res = {"snapshot": snapshot, "summary": summary, "events": events, "owned_writes": writes,
            "forced": forced, "stairs_trace": stairs_trace, "stairs_each_floor": each_floor}
     with open(a.out, "w") as f:

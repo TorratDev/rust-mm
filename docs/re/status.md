@@ -122,6 +122,12 @@ Each duration row is from 24 runtime samples with different RNG states, flag as 
 
 Tags for the table: the setter and draw columns are **[blue-verified]** (setter bodies static, duration runtime), high. The effect column is static, medium where stated.
 
+**Runtime, #624 (batch #644, [`runtime-batch-644.md`](progression/runtime-batch-644.md)).** Emulator-verified on the retail EUR dump from the floor-1 savestate; all three scripts ran to completion, output hashes in the batch note:
+- **Speed lowered (row 9):** `status_effects.py`, 12 of 12 samples: `+0xE0` equals the up-counter count after `021882D0` (`eba40e4a…`).
+- **Leech Seed (row 8):** `status_leech_seed.py`, 3000 frames: the end-of-turn drain fires (5 damage events) and the seeder heal (5 events) (`b153a100…`).
+- **Enraged (row 7):** `status_rage.py`, 1500 frames, `+0xAF` = 1: stage-change events, the hit at frame 1441 and the end-of-turn expiry all fire (`5e3f6766…`).
+These confirm the setter and per-turn path only. Stage values and damage amounts are not compared with a reference here.
+
 ### Open items for these statuses
 
 - A paralysed or flinched monster's behaviour in play: in the #624 runs the monsters did not act while the flag was set (the flag cleared on the tick just before each one's first action), so the flinch refusal, the −1 from paralysis and the flinch turn-order effect are still static reads only. Focus Energy's critical outcome is not confirmed (its effect row stays medium).
