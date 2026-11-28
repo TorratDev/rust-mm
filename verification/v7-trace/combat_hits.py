@@ -7,7 +7,8 @@ the four call sites record the dmg_struct and the gDungeon working values. One J
 hit goes to OUT/hits.jsonl. With a leader flag set (--focus, --flinch,
 --paralysis), each leader entry to the move gate (02172ADC) and to the attack it calls
 (0215B384) goes to OUT/gate.jsonl with the flinch and paralysis bytes (#624). Each change of the
-leader's entity, position, HP bytes +0x0E..+0x13 or paralysis bytes goes to OUT/watch.jsonl. At the first hit the lookup tables are read from RAM into
+leader's entity, position, HP bytes +0x0E..+0x13 or paralysis bytes goes to OUT/watch.jsonl. Every call to
+the Attack / Sp. Atk lowerer (02189534) goes to OUT/gate.jsonl as fn 'lower'. At the first hit the lookup tables are read from RAM into
 OUT/tables.json (overlay 1 is resident there during a dungeon).
 
 Nothing from the ROM is written into the repository: OUT must be outside it.
@@ -32,6 +33,7 @@ GDUNGEON_PTR = 0x0217C79C  # literal holding &gDungeon, as CalcDamage loads it
 G_DUNGEON = 0x020E0788  # pointer to the dungeon struct (retail_trace.py)
 RNG_STATE = 0x021B3F58  # gDungeonRngState
 MOVE_GATE = 0x02172ADC  # flinch / paralysis gate (#624); void, the refusal is the branch it takes
+LOWER_OFFENSE = 0x02189534  # lowers the target's Attack (stat 0) or Sp. Atk stage
 GATE_ATTACK = 0x0215B384  # the attack call the gate makes only when not refused
 RET_SITES = [0x021567C8, 0x02161B50, 0x02161D5C, 0x0215672C]  # BL sites, from the x-ref
 INFO_LEN = 0x140
@@ -138,6 +140,12 @@ def main() -> None:
                                            "9b": rd(info + 0x9B, 1)[0], "9c": rd(info + 0x9C, 1)[0]}) + "\n")
         return hook
 
+    def on_lower(*_):  # every call, any entity: who lowers whose Attack or Sp. Atk (#624)
+        gate_out.write(json.dumps({"frame": frame_no[0], "fn": "lower", "lr": regs.r14, "user": regs.r0,
+                                   "target": regs.r1, "stat": regs.r2, "amount": regs.r3,
+                                   "t_1c": rd(rd32(regs.r1 + 0x70) + 0x1C, 4).hex()}) + "\n")
+
+    emu.memory.register_exec(LOWER_OFFENSE, on_lower)
     emu.memory.register_exec(MOVE_GATE, on_gate("gate"))
     emu.memory.register_exec(GATE_ATTACK, on_gate("attack"))
     emu.memory.register_exec(CALC_DAMAGE, on_entry)
