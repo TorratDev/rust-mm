@@ -6,7 +6,8 @@ target info structs (entity+0x70), gDungeonRngState and the return address. Retu
 the four call sites record the dmg_struct and the gDungeon working values. One JSON line per
 hit goes to OUT/hits.jsonl. With a leader flag set (--focus, --flinch,
 --paralysis), each leader entry to the move gate (02172ADC) and to the attack it calls
-(0215B384) goes to OUT/gate.jsonl with the flinch and paralysis bytes (#624). At the first hit the lookup tables are read from RAM into
+(0215B384) goes to OUT/gate.jsonl with the flinch and paralysis bytes (#624). Each change of the
+leader's entity, position, HP bytes +0x0E..+0x13 or paralysis bytes goes to OUT/watch.jsonl. At the first hit the lookup tables are read from RAM into
 OUT/tables.json (overlay 1 is resident there during a dungeon).
 
 Nothing from the ROM is written into the repository: OUT must be outside it.
@@ -103,6 +104,8 @@ def main() -> None:
         if not tables_done[0]:
             tables_done[0] = True
             tables = {name: rd(addr, n).hex() for name, (addr, n) in TABLES.items()}
+            tables["focusOdds_0217C7C8"] = rd32(0x0217C7C8)  # the literal itself is the odds (#624)
+            tables["critMul_0217C7F4"] = rd(rd32(0x0217C7F4), 8).hex()  # literal points at the 48.16 crit factor
             with open(os.path.join(a.out, "tables.json"), "w") as f:
                 json.dump(tables, f)
 
@@ -179,11 +182,23 @@ def main() -> None:
     leader[0] = rd32(gd + 0x11314) if a.focus != "none" or a.flinch or a.paralysis else 0
 
     turns = h.parse_inputs(a.inputs)
+    watch_out = open(os.path.join(a.out, "watch.jsonl"), "w")  # leader state changes, per frame (#624)
+    last = None
     for f in range(a.frames):
         frame_no[0] = f
         if f in turns:
             emu.input.keypad_update(turns[f])
         emu.cycle(with_joystick=False)
+        if leader[0]:
+            ent = rd32(rd32(G_DUNGEON) + 0x11314)
+            info = rd32(ent + 0x70) if ent >= 0x02000000 else 0
+            st = {"ent": ent, "pos": rd(ent + 4, 4).hex() if info else "",
+                  "hp_0e_14": rd(info + 0x0E, 6).hex() if info else "",
+                  "9b": rd(info + 0x9B, 1)[0] if info else -1, "9c": rd(info + 0x9C, 1)[0] if info else -1}
+            if st != last:
+                watch_out.write(json.dumps({"frame": f, **st}) + "\n")
+                last = st
+    watch_out.close()
     out.close()
     gate_out.close()
     print(f"{a.frames} turn frames: {count['entry']} entries, {count['hit']} hits", flush=True)

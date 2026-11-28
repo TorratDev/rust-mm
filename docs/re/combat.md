@@ -197,7 +197,7 @@ Runtime evidence in this section comes from investigator a's scratch probes. The
 
 - **Position.** `DungeonRandInt(100)` at `0217C698` is drawn after the first roll (`0217C02C`) and before the variance roll (`0217C720`). It was drawn in every `CalcDamage` the probes ran, including attacks with natural crit odds 0 (move 355, roll 41, no crit). **blue-verified** (runtime). The Battle and Shell Armor gate above is still static.
 - **Flag.** A crit sets byte `+0xD` of the damage struct to `01`. Run `6b21d775` forced the odds argument (the stack argument at `sp+0`) to 999 at `CalcDamage` entry: 7 crits in 12 hits. **blue-verified** (runtime, patched argument).
-- **Multiplier.** Frame 1528, move 355, same rolls in both runs (38, 41, 4326): damage 7 without a crit and 10 with one, consistent with ×1.5. The exact multiplier was not recomputed from the 48.16 value; only integer damage was compared. **blue-verified** (runtime; medium on the exact value).
+- **Multiplier.** Frame 1528, move 355, same rolls in both runs (38, 41, 4326): damage 7 without a crit and 10 with one, consistent with ×1.5. The factor is read from RAM (#624, `combat_hits.py`, `tables.json`): `DAT_0217C7F4` points at the 48.16 value `0x0000000000018000` = 1.5. **blue-verified** (runtime, high).
 - **Natural odds.** The natural odds argument was 12 for moves 154 and 260, and 0 for move 355. The two natural-odds attacks in the base run rolled 48 and 56 and did not crit. A natural crit has not been seen firing. **open**.
 
 ### P3. Huge Power and Hustle
